@@ -8,7 +8,7 @@ use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::utils::{felts_to_u128, BytesDigest};
 
 /// The total size of the public inputs field element vector.
-pub const PUBLIC_INPUTS_FELTS_LEN: usize = 16;
+pub const PUBLIC_INPUTS_FELTS_LEN: usize = 14;
 pub const NULLIFIER_START_INDEX: usize = 0;
 pub const NULLIFIER_END_INDEX: usize = 4;
 pub const ROOT_HASH_START_INDEX: usize = 4;
@@ -37,28 +37,6 @@ pub struct PublicCircuitInputs {
     /// The address of the account to pay out to.
     pub exit_account: BytesDigest,
 }
-/// The nullifiers and sum total funding amount for a given exit account within a block
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PublicInputsByAccount {
-    /// Funding amounts of duplicate exit accounts summed.
-    pub funding_amount: u128,
-    /// The nullifiers of each individual transfer proof.
-    pub nullifiers: Vec<BytesDigest>,
-    /// The address of the account to pay out to.
-    pub exit_account: BytesDigest,
-}
-
-/// Aggregated public inputs for a given block.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PublicInputsByBlock {
-    /// The root hash of the block's storage trie.
-    pub root_hash: BytesDigest,
-    /// Public inputs indexed by exit accounts.
-    pub account_data: Vec<PublicInputsByAccount>,
-}
-
-/// Public inputs from aggregated proofs indexed by block.
-pub type AggregatedPublicCircuitInputs = Vec<PublicInputsByBlock>;
 
 /// All of the private inputs required for the circuit.
 #[derive(Debug, Clone)]
@@ -86,16 +64,6 @@ impl PublicCircuitInputs {
         num_leaves: usize,
     ) -> anyhow::Result<Vec<Self>> {
         let leaf_public_inputs = &aggr.public_inputs;
-        // Aggregated proof public inputs are ordered as follows:
-        // Root hash count (root_hash_count: u32): 1 felt
-        // Root hash (root_hash: BytesDigest): 4 felts
-        // Length of the PublicInputsByAccount (public_inputs_by_acc_len: u32): 1 felt
-        // Summed funding amount (summed_funding_amount: u128): 4 felts
-        // Exit account (exit_account: BytesDigest): 4 felts
-        // Length of the Nullifiers (nullifiers_len: u32): 1 felt
-        // Nullifiers (nullifiers: Vec<BytesDigest>): [4 felts; nullifiers_len]
-        // Repeated for each PublicInputsByAccount...
-        // Repeated for each PublicInputsByBlock...
         let expected = leaf_pi_len.checked_mul(num_leaves).ok_or_else(|| {
             anyhow::anyhow!(
                 "overflow computing expected public inputs (leaf_pi_len={}, num_leaves={})",
