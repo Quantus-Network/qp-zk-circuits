@@ -16,7 +16,7 @@ resolver = "2"
 [workspace.dependencies]
 anyhow = { version = "1.0.98", default-features = false }
 criterion = { version = "0.5.1", default-features = false }
-qp-plonky2 = { version = "1.1.0", default-features = false, features = [
+qp-plonky2 = { git="https://github.com/Quantus-Network/qp-plonky2", branch= "derive-ord-field", default-features = false, features = [
   "no_random",
 ] }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }

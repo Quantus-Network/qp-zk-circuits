@@ -1,7 +1,12 @@
+use std::collections::BTreeMap;
+
 use plonky2::{
     field::extension::Extendable,
     hash::hash_types::RichField,
-    iop::witness::{PartialWitness, WitnessWrite},
+    iop::{
+        target::Target,
+        witness::{PartialWitness, WitnessWrite},
+    },
     plonk::{
         circuit_builder::CircuitBuilder,
         circuit_data::{CircuitData, CommonCircuitData, VerifierOnlyCircuitData},
@@ -9,8 +14,12 @@ use plonky2::{
     },
 };
 use rayon::{iter::ParallelIterator, slice::ParallelSlice};
+use wormhole_circuit::inputs::AggregatedPublicCircuitInputs;
 use wormhole_verifier::ProofWithPublicInputs;
-use zk_circuits_common::circuit::{C, D, F};
+use zk_circuits_common::{
+    circuit::{C, D, F},
+    gadgets::{add_u128_base2_32_split, bytes_digest_eq},
+};
 
 /// The default branching factor of the proof tree. A higher value means more proofs get aggregated
 /// into a single proof at each level.
@@ -19,12 +28,40 @@ pub const DEFAULT_TREE_BRANCHING_FACTOR: usize = 2;
 /// leaf nodes and the root node.
 pub const DEFAULT_TREE_DEPTH: u32 = 3;
 
+const LEAF_PI_LEN: usize = 16;
+const NULLIFIER_START: usize = 0; // 4 felts (not used in dedupe output)
+const ROOT_START: usize = 4; // 4 felts
+const FUNDING_START: usize = 8; // 4 felts
+const EXIT_START: usize = 12; // 4 felts
+
 /// A proof containing both the proof data and the circuit data needed to verify it.
 #[derive(Debug)]
 pub struct AggregatedProof<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
 {
     pub proof: ProofWithPublicInputs<F, C, D>,
     pub circuit_data: CircuitData<F, C, D>,
+}
+
+// The root proof that is the result of aggregating multiple leaf proofs, containing the indices of the block -> root hash groups needed to parse the deduped public inputs
+#[derive(Debug)]
+pub struct AggregatedRootProof<
+    F: RichField + Extendable<D>,
+    C: GenericConfig<D, F = F>,
+    const D: usize,
+> {
+    pub proof: ProofWithPublicInputs<F, C, D>,
+    pub circuit_data: CircuitData<F, C, D>,
+    pub indices: Vec<Vec<Vec<usize>>>,
+}
+
+impl AggregatedRootProof<F, C, D> {
+    /// Parse the public inputs from the aggregated root proof
+    /// Groups by `root_hash`, then `exit_account`, sums `funding_amount`, and collects `nullifiers`.
+    /// Should match the output of `aggregator.parse_leaf_public_inputs_from_proof_buffer()` if the same
+    /// proof buffer was used
+    pub fn parse_public_inputs(&self) -> Result<AggregatedPublicCircuitInputs, anyhow::Error> {
+        AggregatedPublicCircuitInputs::try_from_aggregated(&self.proof.public_inputs, &self.indices)
+    }
 }
 
 /// The tree configuration to use when aggregating proofs into a tree.
@@ -57,7 +94,7 @@ pub fn aggregate_to_tree(
     common_data: &CommonCircuitData<F, D>,
     verifier_data: &VerifierOnlyCircuitData<C, D>,
     config: TreeAggregationConfig,
-) -> anyhow::Result<AggregatedProof<F, C, D>> {
+) -> anyhow::Result<AggregatedRootProof<F, C, D>> {
     // Aggregate the first level.
     let mut proofs = aggregate_level(leaf_proofs, common_data, verifier_data, config)?;
 
@@ -71,9 +108,12 @@ pub fn aggregate_to_tree(
 
         proofs = aggregated_proofs;
     }
+    let leaves_public_inputs = &proofs[0].proof.public_inputs;
+    let indices = find_group_indices(leaves_public_inputs)?;
+    println!("group indices = {:?}", indices);
+    let root_proof = aggregate_dedupe_public_inputs(proofs, &indices)?;
 
-    assert!(proofs.len() == 1);
-    Ok(proofs.pop().unwrap())
+    Ok(root_proof)
 }
 
 #[cfg(not(feature = "multithread"))]
@@ -140,6 +180,184 @@ fn aggregate_chunk(
         circuit_data,
     };
     Ok(aggregated_proof)
+}
+
+fn find_group_indices(leaves_public_inputs: &[F]) -> anyhow::Result<Vec<Vec<Vec<usize>>>> {
+    anyhow::ensure!(
+        leaves_public_inputs.len() % LEAF_PI_LEN == 0,
+        "leaves_public_inputs length ({}) is not a multiple of {}",
+        leaves_public_inputs.len(),
+        LEAF_PI_LEN
+    );
+    let n_leaves = leaves_public_inputs.len() / LEAF_PI_LEN;
+
+    // root_hash -> (exit_account -> index)
+    let mut groups: BTreeMap<[F; 4], BTreeMap<[F; 4], Vec<usize>>> = BTreeMap::new();
+
+    // chunk leaves into groups of 16
+    for (i, chunk) in leaves_public_inputs.chunks(LEAF_PI_LEN).enumerate() {
+        let root_hash = chunk[ROOT_START..ROOT_START + 4].try_into().unwrap(); // first felt of root hash
+        let exit_account = chunk[EXIT_START..EXIT_START + 4].try_into().unwrap(); // first felt of exit account
+        groups
+            .entry(root_hash)
+            .or_default()
+            .entry(exit_account)
+            .or_default()
+            .push(i);
+    }
+
+    // Produce stable Vec<Vec<Vec<usize>>> in sorted order.
+    let mut out: Vec<Vec<Vec<usize>>> = Vec::with_capacity(groups.len());
+    let mut counted = 0usize;
+
+    for (_root_key, exits_map) in groups {
+        let mut per_root: Vec<Vec<usize>> = Vec::with_capacity(exits_map.len());
+        for (_exit_key, mut idxs) in exits_map {
+            // keep deterministic ascending indices (already ascending by i, but be safe)
+            idxs.sort_unstable();
+            counted += idxs.len();
+            per_root.push(idxs);
+        }
+        out.push(per_root);
+    }
+
+    // Sanity: flattened coverage equals #leaves.
+    anyhow::ensure!(
+        counted == n_leaves,
+        "grouping coverage mismatch: counted {} != n_leaves {}",
+        counted,
+        n_leaves
+    );
+    Ok(out)
+}
+
+/// Build a tiny wrapper circuit around the *single* root aggregated proof that:
+///  - verifies that proof,
+///  - enforces groups (indices) have identical root/exit among members,
+///  - sums funding across members with add_u128_base2_32
+///  - The layout of the aggregated public inputs is as follows:
+///   - [root_hash(4), [funding_sum(4), exit(4), nullifiers(4)*] *]
+fn aggregate_dedupe_public_inputs(
+    proofs: Vec<AggregatedProof<F, C, D>>,
+    indices: &[Vec<Vec<usize>>],
+) -> anyhow::Result<AggregatedRootProof<F, C, D>> {
+    anyhow::ensure!(
+        proofs.len() == 1,
+        "aggregate_dedupe_public_inputs expects a single root proof"
+    );
+    let root = &proofs[0];
+
+    // Off-circuit sanity and sizing
+    // TODO: figure out how to express these more global checks as a set of constaints in the circuit
+    let flat: Vec<usize> = indices
+        .iter()
+        .flat_map(|v| v.iter().flat_map(|w| w.iter().copied()))
+        .collect();
+    let n_leaf = flat.len();
+    anyhow::ensure!(n_leaf > 0, "indices must not be empty");
+
+    let root_pi_len = root.proof.public_inputs.len();
+    anyhow::ensure!(
+        root_pi_len % LEAF_PI_LEN == 0,
+        "Root PI length {} is not a multiple of {}",
+        root_pi_len,
+        LEAF_PI_LEN
+    );
+    anyhow::ensure!(root_pi_len / LEAF_PI_LEN == n_leaf,
+        "Flattened indices length {} must equal number of leaf proofs {} (derived from root PI len {})",
+        n_leaf, root_pi_len / LEAF_PI_LEN, root_pi_len);
+
+    // - check that all indices are < n_leaf
+    anyhow::ensure!(
+        flat.iter().all(|&k| k < n_leaf),
+        "Index out of range in indices"
+    );
+
+    // Build wrapper circuit
+    let child_common = &root.circuit_data.common;
+    let child_verifier_only = &root.circuit_data.verifier_only;
+
+    let mut builder = CircuitBuilder::new(child_common.config.clone());
+    let vd_t = builder.add_virtual_verifier_data(child_common.fri_params.config.cap_height);
+
+    // Child proof target = the (only) root aggregated proof
+    let child_pt = builder.add_virtual_proof_with_pis(child_common);
+    builder.verify_proof::<C>(&child_pt, &vd_t, child_common);
+
+    // Helpers to slice 4-limb values out of the *child* PI vector
+    let limbs4_at = |pis: &Vec<Target>, leaf_idx: usize, start_off: usize| -> [Target; 4] {
+        let base = leaf_idx * LEAF_PI_LEN + start_off;
+        [pis[base], pis[base + 1], pis[base + 2], pis[base + 3]]
+    };
+
+    // Build deduped output
+    let mut deduped_pis: Vec<Target> = Vec::new();
+
+    for per_root in indices.iter() {
+        let rep = per_root[0][0];
+        let root_ref = limbs4_at(&child_pt.public_inputs, rep, ROOT_START);
+        // One root hash per group of deduped exit accounts.
+        deduped_pis.extend_from_slice(&root_ref);
+
+        for group in per_root.iter() {
+            // Representative fields
+            let exit_ref = limbs4_at(&child_pt.public_inputs, rep, EXIT_START);
+
+            // Enforce all members share same root & exit
+            for &idx in group.iter() {
+                let root_i = limbs4_at(&child_pt.public_inputs, idx, ROOT_START);
+                let exit_i = limbs4_at(&child_pt.public_inputs, idx, EXIT_START);
+
+                let er = bytes_digest_eq(&mut builder, root_i, root_ref);
+                let ee = bytes_digest_eq(&mut builder, exit_i, exit_ref);
+                let both = builder.mul(er.target, ee.target);
+                let one = builder.one();
+                builder.connect(both, one);
+            }
+
+            // Sum funding across the group
+            let mut acc = [
+                builder.zero(),
+                builder.zero(),
+                builder.zero(),
+                builder.zero(),
+            ];
+            for &idx in group.iter() {
+                let fund_i = limbs4_at(&child_pt.public_inputs, idx, FUNDING_START);
+                let (sum, top_carry) = add_u128_base2_32_split(&mut builder, acc, fund_i);
+                // Enforce no 129-bit overflow.
+                let zero = builder.zero();
+                builder.connect(top_carry, zero);
+                acc = sum;
+            }
+
+            // Emit one compressed PI couplet: [funding_sum(4), exit(4)]
+            deduped_pis.extend_from_slice(&acc);
+            deduped_pis.extend_from_slice(&exit_ref);
+
+            // Forward ALL nullifiers for this group, in the order given by indices[i][j]
+            for &idx in group.iter() {
+                let null_i = limbs4_at(&child_pt.public_inputs, idx, NULLIFIER_START);
+                deduped_pis.extend_from_slice(&null_i); // +4 per leaf in group
+            }
+        }
+    }
+
+    // Register compressed PIs
+    builder.register_public_inputs(&deduped_pis);
+
+    // Prove wrapper
+    let circuit_data = builder.build();
+    let mut pw = PartialWitness::new();
+    pw.set_verifier_data_target(&vd_t, child_verifier_only)?;
+    pw.set_proof_with_pis_target(&child_pt, &root.proof)?;
+
+    let proof = circuit_data.prove(pw)?;
+    Ok(AggregatedRootProof {
+        proof,
+        circuit_data,
+        indices: indices.to_vec(),
+    })
 }
 
 #[cfg(test)]

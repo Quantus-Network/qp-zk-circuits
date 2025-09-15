@@ -14,7 +14,7 @@ fn create_proof_benchmark(c: &mut Criterion) {
         b.iter(|| {
             let config = config.clone();
             let prover = WormholeProver::new(config);
-            let inputs = CircuitInputs::test_inputs();
+            let inputs = CircuitInputs::test_inputs_0();
             prover.commit(&inputs).unwrap().prove().unwrap()
         });
     });

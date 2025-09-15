@@ -1,5 +1,5 @@
 use plonky2::{field::types::Field, plonk::proof::ProofWithPublicInputs};
-use test_helpers::{DEFAULT_SECRET, DEFAULT_TRANSFER_COUNT};
+use test_helpers::{DEFAULT_SECRETS, DEFAULT_TRANSFER_COUNTS};
 use wormhole_circuit::{
     codec::FieldElementCodec,
     nullifier::{Nullifier, NullifierTargets},
@@ -23,8 +23,8 @@ pub trait TestInputs {
 
 impl TestInputs for Nullifier {
     fn test_inputs() -> Self {
-        let secret = hex::decode(DEFAULT_SECRET).unwrap();
-        Self::from_preimage(&secret, DEFAULT_TRANSFER_COUNT)
+        let secret = hex::decode(DEFAULT_SECRETS[0]).unwrap();
+        Self::from_preimage(&secret, DEFAULT_TRANSFER_COUNTS[0])
     }
 }
 
@@ -39,7 +39,7 @@ fn invalid_secret_fails_proof() {
     let mut valid_nullifier = Nullifier::test_inputs();
 
     // Flip the first byte of the preimage.
-    let mut invalid_bytes = hex::decode(DEFAULT_SECRET).unwrap();
+    let mut invalid_bytes = hex::decode(DEFAULT_SECRETS[0]).unwrap();
     invalid_bytes[0] ^= 0xFF;
     valid_nullifier.secret = injective_bytes_to_felts(&invalid_bytes);
 
@@ -50,14 +50,14 @@ fn invalid_secret_fails_proof() {
 #[test]
 fn all_zero_preimage_is_valid_and_hashes() {
     let preimage_bytes = vec![0u8; 64];
-    let nullifier = Nullifier::from_preimage(&preimage_bytes, DEFAULT_TRANSFER_COUNT);
+    let nullifier = Nullifier::from_preimage(&preimage_bytes, DEFAULT_TRANSFER_COUNTS[0]);
     let field_elements = nullifier.to_field_elements();
     assert!(!field_elements.iter().all(Field::is_zero));
 }
 
 #[test]
 fn nullifier_codec() {
-    let nullifier = Nullifier::from_preimage(&[1u8; 32], DEFAULT_TRANSFER_COUNT);
+    let nullifier = Nullifier::from_preimage(&[1u8; 32], DEFAULT_TRANSFER_COUNTS[0]);
 
     // Encode the account as field elements and compare.
     let field_elements = nullifier.to_field_elements();
