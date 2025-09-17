@@ -1,39 +1,39 @@
 [package]
-name = "wormhole-aggregator"
-version.workspace = true
-edition.workspace = true
 authors.workspace = true
 description.workspace = true
+edition.workspace = true
 license.workspace = true
+name = "qp-wormhole-aggregator"
+version.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
 qp-plonky2 = { workspace = true }
-wormhole-prover = { path = "../prover", default-features = false }
-wormhole-verifier = { path = "../verifier", default-features = false }
-wormhole-circuit = { path = "../circuit", default-features = false }
-zk-circuits-common = { path = "../../common" }
-test-helpers = { path = "../tests/test-helpers", default-features = false }
 rayon = { version = "1.10.0", optional = true }
+test-helpers = { path = "../tests/test-helpers", default-features = false }
+wormhole-circuit = { package = "qp-wormhole-circuit", version = "0.1.2", path = "../circuit", default-features = false }
+wormhole-prover = { package = "qp-wormhole-prover", version = "0.1.2", path = "../prover", default-features = false }
+wormhole-verifier = { package = "qp-wormhole-verifier", version = "0.1.2", path = "../verifier", default-features = false }
+zk-circuits-common = { package = "qp-zk-circuits-common", version = "0.1.2", path = "../../common" }
 
 [dev-dependencies]
 criterion = { workspace = true }
 
 [features]
-default = ["std", "multithread"]
-std = [
-  "anyhow/std",
-  "qp-plonky2/std",
-  "wormhole-prover/std",
-  "wormhole-verifier/std",
-  "zk-circuits-common/std",
-]
-no_zk = []
+default = ["multithread", "std"]
 multithread = ["rayon"]
+no_zk = []
+std = [
+	"anyhow/std",
+	"qp-plonky2/std",
+	"wormhole-prover/std",
+	"wormhole-verifier/std",
+	"zk-circuits-common/std",
+]
 
 [lints]
 workspace = true
 
 [[bench]]
-name = "aggregator"
 harness = false
+name = "aggregator"

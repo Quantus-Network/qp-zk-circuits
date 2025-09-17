@@ -1,10 +1,10 @@
 [package]
+edition = "2021"
 name = "test-helpers"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
 
 [dependencies]
-wormhole-circuit = { path = "../../circuit" }
-zk-circuits-common = { path = "../../../common" }
-qp-plonky2 = { workspace = true, default-features = true }
 hex = { workspace = true }
+qp-plonky2 = { workspace = true, default-features = true }
+wormhole-circuit = { package = "qp-wormhole-circuit", version = "0.1.2", path = "../../circuit" }
+zk-circuits-common = { package = "qp-zk-circuits-common", version = "0.1.2", path = "../../../common" }

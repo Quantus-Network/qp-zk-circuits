@@ -1,15 +1,15 @@
 [package]
-name = "wormhole-example"
-version = "0.1.0"
 edition = "2021"
+name = "wormhole-example"
 publish = false
+version.workspace = true
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
-wormhole-circuit = { path = "../circuit", default-features = false, features = [
-  "std",
-] }
-wormhole-prover = { path = "../prover", default-features = false }
-qp-plonky2 = { workspace = true, features = ["default"] }
-zk-circuits-common = { path = "../../common" }
 hex = { workspace = true, features = ["alloc"] }
+qp-plonky2 = { workspace = true, features = ["default"] }
+wormhole-circuit = { package = "qp-wormhole-circuit", version = "0.1.2", path = "../circuit", default-features = false, features = [
+	"std",
+] }
+wormhole-prover = { package = "qp-wormhole-prover", version = "0.1.2", path = "../prover", default-features = false }
+zk-circuits-common = { package = "qp-zk-circuits-common", version = "0.1.2", path = "../../common" }

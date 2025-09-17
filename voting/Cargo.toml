@@ -1,15 +1,16 @@
 [package]
-name = "voting-circuit"
-version.workspace = true
-edition.workspace = true
 authors.workspace = true
 description.workspace = true
+edition.workspace = true
 license.workspace = true
+name = "qp-voting-circuit"
+publish = false
+version.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
 qp-plonky2 = { workspace = true }
-zk-circuits-common = { path = "../common" }
+zk-circuits-common = { package = "qp-zk-circuits-common", version = "0.1.2", path = "../common" }
 
 [features]
 default = ["std"]

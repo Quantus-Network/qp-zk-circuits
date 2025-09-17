@@ -1,33 +1,36 @@
 [workspace]
 members = [
-  "common",
-  "wormhole/aggregator",
-  "wormhole/circuit",
-  "wormhole/circuit-builder",
-  "wormhole/prover",
-  "wormhole/tests",
-  "wormhole/tests/test-helpers",
-  "wormhole/verifier",
-  "wormhole/example",
-  "voting",
+	"common",
+	"voting",
+	"wormhole/aggregator",
+	"wormhole/circuit",
+	"wormhole/circuit-builder",
+	"wormhole/example",
+	"wormhole/prover",
+	"wormhole/tests",
+	"wormhole/tests/test-helpers",
+	"wormhole/verifier",
 ]
 resolver = "2"
 
 [workspace.dependencies]
 anyhow = { version = "1.0.98", default-features = false }
 criterion = { version = "0.5.1", default-features = false }
-qp-plonky2 = { git="https://github.com/Quantus-Network/qp-plonky2", branch= "derive-ord-field", default-features = false, features = [
-  "no_random",
-] }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
+qp-plonky2 = { git="https://github.com/Quantus-Network/qp-plonky2", branch= "derive-ord-field", default-features = false, features = [
+	"no_random",
+] }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 
 [workspace.package]
-version = "0.1.0"
-edition = "2021"
 authors = ["Quantus Network"]
-description = "Wormhole circuit implementation using Plonky2"
+categories = ["cryptography"]
+description = "Quantus-Network - Wormhole circuit implementation using Plonky2"
+edition = "2021"
+keywords = ["circuits", "plonky2", "quantus-network", "wormhole", "zk"]
 license = "MIT"
+repository = "https://github.com/Quantus-Network/qp-zk-circuits"
+version = "0.1.2"
 
 [workspace.lints.clippy]
 uninlined_format_args = "allow"

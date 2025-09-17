@@ -18,8 +18,8 @@
 //! use wormhole_circuit::storage_proof::ProcessedStorageProof;
 //! use wormhole_circuit::substrate_account::SubstrateAccount;
 //! use wormhole_circuit::unspendable_account::UnspendableAccount;
-//! use wormhole_prover::WormholeProver;
-//! use wormhole_verifier::WormholeVerifier;
+//! use qp_wormhole_prover::WormholeProver;
+//! use qp_wormhole_verifier::WormholeVerifier;
 //! use plonky2::plonk::circuit_data::CircuitConfig;
 //! use std::path::Path;
 //!
@@ -48,12 +48,12 @@
 //! let config = CircuitConfig::standard_recursion_config();
 //! let prover = WormholeProver::new(config);
 //! let prover_next = prover.commit(&inputs)?;
-//! let proof = prover_next.prove().map_err(|e| anyhow::anyhow!(e))?;
+//! let proof = prover_next.prove()?;
 //!
 //! // Verify the proof
 //! let verifier =
 //!     WormholeVerifier::new_from_files(Path::new("verifier.bin"), Path::new("common.bin"))?;
-//! verifier.verify(proof).map_err(|e| anyhow::anyhow!(e))?;
+//! verifier.verify(proof)?;
 //! # Ok(())
 //! # }
 //! ```

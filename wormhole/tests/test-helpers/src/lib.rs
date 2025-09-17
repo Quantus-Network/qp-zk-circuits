@@ -113,7 +113,7 @@ pub mod storage_proof {
         DEFAULT_FUNDING_ACCOUNT, DEFAULT_FUNDING_AMOUNTS, DEFAULT_TO_ACCOUNTS,
         DEFAULT_TRANSFER_COUNTS,
     };
-    use wormhole_circuit::storage_proof::{ProcessedStorageProof, StorageProof, leaf::LeafInputs};
+    use wormhole_circuit::storage_proof::{leaf::LeafInputs, ProcessedStorageProof, StorageProof};
     use zk_circuits_common::utils::BytesDigest;
 
     pub const DEFAULT_ROOT_HASHES: [&str; 2] = [

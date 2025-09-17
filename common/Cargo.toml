@@ -1,10 +1,10 @@
 [package]
-name = "zk-circuits-common"
-version.workspace = true
-edition.workspace = true
 authors.workspace = true
 description.workspace = true
+edition.workspace = true
 license.workspace = true
+name = "qp-zk-circuits-common"
+version.workspace = true
 
 [dependencies]
 anyhow = { workspace = true, default-features = false }
@@ -13,5 +13,5 @@ serde = { workspace = true }
 
 [features]
 default = ["std"]
-std = ["anyhow/std", "qp-plonky2/std", "serde/std"]
 no_random = ["qp-plonky2/no_random"]
+std = ["anyhow/std", "qp-plonky2/std", "serde/std"]

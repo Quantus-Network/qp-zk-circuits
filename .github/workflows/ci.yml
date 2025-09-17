@@ -1,6 +1,6 @@
 ---
     name: Continuous Integration
-    
+
     on:
       pull_request:
         paths-ignore:
@@ -14,17 +14,17 @@
           - "docs/**"
           - "*.md"
           - "LICENSE"
-    
+
     concurrency:
       group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: true
-    
+
     env:
       CARGO_INCREMENTAL: 0
       CARGO_TERM_COLOR: always
       CARGO_NET_RETRY: 10
       CARGO_NET_TIMEOUT: 60
-    
+
     jobs:
       fast-checks:
         name: 🏁 Fast Checks (Format)
@@ -39,7 +39,7 @@
             run: |
               taplo format --check --config taplo.toml
               cargo +nightly fmt --all -- --check
-    
+
       test-workspace:
         name: 🧪 Test Workspace
         needs: fast-checks
@@ -63,7 +63,7 @@
             uses: Swatinem/rust-cache@v2
           - name: Test workspace (release, fast tests)
             run: cargo test --workspace --locked --release --lib --bins -- --skip aggregator_tests --skip circuit_data_tests --skip storage_proof_tests --skip prover_tests --skip verifier_tests
-    
+
       analysis:
         name: 🤖 Analysis (Clippy & Doc)
         needs: fast-checks
@@ -81,7 +81,7 @@
             run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
           - name: Check documentation
             run: cargo doc --workspace --locked --no-deps --all-features --document-private-items
-    
+
       slow-tests:
         name: 🐌 Slow Tests (Crypto-heavy)
         needs: fast-checks
@@ -97,7 +97,7 @@
           - name: Run slow crypto tests
             run: |
               cargo test --release -p tests -- aggregator_tests circuit_data_tests storage_proof_tests prover_tests verifier_tests
-              cargo test --release -p wormhole-aggregator "tree::tests"
+              cargo test --release -p qp-wormhole-aggregator "tree::tests"
 
       security-audit:
         name: 🔒 Security Audit

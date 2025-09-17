@@ -17,7 +17,7 @@
 //! use wormhole_circuit::storage_proof::ProcessedStorageProof;
 //! use wormhole_circuit::substrate_account::SubstrateAccount;
 //! use wormhole_circuit::unspendable_account::UnspendableAccount;
-//! use wormhole_prover::WormholeProver;
+//! use qp_wormhole_prover::WormholeProver;
 //! use plonky2::plonk::circuit_data::CircuitConfig;
 //!
 //! # fn main() -> anyhow::Result<()> {
@@ -41,7 +41,7 @@
 //! let config = CircuitConfig::standard_recursion_config();
 //! let prover = WormholeProver::new(config);
 //! let prover_next = prover.commit(&inputs)?;
-//! let proof = prover_next.prove().map_err(|e| anyhow::anyhow!(e))?;
+//! let _proof = prover_next.prove()?;
 //! # Ok(())
 //! # }
 //! ```

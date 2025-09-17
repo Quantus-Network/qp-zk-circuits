@@ -1,5 +1,6 @@
 use anyhow::Result;
+use qp_wormhole_circuit_builder::generate_circuit_binaries;
 
 fn main() -> Result<()> {
-    circuit_builder::generate_circuit_binaries("generated-bins", true)
+    generate_circuit_binaries("generated-bins", true)
 }
