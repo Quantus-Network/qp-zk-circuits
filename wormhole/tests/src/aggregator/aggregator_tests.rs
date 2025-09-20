@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use wormhole_aggregator::aggregator::WormholeProofAggregator;
-use wormhole_circuit::inputs::{CircuitInputs, PublicCircuitInputs};
+use wormhole_circuit::inputs::{AggregatedPublicCircuitInputs, CircuitInputs, PublicCircuitInputs};
 use wormhole_prover::WormholeProver;
 
 use crate::aggregator::circuit_config;
@@ -80,12 +80,15 @@ fn aggregate_proofs_into_tree() {
     }
 
     let aggregated_public_inputs_ref = aggregator
-        .parse_leaf_public_inputs_from_proof_buffer()
+        .parse_aggregated_public_inputs_from_proof_buffer()
         .unwrap();
 
     let aggregated_proof = aggregator.aggregate().unwrap(); // AggregatedProof<F, C, D>
 
-    let aggregated_public_inputs = aggregated_proof.parse_public_inputs().unwrap();
+    let aggregated_public_inputs = AggregatedPublicCircuitInputs::try_from_slice(
+        aggregated_proof.proof.public_inputs.as_slice(),
+    )
+    .unwrap();
 
     // Check that the aggregated_public_inputs_ref equals the aggregated_public_inputs
 

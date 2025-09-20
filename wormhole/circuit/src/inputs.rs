@@ -3,6 +3,7 @@ use crate::storage_proof::ProcessedStorageProof;
 use alloc::vec::Vec;
 use anyhow::{bail, Context};
 use plonky2::field::goldilocks_field::GoldilocksField;
+use plonky2::field::types::PrimeField64;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::utils::{felts_to_u128, BytesDigest};
@@ -37,28 +38,26 @@ pub struct PublicCircuitInputs {
     /// The address of the account to pay out to.
     pub exit_account: BytesDigest,
 }
-/// The nullifiers and sum total funding amount for a given exit account within a block
+
+/// The exit account and its given sum total funding amount
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicInputsByAccount {
     /// Funding amounts of duplicate exit accounts summed.
-    pub funding_sum: u128,
+    pub summed_funding_amount: u128,
     /// The address of the account to pay out to.
     pub exit_account: BytesDigest,
+}
+
+/// Aggregated public inputs
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AggregatedPublicCircuitInputs {
+    /// The root hash of the block's storage trie.
+    pub root_hashes: Vec<BytesDigest>,
+    /// Public inputs indexed by exit accounts.
+    pub account_data: Vec<PublicInputsByAccount>,
     /// The nullifiers of each individual transfer proof.
     pub nullifiers: Vec<BytesDigest>,
 }
-
-/// Aggregated public inputs for a given block.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PublicInputsByBlock {
-    /// The root hash of the block's storage trie.
-    pub root_hash: BytesDigest,
-    /// Public inputs indexed by exit accounts.
-    pub account_data: Vec<PublicInputsByAccount>,
-}
-#[derive(Debug, Clone, PartialEq, Eq)]
-/// Public inputs from aggregated proofs indexed by block.
-pub struct AggregatedPublicCircuitInputs(pub Vec<PublicInputsByBlock>);
 
 /// All of the private inputs required for the circuit.
 #[derive(Debug, Clone)]
@@ -77,33 +76,28 @@ pub struct PrivateCircuitInputs {
 }
 
 impl AggregatedPublicCircuitInputs {
-    pub fn try_from_aggregated(
-        pis: &[GoldilocksField],
-        indices: &[Vec<Vec<usize>>],
-    ) -> anyhow::Result<Self> {
+    pub fn try_from_slice(pis: &[GoldilocksField]) -> anyhow::Result<Self> {
         // Layout in the FINAL (deduped) wrapper proof PIs:
-        // For each root group i:
-        //   - root_hash (4 felts)
-        //   - for each exit group j in indices[i]:
-        //       - funding_sum (4 felts, big-endian limbs)
-        //       - exit_account (4 felts)
-        //       - nullifiers: len(indices[i][j]) * (4 felts each)
+        // [block_count, account_count, root_hashes(4)*, [funding_sum(4), exit_account(4)]*, nullifiers(4)*]
 
+        let block_count = pis[0].to_canonical_u64() as usize;
+        let account_count = pis[1].to_canonical_u64() as usize;
+
+        // Numbers of leaf proofs we aggm,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,regated over into a tree according the length of the public inputs.
+        let n_leaf = pis.len() / PUBLIC_INPUTS_FELTS_LEN;
         // Compute expected total PI length from indices and sanity-check.
-        let mut expected_felts = 0usize;
-        for per_root in indices {
-            expected_felts += 4; // root_hash
-            for group in per_root {
-                expected_felts += 4; // funding_sum
-                expected_felts += 4; // exit_account
-                expected_felts += 4 * group.len(); // nullifiers
-            }
-        }
+
+        let mut expected_felts = 2usize; // for block_count and account_count
+
+        let data_item_felts = 4;
+        expected_felts += data_item_felts * (block_count); // root_hashes (4 felts each)
+        expected_felts += data_item_felts * (account_count * 2); // funding_sum + exit_account (4 felts each)
+        expected_felts += data_item_felts * (n_leaf); // nullifiers (4 felts each)
         anyhow::ensure!(
-            pis.len() == expected_felts,
-            "Deduped PI length mismatch: got {}, expected {} (computed from indices).",
-            pis.len(),
-            expected_felts
+            expected_felts <= pis.len(),
+            "Deduped PI length must be less than or equal to {}, but got {} (computed from indices).",
+            expected_felts,
+            pis.len()
         );
 
         // Helpers
@@ -117,59 +111,55 @@ impl AggregatedPublicCircuitInputs {
             felts_to_u128(arr).map_err(|e| anyhow::anyhow!("felts_to_u128 error: {:?}", e))
         }
 
-        let mut cursor = 0usize;
-        let mut blocks: Vec<PublicInputsByBlock> = Vec::with_capacity(indices.len());
+        let mut cursor = 2usize; // start after block_count and account_count
+        let mut root_hashes: Vec<BytesDigest> = Vec::with_capacity(block_count);
+        let mut account_data: Vec<PublicInputsByAccount> = Vec::with_capacity(account_count);
+        let mut nullifiers: Vec<BytesDigest> = Vec::with_capacity(n_leaf);
 
-        for per_root in indices {
+        for _ in 0..block_count {
             // 1) root hash
             let root_hash =
                 read_digest(&pis[cursor..cursor + 4]).context("parsing root_hash for block")?;
+            cursor += data_item_felts;
+            root_hashes.push(root_hash);
+        }
+
+        for _ in 0..account_count {
+            // funding_sum (4 felts, BE limbs)
+            let summed_funding_amount = read_u128(&pis[cursor..cursor + 4])?;
             cursor += 4;
 
-            let mut accounts: Vec<PublicInputsByAccount> = Vec::with_capacity(per_root.len());
-
-            // 2) groups under this root
-            for group in per_root {
-                // funding_sum (4 felts, BE limbs)
-                let funding_sum = read_u128(&pis[cursor..cursor + 4])?;
-                cursor += 4;
-
-                // exit_account (4 felts)
-                let exit_account =
-                    read_digest(&pis[cursor..cursor + 4]).context("parsing exit_account")?;
-                cursor += 4;
-
-                // nullifiers: one 4-felt digest per leaf index in this group
-                let mut nullifiers: Vec<BytesDigest> = Vec::with_capacity(group.len());
-                for _ in 0..group.len() {
-                    let n = read_digest(&pis[cursor..cursor + 4]).context("parsing nullifier")?;
-                    cursor += 4;
-                    nullifiers.push(n);
-                }
-
-                accounts.push(PublicInputsByAccount {
-                    funding_sum,
-                    nullifiers,
-                    exit_account,
-                });
-            }
-
-            blocks.push(PublicInputsByBlock {
-                root_hash,
-                account_data: accounts,
+            // exit_account (4 felts)
+            let exit_account =
+                read_digest(&pis[cursor..cursor + 4]).context("parsing exit_account")?;
+            cursor += 4;
+            account_data.push(PublicInputsByAccount {
+                summed_funding_amount,
+                exit_account,
             });
         }
 
-        // Final safety: we should have consumed exactly all PIs.
-        if cursor != pis.len() {
+        for _ in 0..n_leaf {
+            // nullifiers: one 4-felt digest per leaf index in this group
+            let n = read_digest(&pis[cursor..cursor + 4]).context("parsing nullifier")?;
+            cursor += 4;
+            nullifiers.push(n);
+        }
+
+        // Final safety: we should have consumed exactly all expected felts, the rest of the felts should be zero.
+        if cursor != expected_felts {
             bail!(
-                "Internal parsing error: consumed {} felts, but PI length is {}.",
+                "Internal parsing error: consumed {} felts, but expected {}.",
                 cursor,
-                pis.len()
+                expected_felts
             );
         }
 
-        Ok(AggregatedPublicCircuitInputs(blocks))
+        Ok(AggregatedPublicCircuitInputs {
+            root_hashes,
+            account_data,
+            nullifiers,
+        })
     }
 }
 

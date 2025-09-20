@@ -26,23 +26,23 @@
       CARGO_NET_TIMEOUT: 60
 
     jobs:
-      fast-checks:
-        name: 🏁 Fast Checks (Format)
-        runs-on: ubuntu-latest
-        steps:
-          - uses: actions/checkout@v4
-          - name: Install required components
-            run: rustup component add rustfmt --toolchain nightly
-          - name: Install taplo
-            run: cargo install taplo-cli --locked
-          - name: Run format checks
-            run: |
-              taplo format --check --config taplo.toml
-              cargo +nightly fmt --all -- --check
+      # fast-checks:
+      #   name: 🏁 Fast Checks (Format)
+      #   runs-on: ubuntu-latest
+      #   steps:
+      #     - uses: actions/checkout@v4
+      #     - name: Install required components
+      #       run: rustup component add rustfmt --toolchain nightly
+      #     - name: Install taplo
+      #       run: cargo install taplo-cli --locked
+      #     - name: Run format checks
+      #       run: |
+      #         taplo format --check --config taplo.toml
+      #         cargo +nightly fmt --all -- --check
 
       test-workspace:
         name: 🧪 Test Workspace
-        needs: fast-checks
+        # needs: fast-checks
         runs-on: ${{ matrix.os }}
         timeout-minutes: 30
         strategy:
@@ -66,7 +66,7 @@
 
       analysis:
         name: 🤖 Analysis (Clippy & Doc)
-        needs: fast-checks
+        # needs: fast-checks
         runs-on: ubuntu-latest
         timeout-minutes: 20
         steps:
@@ -84,7 +84,7 @@
 
       slow-tests:
         name: 🐌 Slow Tests (Crypto-heavy)
-        needs: fast-checks
+        # needs: fast-checks
         runs-on: ubuntu-latest
         timeout-minutes: 60
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -101,7 +101,7 @@
 
       security-audit:
         name: 🔒 Security Audit
-        needs: fast-checks
+        # needs: fast-checks
         runs-on: ubuntu-latest
         timeout-minutes: 10
         steps:

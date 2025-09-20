@@ -79,17 +79,43 @@ pub fn bytes_digest_eq<F: RichField + Extendable<D>, const D: usize>(
     a: [Target; 4],
     c: [Target; 4],
 ) -> BoolTarget {
-    let e0 = b.sub(a[0], c[0]);
-    let e1 = b.sub(a[1], c[1]);
-    let e2 = b.sub(a[2], c[2]);
-    let e3 = b.sub(a[3], c[3]);
-    // add all equals
-    let sum = b.add_many([e0, e1, e2, e3]);
-    let zero = b.zero();
-    b.is_equal(sum, zero)
+    // limb-wise equality in the field
+    let e0 = b.is_equal(a[0], c[0]); // BoolTarget
+    let e1 = b.is_equal(a[1], c[1]);
+    let e2 = b.is_equal(a[2], c[2]);
+    let e3 = b.is_equal(a[3], c[3]);
+    let e01 = b.and(e0, e1);
+    let e23 = b.and(e2, e3);
+    b.and(e01, e23)
 }
 
-/// 128-bit add in base 2^32 using *bit-split* to derive the carry bit.
+/// Count unique 4x32-bit keys (big-endian limbs) among N leaves:
+/// For each i, flag[i] = 1 if key[i] != key[j] for all j<i, else 0.
+/// Returns sum(flag) as a Target.
+pub fn count_unique_4x32_keys<F: RichField + Extendable<D>, const D: usize>(
+    b: &mut CircuitBuilder<F, D>,
+    keys: &[[Target; 4]],
+) -> Target {
+    let n = keys.len();
+    let one = b.one();
+    let mut first_flags: Vec<Target> = Vec::with_capacity(n);
+
+    for i in 0..n {
+        // seen_any = OR_{j<i} (keys[i] == keys[j])
+        let mut seen_any = BoolTarget::new_unsafe(b.zero());
+        for j in 0..i {
+            let eq = bytes_digest_eq(b, keys[i], keys[j]); // BoolTarget
+            seen_any = b.or(seen_any, eq);
+        }
+        // first_i = 1 - seen_any
+        let first_i = b.sub(one, seen_any.target);
+        first_flags.push(first_i);
+    }
+
+    b.add_many(&first_flags)
+}
+
+/// 128-bit add in   2^32 using *bit-split* to derive the carry bit.
 /// Inputs a,c are 4x32-bit limbs big-endian (limb0 = most significant).
 /// Returns (sum_limbs, top_carry_target).
 /// Big-endian 128-bit add in base 2^32.

@@ -445,7 +445,7 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 [[package]]
 name = "plonky2_maybe_rayon"
 version = "1.0.0"
-source = "git+https://github.com/Quantus-Network/qp-plonky2?branch=derive-ord-field#ff5362538c2bf0bf20a7c2238d89a5010b9c96b8"
+source = "git+https://github.com/Quantus-Network/qp-plonky2#cdb6ecc725aeec4c126adf9c4de2a8851b20da0d"
 dependencies = [
  "rayon",
 ]
@@ -453,7 +453,7 @@ dependencies = [
 [[package]]
 name = "plonky2_util"
 version = "1.0.0"
-source = "git+https://github.com/Quantus-Network/qp-plonky2?branch=derive-ord-field#ff5362538c2bf0bf20a7c2238d89a5010b9c96b8"
+source = "git+https://github.com/Quantus-Network/qp-plonky2#cdb6ecc725aeec4c126adf9c4de2a8851b20da0d"
 
 [[package]]
 name = "ppv-lite86"
@@ -486,7 +486,7 @@ dependencies = [
 [[package]]
 name = "qp-plonky2"
 version = "1.1.1"
-source = "git+https://github.com/Quantus-Network/qp-plonky2?branch=derive-ord-field#ff5362538c2bf0bf20a7c2238d89a5010b9c96b8"
+source = "git+https://github.com/Quantus-Network/qp-plonky2#cdb6ecc725aeec4c126adf9c4de2a8851b20da0d"
 dependencies = [
  "ahash",
  "anyhow",
@@ -510,7 +510,7 @@ dependencies = [
 [[package]]
 name = "qp-plonky2-field"
 version = "1.1.1"
-source = "git+https://github.com/Quantus-Network/qp-plonky2?branch=derive-ord-field#ff5362538c2bf0bf20a7c2238d89a5010b9c96b8"
+source = "git+https://github.com/Quantus-Network/qp-plonky2#cdb6ecc725aeec4c126adf9c4de2a8851b20da0d"
 dependencies = [
  "anyhow",
  "itertools 0.11.0",
