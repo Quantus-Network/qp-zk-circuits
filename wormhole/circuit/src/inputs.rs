@@ -51,11 +51,11 @@ pub struct PublicInputsByAccount {
 /// Aggregated public inputs
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AggregatedPublicCircuitInputs {
-    /// The root hash of the block's storage trie.
+    /// The set of root hashes in the aggregated proofs
     pub root_hashes: Vec<BytesDigest>,
-    /// Public inputs indexed by exit accounts.
+    /// The set of exit accounts and their summed funding amounts
     pub account_data: Vec<PublicInputsByAccount>,
-    /// The nullifiers of each individual transfer proof.
+    /// The nullifiers of each individual transfer proof
     pub nullifiers: Vec<BytesDigest>,
 }
 
@@ -83,7 +83,7 @@ impl AggregatedPublicCircuitInputs {
         let block_count = pis[0].to_canonical_u64() as usize;
         let account_count = pis[1].to_canonical_u64() as usize;
 
-        // Numbers of leaf proofs we aggm,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,regated over into a tree according the length of the public inputs.
+        // Numbers of leaf proofs we aggregated over into a tree according the length of the public inputs.
         let n_leaf = pis.len() / PUBLIC_INPUTS_FELTS_LEN;
         // Compute expected total PI length from indices and sanity-check.
 

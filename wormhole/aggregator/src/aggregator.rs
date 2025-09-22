@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::bail;
 use plonky2::plonk::circuit_data::{CircuitConfig, VerifierCircuitData};
@@ -120,13 +120,12 @@ impl WormholeProofAggregator {
 fn aggregate_public_inputs(
     leaves: Vec<PublicCircuitInputs>,
 ) -> anyhow::Result<AggregatedPublicCircuitInputs> {
-    // by_block: root_hash -> (exit_account -> PublicInputsByAccount)
-    let mut by_block: BTreeMap<BytesDigest, bool> = BTreeMap::new();
+    let mut by_block: BTreeSet<BytesDigest> = BTreeSet::new();
     let mut by_account: BTreeMap<BytesDigest, PublicInputsByAccount> = BTreeMap::new();
     let nullifiers: Vec<BytesDigest> = leaves.iter().map(|leaf| leaf.nullifier).collect();
 
     for leaf in leaves {
-        by_block.entry(leaf.root_hash).or_insert_with(|| true);
+        by_block.insert(leaf.root_hash);
         let acct_entry =
             by_account
                 .entry(leaf.exit_account)
@@ -148,7 +147,7 @@ fn aggregate_public_inputs(
     }
 
     // Materialize the nested maps into the desired Vec<PublicInputsByBlock> shape.
-    let mut blocks: Vec<BytesDigest> = by_block.into_keys().collect();
+    let mut blocks: Vec<BytesDigest> = by_block.into_iter().collect();
     let mut accounts: Vec<PublicInputsByAccount> = by_account.into_values().collect();
 
     // Sort blocks by the same comparator on the root hash.
@@ -159,13 +158,12 @@ fn aggregate_public_inputs(
     Ok(AggregatedPublicCircuitInputs {
         root_hashes: blocks,
         account_data: accounts,
-        nullifiers, // nullifiers are not aggregated outside the circuit
+        nullifiers,
     })
 }
 
 #[inline]
 fn digest_key_le_u64x4(d: &BytesDigest) -> [u64; 4] {
-    // Adjust this accessor if your BytesDigest stores bytes differently.
     let bytes: &[u8; 32] = d; // e.g., impl AsRef<[u8;32]> for BytesDigest
     [
         u64::from_le_bytes(bytes[0..8].try_into().unwrap()),

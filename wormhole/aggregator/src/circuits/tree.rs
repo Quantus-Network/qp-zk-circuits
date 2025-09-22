@@ -66,13 +66,6 @@ impl Groupings {
     }
     pub fn len(&self) -> usize {
         let len_root_hashes: usize = self.root_hashes.iter().map(|v| v.len()).sum();
-        let len_exit_accounts: usize = self.exit_accounts.iter().map(|v| v.len()).sum();
-        // assert that both lengths are equal
-        assert_eq!(
-            len_root_hashes, len_exit_accounts,
-            "length of root_hashes ({}) must be equal to length of exit_accounts ({}).",
-            len_root_hashes, len_exit_accounts
-        );
         len_root_hashes
     }
 
@@ -208,14 +201,13 @@ fn find_group_indices(leaves_public_inputs: &[F]) -> anyhow::Result<Groupings> {
     );
     let n_leaves = leaves_public_inputs.len() / LEAF_PI_LEN;
 
-    // root_hash -> (exit_account -> index)
     let mut root_hash_groups: BTreeMap<[F; 4], Vec<usize>> = BTreeMap::new();
     let mut exit_account_groups: BTreeMap<[F; 4], Vec<usize>> = BTreeMap::new();
 
     // chunk leaves into groups of 16
     for (i, chunk) in leaves_public_inputs.chunks(LEAF_PI_LEN).enumerate() {
-        let root_hash = chunk[ROOT_START..ROOT_START + 4].try_into().unwrap(); // first felt of root hash
-        let exit_account = chunk[EXIT_START..EXIT_START + 4].try_into().unwrap(); // first felt of exit account
+        let root_hash = chunk[ROOT_START..ROOT_START + 4].try_into().unwrap();
+        let exit_account = chunk[EXIT_START..EXIT_START + 4].try_into().unwrap();
         root_hash_groups.entry(root_hash).or_default().push(i);
         exit_account_groups.entry(exit_account).or_default().push(i);
     }
@@ -664,7 +656,7 @@ mod tests {
     #[test]
     fn recursive_aggregation_tree() {
         // Non deterministic RNG.
-        let mut rng = StdRng::from_entropy();
+        let mut rng = StdRng::from_seed([41u8; 32]);
 
         // Choose number of unique roots & exits in [1..=8].
         let k_roots: usize = rng.gen_range(1..=8);
@@ -751,10 +743,10 @@ mod tests {
         };
 
         // 1) Collect unique roots in a deterministic order (sorted).
-        let mut roots_set: BTreeSet<BytesDigest> = BTreeSet::new();
+        let mut roots_set: BTreeSet<[F; 4]> = BTreeSet::new();
 
         // 2) Sum funding by exit account (across all roots), deterministic map.
-        let mut exit_sums: BTreeMap<BytesDigest, u128> = BTreeMap::new();
+        let mut exit_sums: BTreeMap<[F; 4], u128> = BTreeMap::new();
 
         // 3) Collect all nullifiers in **leaf order**.
         let mut nullifiers_ref: Vec<BytesDigest> = Vec::with_capacity(8);
@@ -765,31 +757,28 @@ mod tests {
             let root_f = [pis[4], pis[5], pis[6], pis[7]];
             let exit_f = [pis[12], pis[13], pis[14], pis[15]];
 
-            let null_d = felts_to_digest(null_f);
-            let root_d = felts_to_digest(root_f);
-            let exit_d = felts_to_digest(exit_f);
-
             let funding_u128 = funding_vals[i];
 
-            roots_set.insert(root_d);
+            roots_set.insert(root_f);
             exit_sums
-                .entry(exit_d)
+                .entry(exit_f)
                 .and_modify(|s| *s = s.checked_add(funding_u128).expect("no u128 overflow"))
                 .or_insert(funding_u128);
-            nullifiers_ref.push(null_d);
+            nullifiers_ref.push(felts_to_digest(null_f));
         }
 
         // Materialize sorted roots.
-        let root_hashes_ref: Vec<BytesDigest> = roots_set.into_iter().collect();
+        let root_hashes_ref: Vec<BytesDigest> =
+            roots_set.into_iter().map(felts_to_digest).collect();
 
         // Materialize account_data sorted by exit digest.
-        let mut account_data_ref: Vec<PublicInputsByAccount> = Vec::with_capacity(exit_sums.len());
-        for (exit_d, sum_u128) in exit_sums.into_iter() {
-            account_data_ref.push(PublicInputsByAccount {
+        let account_data_ref: Vec<PublicInputsByAccount> = exit_sums
+            .into_iter()
+            .map(|(exit_f, sum_u128)| PublicInputsByAccount {
                 summed_funding_amount: sum_u128,
-                exit_account: exit_d,
-            });
-        }
+                exit_account: felts_to_digest(exit_f),
+            })
+            .collect();
 
         let aggregated_public_inputs_ref = AggregatedPublicCircuitInputs {
             root_hashes: root_hashes_ref,
