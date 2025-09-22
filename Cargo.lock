@@ -543,6 +543,7 @@ dependencies = [
  "qp-wormhole-prover",
  "qp-wormhole-verifier",
  "qp-zk-circuits-common",
+ "rand 0.8.5",
  "rayon",
  "test-helpers",
 ]
