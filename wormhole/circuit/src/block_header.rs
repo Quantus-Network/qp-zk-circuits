@@ -7,11 +7,11 @@ use plonky2::{
         target::Target,
         witness::{PartialWitness, WitnessWrite},
     },
-    plonk::{circuit_builder::CircuitBuilder, config::Hasher},
+    plonk::circuit_builder::CircuitBuilder,
 };
 use zk_circuits_common::{
     circuit::{CircuitFragment, D, F},
-    utils::{digest_bytes_to_felts, u64_to_felts, BytesDigest, Digest, FELTS_PER_U64},
+    utils::{digest_bytes_to_felts, u64_to_felts, Digest, FELTS_PER_U64},
 };
 
 use crate::inputs::BlockHeaderInputs;
@@ -78,7 +78,7 @@ impl CircuitFragment for BlockHeader {
     ) {
         let mut preimage = Vec::new();
         preimage.extend_from_slice(&parent_hash.elements);
-        preimage.extend_from_slice(block_number);
+        preimage.extend_from_slice(&block_number);
         preimage.extend_from_slice(&state_root.elements);
         preimage.extend_from_slice(&extrinsics_root.elements);
 
@@ -86,7 +86,7 @@ impl CircuitFragment for BlockHeader {
         // For now, we can assume the length and types
 
         let computed_hash = builder.hash_n_to_hash_no_pad::<PoseidonHash>(preimage);
-        builder.connect_hashes(*block_hash, computed_hash);
+        builder.connect_hashes(block_hash, computed_hash);
     }
 
     fn fill_targets(

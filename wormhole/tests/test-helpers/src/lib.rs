@@ -19,13 +19,17 @@ pub const DEFAULT_TO_ACCOUNT: [u8; 32] = [
     162, 77, 187, 9, 249, 178, 185, 87, 194, 50, 198, 98, 179, 134, 179, 126, 123, 21, 247, 44, 50,
     216, 140, 243, 97, 177, 13, 94, 26, 255, 19, 170,
 ];
+pub const DEFAULT_BLOCK_HASH: [u8; 32] = [
+    162, 77, 187, 9, 249, 178, 185, 87, 194, 50, 198, 98, 179, 134, 179, 126, 123, 21, 247, 44, 50,
+    216, 140, 243, 97, 177, 13, 94, 26, 255, 19, 170,
+];
 
 pub const DEFAULT_EXIT_ACCOUNT: [u8; 32] = [4u8; 32];
 
 impl TestInputs for CircuitInputs {
     fn test_inputs() -> Self {
         let secret = hex::decode(DEFAULT_SECRET.trim()).unwrap();
-        let root_hash = hex::decode(DEFAULT_ROOT_HASH.trim())
+        let root_hash: [u8; 32] = hex::decode(DEFAULT_ROOT_HASH.trim())
             .unwrap()
             .as_slice()
             .try_into()
@@ -44,8 +48,8 @@ impl TestInputs for CircuitInputs {
             public: PublicCircuitInputs {
                 funding_amount: DEFAULT_FUNDING_AMOUNT,
                 nullifier,
-                root_hash,
                 exit_account,
+                block_hash: BytesDigest::try_from(DEFAULT_BLOCK_HASH).unwrap(),
             },
             private: PrivateCircuitInputs {
                 secret,
@@ -53,6 +57,14 @@ impl TestInputs for CircuitInputs {
                 transfer_count: DEFAULT_TRANSFER_COUNT,
                 funding_account,
                 unspendable_account,
+                block_header: wormhole_circuit::inputs::BlockHeaderInputs {
+                    block_hash: BytesDigest::try_from(DEFAULT_BLOCK_HASH).unwrap(),
+                    parent_hash: BytesDigest::try_from(DEFAULT_BLOCK_HASH).unwrap(), // TODO: use more sensible value
+                    block_number: 1,
+                    state_root: BytesDigest::try_from(root_hash).unwrap(),
+                    extrinsics_root: BytesDigest::try_from(root_hash).unwrap(), // TODO: use more sensible value
+
+                },
             },
         }
     }
