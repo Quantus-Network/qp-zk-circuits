@@ -46,7 +46,7 @@ impl StorageProofTargets {
             .collect();
 
         Self {
-            root_hash: builder.add_virtual_hash_public_input(),
+            root_hash: builder.add_virtual_hash(),
             proof_len: builder.add_virtual_target(),
             proof_data,
             indices,
@@ -127,7 +127,7 @@ impl TryFrom<&CircuitInputs> for StorageProof {
     fn try_from(inputs: &CircuitInputs) -> Result<Self, Self::Error> {
         Ok(Self::new(
             &inputs.private.storage_proof,
-            *inputs.public.root_hash,
+            *inputs.private.block_header.state_root,
             LeafInputs::try_from(inputs)?,
         ))
     }

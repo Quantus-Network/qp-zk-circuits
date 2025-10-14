@@ -2,6 +2,7 @@
 
 extern crate alloc;
 
+pub mod block_header;
 pub mod circuit;
 pub mod codec;
 pub mod inputs;
