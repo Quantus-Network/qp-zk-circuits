@@ -10,7 +10,10 @@ use wormhole_circuit::storage_proof::ProcessedStorageProof;
 use wormhole_circuit::substrate_account::SubstrateAccount;
 use wormhole_circuit::unspendable_account::UnspendableAccount;
 use wormhole_prover::WormholeProver;
-use zk_circuits_common::utils::{digest_felts_to_bytes, digest_bytes_to_felts, u128_to_felts, u64_to_felts, BytesDigest};
+use zk_circuits_common::utils::{
+    digest_bytes_to_felts, digest_felts_to_bytes, injective_bytes_to_felts, u128_to_felts,
+    u64_to_felts, BytesDigest,
+};
 
 fn main() -> anyhow::Result<()> {
     // 1. Define base values for the transaction
@@ -31,15 +34,16 @@ fn main() -> anyhow::Result<()> {
     let leaf_inputs_hash = PoseidonHash::hash_no_pad(&leaf_inputs_felts);
 
     let parent_hash = BytesDigest::try_from([1u8; 32]).unwrap();
-    let block_number = 1337u64;
+    let block_number = 1337u32;
     let extrinsics_root = BytesDigest::try_from([3u8; 32]).unwrap();
     // For this example, we'll say the state_root *is* the leaf hash. In reality,
     // the state_root would be the root of a large Merkle tree containing the leaf hash.
-    let state_root = BytesDigest::try_from(digest_felts_to_bytes(leaf_inputs_hash.elements)).unwrap();
+    let state_root =
+        BytesDigest::try_from(digest_felts_to_bytes(leaf_inputs_hash.elements)).unwrap();
 
     let mut header_preimage_felts = Vec::new();
     header_preimage_felts.extend(digest_bytes_to_felts(parent_hash));
-    header_preimage_felts.extend(u64_to_felts(block_number));
+    header_preimage_felts.extend(injective_bytes_to_felts(&block_number.to_le_bytes()));
     header_preimage_felts.extend(digest_bytes_to_felts(state_root));
     header_preimage_felts.extend(digest_bytes_to_felts(extrinsics_root));
     let block_hash_felts = PoseidonHash::hash_no_pad(&header_preimage_felts).elements;
@@ -66,6 +70,7 @@ fn main() -> anyhow::Result<()> {
                 block_number,
                 state_root,
                 extrinsics_root,
+                digest_logs: [0u8; 110],
             },
         },
         public: PublicCircuitInputs {
@@ -83,7 +88,10 @@ fn main() -> anyhow::Result<()> {
     let proof: ProofWithPublicInputs<_, _, 2> = prover_next.prove().expect("proof failed; qed");
 
     let public_inputs = PublicCircuitInputs::try_from(&proof)?;
-    println!("Successfully verified proof with public inputs: {:?}", public_inputs);
+    println!(
+        "Successfully verified proof with public inputs: {:?}",
+        public_inputs
+    );
 
     let proof_hex = hex::encode(proof.to_bytes());
     std::fs::write("proof_from_bins.hex", proof_hex)?;

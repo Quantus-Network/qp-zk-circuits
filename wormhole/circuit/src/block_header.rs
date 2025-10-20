@@ -11,28 +11,42 @@ use plonky2::{
 };
 use zk_circuits_common::{
     circuit::{CircuitFragment, D, F},
-    utils::{digest_bytes_to_felts, u64_to_felts, Digest, FELTS_PER_U64},
+    utils::{digest_bytes_to_felts, injective_bytes_to_felts, Digest, FELTS_PER_U64},
 };
 
 use crate::inputs::BlockHeaderInputs;
+
+/// 110 bytes, rounded to 28 felts ~= 112 bytes
+const DIGEST_LOGS_FELTS: usize = 28;
 
 #[derive(Debug, Clone)]
 pub struct BlockHeader {
     pub block_hash: Digest,
     pub parent_hash: Digest,
-    pub block_number: [F; FELTS_PER_U64],
+    pub block_number: [F; 1],
     pub state_root: Digest,
     pub extrinsics_root: Digest,
+    pub digest_logs: [F; DIGEST_LOGS_FELTS],
 }
 
 impl From<&BlockHeaderInputs> for BlockHeader {
     fn from(inputs: &BlockHeaderInputs) -> Self {
+        let digest_logs: [F; DIGEST_LOGS_FELTS] = injective_bytes_to_felts(&inputs.digest_logs)
+            .try_into()
+            .expect("valid digest logs; qed");
+
+        let block_number_felts: [F; 1] =
+            injective_bytes_to_felts(&inputs.block_number.to_be_bytes())
+                .try_into()
+                .expect("valid number; qed");
+
         Self {
             block_hash: digest_bytes_to_felts(inputs.block_hash),
             parent_hash: digest_bytes_to_felts(inputs.parent_hash),
-            block_number: u64_to_felts(inputs.block_number),
+            block_number: block_number_felts,
             state_root: digest_bytes_to_felts(inputs.state_root),
             extrinsics_root: digest_bytes_to_felts(inputs.extrinsics_root),
+            digest_logs,
         }
     }
 }
@@ -49,6 +63,8 @@ pub struct BlockHeaderTargets {
     pub state_root: HashOutTarget,
     /// The root of the extrinsics trie.
     pub extrinsics_root: HashOutTarget,
+    /// Digest logs of the header
+    pub digest_logs: [Target; DIGEST_LOGS_FELTS],
 }
 
 impl BlockHeaderTargets {
@@ -59,6 +75,7 @@ impl BlockHeaderTargets {
             block_number: array::from_fn(|_| builder.add_virtual_target()),
             state_root: builder.add_virtual_hash(),
             extrinsics_root: builder.add_virtual_hash(),
+            digest_logs: array::from_fn(|_| builder.add_virtual_target()),
         }
     }
 }
@@ -73,6 +90,7 @@ impl CircuitFragment for BlockHeader {
             block_number,
             state_root,
             extrinsics_root,
+            digest_logs,
         }: &Self::Targets,
         builder: &mut CircuitBuilder<F, D>,
     ) {
@@ -81,9 +99,7 @@ impl CircuitFragment for BlockHeader {
         preimage.extend_from_slice(&block_number);
         preimage.extend_from_slice(&state_root.elements);
         preimage.extend_from_slice(&extrinsics_root.elements);
-
-        // TODO: find a way to include digest logs with a fixed size
-        // For now, we can assume the length and types
+        preimage.extend_from_slice(&digest_logs);
 
         let computed_hash = builder.hash_n_to_hash_no_pad::<PoseidonHash>(preimage);
         builder.connect_hashes(block_hash, computed_hash);
@@ -99,6 +115,8 @@ impl CircuitFragment for BlockHeader {
         pw.set_target_arr(&targets.block_number, &self.block_number)?;
         pw.set_hash_target(targets.state_root, self.state_root.into())?;
         pw.set_hash_target(targets.extrinsics_root, self.extrinsics_root.into())?;
+        pw.set_target_arr(&targets.digest_logs, &self.digest_logs)?;
+
         Ok(())
     }
 }

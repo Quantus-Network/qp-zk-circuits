@@ -18,6 +18,8 @@ pub const FUNDING_AMOUNT_END_INDEX: usize = 12;
 pub const EXIT_ACCOUNT_START_INDEX: usize = 12;
 pub const EXIT_ACCOUNT_END_INDEX: usize = 16;
 
+pub const DIGEST_LOGS_SIZE: usize = 110;
+
 /// Inputs required to commit to the wormhole circuit.
 #[derive(Debug, Clone)]
 pub struct CircuitInputs {
@@ -61,9 +63,10 @@ pub struct PrivateCircuitInputs {
 pub struct BlockHeaderInputs {
     pub block_hash: BytesDigest,
     pub parent_hash: BytesDigest,
-    pub block_number: u64,
+    pub block_number: u32,
     pub state_root: BytesDigest,
     pub extrinsics_root: BytesDigest,
+    pub digest_logs: [u8; DIGEST_LOGS_SIZE],
 }
 
 impl PublicCircuitInputs {

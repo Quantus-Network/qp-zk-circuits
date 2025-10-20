@@ -63,7 +63,7 @@ impl TestInputs for CircuitInputs {
                     block_number: 1,
                     state_root: BytesDigest::try_from(root_hash).unwrap(),
                     extrinsics_root: BytesDigest::try_from(root_hash).unwrap(), // TODO: use more sensible value
-
+                    digest_logs: [0u8; 110],
                 },
             },
         }
