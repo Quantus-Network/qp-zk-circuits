@@ -34,10 +34,10 @@ pub struct PublicCircuitInputs {
     pub funding_amount: u128,
     /// The nullifier.
     pub nullifier: BytesDigest,
-    /// The hash of the block header.
-    pub block_hash: BytesDigest,
     /// The address of the account to pay out to.
     pub exit_account: BytesDigest,
+    /// The hash of the block header.
+    pub block_hash: BytesDigest,
 }
 
 /// All of the private inputs required for the circuit.

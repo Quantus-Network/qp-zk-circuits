@@ -15,3 +15,5 @@ wormhole/tests/*.hex
 # wormhole fuzzing files
 .env.qac
 transfer_proof.json
+
+.env
