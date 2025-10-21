@@ -8,16 +8,18 @@
 use anyhow::Context;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
+use qp_poseidon::PoseidonHasher;
 use quantus_cli::chain::client::SubxtPoseidonHasher;
 use quantus_cli::chain::quantus_subxt as quantus_node;
-use quantus_cli::chain::quantus_subxt::api::runtime_types::qp_poseidon::PoseidonHasher;
+use quantus_cli::qp_dilithium_crypto::{DilithiumPair, DilithiumPublic, DilithiumSigner};
 use quantus_cli::{qp_dilithium_crypto, AccountId32, QuantusClient};
+use sp_core::Hasher;
 use sp_runtime::traits::IdentifyAccount;
-use subxt::config::Hasher;
 use subxt::ext::codec::Encode;
 use subxt::ext::jsonrpsee::core::client::ClientT;
 use subxt::ext::jsonrpsee::core::params::ArrayParams;
 use subxt::ext::jsonrpsee::core::traits::ToRpcParams;
+use subxt::ext::subxt_rpcs::client::RpcParams;
 use subxt::ext::subxt_rpcs::rpc_params;
 use subxt::utils::AccountId32 as SubxtAccountId;
 use wormhole_circuit::inputs::{
@@ -36,9 +38,8 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Connected to Substrate node.");
 
-    let alice_pair =
-        quantus_cli::qp_dilithium_crypto::DilithiumPair::from_seed(&[0u8; 32]).expect("valid seed");
-    let alice_account = alice_pair.public().into_account();
+    let alice_pair = DilithiumPair::from_seed(&[0u8; 32]).expect("valid seed");
+    let alice_account = AccountId32::new(PoseidonHasher::hash(alice_pair.public().as_ref()).0);
 
     // Generate a random destination account to ensure the transaction is unique.
     let dest_account_id = SubxtAccountId([255u8; 32]);
@@ -88,7 +89,7 @@ async fn main() -> anyhow::Result<()> {
 
     let proof_address = quantus_node::api::storage().balances().transfer_proof((
         transfer_count,
-        alice_account,
+        SubxtAccountId(alice_account.into()),
         dest_account_id,
         funding_amount,
     ));
@@ -99,15 +100,14 @@ async fn main() -> anyhow::Result<()> {
     assert!(storage_api.fetch_raw_keys(final_key).await.is_ok());
 
     println!("Fetching storage proof for Alice's account...");
-    let proof_params = rpc_params![final_key, block_hash];
+    let proof_params: ArrayParams = rpc_params![final_key, block_hash].into();
     let read_proof = quantus_client
         .rpc_client()
-        .request("state_getReadProof", proof_params.into())
+        .request("state_getReadProof", proof_params)
         .await?;
 
-    let proof_nodes: Vec<Vec<u8>> = read_proof.proof.into_iter().map(|p| p.0).collect();
+    println!("storage proofs {:?}", read_proof);
 
-    // 5. Get the block header.
     println!("Fetching block header...");
     let header = api
         .rpc()
@@ -119,7 +119,6 @@ async fn main() -> anyhow::Result<()> {
     let extrinsics_root = BytesDigest::try_from(*header.extrinsics_root.as_bytes())?;
     let block_number = header.number;
 
-    // 6. Assemble all inputs for the ZK circuit.
     println!("Assembling circuit inputs...");
     let secret = [1u8; 32];
     let unspendable_account =
