@@ -5,22 +5,16 @@
 //! - Combines and passes the necessary inputs to the wormhole prover
 //! - Generate the proof for the wormhole transfer
 
-use anyhow::Context;
-use plonky2::plonk::circuit_data::CircuitConfig;
-use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_poseidon::PoseidonHasher;
-use quantus_cli::chain::client::SubxtPoseidonHasher;
 use quantus_cli::chain::quantus_subxt as quantus_node;
 use quantus_cli::qp_dilithium_crypto::{DilithiumPair, DilithiumPublic, DilithiumSigner};
 use quantus_cli::{qp_dilithium_crypto, AccountId32, QuantusClient};
 use sp_core::Hasher;
-use sp_runtime::traits::IdentifyAccount;
+use subxt::client::OfflineClientT;
+use subxt::config::{DefaultExtrinsicParams, DefaultExtrinsicParamsBuilder, ExtrinsicParams};
 use subxt::ext::codec::Encode;
 use subxt::ext::jsonrpsee::core::client::ClientT;
-use subxt::ext::jsonrpsee::core::params::ArrayParams;
-use subxt::ext::jsonrpsee::core::traits::ToRpcParams;
-use subxt::ext::subxt_rpcs::client::RpcParams;
-use subxt::ext::subxt_rpcs::rpc_params;
+use subxt::ext::jsonrpsee::rpc_params;
 use subxt::utils::AccountId32 as SubxtAccountId;
 use wormhole_circuit::inputs::{
     BlockHeaderInputs, CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs,
@@ -46,26 +40,37 @@ async fn main() -> anyhow::Result<()> {
 
     println!(
         "Generated random destination account: {:?}",
-        dest_account_id
+        &dest_account_id
     );
 
-    let funding_amount = 1_000_000_000_000u128;
+    let funding_amount = 1_000_000_000_001u128;
 
     // 3. Create and submit a balances transfer extrinsic.
     let transfer_tx = quantus_cli::chain::quantus_subxt::api::tx()
         .balances()
         .transfer_keep_alive(
-            subxt::ext::subxt_core::utils::MultiAddress::Id(dest_account_id),
+            subxt::ext::subxt_core::utils::MultiAddress::Id(dest_account_id.clone()),
             funding_amount,
         );
 
-    println!("Submitting transfer from Alice to {}...", dest_account_id);
+    println!("Submitting transfer from Alice to {}...", &dest_account_id);
+    let ext_params = DefaultExtrinsicParamsBuilder::new()
+        .nonce(
+            quantus_client
+                .client()
+                .tx()
+                .account_nonce(&alice_account)
+                .await?,
+        )
+        .build();
+
     let signed_extrinsic = quantus_client
         .client()
         .tx()
-        .sign_and_submit_then_watch_default(&transfer_tx, &alice_pair)
+        .sign_and_submit(&transfer_tx, &alice_pair, &ext_params)
         .await?;
-    let events = signed_extrinsic.wait_for_finalized_success().await?;
+
+    // println!("Events: {:?}", events);
 
     let block_hash = client.blocks().at_latest().await?.hash();
 
@@ -80,8 +85,8 @@ async fn main() -> anyhow::Result<()> {
     let transfer_proof_hash = qp_poseidon::PoseidonHasher::hash_storage::<AccountId32>(
         &(
             transfer_count,
-            alice_account,
-            dest_account_id,
+            alice_account.clone(),
+            dest_account_id.clone(),
             funding_amount,
         )
             .encode(),
@@ -97,10 +102,10 @@ async fn main() -> anyhow::Result<()> {
     final_key.extend_from_slice(&transfer_proof_hash);
 
     // assert the above key exists
-    assert!(storage_api.fetch_raw_keys(final_key).await.is_ok());
+    assert!(storage_api.fetch_raw_keys(final_key.clone()).await.is_ok());
 
     println!("Fetching storage proof for Alice's account...");
-    let proof_params: ArrayParams = rpc_params![final_key, block_hash].into();
+    let proof_params = rpc_params![final_key, block_hash];
     let read_proof = quantus_client
         .rpc_client()
         .request("state_getReadProof", proof_params)
@@ -108,69 +113,68 @@ async fn main() -> anyhow::Result<()> {
 
     println!("storage proofs {:?}", read_proof);
 
-    println!("Fetching block header...");
-    let header = api
-        .rpc()
-        .header(Some(block_hash))
-        .await?
-        .context("Header not found")?;
-    let state_root = BytesDigest::try_from(*header.state_root.as_bytes())?;
-    let parent_hash = BytesDigest::try_from(*header.parent_hash.as_bytes())?;
-    let extrinsics_root = BytesDigest::try_from(*header.extrinsics_root.as_bytes())?;
-    let block_number = header.number;
+    // println!("Fetching block header...");
+    // let header = api
+    //     .rpc()
+    //     .header(Some(block_hash))
+    //     .await?
+    //     .context("Header not found")?;
+    // let state_root = BytesDigest::try_from(*header.state_root.as_bytes())?;
+    // let parent_hash = BytesDigest::try_from(*header.parent_hash.as_bytes())?;
+    // let extrinsics_root = BytesDigest::try_from(*header.extrinsics_root.as_bytes())?;
+    // let block_number = header.number;
 
-    println!("Assembling circuit inputs...");
-    let secret = [1u8; 32];
-    let unspendable_account =
-        wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(&secret).account_id;
+    // println!("Assembling circuit inputs...");
+    // let secret = [1u8; 32];
+    // let unspendable_account =
+    //     wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(&secret).account_id;
 
-    // NOTE: The `indices` for the storage proof are non-trivial to calculate.
-    // They depend on the structure of the Patricia Merkle Trie and the path to the
-    // specific leaf. For this example, we are passing an empty vec, which will
-    // likely fail in a real circuit that properly validates them. A real implementation
-    // would require a client-side trie library to determine these indices.
-    let processed_storage_proof = ProcessedStorageProof::new(proof_nodes, vec![])?;
+    // // NOTE: The `indices` for the storage proof are non-trivial to calculate.
+    // // They depend on the structure of the Patricia Merkle Trie and the path to the
+    // // specific leaf. For this example, we are passing an empty vec, which will
+    // // likely fail in a real circuit that properly validates them. A real implementation
+    // // would require a client-side trie library to determine these indices.
+    // let processed_storage_proof = ProcessedStorageProof::new(proof_nodes, vec![])?;
 
-    let inputs = CircuitInputs {
-        private: PrivateCircuitInputs {
-            secret,
-            transfer_count: 0, // In a real scenario, this would be tracked.
-            funding_account: BytesDigest::try_from(alice_account_id.as_ref())?,
-            storage_proof: processed_storage_proof,
-            unspendable_account: Digest::from(unspendable_account).into(),
-            block_header: BlockHeaderInputs {
-                block_hash: BytesDigest::try_from(block_hash.as_ref())?,
-                parent_hash,
-                block_number: block_number as u64,
-                state_root,
-                extrinsics_root,
-            },
-        },
-        public: PublicCircuitInputs {
-            funding_amount,
-            nullifier: Nullifier::from_preimage(&secret, 0).hash.into(),
-            exit_account: BytesDigest::try_from(dest_account_id.as_ref())?,
-            block_hash: BytesDigest::try_from(block_hash.as_ref())?,
-        },
-    };
+    // let inputs = CircuitInputs {
+    //     private: PrivateCircuitInputs {
+    //         secret,
+    //         transfer_count: 0, // In a real scenario, this would be tracked.
+    //         funding_account: BytesDigest::try_from(alice_account_id.as_ref())?,
+    //         storage_proof: processed_storage_proof,
+    //         unspendable_account: Digest::from(unspendable_account).into(),
+    //         block_header: BlockHeaderInputs {
+    //             block_hash: BytesDigest::try_from(block_hash.as_ref())?,
+    //             parent_hash,
+    //             block_number: block_number as u64,
+    //             state_root,
+    //             extrinsics_root,
+    //         },
+    //     },
+    //     public: PublicCircuitInputs {
+    //         funding_amount,
+    //         nullifier: Nullifier::from_preimage(&secret, 0).hash.into(),
+    //         exit_account: BytesDigest::try_from(dest_account_id.as_ref())?,
+    //         block_hash: BytesDigest::try_from(block_hash.as_ref())?,
+    //     },
+    // };
 
-    // 7. Generate and verify the proof.
-    println!("Generating ZK proof...");
-    let config = CircuitConfig::standard_recursion_config();
-    let prover = WormholeProver::new(config);
-    let prover_next = prover.commit(&inputs)?;
-    let proof: ProofWithPublicInputs<_, _, 2> = prover_next.prove().expect("proof failed; qed");
+    // println!("Generating ZK proof...");
+    // let config = CircuitConfig::standard_recursion_config();
+    // let prover = WormholeProver::new(config);
+    // let prover_next = prover.commit(&inputs)?;
+    // let proof: ProofWithPublicInputs<_, _, 2> = prover_next.prove().expect("proof failed; qed");
 
-    let public_inputs = PublicCircuitInputs::try_from(&proof)?;
-    println!(
-        "\nSuccessfully generated and verified proof!\nPublic Inputs: {:?}\n",
-        public_inputs
-    );
+    // let public_inputs = PublicCircuitInputs::try_from(&proof)?;
+    // println!(
+    //     "\nSuccessfully generated and verified proof!\nPublic Inputs: {:?}\n",
+    //     public_inputs
+    // );
 
-    let proof_hex = hex::encode(proof.to_bytes());
-    let proof_file = "proof.hex";
-    std::fs::write(proof_file, proof_hex)?;
-    println!("Proof written to {}", proof_file);
+    // let proof_hex = hex::encode(proof.to_bytes());
+    // let proof_file = "proof.hex";
+    // std::fs::write(proof_file, proof_hex)?;
+    // println!("Proof written to {}", proof_file);
 
     Ok(())
 }

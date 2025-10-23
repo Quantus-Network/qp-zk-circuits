@@ -6954,6 +6954,7 @@ dependencies = [
  "sp-core 38.1.0",
  "sp-runtime 44.0.0",
  "subxt",
+ "tokio",
 ]
 
 [[package]]
