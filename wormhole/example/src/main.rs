@@ -67,10 +67,12 @@ async fn main() -> anyhow::Result<()> {
     let signed_extrinsic = quantus_client
         .client()
         .tx()
-        .sign_and_submit(&transfer_tx, &alice_pair, &ext_params)
+        .sign_and_submit_then_watch(&transfer_tx, &alice_pair, ext_params)
         .await?;
 
-    // println!("Events: {:?}", events);
+    let events = signed_extrinsic.wait_for_finalized_success().await?;
+
+    println!("Transfer finalized with events: {:?}", events);
 
     let block_hash = client.blocks().at_latest().await?.hash();
 
