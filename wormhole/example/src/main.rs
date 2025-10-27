@@ -7,7 +7,9 @@
 
 use qp_poseidon::PoseidonHasher;
 use quantus_cli::chain::quantus_subxt as quantus_node;
+use quantus_cli::cli::common::submit_transaction;
 use quantus_cli::qp_dilithium_crypto::{DilithiumPair, DilithiumPublic, DilithiumSigner};
+use quantus_cli::wallet::QuantumKeyPair;
 use quantus_cli::{qp_dilithium_crypto, AccountId32, QuantusClient};
 use sp_core::Hasher;
 use subxt::client::OfflineClientT;
@@ -33,6 +35,10 @@ async fn main() -> anyhow::Result<()> {
     println!("Connected to Substrate node.");
 
     let alice_pair = DilithiumPair::from_seed(&[0u8; 32]).expect("valid seed");
+    let quantum_keypair = QuantumKeyPair {
+        public_key: alice_pair.public().0.to_vec(),
+        private_key: alice_pair.secret.to_vec(),
+    };
     let alice_account = AccountId32::new(PoseidonHasher::hash(alice_pair.public().as_ref()).0);
 
     // Generate a random destination account to ensure the transaction is unique.
@@ -54,25 +60,8 @@ async fn main() -> anyhow::Result<()> {
         );
 
     println!("Submitting transfer from Alice to {}...", &dest_account_id);
-    let ext_params = DefaultExtrinsicParamsBuilder::new()
-        .nonce(
-            quantus_client
-                .client()
-                .tx()
-                .account_nonce(&alice_account)
-                .await?,
-        )
-        .build();
 
-    let signed_extrinsic = quantus_client
-        .client()
-        .tx()
-        .sign_and_submit_then_watch(&transfer_tx, &alice_pair, ext_params)
-        .await?;
-
-    let events = signed_extrinsic.wait_for_finalized_success().await?;
-
-    println!("Transfer finalized with events: {:?}", events);
+    submit_transaction(&quantus_client, &quantum_keypair, transfer_tx, None).await?;
 
     let block_hash = client.blocks().at_latest().await?.hash();
 

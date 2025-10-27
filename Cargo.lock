@@ -3859,7 +3859,7 @@ dependencies = [
 [[package]]
 name = "quantus-cli"
 version = "0.2.4"
-source = "git+https://github.com/Quantus-Network/quantus-cli.git#212ecef7162acc35cff02e1dc5a325b86016e056"
+source = "git+https://github.com/Quantus-Network/quantus-cli.git?branch=fix%2Ftrack-tx-inclusion-properly#538f74fe3c3348e5ff7093fa65ccd4269ba5787c"
 dependencies = [
  "aes-gcm",
  "argon2",

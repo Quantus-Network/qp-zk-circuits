@@ -14,7 +14,7 @@ wormhole-circuit = { package = "qp-wormhole-circuit", version = "0.1.2", path = 
 wormhole-prover = { package = "qp-wormhole-prover", version = "0.1.2", path = "../prover", default-features = false }
 zk-circuits-common = { package = "qp-zk-circuits-common", version = "0.1.2", path = "../../common" }
 subxt = "0.43.0"
-quantus-cli = { git = "https://github.com/Quantus-Network/quantus-cli.git", default-features = false }
+quantus-cli = { git = "https://github.com/Quantus-Network/quantus-cli.git", branch = "fix/track-tx-inclusion-properly", default-features = false }
 sp-runtime = "44.0.0"
 qp-poseidon = "0.9.5"
 sp-core = "38.1.0"
