@@ -8,15 +8,17 @@ use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::utils::{felts_to_u128, BytesDigest};
 
 /// The total size of the public inputs field element vector.
-pub const PUBLIC_INPUTS_FELTS_LEN: usize = 14;
+pub const PUBLIC_INPUTS_FELTS_LEN: usize = 16;
 pub const NULLIFIER_START_INDEX: usize = 0;
 pub const NULLIFIER_END_INDEX: usize = 4;
-pub const ROOT_HASH_START_INDEX: usize = 4;
-pub const ROOT_HASH_END_INDEX: usize = 8;
+pub const BLOCK_HASH_START_INDEX: usize = 4;
+pub const BLOCK_HASH_END_INDEX: usize = 8;
 pub const FUNDING_AMOUNT_START_INDEX: usize = 8;
 pub const FUNDING_AMOUNT_END_INDEX: usize = 12;
 pub const EXIT_ACCOUNT_START_INDEX: usize = 12;
 pub const EXIT_ACCOUNT_END_INDEX: usize = 16;
+
+pub const DIGEST_LOGS_SIZE: usize = 110;
 
 /// Inputs required to commit to the wormhole circuit.
 #[derive(Debug, Clone)]
@@ -32,10 +34,10 @@ pub struct PublicCircuitInputs {
     pub funding_amount: u128,
     /// The nullifier.
     pub nullifier: BytesDigest,
-    /// The root hash of the storage trie.
-    pub root_hash: BytesDigest,
     /// The address of the account to pay out to.
     pub exit_account: BytesDigest,
+    /// The hash of the block header.
+    pub block_hash: BytesDigest,
 }
 
 /// All of the private inputs required for the circuit.
@@ -52,6 +54,19 @@ pub struct PrivateCircuitInputs {
     pub funding_account: BytesDigest,
     /// The unspendable account hash.
     pub unspendable_account: BytesDigest,
+    /// The block header data.
+    pub block_header: BlockHeaderInputs,
+}
+
+/// The private inputs required for the block header circuit.
+#[derive(Debug, Clone)]
+pub struct BlockHeaderInputs {
+    pub block_hash: BytesDigest,
+    pub parent_hash: BytesDigest,
+    pub block_number: u32,
+    pub state_root: BytesDigest,
+    pub extrinsics_root: BytesDigest,
+    pub digest_logs: [u8; DIGEST_LOGS_SIZE],
 }
 
 impl PublicCircuitInputs {
@@ -89,23 +104,22 @@ impl PublicCircuitInputs {
     }
 
     pub fn try_from_slice(pis: &[GoldilocksField]) -> anyhow::Result<Self> {
-        const LEAF_PI_LEN: usize = 16;
         // Public inputs are ordered as follows:
         // Nullifier.hash: 4 felts
-        // StorageProof.root_hash: 4 felts
+        // BlockHeader.block_hash: 4 felts
         // StorageProof.funding_amount: 4 felts
         // ExitAccount.address: 4 felts
-        if pis.len() != LEAF_PI_LEN {
+        if pis.len() != PUBLIC_INPUTS_FELTS_LEN {
             bail!(
                 "public inputs should contain: {} field elements, got: {}",
-                LEAF_PI_LEN,
+                PUBLIC_INPUTS_FELTS_LEN,
                 pis.len()
             )
         }
         let nullifier = BytesDigest::try_from(&pis[NULLIFIER_START_INDEX..NULLIFIER_END_INDEX])
             .context("failed to deserialize nullifier hash")?;
-        let root_hash = BytesDigest::try_from(&pis[ROOT_HASH_START_INDEX..ROOT_HASH_END_INDEX])
-            .context("failed to deserialize root hash")?;
+        let block_hash = BytesDigest::try_from(&pis[BLOCK_HASH_START_INDEX..BLOCK_HASH_END_INDEX])
+            .context("failed to deserialize block hash")?;
         let funding_amount = felts_to_u128(
             <[F; 4]>::try_from(&pis[FUNDING_AMOUNT_START_INDEX..FUNDING_AMOUNT_END_INDEX])
                 .context("failed to deserialize funding amount")?,
@@ -118,7 +132,7 @@ impl PublicCircuitInputs {
         Ok(PublicCircuitInputs {
             funding_amount,
             nullifier,
-            root_hash,
+            block_hash,
             exit_account,
         })
     }
