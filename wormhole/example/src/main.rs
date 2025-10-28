@@ -5,21 +5,22 @@
 //! - Combines and passes the necessary inputs to the wormhole prover
 //! - Generate the proof for the wormhole transfer
 
+use plonky2::plonk::circuit_data::CircuitConfig;
+use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_poseidon::PoseidonHasher;
 use quantus_cli::chain::quantus_subxt as quantus_node;
 use quantus_cli::cli::common::submit_transaction;
-use quantus_cli::qp_dilithium_crypto::{DilithiumPair, DilithiumPublic, DilithiumSigner};
+use quantus_cli::qp_dilithium_crypto::DilithiumPair;
 use quantus_cli::wallet::QuantumKeyPair;
-use quantus_cli::{qp_dilithium_crypto, AccountId32, QuantusClient};
-use sp_core::Hasher;
-use subxt::client::OfflineClientT;
-use subxt::config::{DefaultExtrinsicParams, DefaultExtrinsicParamsBuilder, ExtrinsicParams};
+use quantus_cli::{AccountId32, QuantusClient};
+use sp_core::{Hasher, H256};
+use subxt::backend::legacy::rpc_methods::ReadProof;
 use subxt::ext::codec::Encode;
 use subxt::ext::jsonrpsee::core::client::ClientT;
 use subxt::ext::jsonrpsee::rpc_params;
-use subxt::utils::AccountId32 as SubxtAccountId;
+use subxt::utils::{to_hex, AccountId32 as SubxtAccountId};
 use wormhole_circuit::inputs::{
-    BlockHeaderInputs, CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs,
+    BlockHeaderInputs, CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs, DIGEST_LOGS_SIZE,
 };
 use wormhole_circuit::nullifier::Nullifier;
 use wormhole_circuit::storage_proof::ProcessedStorageProof;
@@ -85,8 +86,8 @@ async fn main() -> anyhow::Result<()> {
 
     let proof_address = quantus_node::api::storage().balances().transfer_proof((
         transfer_count,
-        SubxtAccountId(alice_account.into()),
-        dest_account_id,
+        SubxtAccountId(alice_account.clone().into()),
+        dest_account_id.clone(),
         funding_amount,
     ));
     let mut final_key = proof_address.to_root_bytes();
@@ -96,76 +97,86 @@ async fn main() -> anyhow::Result<()> {
     assert!(storage_api.fetch_raw_keys(final_key.clone()).await.is_ok());
 
     println!("Fetching storage proof for Alice's account...");
-    let proof_params = rpc_params![final_key, block_hash];
-    let read_proof = quantus_client
+    let proof_params = rpc_params![vec![to_hex(final_key)], block_hash];
+    let read_proof: ReadProof<H256> = quantus_client
         .rpc_client()
         .request("state_getReadProof", proof_params)
         .await?;
 
     println!("storage proofs {:?}", read_proof);
 
-    // println!("Fetching block header...");
-    // let header = api
-    //     .rpc()
-    //     .header(Some(block_hash))
-    //     .await?
-    //     .context("Header not found")?;
-    // let state_root = BytesDigest::try_from(*header.state_root.as_bytes())?;
-    // let parent_hash = BytesDigest::try_from(*header.parent_hash.as_bytes())?;
-    // let extrinsics_root = BytesDigest::try_from(*header.extrinsics_root.as_bytes())?;
-    // let block_number = header.number;
+    println!("Fetching block header...");
+    let blocks = client.blocks().at(block_hash).await?;
+    let header = blocks.header();
 
-    // println!("Assembling circuit inputs...");
-    // let secret = [1u8; 32];
-    // let unspendable_account =
-    //     wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(&secret).account_id;
+    let state_root = BytesDigest::try_from(header.state_root.as_bytes())?;
+    let parent_hash = BytesDigest::try_from(header.parent_hash.as_bytes())?;
+    let extrinsics_root = BytesDigest::try_from(header.extrinsics_root.as_bytes())?;
+    let block_number = header.number;
+    let block_hash = block_hash;
+    let parent_hash = parent_hash;
+    let digest_logs: [u8; DIGEST_LOGS_SIZE] = header
+        .digest
+        .logs
+        .encode()
+        .try_into()
+        .expect("Digest logs size len issue; qed");
 
-    // // NOTE: The `indices` for the storage proof are non-trivial to calculate.
-    // // They depend on the structure of the Patricia Merkle Trie and the path to the
-    // // specific leaf. For this example, we are passing an empty vec, which will
-    // // likely fail in a real circuit that properly validates them. A real implementation
-    // // would require a client-side trie library to determine these indices.
-    // let processed_storage_proof = ProcessedStorageProof::new(proof_nodes, vec![])?;
+    println!("Assembling circuit inputs...");
+    let secret = [1u8; 32];
+    let unspendable_account =
+        wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(&secret).account_id;
 
-    // let inputs = CircuitInputs {
-    //     private: PrivateCircuitInputs {
-    //         secret,
-    //         transfer_count: 0, // In a real scenario, this would be tracked.
-    //         funding_account: BytesDigest::try_from(alice_account_id.as_ref())?,
-    //         storage_proof: processed_storage_proof,
-    //         unspendable_account: Digest::from(unspendable_account).into(),
-    //         block_header: BlockHeaderInputs {
-    //             block_hash: BytesDigest::try_from(block_hash.as_ref())?,
-    //             parent_hash,
-    //             block_number: block_number as u64,
-    //             state_root,
-    //             extrinsics_root,
-    //         },
-    //     },
-    //     public: PublicCircuitInputs {
-    //         funding_amount,
-    //         nullifier: Nullifier::from_preimage(&secret, 0).hash.into(),
-    //         exit_account: BytesDigest::try_from(dest_account_id.as_ref())?,
-    //         block_hash: BytesDigest::try_from(block_hash.as_ref())?,
-    //     },
-    // };
+    // NOTE: The `indices` for the storage proof are non-trivial to calculate.
+    // They depend on the structure of the Patricia Merkle Trie and the path to the
+    // specific leaf. For this example, we are passing an empty vec, which will
+    // likely fail in a real circuit that properly validates them. A real implementation
+    // would require a client-side trie library to determine these indices.
+    let processed_storage_proof = ProcessedStorageProof::new(
+        read_proof.proof.iter().map(|v| v.to_vec()).collect(),
+        vec![],
+    )?;
 
-    // println!("Generating ZK proof...");
-    // let config = CircuitConfig::standard_recursion_config();
-    // let prover = WormholeProver::new(config);
-    // let prover_next = prover.commit(&inputs)?;
-    // let proof: ProofWithPublicInputs<_, _, 2> = prover_next.prove().expect("proof failed; qed");
+    let inputs = CircuitInputs {
+        private: PrivateCircuitInputs {
+            secret,
+            transfer_count: 0, // In a real scenario, this would be tracked.
+            funding_account: BytesDigest::try_from(alice_account.as_ref() as &[u8])?,
+            storage_proof: processed_storage_proof,
+            unspendable_account: Digest::from(unspendable_account).into(),
+            block_header: BlockHeaderInputs {
+                block_hash: BytesDigest::try_from(block_hash.as_ref())?,
+                parent_hash,
+                block_number: block_number as u32,
+                state_root,
+                extrinsics_root,
+                digest_logs,
+            },
+        },
+        public: PublicCircuitInputs {
+            funding_amount,
+            nullifier: Nullifier::from_preimage(&secret, 0).hash.into(),
+            exit_account: BytesDigest::try_from(dest_account_id.as_ref() as &[u8])?,
+            block_hash: BytesDigest::try_from(block_hash.as_ref())?,
+        },
+    };
 
-    // let public_inputs = PublicCircuitInputs::try_from(&proof)?;
-    // println!(
-    //     "\nSuccessfully generated and verified proof!\nPublic Inputs: {:?}\n",
-    //     public_inputs
-    // );
+    println!("Generating ZK proof...");
+    let config = CircuitConfig::standard_recursion_config();
+    let prover = WormholeProver::new(config);
+    let prover_next = prover.commit(&inputs)?;
+    let proof: ProofWithPublicInputs<_, _, 2> = prover_next.prove().expect("proof failed; qed");
 
-    // let proof_hex = hex::encode(proof.to_bytes());
-    // let proof_file = "proof.hex";
-    // std::fs::write(proof_file, proof_hex)?;
-    // println!("Proof written to {}", proof_file);
+    let public_inputs = PublicCircuitInputs::try_from(&proof)?;
+    println!(
+        "\nSuccessfully generated and verified proof!\nPublic Inputs: {:?}\n",
+        public_inputs
+    );
+
+    let proof_hex = hex::encode(proof.to_bytes());
+    let proof_file = "proof.hex";
+    std::fs::write(proof_file, proof_hex)?;
+    println!("Proof written to {}", proof_file);
 
     Ok(())
 }

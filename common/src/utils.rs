@@ -1,6 +1,7 @@
 use crate::circuit::F;
 use alloc::vec::Vec;
-use anyhow::anyhow;
+use anyhow::{anyhow, Error};
+use core::fmt::Display;
 use core::ops::Deref;
 use plonky2::field::types::{Field, Field64, PrimeField64};
 use plonky2::hash::hash_types::HashOut;
@@ -24,6 +25,33 @@ pub struct BytesDigest([u8; 32]);
 pub enum DigestError {
     ChunkOutOfFieldRange { chunk_index: usize, value: u64 },
     InvalidLength { expected: usize, got: usize },
+    Other,
+}
+
+impl Display for DigestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DigestError::ChunkOutOfFieldRange { chunk_index, value } => {
+                write!(
+                    f,
+                    "Chunk out of field range at index {}: {}",
+                    chunk_index, value
+                )
+            }
+            DigestError::InvalidLength { expected, got } => {
+                write!(f, "Invalid length: expected {}, got {}", expected, got)
+            }
+            DigestError::Other => write!(f, "Other error"),
+        }
+    }
+}
+
+impl std::error::Error for DigestError {}
+
+impl From<Error> for DigestError {
+    fn from(_: Error) -> Self {
+        DigestError::Other
+    }
 }
 
 impl TryFrom<&[u8]> for BytesDigest {
@@ -42,7 +70,11 @@ impl TryFrom<[u8; 32]> for BytesDigest {
     type Error = DigestError;
     fn try_from(value: [u8; 32]) -> Result<Self, Self::Error> {
         for (i, chunk) in value.chunks(8).enumerate() {
-            let v = u64::from_le_bytes(chunk.try_into().unwrap());
+            let v =
+                u64::from_le_bytes(chunk.try_into().map_err(|_| DigestError::InvalidLength {
+                    expected: 8,
+                    got: chunk.len(),
+                })?);
             if v >= F::ORDER {
                 return Err(DigestError::ChunkOutOfFieldRange {
                     chunk_index: i,
