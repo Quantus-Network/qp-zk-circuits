@@ -26,19 +26,18 @@
       CARGO_NET_TIMEOUT: 60
 
     jobs:
-      # fast-checks:
-      #   name: 🏁 Fast Checks (Format)
-      #   runs-on: ubuntu-latest
-      #   steps:
-      #     - uses: actions/checkout@v4
-      #     - name: Install required components
-      #       run: rustup component add rustfmt --toolchain nightly
-      #     - name: Install taplo
-      #       run: cargo install taplo-cli --locked
-      #     - name: Run format checks
-      #       run: |
-      #         taplo format --check --config taplo.toml
-      #         cargo +nightly fmt --all -- --check
+      fast-checks:
+        name: 🏁 Fast Checks (Format)
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+          - name: Install required components
+            run: rustup component add rustfmt --toolchain nightly
+          - name: Install taplo
+            run: cargo install taplo-cli --locked
+          - name: Run format checks
+            run: |
+              cargo +nightly fmt --all -- --check
 
       test-workspace:
         name: 🧪 Test Workspace

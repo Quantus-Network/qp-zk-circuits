@@ -17,7 +17,7 @@ use rayon::{iter::ParallelIterator, slice::ParallelSlice};
 use wormhole_verifier::ProofWithPublicInputs;
 use zk_circuits_common::{
     circuit::{C, D, F},
-    gadgets::{add_u128_base2_32_split, bytes_digest_eq, count_unique_4x32_keys},
+    gadgets::{add_u128_base2_32_split, bytes_digest_eq, count_unique_4x32_keys, limbs4_at_offset},
 };
 
 /// The default branching factor of the proof tree. A higher value means more proofs get aggregated
@@ -50,8 +50,8 @@ pub struct Groupings {
 
 impl Groupings {
     pub fn new(root_hashes: Vec<Vec<usize>>, exit_accounts: Vec<Vec<usize>>) -> Self {
-        let len_root_hashes: usize = root_hashes.iter().map(|v| v.len()).sum();
-        let len_exit_accounts: usize = exit_accounts.iter().map(|v| v.len()).sum();
+        let len_root_hashes = root_hashes.iter().map(|v| v.len()).sum();
+        let len_exit_accounts = exit_accounts.iter().map(|v| v.len()).sum();
         // assert that both lengths are equal
         assert_eq!(
             len_root_hashes, len_exit_accounts,
@@ -65,8 +65,7 @@ impl Groupings {
         }
     }
     pub fn len(&self) -> usize {
-        let len_root_hashes: usize = self.root_hashes.iter().map(|v| v.len()).sum();
-        len_root_hashes
+        self.size
     }
 
     pub fn is_empty(&self) -> bool {
@@ -201,8 +200,8 @@ fn find_group_indices(leaves_public_inputs: &[F]) -> anyhow::Result<Groupings> {
     );
     let n_leaves = leaves_public_inputs.len() / LEAF_PI_LEN;
 
-    let mut root_hash_groups: BTreeMap<[F; 4], Vec<usize>> = BTreeMap::new();
-    let mut exit_account_groups: BTreeMap<[F; 4], Vec<usize>> = BTreeMap::new();
+    let mut root_hash_groups = BTreeMap::<[F; 4], Vec<usize>>::new();
+    let mut exit_account_groups = BTreeMap::<[F; 4], Vec<usize>>::new();
 
     // chunk leaves into groups of 16
     for (i, chunk) in leaves_public_inputs.chunks(LEAF_PI_LEN).enumerate() {
@@ -213,18 +212,11 @@ fn find_group_indices(leaves_public_inputs: &[F]) -> anyhow::Result<Groupings> {
     }
 
     // Produce stable Vec<Vec<usize>> in sorted order.
-    let mut out_root: Vec<Vec<usize>> = Vec::with_capacity(root_hash_groups.len());
-
-    for (_, root_hash_map) in root_hash_groups {
-        out_root.push(root_hash_map);
-    }
+    let out_root = root_hash_groups.into_values().collect();
 
     // Produce stable Vec<Vec<usize>> in sorted order.
-    let mut out_exit: Vec<Vec<usize>> = Vec::with_capacity(exit_account_groups.len());
+    let out_exit = exit_account_groups.into_values().collect();
 
-    for (_, exits_map) in exit_account_groups {
-        out_exit.push(exits_map);
-    }
     let groupings = Groupings::new(out_root, out_exit);
     // assert that the length equals the n_leaves
     anyhow::ensure!(
@@ -257,8 +249,7 @@ fn aggregate_dedupe_public_inputs(
     );
     let root = &proofs[0];
 
-    // Off-circuit sanity and sizing
-    // TODO: figure out how to express these more global checks as a set of constaints in the circuit
+    // Off-circuit sanity and sizing checks
     let n_leaf = indices.len();
     anyhow::ensure!(n_leaf > 0, "indices must not be empty");
 
@@ -284,27 +275,19 @@ fn aggregate_dedupe_public_inputs(
     let child_pt = builder.add_virtual_proof_with_pis(child_common);
     builder.verify_proof::<C>(&child_pt, &vd_t, child_common);
 
-    // Helpers to slice 4-limb values out of the *child* PI vector
-    let limbs4_at = |pis: &Vec<Target>, leaf_idx: usize, start_off: usize| -> [Target; 4] {
-        let base = leaf_idx * LEAF_PI_LEN + start_off;
-        [pis[base], pis[base + 1], pis[base + 2], pis[base + 3]]
-    };
-
-    // Preload all roots & exits (as Targets) so we can count uniques with fixed loops
-    let mut all_roots: Vec<[Target; 4]> = Vec::with_capacity(n_leaf);
-    let mut all_funding_amounts: Vec<[Target; 4]> = Vec::with_capacity(n_leaf);
-    let mut all_exits: Vec<[Target; 4]> = Vec::with_capacity(n_leaf);
-    let mut all_nullifiers: Vec<[Target; 4]> = Vec::with_capacity(n_leaf);
-    for i in 0..n_leaf {
-        all_roots.push(limbs4_at(&child_pt.public_inputs, i, ROOT_START));
-        all_exits.push(limbs4_at(&child_pt.public_inputs, i, EXIT_START));
-        all_funding_amounts.push(limbs4_at(&child_pt.public_inputs, i, FUNDING_START));
-        all_nullifiers.push(limbs4_at(&child_pt.public_inputs, i, NULLIFIER_START));
-    }
+    let child_pi_targets = &child_pt.public_inputs;
 
     // Compute unique counts for roots and exits
-    let num_roots_t = count_unique_4x32_keys(&mut builder, &all_roots);
-    let num_exits_t = count_unique_4x32_keys(&mut builder, &all_exits);
+    let num_roots_t = count_unique_4x32_keys::<_, _, LEAF_PI_LEN, ROOT_START>(
+        &mut builder,
+        child_pi_targets,
+        n_leaf,
+    );
+    let num_exits_t = count_unique_4x32_keys::<_, _, LEAF_PI_LEN, EXIT_START>(
+        &mut builder,
+        child_pi_targets,
+        n_leaf,
+    );
 
     // Build deduped output
     let mut deduped_pis: Vec<Target> = Vec::new();
@@ -317,12 +300,12 @@ fn aggregate_dedupe_public_inputs(
 
     for per_root in indices.root_hashes.iter() {
         let rep = per_root[0];
-        let root_ref = all_roots[rep];
+        let root_ref = limbs4_at_offset::<LEAF_PI_LEN, ROOT_START>(child_pi_targets, rep);
         // One root hash per group of deduped exit accounts.
         deduped_pis.extend_from_slice(&root_ref);
 
         for &idx in per_root.iter() {
-            let root_i = all_roots[idx];
+            let root_i = limbs4_at_offset::<LEAF_PI_LEN, ROOT_START>(child_pi_targets, idx);
             let ee = bytes_digest_eq(&mut builder, root_i, root_ref);
             builder.connect(ee.target, one);
         }
@@ -330,7 +313,7 @@ fn aggregate_dedupe_public_inputs(
 
     for per_exit in indices.exit_accounts.iter() {
         let rep = per_exit[0];
-        let exit_ref = all_exits[rep];
+        let exit_ref = limbs4_at_offset::<LEAF_PI_LEN, EXIT_START>(child_pi_targets, rep);
 
         // Sum funding across the group
         let mut acc = [
@@ -342,11 +325,11 @@ fn aggregate_dedupe_public_inputs(
 
         for &idx in per_exit.iter() {
             // Enforce all members share same exit
-            let exit_i = all_exits[idx];
+            let exit_i = limbs4_at_offset::<LEAF_PI_LEN, EXIT_START>(child_pi_targets, idx);
             let ee = bytes_digest_eq(&mut builder, exit_i, exit_ref);
             builder.connect(ee.target, one);
             // Sum funding amounts
-            let fund_i = all_funding_amounts[idx];
+            let fund_i = limbs4_at_offset::<LEAF_PI_LEN, FUNDING_START>(child_pi_targets, idx);
             let (sum, top_carry) = add_u128_base2_32_split(&mut builder, acc, fund_i);
             // Enforce no 129-bit overflow.
             let zero = builder.zero();
@@ -358,12 +341,12 @@ fn aggregate_dedupe_public_inputs(
         deduped_pis.extend_from_slice(&exit_ref);
     }
     // Forward ALL nullifiers
-    deduped_pis.extend_from_slice(
-        &all_nullifiers
-            .into_iter()
-            .flat_map(|n| n.to_vec())
-            .collect::<Vec<Target>>(),
-    );
+    for i in 0..n_leaf {
+        deduped_pis.extend_from_slice(&limbs4_at_offset::<LEAF_PI_LEN, NULLIFIER_START>(
+            child_pi_targets,
+            i,
+        ));
+    }
 
     // Pad the rest of the deduped_pis until it is equal to root_pi_len + 2 (for the two counts)
     while deduped_pis.len() < root_pi_len + 2 {

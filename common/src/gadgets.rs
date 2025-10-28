@@ -89,14 +89,29 @@ pub fn bytes_digest_eq<F: RichField + Extendable<D>, const D: usize>(
     b.and(e01, e23)
 }
 
-/// Count unique 4x32-bit keys (big-endian limbs) among N leaves:
+#[inline]
+pub fn limbs4_at_offset<const LEAF_PI_LEN: usize, const KEY_OFFSET: usize>(
+    pis: &[Target],
+    index: usize,
+) -> [Target; 4] {
+    let base = index * LEAF_PI_LEN + KEY_OFFSET;
+    [pis[base], pis[base + 1], pis[base + 2], pis[base + 3]]
+}
+
+/// Count unique 4x32-bit keys (big-endian limbs) among N leaves each of LEAF_PI_LEN:
+/// KEY_OFFSET is the offset of the 4x32-bit key within each leaf's public inputs.
 /// For each i, flag[i] = 1 if key[i] != key[j] for all j<i, else 0.
 /// Returns sum(flag) as a Target.
-pub fn count_unique_4x32_keys<F: RichField + Extendable<D>, const D: usize>(
+pub fn count_unique_4x32_keys<
+    F: RichField + Extendable<D>,
+    const D: usize,
+    const LEAF_PI_LEN: usize,
+    const KEY_OFFSET: usize,
+>(
     b: &mut CircuitBuilder<F, D>,
-    keys: &[[Target; 4]],
+    pis: &[Target],
+    n: usize,
 ) -> Target {
-    let n = keys.len();
     let one = b.one();
     let mut first_flags: Vec<Target> = Vec::with_capacity(n);
 
@@ -104,7 +119,9 @@ pub fn count_unique_4x32_keys<F: RichField + Extendable<D>, const D: usize>(
         // seen_any = OR_{j<i} (keys[i] == keys[j])
         let mut seen_any = BoolTarget::new_unsafe(b.zero());
         for j in 0..i {
-            let eq = bytes_digest_eq(b, keys[i], keys[j]); // BoolTarget
+            let key_i = limbs4_at_offset::<LEAF_PI_LEN, KEY_OFFSET>(pis, i);
+            let key_j = limbs4_at_offset::<LEAF_PI_LEN, KEY_OFFSET>(pis, j);
+            let eq = bytes_digest_eq(b, key_i, key_j); // BoolTarget
             seen_any = b.or(seen_any, eq);
         }
         // first_i = 1 - seen_any
