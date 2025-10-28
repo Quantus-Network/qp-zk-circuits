@@ -18,7 +18,7 @@ pub const FUNDING_AMOUNT_END_INDEX: usize = 12;
 pub const EXIT_ACCOUNT_START_INDEX: usize = 12;
 pub const EXIT_ACCOUNT_END_INDEX: usize = 16;
 
-pub const DIGEST_LOGS_SIZE: usize = 110;
+pub const DIGEST_LOGS_SIZE: usize = 72;
 
 /// Inputs required to commit to the wormhole circuit.
 #[derive(Debug, Clone)]

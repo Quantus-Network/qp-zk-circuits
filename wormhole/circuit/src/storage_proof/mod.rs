@@ -55,7 +55,7 @@ impl StorageProofTargets {
     }
 }
 
-/// A storgae proof along with an array of indices where the hash child ndoes are placed.
+/// A storage proof along with an array of indices where the hash child nodes are placed.
 #[derive(Debug, Clone)]
 pub struct ProcessedStorageProof {
     pub proof: Vec<Vec<u8>>,

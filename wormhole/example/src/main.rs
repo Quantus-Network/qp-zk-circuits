@@ -115,9 +115,9 @@ async fn main() -> anyhow::Result<()> {
     let block_number = header.number;
     let block_hash = block_hash;
     let parent_hash = parent_hash;
+    println!("Digest logs: {:?}", header.digest.logs);
     let digest_logs: [u8; DIGEST_LOGS_SIZE] = header
         .digest
-        .logs
         .encode()
         .try_into()
         .expect("Digest logs size len issue; qed");
