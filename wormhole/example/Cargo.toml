@@ -19,3 +19,4 @@ sp-runtime = "44.0.0"
 qp-poseidon = "0.9.5"
 sp-core = "38.1.0"
 tokio = "1.48.0"
+sp-trie = { git = "https://github.com/Quantus-Network/chain.git", default-features = false }

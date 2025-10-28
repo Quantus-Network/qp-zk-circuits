@@ -27,6 +27,9 @@ use wormhole_circuit::storage_proof::ProcessedStorageProof;
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::utils::{BytesDigest, Digest};
 
+mod proof_processing;
+mod utils;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // let quantus_client = QuantusClient::new("wss://a.t.res.fm").await?;
@@ -127,15 +130,9 @@ async fn main() -> anyhow::Result<()> {
     let unspendable_account =
         wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(&secret).account_id;
 
-    // NOTE: The `indices` for the storage proof are non-trivial to calculate.
-    // They depend on the structure of the Patricia Merkle Trie and the path to the
-    // specific leaf. For this example, we are passing an empty vec, which will
-    // likely fail in a real circuit that properly validates them. A real implementation
-    // would require a client-side trie library to determine these indices.
-    let processed_storage_proof = ProcessedStorageProof::new(
-        read_proof.proof.iter().map(|v| v.to_vec()).collect(),
-        vec![],
-    )?;
+    println!("Processing storage proof to generate ordered path and indices...");
+    let processed_storage_proof =
+        proof_processing::process_storage_proof(header.state_root, &final_key, read_proof.proof)?;
 
     let inputs = CircuitInputs {
         private: PrivateCircuitInputs {

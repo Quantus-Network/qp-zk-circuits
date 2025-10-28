@@ -3733,7 +3733,7 @@ dependencies = [
  "sp-core 37.0.0",
  "sp-runtime 42.0.0",
  "sp-storage",
- "sp-trie 40.0.0",
+ "sp-trie 40.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -5068,7 +5068,7 @@ dependencies = [
  "sp-runtime-interface 30.0.0",
  "sp-state-machine 0.46.0",
  "sp-tracing 17.1.0",
- "sp-trie 40.0.0",
+ "sp-trie 40.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "tracing",
  "tracing-core",
 ]
@@ -5158,7 +5158,7 @@ dependencies = [
  "sp-core 37.0.0",
  "sp-io 41.0.1",
  "sp-std",
- "sp-trie 40.0.0",
+ "sp-trie 40.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "sp-weights 32.0.0",
  "tracing",
  "tuplex",
@@ -5276,7 +5276,7 @@ dependencies = [
  "sp-core 37.0.0",
  "sp-externalities",
  "sp-panic-handler",
- "sp-trie 40.0.0",
+ "sp-trie 40.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 1.0.69",
  "tracing",
  "trie-db",
@@ -5369,6 +5369,24 @@ dependencies = [
  "substrate-prometheus-endpoint",
  "thiserror 1.0.69",
  "tracing",
+ "trie-db",
+ "trie-root",
+]
+
+[[package]]
+name = "sp-trie"
+version = "40.0.0"
+source = "git+https://github.com/Quantus-Network/chain.git#54db883efa71437bf912ccabbf179d81c690c74f"
+dependencies = [
+ "foldhash",
+ "hash-db",
+ "hashbrown 0.15.5",
+ "log",
+ "memory-db",
+ "parity-scale-codec",
+ "scale-info",
+ "sp-core 37.0.0",
+ "sp-externalities",
  "trie-db",
  "trie-root",
 ]
@@ -6953,6 +6971,7 @@ dependencies = [
  "quantus-cli",
  "sp-core 38.1.0",
  "sp-runtime 44.0.0",
+ "sp-trie 40.0.0 (git+https://github.com/Quantus-Network/chain.git)",
  "subxt",
  "tokio",
 ]
