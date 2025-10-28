@@ -18,6 +18,7 @@ zk-circuits-common = { package = "qp-zk-circuits-common", version = "0.1.2", pat
 
 [dev-dependencies]
 criterion = { workspace = true }
+rand = "0.8"
 
 [features]
 default = ["multithread", "std"]
