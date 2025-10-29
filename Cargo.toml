@@ -17,8 +17,12 @@ resolver = "2"
 anyhow = { version = "1.0.98", default-features = false }
 criterion = { version = "0.5.1", default-features = false }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
-qp-plonky2 = { git = "https://github.com/Quantus-Network/qp-plonky2", default-features = false, features = [
+qp-plonky2 = { git = "https://github.com/Quantus-Network/qp-plonky2", default-features = false, branch = "poseidon2", features = [
 	"no_random",
+] }
+qp-poseidon-core = { git = "https://github.com/Quantus-Network/qp-poseidon", branch = "audit-responses", default-features = false, features = [
+	"p2",
+	"p3",
 ] }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 
@@ -34,3 +38,6 @@ version = "0.1.2"
 
 [workspace.lints.clippy]
 uninlined_format_args = "allow"
+
+[patch.crates-io]
+qp-plonky2 = { git = "https://github.com/Quantus-Network/qp-plonky2", branch = "poseidon2" }

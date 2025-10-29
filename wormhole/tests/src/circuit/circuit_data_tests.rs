@@ -21,6 +21,7 @@ use wormhole_prover::WormholeProver;
 use wormhole_verifier::WormholeVerifier;
 use zk_circuits_common::circuit::{TransferProofJson, D, F};
 use zk_circuits_common::utils::u64_to_felts;
+use zk_circuits_common::utils::BytesDigest;
 use zk_circuits_common::utils::{digest_felts_to_bytes, u128_to_felts};
 
 /// Extract the last valid JSON object of type T from an arbitrary stdout blob.
@@ -140,8 +141,8 @@ fn test_prover_and_verifier_from_file_e2e() -> Result<()> {
 
     // Create inputs
     let funding_account = SubstrateAccount::new(&[2u8; 32])?;
-    let secret = [1u8; 32];
-    let unspendable_account = UnspendableAccount::from_secret(&secret).account_id;
+    let secret = BytesDigest::try_from([1u8; 32]).unwrap();
+    let unspendable_account = UnspendableAccount::from_secret(secret).account_id;
     let funding_amount = 1000u128;
     let transfer_count = 0u64;
 
@@ -165,7 +166,7 @@ fn test_prover_and_verifier_from_file_e2e() -> Result<()> {
         },
         public: PublicCircuitInputs {
             funding_amount,
-            nullifier: Nullifier::from_preimage(&secret, 0).hash.into(),
+            nullifier: Nullifier::from_preimage(secret, 0).hash.into(),
             root_hash: root_hash.try_into().unwrap(),
             exit_account: (*exit_account).into(),
         },
@@ -272,7 +273,8 @@ fn test_prover_and_verifier_fuzzing() -> Result<()> {
                 223, 23, 232, 59, 97, 108, 223, 113, 2, 89, 54, 39, 126, 65, 248, 106, 156, 219, 7,
                 123, 213, 197, 228, 118, 177, 81, 61, 77, 23, 89, 200, 80,
             ])?; // Alice test account from dev node.
-            let unspendable_account = UnspendableAccount::from_secret(&secret).account_id;
+            let secret = BytesDigest::try_from(secret.as_slice()).unwrap();
+            let unspendable_account = UnspendableAccount::from_secret(secret).account_id;
 
             let transfer_count_from_chain = proof_json.transfer_count;
 
@@ -293,7 +295,7 @@ fn test_prover_and_verifier_fuzzing() -> Result<()> {
                 },
                 public: PublicCircuitInputs {
                     funding_amount,
-                    nullifier: Nullifier::from_preimage(&secret, transfer_count_from_chain)
+                    nullifier: Nullifier::from_preimage(secret, transfer_count_from_chain)
                         .hash
                         .into(),
                     root_hash: state_root_bytes.try_into().unwrap(),

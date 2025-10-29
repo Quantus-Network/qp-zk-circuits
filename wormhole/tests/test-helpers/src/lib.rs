@@ -35,7 +35,9 @@ pub const DEFAULT_EXIT_ACCOUNT: [u8; 32] = [4u8; 32];
 
 impl TestInputs for CircuitInputs {
     fn test_inputs_0() -> Self {
-        let secret = hex::decode(DEFAULT_SECRETS[0].trim()).unwrap();
+        let secret = hex::decode(DEFAULT_SECRETS[0].trim()).unwrap()[..32]
+            .try_into()
+            .unwrap();
         let root_hash = hex::decode(DEFAULT_ROOT_HASHES[0].trim())
             .unwrap()
             .as_slice()
@@ -43,11 +45,10 @@ impl TestInputs for CircuitInputs {
             .unwrap();
 
         let funding_account = BytesDigest::try_from(DEFAULT_FUNDING_ACCOUNT).unwrap();
-        let nullifier = Nullifier::from_preimage(&secret, DEFAULT_TRANSFER_COUNTS[0])
+        let nullifier = Nullifier::from_preimage(secret, DEFAULT_TRANSFER_COUNTS[0])
             .hash
             .into();
-        let secret: [u8; 32] = secret.try_into().expect("Expected 32 bytes for secret");
-        let unspendable_account = UnspendableAccount::from_secret(&secret).account_id.into();
+        let unspendable_account = UnspendableAccount::from_secret(secret).account_id.into();
         let exit_account = BytesDigest::try_from(DEFAULT_EXIT_ACCOUNT).unwrap();
 
         let storage_proof = ProcessedStorageProof::test_inputs_0();
@@ -68,7 +69,9 @@ impl TestInputs for CircuitInputs {
         }
     }
     fn test_inputs_1() -> Self {
-        let secret = hex::decode(DEFAULT_SECRETS[1].trim()).unwrap();
+        let secret = hex::decode(DEFAULT_SECRETS[1].trim()).unwrap()[..32]
+            .try_into()
+            .unwrap();
         let root_hash = hex::decode(DEFAULT_ROOT_HASHES[1].trim())
             .unwrap()
             .as_slice()
@@ -76,11 +79,10 @@ impl TestInputs for CircuitInputs {
             .unwrap();
 
         let funding_account = BytesDigest::try_from(DEFAULT_FUNDING_ACCOUNT).unwrap();
-        let nullifier = Nullifier::from_preimage(&secret, DEFAULT_TRANSFER_COUNTS[1])
+        let nullifier = Nullifier::from_preimage(secret, DEFAULT_TRANSFER_COUNTS[1])
             .hash
             .into();
-        let secret: [u8; 32] = secret.try_into().expect("Expected 32 bytes for secret");
-        let unspendable_account = UnspendableAccount::from_secret(&secret).account_id.into();
+        let unspendable_account = UnspendableAccount::from_secret(secret).account_id.into();
         let exit_account = BytesDigest::try_from(DEFAULT_EXIT_ACCOUNT).unwrap();
 
         let storage_proof = ProcessedStorageProof::test_inputs_1();
@@ -233,8 +235,10 @@ pub mod nullifier {
 
     impl TestInputs for Nullifier {
         fn test_inputs() -> Self {
-            let secret = hex::decode(DEFAULT_SECRETS[0]).unwrap();
-            Self::from_preimage(secret.as_slice(), DEFAULT_TRANSFER_COUNTS[0])
+            let secret = hex::decode(DEFAULT_SECRETS[0]).unwrap()[..32]
+                .try_into()
+                .unwrap();
+            Self::from_preimage(secret, DEFAULT_TRANSFER_COUNTS[0])
         }
     }
 }

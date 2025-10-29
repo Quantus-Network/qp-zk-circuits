@@ -63,7 +63,7 @@ pub struct AggregatedPublicCircuitInputs {
 #[derive(Debug, Clone)]
 pub struct PrivateCircuitInputs {
     /// Raw bytes of the secret of the nullifier and the unspendable account
-    pub secret: [u8; 32],
+    pub secret: BytesDigest,
     /// A sequence of key-value nodes representing the storage proof.
     ///
     /// Each element is a tuple where the items are the left and right splits of a proof node split

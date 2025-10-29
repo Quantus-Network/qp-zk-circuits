@@ -49,7 +49,8 @@ fn preimage_matches_right_address() {
     for (secret, address) in SECRETS.iter().zip(ADDRESSES) {
         let decoded_secret: [u8; 32] = hex::decode(secret).unwrap().try_into().unwrap();
         let decoded_address = hex::decode(address).unwrap();
-        let unspendable_account = UnspendableAccount::from_secret(&decoded_secret);
+        let unspendable_account =
+            UnspendableAccount::from_secret(decoded_secret.try_into().unwrap());
 
         let decoded_address = BytesDigest::try_from(decoded_address.as_slice()).unwrap();
 
@@ -64,7 +65,8 @@ fn preimage_matches_right_address() {
 fn preimage_does_not_match_wrong_address() {
     let (secret, wrong_address) = (SECRETS[0], ADDRESSES[1]);
     let decoded_secret: [u8; 32] = hex::decode(secret).unwrap().try_into().unwrap();
-    let mut unspendable_account = UnspendableAccount::from_secret(&decoded_secret);
+    let mut unspendable_account =
+        UnspendableAccount::from_secret(decoded_secret.try_into().unwrap());
 
     // Override the correct hash with the wrong one.
     let wrong_address =
@@ -79,7 +81,7 @@ fn preimage_does_not_match_wrong_address() {
 #[test]
 fn all_zero_preimage_is_valid_and_hashes() {
     let preimage_bytes = [0u8; 32];
-    let account = UnspendableAccount::from_secret(&preimage_bytes);
+    let account = UnspendableAccount::from_secret(preimage_bytes.try_into().unwrap());
     assert!(!account.account_id.to_vec().iter().all(Field::is_zero));
 }
 
@@ -97,10 +99,6 @@ fn unspendable_account_codec() {
             F::from_noncanonical_u64(6),
             F::from_noncanonical_u64(7),
             F::from_noncanonical_u64(8),
-            F::from_noncanonical_u64(9),
-            F::from_noncanonical_u64(10),
-            F::from_noncanonical_u64(11),
-            F::from_noncanonical_u64(12),
         ],
     };
 
@@ -115,10 +113,6 @@ fn unspendable_account_codec() {
     assert_eq!(field_elements[5], F::from_noncanonical_u64(6));
     assert_eq!(field_elements[6], F::from_noncanonical_u64(7));
     assert_eq!(field_elements[7], F::from_noncanonical_u64(8));
-    assert_eq!(field_elements[8], F::from_noncanonical_u64(9));
-    assert_eq!(field_elements[9], F::from_noncanonical_u64(10));
-    assert_eq!(field_elements[10], F::from_noncanonical_u64(11));
-    assert_eq!(field_elements[11], F::from_noncanonical_u64(12));
 
     // Decode the field elements back into an UnspendableAccount
     let recovered_account = UnspendableAccount::from_field_elements(&field_elements).unwrap();
