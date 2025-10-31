@@ -239,8 +239,9 @@ impl CircuitFragment for Nullifier {
     ) {
         let mut preimage = Vec::new();
         let salt_felts = injective_string_to_felt(NULLIFIER_SALT);
-        preimage.push(builder.constant(salt_felts[0]));
-        preimage.push(builder.constant(salt_felts[1]));
+        for &f in salt_felts.iter() {
+            preimage.push(builder.constant(f));
+        }
         preimage.extend(secret.elements.iter());
         preimage.extend(transfer_count);
 

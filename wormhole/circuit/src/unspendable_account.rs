@@ -14,8 +14,8 @@ use zk_circuits_common::utils::{
     digest_bytes_to_felts, digest_felts_to_bytes, injective_string_to_felt, BytesDigest, Digest,
 };
 
-pub const SECRET_NUM_TARGETS: usize = 8;
-pub const PREIMAGE_NUM_TARGETS: usize = 10;
+pub const SECRET_NUM_TARGETS: usize = 4;
+pub const PREIMAGE_NUM_TARGETS: usize = 7;
 pub const UNSPENDABLE_SALT: &str = "wormhole";
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -40,15 +40,18 @@ impl UnspendableAccount {
 
         if preimage.len() != PREIMAGE_NUM_TARGETS {
             panic!(
-                "Expected preimage to be 80 bytes (10 field elements), got {} field elements",
+                "Expected preimage to be 56 bytes (7 field elements), got {} field elements",
                 preimage.len()
             );
         }
 
         // Hash twice to get the account id.
         let inner_hash = PoseidonHash::hash_no_pad(&preimage).elements;
-        // println!("inner_hash: {:?}", hex::encode(felts_to_bytes(&inner_hash)));
         let outer_hash = PoseidonHash::hash_no_pad(&inner_hash).elements;
+        // println!(
+        //     "accountId: {:?}",
+        //     hex::encode(*digest_felts_to_bytes(outer_hash))
+        // );
         let account_id = Digest::from(outer_hash);
 
         Self {
@@ -175,8 +178,9 @@ impl CircuitFragment for UnspendableAccount {
     ) {
         let salt = injective_string_to_felt(UNSPENDABLE_SALT);
         let mut preimage = Vec::new();
-        preimage.push(builder.constant(salt[0]));
-        preimage.push(builder.constant(salt[1]));
+        for felt in salt {
+            preimage.push(builder.constant(felt));
+        }
         preimage.extend(secret.elements.iter());
 
         // Compute the `generated_account` by double-hashing the preimage (salt + secret).

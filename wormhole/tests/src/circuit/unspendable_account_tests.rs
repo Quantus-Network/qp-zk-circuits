@@ -19,11 +19,11 @@ const SECRETS: [&str; 5] = [
 
 #[cfg(test)]
 const ADDRESSES: [&str; 5] = [
-    "582d3b97e9b09c7776921d3ead2d8186e3aa199cf8d63f5d014e65d04ac80f26",
-    "b0807446c24263def407aa8328400fef981ec30fc8453d7adbcc57bcf8af3bbf",
-    "ac081f035cc995574fef749f33b455c31cb02759932d01b6367ab852bb5599ac",
-    "a5073c13573f10552c37f35080dc0118bda22f1217381611cf4644909377ce05",
-    "73378f4b54f48a38b17073e08440531594f2b771ceefc5c3cd621e1309fbe927",
+    "b209bdf6636fd7a3a224b9e62dde4acf7a93ecc7d19f618990e34bdeae8e1455",
+    "aebdf7b4136139bbda4d8b5b4cfe3726dfdd64c842e16f79ad8033f8044c3b7e",
+    "f5fc29c796b56aeabc3d3d9bd113d6b958f434b0919e207d81c3ded261331677",
+    "c18c0dfb3f71945ea7cf1ecfdd110a6ed1c2d0cdde5db0b2d05c60e14bc2da83",
+    "96d45bf29b88b160511748dba781606b10e1f5f9dfdc9d7350e7d57676f65e43",
 ];
 
 #[cfg(test)]
@@ -104,7 +104,7 @@ fn unspendable_account_codec() {
 
     // Encode the account as field elements and compare.
     let field_elements = account.to_field_elements();
-    assert_eq!(field_elements.len(), 12);
+    assert_eq!(field_elements.len(), 8);
     assert_eq!(field_elements[0], F::from_noncanonical_u64(1));
     assert_eq!(field_elements[1], F::from_noncanonical_u64(2));
     assert_eq!(field_elements[2], F::from_noncanonical_u64(3));
