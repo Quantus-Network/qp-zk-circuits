@@ -131,9 +131,8 @@ async fn main() -> anyhow::Result<()> {
         wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(&secret).account_id;
 
     println!("Processing storage proof to generate ordered path and indices...");
-    let processed_storage_proof =
-        proof_processing::process_storage_proof(header.state_root, &final_key, read_proof.proof)?;
-
+        let processed_storage_proof = proof_processing::process_storage_proof::
+            <qp_poseidon::PoseidonHasher>(header.state_root, &final_key, read_proof.proof)?;
     let inputs = CircuitInputs {
         private: PrivateCircuitInputs {
             secret,

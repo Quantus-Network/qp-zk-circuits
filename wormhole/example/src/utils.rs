@@ -1,76 +1,70 @@
 //! Utility functions for the wormhole example.
-use crate::*;
+use anyhow::anyhow;
+use hex;
+use sp_core::{Hasher, H256};
+use wormhole_circuit::storage_proof::ProcessedStorageProof;
+
+// Assuming PoseidonHasher is brought into scope from main.rs or lib.rs
+use crate::PoseidonHasher;
 
 /// Prepares the storage proof for circuit consumption.
-fn prepare_proof_for_circuit(
+/// This function attempts to order the proof nodes based on finding child hashes
+/// within parent nodes using a string search.
+pub fn prepare_proof_for_circuit(
     proof: Vec<Vec<u8>>,
-    state_root: String,
+    state_root: H256,
     last_idx: usize,
-) -> (Vec<String>, Vec<usize>) {
-    let mut hashes = Vec::<String>::new();
-    let mut bytes = Vec::<String>::new();
-    let mut parts = Vec::<(String, String)>::new();
-    let mut storage_proof = Vec::<String>::new();
+) -> anyhow::Result<ProcessedStorageProof> {
+    let mut hashes = vec![];
+    let mut bytes_hex = vec![];
+    let mut storage_proof_hex = vec![];
+
     for node_data in proof.iter() {
-        let hash = hex::encode(<PoseidonHasher as Hasher>::hash(node_data));
-        let node_bytes = hex::encode(node_data);
+        let hash = <PoseidonHasher as Hasher>::hash(node_data);
         if hash == state_root {
-            storage_proof.push(node_bytes);
+            storage_proof_hex.push(hex::encode(node_data));
         } else {
-            // don't put the hash in if it is the root
             hashes.push(hash);
-            bytes.push(node_bytes.clone());
+            bytes_hex.push(hex::encode(node_data));
         }
     }
 
-    println!(
-        "Finished constructing bytes and hashes vectors {:?} {:?}",
-        bytes, hashes
-    );
+    if storage_proof_hex.is_empty() {
+        return Err(anyhow!("State root node not found in proof set"));
+    }
 
-    let mut ordered_hashes = Vec::<String>::new();
     let mut indices = Vec::<usize>::new();
 
     while !hashes.is_empty() {
+        let mut found_in_iteration = false;
         for i in (0..hashes.len()).rev() {
-            let hash = hashes[i].clone();
-            if let Some(last) = storage_proof.last() {
-                if let Some(index) = last.find(&hash) {
-                    let (left, right) = last.split_at(index);
+            let hash = hashes[i];
+            let hash_hex = hex::encode(hash.as_bytes());
+
+            if let Some(last_node_hex) = storage_proof_hex.last() {
+                if let Some(index) = last_node_hex.find(&hash_hex) {
+                    // NOTE: This provides the byte index within a hex string.
+                    // This is likely not the correct index format for the circuit.
                     indices.push(index);
-                    parts.push((left.to_string(), right.to_string()));
-                    storage_proof.push(bytes[i].clone());
-                    ordered_hashes.push(hash.clone());
+                    storage_proof_hex.push(bytes_hex[i].clone());
                     hashes.remove(i);
-                    bytes.remove(i);
+                    bytes_hex.remove(i);
+                    found_in_iteration = true;
+                    break; // Found a match, restart the inner loop
                 }
             }
         }
+        if !found_in_iteration && !hashes.is_empty() {
+            return Err(anyhow!("Could not order storage proof, path is broken."));
+        }
     }
+
     indices.push(last_idx);
 
-    // iterate through the storage proof, printing the size of each.
-    for (i, node) in storage_proof.iter().enumerate() {
-        println!("Storage proof node {}: {} bytes", i, (node.len() / 16));
-    }
+    let final_storage_proof: Vec<Vec<u8>> = storage_proof_hex
+        .into_iter()
+        .map(hex::decode)
+        .collect::<Result<_, _>>()?;
 
-    println!(
-        "Storage proof generated: {:?} {:?} {:?} {:?}",
-        &storage_proof, parts, ordered_hashes, indices
-    );
-
-    for (i, _) in storage_proof.iter().enumerate() {
-        if i == parts.len() {
-            break;
-        }
-        let part = parts[i].clone();
-        let hash = ordered_hashes[i].clone();
-        if part.1[..64] != hash {
-            panic!("storage proof index incorrect {:?} != {:?}", part.1, hash);
-        } else {
-            println!("storage proof index correct: {:?}", part.0.len());
-        }
-    }
-
-    (storage_proof, indices)
+    Ok(ProcessedStorageProof::new(final_storage_proof, indices))
 }

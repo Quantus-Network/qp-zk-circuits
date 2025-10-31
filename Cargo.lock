@@ -5378,15 +5378,23 @@ name = "sp-trie"
 version = "40.0.0"
 source = "git+https://github.com/Quantus-Network/chain.git#54db883efa71437bf912ccabbf179d81c690c74f"
 dependencies = [
+ "ahash",
  "foldhash",
  "hash-db",
  "hashbrown 0.15.5",
  "log",
  "memory-db",
+ "nohash-hasher",
  "parity-scale-codec",
+ "parking_lot",
+ "rand 0.8.5",
  "scale-info",
+ "schnellru",
  "sp-core 37.0.0",
  "sp-externalities",
+ "substrate-prometheus-endpoint",
+ "thiserror 1.0.69",
+ "tracing",
  "trie-db",
  "trie-root",
 ]

@@ -229,10 +229,9 @@ impl CircuitFragment for StorageProof {
                 builder.range_check(*felt, 32);
             }
 
-            // Lastly, we do an additional check if this is the leaf node - that the hash of its
-            // inputs is contained within the node. Note: we only compare the last 3 felts since
-            // the stored leaf inputs hash does not always contain the first nibble.
-            for y in 1..4 {
+            // For the leaf node, the value is the hash of the leaf inputs. The hash of the
+            // leaf node itself (prev_hash) is the hash of that value.
+            for y in 0..4 {
                 let diff = builder.sub(leaf_inputs_hash.elements[y], prev_hash.elements[y]);
                 let result = builder.mul(diff, is_leaf_node.target);
                 let zero = builder.zero();
