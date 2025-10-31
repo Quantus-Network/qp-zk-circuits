@@ -110,15 +110,7 @@ pub mod circuit_logic {
 
     fn connect_shared_targets(targets: &CircuitTargets, builder: &mut CircuitBuilder<F, D>) {
         // Secret.
-        for (&a, &b) in targets
-            .nullifier
-            .secret
-            .iter()
-            .zip(&targets.unspendable_account.secret)
-        {
-            builder.connect(a, b);
-        }
-
+        builder.connect_hashes(targets.unspendable_account.secret, targets.nullifier.secret);
         // Transfer count.
         for (&a, &b) in targets
             .nullifier

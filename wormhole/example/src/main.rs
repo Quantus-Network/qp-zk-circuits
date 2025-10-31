@@ -8,7 +8,7 @@ use wormhole_circuit::storage_proof::ProcessedStorageProof;
 use wormhole_circuit::substrate_account::SubstrateAccount;
 use wormhole_circuit::unspendable_account::UnspendableAccount;
 use wormhole_prover::WormholeProver;
-use zk_circuits_common::utils::{digest_felts_to_bytes, u128_to_felts, u64_to_felts};
+use zk_circuits_common::utils::{digest_felts_to_bytes, u128_to_felts, u64_to_felts, BytesDigest};
 
 fn main() -> anyhow::Result<()> {
     // Create inputs. In practice, each input would be gathered from the real node.
@@ -16,8 +16,8 @@ fn main() -> anyhow::Result<()> {
         226, 124, 203, 9, 80, 60, 124, 205, 165, 5, 178, 216, 195, 15, 149, 38, 116, 1, 238, 133,
         181, 154, 106, 17, 41, 228, 118, 179, 82, 141, 225, 76,
     ])?; // Alice's dev account
-    let secret = [1u8; 32];
-    let unspendable_account = UnspendableAccount::from_secret(&secret).account_id;
+    let secret = BytesDigest::try_from([1u8; 32]).unwrap();
+    let unspendable_account = UnspendableAccount::from_secret(secret).account_id;
     let funding_amount = 1_000_000_000_000u128;
     let transfer_count = 0u64;
 
@@ -47,7 +47,7 @@ fn main() -> anyhow::Result<()> {
         },
         public: PublicCircuitInputs {
             funding_amount,
-            nullifier: Nullifier::from_preimage(&secret, 0).hash.into(),
+            nullifier: Nullifier::from_preimage(secret, 0).hash.into(),
             root_hash,
             exit_account: (*exit_account).into(),
         },

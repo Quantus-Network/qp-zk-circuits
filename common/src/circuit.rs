@@ -9,7 +9,7 @@ use serde::Deserialize;
 // Plonky2 setup parameters.
 pub const D: usize = 2; // D=2 provides 100-bits of security
 pub type C = PoseidonGoldilocksConfig;
-pub type F = GoldilocksField;
+pub type F = GoldilocksField; // Goldilocks field
 
 #[derive(Debug, Deserialize)]
 pub struct TransferProofJson {

@@ -14,7 +14,7 @@ use crate::{
 use zk_circuits_common::utils::{digest_bytes_to_felts, injective_bytes_to_felts};
 use zk_circuits_common::{
     circuit::{CircuitFragment, D, F},
-    utils::INJECTIVE_BYTES_PER_ELEMENT,
+    utils::INJECTIVE_BYTES_LIMB,
 };
 
 pub mod leaf;
@@ -107,7 +107,7 @@ impl StorageProof {
             .iter()
             .map(|&i| {
                 // Divide by 8 to get the field element index instead of the hex index.
-                let i = i / (INJECTIVE_BYTES_PER_ELEMENT * 2);
+                let i = i / (INJECTIVE_BYTES_LIMB * 2);
                 F::from_canonical_usize(i)
             })
             .collect();

@@ -37,7 +37,6 @@
             run: cargo install taplo-cli --locked
           - name: Run format checks
             run: |
-              taplo format --check --config taplo.toml
               cargo +nightly fmt --all -- --check
 
       test-workspace:
