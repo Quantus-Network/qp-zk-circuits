@@ -2,16 +2,16 @@
 use anyhow::anyhow;
 use hex;
 use sp_core::{Hasher, H256};
+use subxt::backend::legacy::rpc_methods::Bytes;
 use wormhole_circuit::storage_proof::ProcessedStorageProof;
 
-// Assuming PoseidonHasher is brought into scope from main.rs or lib.rs
-use crate::PoseidonHasher;
+use qp_poseidon::PoseidonHasher;
 
 /// Prepares the storage proof for circuit consumption.
 /// This function attempts to order the proof nodes based on finding child hashes
 /// within parent nodes using a string search.
 pub fn prepare_proof_for_circuit(
-    proof: Vec<Vec<u8>>,
+    proof: Vec<Bytes>,
     state_root: H256,
     last_idx: usize,
 ) -> anyhow::Result<ProcessedStorageProof> {
@@ -20,12 +20,12 @@ pub fn prepare_proof_for_circuit(
     let mut storage_proof_hex = vec![];
 
     for node_data in proof.iter() {
-        let hash = <PoseidonHasher as Hasher>::hash(node_data);
+        let hash = <PoseidonHasher as Hasher>::hash(&node_data.0);
         if hash == state_root {
-            storage_proof_hex.push(hex::encode(node_data));
+            storage_proof_hex.push(hex::encode(&node_data.0));
         } else {
             hashes.push(hash);
-            bytes_hex.push(hex::encode(node_data));
+            bytes_hex.push(hex::encode(&node_data.0));
         }
     }
 
@@ -66,5 +66,5 @@ pub fn prepare_proof_for_circuit(
         .map(hex::decode)
         .collect::<Result<_, _>>()?;
 
-    Ok(ProcessedStorageProof::new(final_storage_proof, indices))
+    ProcessedStorageProof::new(final_storage_proof, indices)
 }

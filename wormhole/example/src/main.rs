@@ -23,11 +23,9 @@ use wormhole_circuit::inputs::{
     BlockHeaderInputs, CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs, DIGEST_LOGS_SIZE,
 };
 use wormhole_circuit::nullifier::Nullifier;
-use wormhole_circuit::storage_proof::ProcessedStorageProof;
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::utils::{BytesDigest, Digest};
 
-mod proof_processing;
 mod utils;
 
 #[tokio::main]
@@ -131,8 +129,8 @@ async fn main() -> anyhow::Result<()> {
         wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(&secret).account_id;
 
     println!("Processing storage proof to generate ordered path and indices...");
-        let processed_storage_proof = proof_processing::process_storage_proof::
-            <qp_poseidon::PoseidonHasher>(header.state_root, &final_key, read_proof.proof)?;
+    let processed_storage_proof =
+        utils::prepare_proof_for_circuit(read_proof.proof, header.state_root, 0)?;
     let inputs = CircuitInputs {
         private: PrivateCircuitInputs {
             secret,
