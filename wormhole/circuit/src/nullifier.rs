@@ -28,7 +28,12 @@ pub const SALT_BYTES_LEN: usize = 8;
 pub const NULLIFIER_SALT: &str = "~nullif~";
 
 // Compile-time check: require NULLIFIER_SALT to have exactly SALT_BYTES_LEN bytes
-const _: [(); SALT_BYTES_LEN] = [(); NULLIFIER_SALT.len()];
+const _: () = {
+    assert!(
+        NULLIFIER_SALT.len() == SALT_BYTES_LEN,
+        "invalid NULLIFIER_SALT length"
+    );
+};
 pub const SECRET_BYTES_LEN: usize = 32;
 pub const SECRET_NUM_TARGETS: usize = DIGEST_NUM_FIELD_ELEMENTS;
 pub const SALT_NUM_TARGETS: usize = 3;
