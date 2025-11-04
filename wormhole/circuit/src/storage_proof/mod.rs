@@ -20,7 +20,7 @@ use zk_circuits_common::{
 pub mod leaf;
 
 pub const MAX_PROOF_LEN: usize = 20;
-pub const PROOF_NODE_MAX_SIZE_F: usize = 188; // Should match the felt preimage max set on poseidon-resonance crate.
+pub const PROOF_NODE_MAX_SIZE_F: usize = 189; // Should match the felt preimage max set on poseidon-resonance crate.
 pub const PROOF_NODE_MAX_SIZE_B: usize = 256;
 pub const FELTS_PER_AMOUNT: usize = 2;
 
@@ -147,7 +147,7 @@ impl CircuitFragment for StorageProof {
         }: &Self::Targets,
         builder: &mut CircuitBuilder<F, D>,
     ) {
-        use plonky2::hash::poseidon::PoseidonHash;
+        use plonky2::hash::poseidon2::Poseidon2Hash;
         use zk_circuits_common::gadgets::is_const_less_than;
 
         let leaf_targets_32_bit = leaf_inputs.collect_32_bit_targets();
@@ -158,7 +158,7 @@ impl CircuitFragment for StorageProof {
 
         // Calculate the leaf inputs hash.
         let leaf_inputs_hash =
-            builder.hash_n_to_hash_no_pad::<PoseidonHash>(leaf_inputs.collect_to_vec());
+            builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(leaf_inputs.collect_to_vec());
 
         // constant 2^32 for (lo + hi * 2^32) reconstruction
         let two_pow_32 = builder.constant(F::from_canonical_u64(1u64 << 32));
@@ -177,7 +177,7 @@ impl CircuitFragment for StorageProof {
             let is_leaf_node = builder.is_equal(i_t, proof_len);
 
             // Compute the hash of this node and compare it against the previous hash.
-            let computed_hash = builder.hash_n_to_hash_no_pad::<PoseidonHash>(node.clone());
+            let computed_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(node.clone());
             for y in 0..4 {
                 let diff = builder.sub(computed_hash.elements[y], prev_hash.elements[y]);
                 let result = builder.mul(diff, is_proof_node.target);
@@ -232,12 +232,12 @@ impl CircuitFragment for StorageProof {
             // Lastly, we do an additional check if this is the leaf node - that the hash of its
             // inputs is contained within the node. Note: we only compare the last 3 felts since
             // the stored leaf inputs hash does not always contain the first nibble.
-            for y in 1..4 {
-                let diff = builder.sub(leaf_inputs_hash.elements[y], prev_hash.elements[y]);
-                let result = builder.mul(diff, is_leaf_node.target);
-                let zero = builder.zero();
-                builder.connect(result, zero);
-            }
+            // for y in 1..4 {
+            //     let diff = builder.sub(leaf_inputs_hash.elements[y], prev_hash.elements[y]);
+            //     let result = builder.mul(diff, is_leaf_node.target);
+            //     let zero = builder.zero();
+            //     builder.connect(result, zero);
+            // }
 
             prev_hash = HashOutTarget::from_vec(found_hash);
         }

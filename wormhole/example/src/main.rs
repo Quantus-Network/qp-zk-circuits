@@ -1,4 +1,4 @@
-use plonky2::hash::poseidon::PoseidonHash;
+use plonky2::hash::poseidon2::Poseidon2Hash;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::config::Hasher;
 use plonky2::plonk::proof::ProofWithPublicInputs;
@@ -26,7 +26,7 @@ fn main() -> anyhow::Result<()> {
     leaf_inputs_felts.extend_from_slice(&funding_account.0);
     leaf_inputs_felts.extend_from_slice(&unspendable_account);
     leaf_inputs_felts.extend_from_slice(&u128_to_felts(funding_amount));
-    let leaf_inputs_hash = PoseidonHash::hash_no_pad(&leaf_inputs_felts);
+    let leaf_inputs_hash = Poseidon2Hash::hash_no_pad(&leaf_inputs_felts);
     let root_hash = digest_felts_to_bytes(leaf_inputs_hash.elements);
 
     let exit_account_id = 8226349481601990196u64;

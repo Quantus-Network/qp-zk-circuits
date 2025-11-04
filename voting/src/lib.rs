@@ -123,7 +123,7 @@ impl CircuitFragment for VoteCircuitData {
     fn circuit(targets: &Self::Targets, builder: &mut CircuitBuilder<F, D>) {
         // --- 1. Merkle Proof Verification ---
         let leaf_hash_targets = builder
-            .hash_n_to_hash_no_pad::<plonky2::hash::poseidon::PoseidonHash>(
+            .hash_n_to_hash_no_pad_p2::<plonky2::hash::poseidon2::Poseidon2Hash>(
                 targets.private_key.elements.to_vec(),
             );
         let mut current_hash_targets = leaf_hash_targets;
@@ -159,7 +159,9 @@ impl CircuitFragment for VoteCircuitData {
             combined_elements.extend(&right_elements);
 
             let parent_hash_candidacy = builder
-                .hash_n_to_hash_no_pad::<plonky2::hash::poseidon::PoseidonHash>(combined_elements);
+                .hash_n_to_hash_no_pad_p2::<plonky2::hash::poseidon2::Poseidon2Hash>(
+                    combined_elements,
+                );
 
             let mut next_hash_elements = Vec::with_capacity(DIGEST_NUM_FIELD_ELEMENTS);
             for k in 0..DIGEST_NUM_FIELD_ELEMENTS {
@@ -184,7 +186,7 @@ impl CircuitFragment for VoteCircuitData {
         nullifier_input_elements.extend_from_slice(&targets.proposal_id.elements);
 
         let computed_nullifier_targets = builder
-            .hash_n_to_hash_no_pad::<plonky2::hash::poseidon::PoseidonHash>(
+            .hash_n_to_hash_no_pad_p2::<plonky2::hash::poseidon2::Poseidon2Hash>(
                 nullifier_input_elements,
             );
 
@@ -265,7 +267,7 @@ mod voting_tests {
     use super::*;
     use plonky2::{
         field::types::Field,
-        hash::poseidon::PoseidonHash,
+        hash::poseidon2::Poseidon2Hash,
         iop::witness::PartialWitness,
         plonk::{circuit_data::CircuitConfig, config::Hasher},
     };
@@ -275,11 +277,11 @@ mod voting_tests {
     };
 
     fn compute_nullifier(private_key: &PrivateKey, proposal_id: &Digest) -> Digest {
-        let pk_hash = PoseidonHash::hash_no_pad(private_key).elements;
+        let pk_hash = Poseidon2Hash::hash_no_pad(private_key).elements;
         let mut input = [F::ZERO; 8];
         input[..4].copy_from_slice(&pk_hash);
         input[4..].copy_from_slice(proposal_id);
-        PoseidonHash::hash_no_pad(&input).elements
+        Poseidon2Hash::hash_no_pad(&input).elements
     }
 
     fn create_test_inputs() -> VoteCircuitData {
@@ -291,7 +293,7 @@ mod voting_tests {
         ];
         let leaves: Vec<Digest> = private_keys_for_tree
             .iter()
-            .map(|bytes| PoseidonHash::hash_no_pad(&digest_bytes_to_felts(*bytes)).elements)
+            .map(|bytes| Poseidon2Hash::hash_no_pad(&digest_bytes_to_felts(*bytes)).elements)
             .collect();
 
         // Build the Merkle tree level by level
@@ -306,7 +308,7 @@ mod voting_tests {
                     let mut combined = [F::ZERO; 8];
                     combined[..4].copy_from_slice(&current_level[i]);
                     combined[4..].copy_from_slice(&current_level[i + 1]);
-                    next_level.push(PoseidonHash::hash_no_pad(&combined).elements);
+                    next_level.push(Poseidon2Hash::hash_no_pad(&combined).elements);
                 } else {
                     next_level.push(current_level[i]);
                 }
