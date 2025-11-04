@@ -36,6 +36,12 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Connected to Substrate node.");
 
+    // get latest header
+    let blocks = client.blocks().at_latest().await?;
+    let header = blocks.header();
+
+    println!("digests {:?}", header.digest);
+
     let alice_pair = DilithiumPair::from_seed(&[0u8; 32]).expect("valid seed");
     let quantum_keypair = QuantumKeyPair {
         public_key: alice_pair.public().0.to_vec(),
@@ -110,13 +116,13 @@ async fn main() -> anyhow::Result<()> {
     let blocks = client.blocks().at(block_hash).await?;
     let header = blocks.header();
 
+    println!("state root {:?}", header.state_root.clone());
     let state_root = BytesDigest::try_from(header.state_root.as_bytes())?;
     let parent_hash = BytesDigest::try_from(header.parent_hash.as_bytes())?;
     let extrinsics_root = BytesDigest::try_from(header.extrinsics_root.as_bytes())?;
     let block_number = header.number;
     let block_hash = block_hash;
     let parent_hash = parent_hash;
-    println!("Digest logs: {:?}", header.digest.logs);
     let digest_logs: [u8; DIGEST_LOGS_SIZE] = header
         .digest
         .encode()
