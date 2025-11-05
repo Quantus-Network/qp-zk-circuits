@@ -223,7 +223,7 @@ impl NullifierTargets {
     pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
         Self {
             hash: builder.add_virtual_hash_public_input(),
-            secret: builder.add_virtual_hash_public_input(),
+            secret: builder.add_virtual_hash(),
             transfer_count: array::from_fn(|_| builder.add_virtual_target()),
         }
     }
