@@ -26,6 +26,8 @@ use wormhole_circuit::nullifier::Nullifier;
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::utils::{BytesDigest, Digest};
 
+use crate::utils::check_leaf;
+
 mod utils;
 
 #[tokio::main]
@@ -134,18 +136,18 @@ async fn main() -> anyhow::Result<()> {
     let unspendable_account =
         wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(&secret).account_id;
 
-    println!("Processing storage proof to generate ordered path and indices...");
-    let (processed_storage_proof, proof_root_hash) =
-        utils::prepare_proof_for_circuit(read_proof.proof, 0)?;
+    let (_, last_idx) = check_leaf(
+        &transfer_proof_hash,
+        read_proof.proof[read_proof.proof.len() - 1].clone().0,
+    );
 
-    if proof_root_hash != header.state_root {
-        return Err(anyhow::anyhow!(
-            "Proof is invalid: computed root hash {:?} does not match state root from header {:?}.",
-            proof_root_hash,
-            header.state_root
-        ));
-    }
-    println!("Successfully verified that the proof root matches the state root.");
+    println!("Processing storage proof to generate ordered path and indices...");
+    let processed_storage_proof = utils::prepare_proof_for_circuit(
+        read_proof.proof,
+        &hex::encode(header.state_root.as_bytes()),
+        last_idx,
+    )?;
+
     let inputs = CircuitInputs {
         private: PrivateCircuitInputs {
             secret,

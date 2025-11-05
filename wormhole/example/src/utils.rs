@@ -7,86 +7,177 @@ use std::collections::{HashMap, HashSet};
 use subxt::backend::legacy::rpc_methods::Bytes;
 use wormhole_circuit::storage_proof::ProcessedStorageProof;
 
+// Function to check that the 24 byte suffix of the leaf hash is the last [-32, -8] bytes of the
+// leaf node
+pub fn check_leaf(leaf_hash: &[u8; 32], leaf_node: Vec<u8>) -> (bool, usize) {
+    let hash_suffix = &leaf_hash[8..32];
+    let mut last_idx = 0usize;
+    let mut found = false;
+
+    for i in 0..=leaf_node.len().saturating_sub(hash_suffix.len()) {
+        if &leaf_node[i..i + hash_suffix.len()] == hash_suffix {
+            last_idx = i;
+            found = true;
+            break;
+        }
+    }
+
+    println!(
+        "Checking leaf hash suffix: {:?} in leaf_node at index: {:?}",
+        hex::encode(hash_suffix),
+        last_idx
+    );
+    println!("leaf_node: {:?}", hex::encode(leaf_node.clone()));
+
+    (found, (last_idx * 2).saturating_sub(16))
+}
+
+// pub fn tree_structure_check(proof: &[Vec<u8>]) -> Result<()> {
+//     for (i, node_data) in proof.iter().enumerate() {
+//         let node_hash = <PoseidonHasher as Hasher>::hash(node_data);
+//         match <sp_trie::LayoutV1<PoseidonHasher> as TrieLayout>::Codec::decode(node_data) {
+//             Ok(node) => match &node {
+//                 Node::Empty => println!("Proof node {}: Empty", i),
+//                 Node::Leaf(partial, value) => {
+//                     let nibbles: Vec<u8> = partial.right_iter().collect();
+//                     println!(
+//                         "Proof node {}: Leaf, partial: {:?}, value: {:?} hash: {:?} bytes: {:?}",
+//                         i,
+//                         hex::encode(&nibbles),
+//                         value,
+//                         node_hash,
+//                         hex::encode(node_data)
+//                     );
+//                 }
+//                 ::Extension(partial, _) => {
+//                     let nibbles: Vec<u8> = partial.right_iter().collect();
+//                     println!(
+//                         "Proof node {}: Extension, partial: {:?} hash: {:?} bytes: {:?}",
+//                         i,
+//                         hex::encode(&nibbles),
+//                         node_hash,
+//                         hex::encode(node_data)
+//                     );
+//                 }
+//                 Node::Branch(children, value) => {
+//                     println!(
+//                         "Proof node {}: Branch, value: {:?} hash: {:?} bytes: {:?}",
+//                         i,
+//                         value,
+//                         node_hash,
+//                         hex::encode(node_data)
+//                     );
+//                     for (j, child) in children.iter().enumerate() {
+//                         if let Some(child) = child {
+//                             println!("  Child {}: {:?}", j, child);
+//                         }
+//                     }
+//                 }
+//                 Node::NibbledBranch(partial, children, value) => {
+//                     let nibbles: Vec<u8> = partial.right_iter().collect();
+//                     let children = children
+//                         .iter()
+//                         .filter_map(|x| {
+//                             x.as_ref().map(|val| match val {
+//                                 NodeHandle::Hash(h) => hex::encode(h),
+//                                 NodeHandle::Inline(i) => hex::encode(i),
+//                             })
+//                         })
+//                         .collect::<Vec<String>>();
+//                     println!(
+//                         "Proof node {}: NibbledBranch, partial: {:?}, value: {:?}, children: {:?} hash: {:?} bytes: {:?}",
+//                         i,
+//                         hex::encode(&nibbles),
+//                         value,
+//                         children,
+//                         node_hash,
+//                         hex::encode(node_data)
+//                     );
+//                 }
+//             },
+//             Err(e) => println!("Failed to decode proof node {}: {:?}", i, e),
+//         }
+//     }
+//     Ok(())
+// }
+
 /// Prepares the storage proof for circuit consumption by finding the proof's root,
 /// verifying it against the state root, and ordering the nodes from root to leaf.
 pub fn prepare_proof_for_circuit(
     proof: Vec<Bytes>,
+    state_root: String,
     last_idx: usize,
-) -> anyhow::Result<(ProcessedStorageProof, H256)> {
-    if proof.is_empty() {
-        return Err(anyhow!("Proof cannot be empty."));
-    }
-
-    //Create a lookup from hash to node data, and collect all node hashes.
-    let mut node_map = HashMap::new();
-    let mut all_hashes = HashSet::new();
+) -> anyhow::Result<ProcessedStorageProof> {
+    let mut hashes = Vec::<String>::new();
+    let mut bytes = Vec::<String>::new();
+    let mut parts = Vec::<(String, String)>::new();
+    let mut storage_proof = Vec::<String>::new();
     for node_data in proof.iter() {
-        let hash = <PoseidonHasher as Hasher>::hash(&node_data.0);
-        node_map.insert(hash, &node_data.0);
-        all_hashes.insert(hash);
-    }
-
-    // Find all hashes that are children of other nodes by searching for their
-    // raw byte representation inside other nodes.
-    let mut child_hashes = HashSet::new();
-    for node_data in node_map.values() {
-        for &hash in &all_hashes {
-            if node_data
-                .windows(32)
-                .any(|window| window == hash.as_bytes())
-            {
-                child_hashes.insert(hash);
-            }
-        }
-    }
-
-    //The root of the proof is the hash that is in `all_hashes` but not in `child_hashes`.
-    let proof_root_hashes: Vec<_> = all_hashes.difference(&child_hashes).collect();
-
-    if proof_root_hashes.len() != 1 {
-        bail!(
-            "Expected to find exactly one root node in the proof, but found {}. Proof might be malformed or contain multiple disjoint paths.",
-            proof_root_hashes.len()
-        );
-    }
-    let proof_root_hash = *proof_root_hashes[0];
-
-    // 4. Now that we have the root, order the proof from top down.
-    let mut ordered_proof_nodes = Vec::<Vec<u8>>::new();
-    let mut indices = Vec::<usize>::new();
-    let mut current_hash = proof_root_hash;
-    let mut used_hashes = HashMap::<H256, bool>::new();
-
-    while let Some(current_node_data) = node_map.get(&current_hash) {
-        ordered_proof_nodes.push(current_node_data.to_vec());
-        used_hashes.insert(current_hash, true);
-
-        let mut found_next_hash = None;
-
-        for (&hash_to_find, _) in node_map.iter() {
-            if used_hashes.contains_key(&hash_to_find) {
-                continue; // Skip nodes already in the path.
-            }
-
-            if let Some(index) = current_node_data
-                .windows(32)
-                .position(|window| window == hash_to_find.as_bytes())
-            {
-                found_next_hash = Some((hash_to_find, index));
-                break;
-            }
-        }
-
-        if let Some((next_hash, index)) = found_next_hash {
-            current_hash = next_hash;
-            indices.push(index * 2); // Convert byte index to hex index for circuit
+        let hash = hex::encode(<PoseidonHasher as Hasher>::hash(node_data));
+        let node_bytes = hex::encode(node_data.0.to_vec());
+        if hash == state_root {
+            storage_proof.push(node_bytes);
         } else {
-            break; // End of path
+            // don't put the hash in if it is the root
+            hashes.push(hash);
+            bytes.push(node_bytes.clone());
+        }
+    }
+
+    println!(
+        "Finished constructing bytes and hashes vectors {:?} {:?}",
+        bytes, hashes
+    );
+
+    let mut ordered_hashes = Vec::<String>::new();
+    let mut indices = Vec::<usize>::new();
+
+    while !hashes.is_empty() {
+        for i in (0..hashes.len()).rev() {
+            let hash = hashes[i].clone();
+            if let Some(last) = storage_proof.last() {
+                if let Some(index) = last.find(&hash) {
+                    let (left, right) = last.split_at(index);
+                    indices.push(index);
+                    parts.push((left.to_string(), right.to_string()));
+                    storage_proof.push(bytes[i].clone());
+                    ordered_hashes.push(hash.clone());
+                    hashes.remove(i);
+                    bytes.remove(i);
+                }
+            }
         }
     }
     indices.push(last_idx);
 
-    let processed_proof = ProcessedStorageProof::new(ordered_proof_nodes, indices)?;
+    // iterate through the storage proof, printing the size of each.
+    for (i, node) in storage_proof.iter().enumerate() {
+        println!("Storage proof node {}: {} bytes", i, (node.len() / 16));
+    }
 
-    Ok((processed_proof, proof_root_hash))
+    println!(
+        "Storage proof generated: {:?} {:?} {:?} {:?}",
+        &storage_proof, parts, ordered_hashes, indices
+    );
+
+    for (i, _) in storage_proof.iter().enumerate() {
+        if i == parts.len() {
+            break;
+        }
+        let part = parts[i].clone();
+        let hash = ordered_hashes[i].clone();
+        if part.1[..64] != hash {
+            panic!("storage proof index incorrect {:?} != {:?}", part.1, hash);
+        } else {
+            println!("storage proof index correct: {:?}", part.0.len());
+        }
+    }
+
+    ProcessedStorageProof::new(
+        storage_proof
+            .iter()
+            .map(|a| hex::decode(a).unwrap())
+            .collect(),
+        indices,
+    )
 }
