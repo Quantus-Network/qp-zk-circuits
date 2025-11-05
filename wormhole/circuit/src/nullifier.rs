@@ -14,7 +14,7 @@ use crate::codec::ByteCodec;
 use crate::codec::FieldElementCodec;
 use crate::inputs::CircuitInputs;
 use plonky2::{
-    hash::{hash_types::HashOutTarget, poseidon::PoseidonHash},
+    hash::{hash_types::HashOutTarget, poseidon2::Poseidon2Hash},
     iop::{
         target::Target,
         witness::{PartialWitness, WitnessWrite},
@@ -75,8 +75,8 @@ impl Nullifier {
         preimage.extend(secret);
         preimage.extend(transfer_count);
 
-        let inner_hash = PoseidonHash::hash_no_pad(&preimage).elements;
-        let outer_hash = PoseidonHash::hash_no_pad(&inner_hash).elements;
+        let inner_hash = Poseidon2Hash::hash_no_pad(&preimage).elements;
+        let outer_hash = Poseidon2Hash::hash_no_pad(&inner_hash).elements;
         let hash = Digest::from(outer_hash);
 
         Self {
@@ -251,9 +251,9 @@ impl CircuitFragment for Nullifier {
         preimage.extend(transfer_count);
 
         // Compute the `generated_account` by double-hashing the preimage (salt + secret).
-        let inner_hash = builder.hash_n_to_hash_no_pad::<PoseidonHash>(preimage);
+        let inner_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(preimage);
         let computed_hash =
-            builder.hash_n_to_hash_no_pad::<PoseidonHash>(inner_hash.elements.to_vec());
+            builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(inner_hash.elements.to_vec());
 
         // Assert that hashes are equal.
         builder.connect_hashes(computed_hash, hash);

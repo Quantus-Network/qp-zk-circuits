@@ -1,7 +1,7 @@
 use anyhow::Context;
 use anyhow::Result;
 use plonky2::field::types::Field;
-use plonky2::hash::poseidon::PoseidonHash;
+use plonky2::hash::poseidon2::Poseidon2Hash;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::config::{Hasher, PoseidonGoldilocksConfig};
 use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
@@ -10,17 +10,22 @@ use serde::de::DeserializeOwned;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
+use test_helpers::storage_proof::TestInputs;
+use test_helpers::DEFAULT_FUNDING_ACCOUNT;
+use test_helpers::DEFAULT_SECRETS;
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use wormhole_circuit::circuit::{circuit_data_from_bytes, circuit_data_to_bytes};
 use wormhole_circuit::inputs::{CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs};
 use wormhole_circuit::nullifier::Nullifier;
+use wormhole_circuit::storage_proof::leaf::LeafInputs;
 use wormhole_circuit::storage_proof::ProcessedStorageProof;
 use wormhole_circuit::substrate_account::SubstrateAccount;
 use wormhole_circuit::unspendable_account::UnspendableAccount;
 use wormhole_prover::WormholeProver;
 use wormhole_verifier::WormholeVerifier;
 use zk_circuits_common::circuit::{TransferProofJson, D, F};
-use zk_circuits_common::utils::u64_to_felts;
+use zk_circuits_common::utils::felts_to_u128;
+use zk_circuits_common::utils::felts_to_u64;
 use zk_circuits_common::utils::BytesDigest;
 use zk_circuits_common::utils::{digest_felts_to_bytes, u128_to_felts};
 
@@ -140,20 +145,29 @@ fn test_prover_and_verifier_from_file_e2e() -> Result<()> {
     let verifier = WormholeVerifier::new_from_files(&verifier_path, &common_path)?;
 
     // Create inputs
-    let funding_account = SubstrateAccount::new(&[2u8; 32])?;
-    let secret = BytesDigest::try_from([1u8; 32]).unwrap();
-    let unspendable_account = UnspendableAccount::from_secret(secret).account_id;
-    let funding_amount = 1000u128;
-    let transfer_count = 0u64;
+    let leaf_inputs = LeafInputs::test_inputs_0();
+    let secret =
+        BytesDigest::try_from(hex::decode(DEFAULT_SECRETS[0]).unwrap().as_slice()).unwrap();
+    let funding_account = leaf_inputs.funding_account;
+    // let secret = BytesDigest::try_from([1u8; 32]).unwrap();
+    let unspendable_account = leaf_inputs.to_account;
+    let funding_amount = leaf_inputs.funding_amount;
+    let transfer_count = leaf_inputs.transfer_count;
 
     let mut leaf_inputs_felts = Vec::new();
-    leaf_inputs_felts.extend(&u64_to_felts(transfer_count));
-    leaf_inputs_felts.extend_from_slice(&funding_account.0);
-    leaf_inputs_felts.extend_from_slice(&unspendable_account);
-    leaf_inputs_felts.extend_from_slice(&u128_to_felts(funding_amount));
+    leaf_inputs_felts.extend(transfer_count);
+    leaf_inputs_felts.extend_from_slice(funding_account.as_slice());
+    leaf_inputs_felts.extend_from_slice(unspendable_account.as_slice());
+    leaf_inputs_felts.extend(funding_amount);
 
-    let leaf_inputs_hash = PoseidonHash::hash_no_pad(&leaf_inputs_felts);
+    let transfer_count = felts_to_u64(transfer_count).unwrap();
+    let funding_amount = felts_to_u128(funding_amount).unwrap();
+
+    let leaf_inputs_hash = Poseidon2Hash::hash_no_pad(&leaf_inputs_felts);
     let root_hash: [u8; 32] = *digest_felts_to_bytes(leaf_inputs_hash.elements);
+
+    // print the hex of the root hash
+    println!("root_hash: {}", hex::encode(root_hash));
 
     let exit_account = SubstrateAccount::new(&[2u8; 32])?;
     let inputs = CircuitInputs {
@@ -161,12 +175,12 @@ fn test_prover_and_verifier_from_file_e2e() -> Result<()> {
             secret,
             funding_account: (*funding_account).into(),
             storage_proof: ProcessedStorageProof::new(vec![], vec![]).unwrap(),
-            unspendable_account: (unspendable_account).into(),
+            unspendable_account: (*unspendable_account).into(),
             transfer_count,
         },
         public: PublicCircuitInputs {
             funding_amount,
-            nullifier: Nullifier::from_preimage(secret, 0).hash.into(),
+            nullifier: Nullifier::from_preimage(secret, transfer_count).hash.into(),
             root_hash: root_hash.try_into().unwrap(),
             exit_account: (*exit_account).into(),
         },
@@ -269,10 +283,7 @@ fn test_prover_and_verifier_fuzzing() -> Result<()> {
                 ProcessedStorageProof::new(storage_proof_bytes, proof_json.indices.clone())
                     .context("failed to build ProcessedStorageProof")?;
 
-            let funding_account = SubstrateAccount::new(&[
-                223, 23, 232, 59, 97, 108, 223, 113, 2, 89, 54, 39, 126, 65, 248, 106, 156, 219, 7,
-                123, 213, 197, 228, 118, 177, 81, 61, 77, 23, 89, 200, 80,
-            ])?; // Alice test account from dev node.
+            let funding_account = SubstrateAccount::new(&DEFAULT_FUNDING_ACCOUNT)?;
             let secret = BytesDigest::try_from(secret.as_slice()).unwrap();
             let unspendable_account = UnspendableAccount::from_secret(secret).account_id;
 

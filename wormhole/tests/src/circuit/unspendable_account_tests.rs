@@ -10,8 +10,8 @@ use zk_circuits_common::{
 
 #[cfg(test)]
 const SECRETS: [&str; 5] = [
-    "cd94df2e3c38a87f3e429b62af022dbe4363143811219d80037e8798b2ec9229",
-    "8b680b2421968a0c1d3cff6f3408e9d780157ae725724a78c3bc0998d1ac8194",
+    "4c8587bd422e01d961acdc75e7d66f6761b7af7c9b1864a492f369c9d6724f05",
+    "c6034553e5556630d24a593d2c92de9f1ede81d48f0fb3371764462cc3594b3f",
     "87f5fc11df0d12f332ccfeb92ddd8995e6c11709501a8b59c2aaf9eefee63ec1",
     "ef69da4e3aa2a6f15b3a9eec5e481f17260ac812faf1e685e450713327c3ab1c",
     "9aa84f99ef2de22e3070394176868df41d6a148117a36132d010529e19b018b7",
@@ -19,11 +19,11 @@ const SECRETS: [&str; 5] = [
 
 #[cfg(test)]
 const ADDRESSES: [&str; 5] = [
-    "b209bdf6636fd7a3a224b9e62dde4acf7a93ecc7d19f618990e34bdeae8e1455",
-    "aebdf7b4136139bbda4d8b5b4cfe3726dfdd64c842e16f79ad8033f8044c3b7e",
-    "f5fc29c796b56aeabc3d3d9bd113d6b958f434b0919e207d81c3ded261331677",
-    "c18c0dfb3f71945ea7cf1ecfdd110a6ed1c2d0cdde5db0b2d05c60e14bc2da83",
-    "96d45bf29b88b160511748dba781606b10e1f5f9dfdc9d7350e7d57676f65e43",
+    "4d38abc959eb7e11526fd632c73d47e8945972fa3d9ce3d62532d5f386353993",
+    "8213d62e0104abe36482ef26346e0d5cd1d7511b22e4b03c770ca2c687b0ed04",
+    "7c281f0265adab691f06195b30deb4d133477a363355c584143827210b19bb09",
+    "5511b416ec05918b6fbc78fbd61d2575be3bd9d5f931b0f2438f7f5f7d46ae6e",
+    "ae18069d04d3fb4b3eb1fb41d6b5bf51b1bad41ff95d067b65116a1f5a68ba09",
 ];
 
 #[cfg(test)]
@@ -49,6 +49,8 @@ fn preimage_matches_right_address() {
     for (secret, address) in SECRETS.iter().zip(ADDRESSES) {
         let decoded_secret: [u8; 32] = hex::decode(secret).unwrap().try_into().unwrap();
         let decoded_address = hex::decode(address).unwrap();
+        // print the decoded address
+        println!("decoded_address: {:?}", decoded_address);
         let unspendable_account =
             UnspendableAccount::from_secret(decoded_secret.try_into().unwrap());
 

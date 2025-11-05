@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 use core::mem::size_of;
 
 use plonky2::{
-    hash::{hash_types::HashOutTarget, poseidon::PoseidonHash},
+    hash::{hash_types::HashOutTarget, poseidon2::Poseidon2Hash},
     iop::witness::{PartialWitness, WitnessWrite},
     plonk::{circuit_builder::CircuitBuilder, config::Hasher},
 };
@@ -46,12 +46,8 @@ impl UnspendableAccount {
         }
 
         // Hash twice to get the account id.
-        let inner_hash = PoseidonHash::hash_no_pad(&preimage).elements;
-        let outer_hash = PoseidonHash::hash_no_pad(&inner_hash).elements;
-        // println!(
-        //     "accountId: {:?}",
-        //     hex::encode(*digest_felts_to_bytes(outer_hash))
-        // );
+        let inner_hash = Poseidon2Hash::hash_no_pad(&preimage).elements;
+        let outer_hash = Poseidon2Hash::hash_no_pad(&inner_hash).elements;
         let account_id = Digest::from(outer_hash);
 
         Self {
@@ -184,9 +180,9 @@ impl CircuitFragment for UnspendableAccount {
         preimage.extend(secret.elements.iter());
 
         // Compute the `generated_account` by double-hashing the preimage (salt + secret).
-        let inner_hash = builder.hash_n_to_hash_no_pad::<PoseidonHash>(preimage.clone());
+        let inner_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(preimage.clone());
         let generated_account =
-            builder.hash_n_to_hash_no_pad::<PoseidonHash>(inner_hash.elements.to_vec());
+            builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(inner_hash.elements.to_vec());
 
         // Assert that hashes are equal.
         builder.connect_hashes(generated_account, account_id);
