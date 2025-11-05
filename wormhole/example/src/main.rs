@@ -135,8 +135,17 @@ async fn main() -> anyhow::Result<()> {
         wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(&secret).account_id;
 
     println!("Processing storage proof to generate ordered path and indices...");
-    let processed_storage_proof =
-        utils::prepare_proof_for_circuit(read_proof.proof, header.state_root, 0)?;
+    let (processed_storage_proof, proof_root_hash) =
+        utils::prepare_proof_for_circuit(read_proof.proof, 0)?;
+
+    if proof_root_hash != header.state_root {
+        return Err(anyhow::anyhow!(
+            "Proof is invalid: computed root hash {:?} does not match state root from header {:?}.",
+            proof_root_hash,
+            header.state_root
+        ));
+    }
+    println!("Successfully verified that the proof root matches the state root.");
     let inputs = CircuitInputs {
         private: PrivateCircuitInputs {
             secret,
