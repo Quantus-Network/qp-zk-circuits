@@ -133,7 +133,7 @@ pub fn prepare_proof_for_circuit(
     let mut indices = Vec::<usize>::new();
 
     while !hashes.is_empty() {
-        for i in (0..hashes.len()).rev() {
+        for i in (1..hashes.len()).rev() {
             let hash = hashes[i].clone();
             if let Some(last) = storage_proof.last() {
                 if let Some(index) = last.find(&hash) {

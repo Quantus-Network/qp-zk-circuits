@@ -144,7 +144,7 @@ async fn main() -> anyhow::Result<()> {
     println!("Processing storage proof to generate ordered path and indices...");
     let processed_storage_proof = utils::prepare_proof_for_circuit(
         read_proof.proof,
-        &hex::encode(header.state_root.as_bytes()),
+        hex::encode(header.state_root.0),
         last_idx,
     )?;
 
