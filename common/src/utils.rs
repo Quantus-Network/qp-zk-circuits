@@ -18,7 +18,7 @@ pub const BIT_32_LIMB_MASK: u64 = 0xFFFF_FFFF;
 pub type Digest = [F; DIGEST_NUM_FIELD_ELEMENTS];
 pub type PrivateKey = [F; 4];
 
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Hash, Default, Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
 pub struct BytesDigest([u8; 32]);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -23,14 +23,14 @@ fn run_test(storage_proof: &StorageProof) -> anyhow::Result<ProofWithPublicInput
 
 #[test]
 fn build_and_verify_proof() {
-    let storage_proof = StorageProof::test_inputs();
+    let storage_proof = StorageProof::test_inputs_0();
     run_test(&storage_proof).unwrap();
 }
 
 #[test]
 #[should_panic(expected = "set twice with different values")]
 fn invalid_root_hash_fails() {
-    let mut proof = StorageProof::test_inputs();
+    let mut proof = StorageProof::test_inputs_0();
     proof.root_hash = [0u8; 32];
     run_test(&proof).unwrap();
 }
@@ -38,7 +38,7 @@ fn invalid_root_hash_fails() {
 #[test]
 #[should_panic(expected = "set twice with different values")]
 fn tampered_proof_fails() {
-    let mut tampered_proof = ProcessedStorageProof::test_inputs();
+    let mut tampered_proof = ProcessedStorageProof::test_inputs_0();
 
     // Flip the first byte in the first node hash. Divide by two to get the byte index.
     let hash_index = tampered_proof.indices[0] / 2;
@@ -46,7 +46,7 @@ fn tampered_proof_fails() {
     let proof = StorageProof::new(
         &tampered_proof,
         default_root_hash(),
-        LeafInputs::test_inputs(),
+        LeafInputs::test_inputs_0(),
     );
 
     run_test(&proof).unwrap();
@@ -55,8 +55,8 @@ fn tampered_proof_fails() {
 #[test]
 #[should_panic(expected = "set twice with different values")]
 fn invalid_nonce() {
-    let proof = ProcessedStorageProof::test_inputs();
-    let mut leaf_inputs = LeafInputs::test_inputs();
+    let proof = ProcessedStorageProof::test_inputs_0();
+    let mut leaf_inputs = LeafInputs::test_inputs_0();
 
     // Alter the nonce.
     leaf_inputs.transfer_count = u64_to_felts(5);
@@ -69,8 +69,8 @@ fn invalid_nonce() {
 #[test]
 #[should_panic(expected = "set twice with different values")]
 fn invalid_exit_address() {
-    let proof = ProcessedStorageProof::test_inputs();
-    let mut leaf_inputs = LeafInputs::test_inputs();
+    let proof = ProcessedStorageProof::test_inputs_0();
+    let mut leaf_inputs = LeafInputs::test_inputs_0();
 
     // Alter the to account.
     leaf_inputs.to_account = SubstrateAccount::new(&[0; 32]).unwrap();
@@ -83,8 +83,8 @@ fn invalid_exit_address() {
 #[test]
 #[should_panic(expected = "set twice with different values")]
 fn invalid_funding_amount() {
-    let proof = ProcessedStorageProof::test_inputs();
-    let mut leaf_inputs = LeafInputs::test_inputs();
+    let proof = ProcessedStorageProof::test_inputs_0();
+    let mut leaf_inputs = LeafInputs::test_inputs_0();
 
     // Alter the funding amount.
     leaf_inputs.funding_amount = [
@@ -109,7 +109,7 @@ fn fuzz_tampered_proof() {
 
     for i in 0..FUZZ_ITERATIONS {
         // Clone the original storage proof
-        let mut tampered_proof = ProcessedStorageProof::test_inputs();
+        let mut tampered_proof = ProcessedStorageProof::test_inputs_0();
 
         // Randomly select a node in the proof to tamper
         let node_index = rand::random_range(0..tampered_proof.proof.len());
@@ -124,7 +124,7 @@ fn fuzz_tampered_proof() {
         let proof = StorageProof::new(
             &tampered_proof,
             default_root_hash(),
-            LeafInputs::test_inputs(),
+            LeafInputs::test_inputs_0(),
         );
 
         // Catch panic from run_test

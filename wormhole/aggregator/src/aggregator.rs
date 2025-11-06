@@ -1,8 +1,15 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use anyhow::bail;
 use plonky2::plonk::circuit_data::{CircuitConfig, VerifierCircuitData};
-use wormhole_circuit::inputs::PublicCircuitInputs;
+use wormhole_circuit::inputs::{
+    AggregatedPublicCircuitInputs, PublicCircuitInputs, PublicInputsByAccount,
+};
 use wormhole_verifier::{ProofWithPublicInputs, WormholeVerifier};
-use zk_circuits_common::circuit::{C, D, F};
+use zk_circuits_common::{
+    circuit::{C, D, F},
+    utils::BytesDigest,
+};
 
 use crate::{
     circuits::tree::{aggregate_to_tree, AggregatedProof, TreeAggregationConfig},
@@ -61,13 +68,30 @@ impl WormholeProofAggregator {
         Ok(())
     }
 
-    pub fn extract_leaf_public_inputs(
+    /// Extract and aggregate leaf public inputs from the filled proof buffer OUTSIDE the circuit.
+    /// Groups by `root_hash`, then `exit_account`, sums `funding_amount`, and collects `nullifiers`.
+    /// Used for sanity checks to ensure it matches the public inputs results from the aggregation circuit.
+    pub fn parse_aggregated_public_inputs_from_proof_buffer(
         &self,
-        aggr: &wormhole_verifier::ProofWithPublicInputs<F, C, D>,
-    ) -> anyhow::Result<Vec<PublicCircuitInputs>> {
-        let leaf_pi_len = self.leaf_circuit_data.common.num_public_inputs;
+    ) -> anyhow::Result<AggregatedPublicCircuitInputs> {
         let num_leaves = self.config.num_leaf_proofs;
-        PublicCircuitInputs::try_from_aggregated(aggr, leaf_pi_len, num_leaves)
+        let proofs = &self.proofs_buffer;
+        let Some(proofs) = proofs else {
+            bail!("there are no proofs to aggregate")
+        };
+        if num_leaves != proofs.len() {
+            bail!(
+                "proof buffer length {} does not match expected num_leaves {}",
+                proofs.len(),
+                num_leaves
+            )
+        };
+        let mut leaves: Vec<PublicCircuitInputs> = Vec::new();
+        for proof in proofs {
+            let pi = PublicCircuitInputs::try_from(proof)?;
+            leaves.push(pi);
+        }
+        aggregate_public_inputs(leaves)
     }
 
     /// Aggregates `N` number of leaf proofs into an [`AggregatedProof`].
@@ -90,4 +114,61 @@ impl WormholeProofAggregator {
 
         Ok(root_proof)
     }
+}
+
+/// Turn flat leaf public inputs into `AggregatedPublicCircuitInputs`.
+fn aggregate_public_inputs(
+    leaves: Vec<PublicCircuitInputs>,
+) -> anyhow::Result<AggregatedPublicCircuitInputs> {
+    let mut by_block: BTreeSet<BytesDigest> = BTreeSet::new();
+    let mut by_account: BTreeMap<BytesDigest, PublicInputsByAccount> = BTreeMap::new();
+    let nullifiers: Vec<BytesDigest> = leaves.iter().map(|leaf| leaf.nullifier).collect();
+
+    for leaf in leaves {
+        by_block.insert(leaf.root_hash);
+        let acct_entry =
+            by_account
+                .entry(leaf.exit_account)
+                .or_insert_with(|| PublicInputsByAccount {
+                    summed_funding_amount: 0u128,
+                    exit_account: leaf.exit_account,
+                });
+
+        // Sum funding amounts with overflow check (fail fast if unrealistic overflow happens).
+        acct_entry.summed_funding_amount = acct_entry
+            .summed_funding_amount
+            .checked_add(leaf.funding_amount)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "overflow while summing funding amounts for exit account {:?}",
+                    acct_entry.exit_account
+                )
+            })?;
+    }
+
+    // Materialize the nested maps into the desired Vec<PublicInputsByBlock> shape.
+    let mut blocks: Vec<BytesDigest> = by_block.into_iter().collect();
+    let mut accounts: Vec<PublicInputsByAccount> = by_account.into_values().collect();
+
+    // Sort blocks by the same comparator on the root hash.
+    blocks.sort_by_key(digest_key_le_u64x4);
+    // Sort accounts by the same comparator on the exit account.
+    accounts.sort_by_key(|a| digest_key_le_u64x4(&a.exit_account));
+
+    Ok(AggregatedPublicCircuitInputs {
+        root_hashes: blocks,
+        account_data: accounts,
+        nullifiers,
+    })
+}
+
+#[inline]
+fn digest_key_le_u64x4(d: &BytesDigest) -> [u64; 4] {
+    let bytes: &[u8; 32] = d; // e.g., impl AsRef<[u8;32]> for BytesDigest
+    [
+        u64::from_le_bytes(bytes[0..8].try_into().unwrap()),
+        u64::from_le_bytes(bytes[8..16].try_into().unwrap()),
+        u64::from_le_bytes(bytes[16..24].try_into().unwrap()),
+        u64::from_le_bytes(bytes[24..32].try_into().unwrap()),
+    ]
 }

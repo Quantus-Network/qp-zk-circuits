@@ -13,7 +13,7 @@ const CIRCUIT_CONFIG: CircuitConfig = CircuitConfig::standard_recursion_config()
 #[test]
 fn verify_simple_proof() {
     let prover = WormholeProver::new(CIRCUIT_CONFIG);
-    let inputs = CircuitInputs::test_inputs();
+    let inputs = CircuitInputs::test_inputs_0();
     let commitment = prover.commit(&inputs).unwrap();
     let proof = commitment.prove().unwrap();
 
@@ -24,7 +24,7 @@ fn verify_simple_proof() {
 #[test]
 fn cannot_verify_with_modified_exit_account() {
     let prover = WormholeProver::new(CIRCUIT_CONFIG);
-    let inputs = CircuitInputs::test_inputs();
+    let inputs = CircuitInputs::test_inputs_0();
     let mut proof = prover.commit(&inputs).unwrap().prove().unwrap();
 
     println!("proof before: {:?}", proof.public_inputs);
@@ -48,7 +48,7 @@ fn cannot_verify_with_modified_exit_account() {
 #[test]
 fn cannot_verify_with_any_public_input_modification() {
     let prover = WormholeProver::new(CIRCUIT_CONFIG);
-    let inputs = CircuitInputs::test_inputs();
+    let inputs = CircuitInputs::test_inputs_0();
     let proof = prover.commit(&inputs).unwrap().prove().unwrap();
     let verifier = WormholeVerifier::new(CIRCUIT_CONFIG, None);
 
@@ -69,7 +69,7 @@ fn cannot_verify_with_any_public_input_modification() {
 #[test]
 fn cannot_verify_with_modified_proof() {
     let prover = WormholeProver::new(CIRCUIT_CONFIG);
-    let inputs = CircuitInputs::test_inputs();
+    let inputs = CircuitInputs::test_inputs_0();
     let proof = prover.commit(&inputs).unwrap().prove().unwrap();
     let verifier = WormholeVerifier::new(CIRCUIT_CONFIG, None);
 
