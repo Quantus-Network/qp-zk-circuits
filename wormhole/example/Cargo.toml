@@ -8,15 +8,15 @@ version.workspace = true
 anyhow = { workspace = true, features = ["std"] }
 hex = { workspace = true, features = ["alloc"] }
 qp-plonky2 = { workspace = true, features = ["default"] }
+qp-poseidon = "0.9.5"
+quantus-cli = { git = "https://github.com/Quantus-Network/quantus-cli.git", branch = "chore/poseidon-release", default-features = false }
+sp-core = "38.1.0"
+sp-runtime = "44.0.0"
+sp-trie = { git = "https://github.com/Quantus-Network/chain.git", default-features = false, features = ["std"] }
+subxt = "0.43.0"
+tokio = "1.48.0"
 wormhole-circuit = { package = "qp-wormhole-circuit", version = "0.1.2", path = "../circuit", default-features = false, features = [
 	"std",
 ] }
 wormhole-prover = { package = "qp-wormhole-prover", version = "0.1.2", path = "../prover", default-features = false }
 zk-circuits-common = { package = "qp-zk-circuits-common", version = "0.1.2", path = "../../common" }
-subxt = "0.43.0"
-quantus-cli = { git = "https://github.com/Quantus-Network/quantus-cli.git", branch = "chore/poseidon-release", default-features = false }
-sp-runtime = "44.0.0"
-qp-poseidon = "0.9.5"
-sp-core = "38.1.0"
-tokio = "1.48.0"
-sp-trie = { git = "https://github.com/Quantus-Network/chain.git", default-features = false, features = ["std"] }
