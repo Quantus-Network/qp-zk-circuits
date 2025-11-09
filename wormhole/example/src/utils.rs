@@ -11,7 +11,7 @@ pub fn check_leaf(leaf_hash: &[u8; 32], leaf_node: Vec<u8>) -> (bool, usize) {
     let mut last_idx = 0usize;
     let mut found = false;
 
-    for i in 0..=leaf_node.len().saturating_sub(hash_suffix.len()) {
+    for i in 1..=leaf_node.len().saturating_sub(hash_suffix.len()) {
         if &leaf_node[i..i + hash_suffix.len()] == hash_suffix {
             last_idx = i;
             found = true;

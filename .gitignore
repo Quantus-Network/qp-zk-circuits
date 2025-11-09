@@ -17,3 +17,6 @@ wormhole/tests/*.hex
 transfer_proof.json
 
 .env
+
+# wormhole example artifacts
+debug_inputs.json
