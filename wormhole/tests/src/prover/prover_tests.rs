@@ -2,7 +2,9 @@ use std::fs;
 
 use hex;
 use plonky2::plonk::circuit_data::CircuitConfig;
-use test_helpers::storage_proof::TestInputs;
+use test_helpers::{
+    TestInputs, DEFAULT_BLOCK_HASHES, DEFAULT_BLOCK_NUMBERS, DEFAULT_PARENT_HASHES,
+};
 use wormhole_circuit::inputs::{CircuitInputs, PublicCircuitInputs};
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::utils::BytesDigest;
@@ -29,16 +31,14 @@ fn proof_can_be_deserialized() {
     let expected = PublicCircuitInputs {
         funding_amount: 1_000_000_000_000u128,
         nullifier: BytesDigest::try_from([
-            169, 76, 150, 35, 66, 248, 76, 193, 57, 204, 106, 33, 169, 160, 248, 113, 235, 144,
-            212, 48, 9, 232, 146, 7, 105, 125, 170, 24, 33, 54, 135, 28,
-        ])
-        .unwrap(),
-        root_hash: BytesDigest::try_from([
-            95, 250, 42, 181, 176, 219, 152, 131, 178, 43, 30, 88, 16, 147, 46, 169, 217, 234, 177,
-            132, 7, 48, 253, 57, 172, 231, 28, 38, 187, 141, 8, 45,
+            102, 213, 23, 119, 137, 1, 172, 231, 97, 86, 27, 28, 210, 26, 24, 162, 195, 135, 231,
+            170, 205, 111, 30, 63, 225, 212, 217, 138, 233, 170, 170, 122,
         ])
         .unwrap(),
         exit_account: BytesDigest::try_from([4u8; 32]).unwrap(),
+        block_hash: BytesDigest::try_from(DEFAULT_BLOCK_HASHES[0]).unwrap(),
+        parent_hash: BytesDigest::try_from(DEFAULT_PARENT_HASHES[0]).unwrap(),
+        block_number: DEFAULT_BLOCK_NUMBERS[0],
     };
     assert_eq!(public_inputs, expected);
     println!("{:?}", public_inputs);

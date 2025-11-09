@@ -70,18 +70,6 @@ You can also run tests for a specific package, for example, for the `wormhole-ci
 cargo test -p wormhole-circuit
 ```
 
-To execute the e2e fuzzing tests for the wormhole circuit you will need to spin up a local node then run: 
-
-```sh
-# This checks out the quantus api client repo one level up and sets an ENV variable with the path to it. 
-source setup_qac.sh
-```
-
-```sh
-# Then run the fuzzing tests:
-cargo test --package tests --lib -- circuit::circuit_data_tests::test_prover_and_verifier_fuzzing --exact --show-output --ignored
-```
-
 
 ## Benchmarks
 

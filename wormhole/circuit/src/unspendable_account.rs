@@ -2,11 +2,8 @@ use alloc::vec::Vec;
 use core::mem::size_of;
 
 use plonky2::{
-    hash::{hash_types::HashOutTarget, poseidon::PoseidonHash},
-    iop::{
-        target::Target,
-        witness::{PartialWitness, WitnessWrite},
-    },
+    hash::{hash_types::HashOutTarget, poseidon2::Poseidon2Hash},
+    iop::witness::{PartialWitness, WitnessWrite},
     plonk::{circuit_builder::CircuitBuilder, config::Hasher},
 };
 
@@ -14,46 +11,43 @@ use crate::codec::FieldElementCodec;
 use crate::{codec::ByteCodec, inputs::CircuitInputs};
 use zk_circuits_common::circuit::{CircuitFragment, D, F};
 use zk_circuits_common::utils::{
-    digest_bytes_to_felts, digest_felts_to_bytes, injective_bytes_to_felts,
-    injective_felts_to_bytes, injective_string_to_felt, BytesDigest, Digest,
+    digest_bytes_to_felts, digest_felts_to_bytes, injective_string_to_felt, BytesDigest, Digest,
 };
 
-pub const SECRET_NUM_TARGETS: usize = 8;
-pub const PREIMAGE_NUM_TARGETS: usize = 10;
+pub const SECRET_NUM_TARGETS: usize = 4;
+pub const PREIMAGE_NUM_TARGETS: usize = 7;
 pub const UNSPENDABLE_SALT: &str = "wormhole";
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct UnspendableAccount {
     pub account_id: Digest,
-    pub secret: [F; SECRET_NUM_TARGETS],
+    pub secret: Digest,
 }
 
 impl UnspendableAccount {
-    pub fn new(account_id: BytesDigest, secret: &[u8]) -> Self {
+    pub fn new(account_id: BytesDigest, secret: BytesDigest) -> Self {
         let account_id = digest_bytes_to_felts(account_id);
-        let secret: [F; SECRET_NUM_TARGETS] = injective_bytes_to_felts(secret).try_into().unwrap();
+        let secret = digest_bytes_to_felts(secret);
         Self { account_id, secret }
     }
 
-    pub fn from_secret(secret: &[u8; 32]) -> Self {
+    pub fn from_secret(secret: BytesDigest) -> Self {
         // First, convert the preimage to its representation as field elements.
         let mut preimage = Vec::new();
-        let secret_felts: [F; SECRET_NUM_TARGETS] =
-            injective_bytes_to_felts(secret).try_into().unwrap();
+        let secret_felts: Digest = digest_bytes_to_felts(secret);
         preimage.extend(injective_string_to_felt(UNSPENDABLE_SALT));
         preimage.extend(secret_felts);
 
         if preimage.len() != PREIMAGE_NUM_TARGETS {
             panic!(
-                "Expected preimage to be 80 bytes (10 field elements), got {} field elements",
+                "Expected preimage to be 56 bytes (7 field elements), got {} field elements",
                 preimage.len()
             );
         }
 
         // Hash twice to get the account id.
-        let inner_hash = PoseidonHash::hash_no_pad(&preimage).elements;
-        // println!("inner_hash: {:?}", hex::encode(felts_to_bytes(&inner_hash)));
-        let outer_hash = PoseidonHash::hash_no_pad(&inner_hash).elements;
+        let inner_hash = Poseidon2Hash::hash_no_pad(&preimage).elements;
+        let outer_hash = Poseidon2Hash::hash_no_pad(&inner_hash).elements;
         let account_id = Digest::from(outer_hash);
 
         Self {
@@ -67,14 +61,14 @@ impl ByteCodec for UnspendableAccount {
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend(*digest_felts_to_bytes(self.account_id));
-        bytes.extend(injective_felts_to_bytes(&self.secret).unwrap());
+        bytes.extend(*digest_felts_to_bytes(self.secret));
         bytes
     }
 
     fn from_bytes(slice: &[u8]) -> anyhow::Result<Self> {
         let f_size = size_of::<F>(); // 8 bytes
         let account_id_size = 4 * f_size; // 4 field elements
-        let secret_size = 8 * f_size; // 8 field elements
+        let secret_size = 4 * f_size; // 4 field elements
         let total_size = account_id_size + secret_size;
 
         if slice.len() != total_size {
@@ -94,15 +88,10 @@ impl ByteCodec for UnspendableAccount {
         offset += account_id_size;
 
         // Deserialize secret
-        let secret: [F; SECRET_NUM_TARGETS] =
-            injective_bytes_to_felts(&slice[offset..offset + secret_size])
-                .try_into()
-                .map_err(|_| {
-                    anyhow::anyhow!(
-                "Failed to deserialize unspendable account secret, expected {} field elements",
-                SECRET_NUM_TARGETS
-            )
-                })?;
+        let secret_bytes: BytesDigest = slice[offset..offset + secret_size]
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Failed to deserialize unspendable account secret"))?;
+        let secret = digest_bytes_to_felts(secret_bytes);
 
         Ok(Self { account_id, secret })
     }
@@ -119,7 +108,7 @@ impl FieldElementCodec for UnspendableAccount {
     fn from_field_elements(elements: &[F]) -> anyhow::Result<Self> {
         // Expected sizes
         let account_id_size = 4;
-        let secret_size = 8;
+        let secret_size = 4;
         let total_size = account_id_size + secret_size;
 
         if elements.len() != total_size {
@@ -153,24 +142,21 @@ impl FieldElementCodec for UnspendableAccount {
 
 impl From<&CircuitInputs> for UnspendableAccount {
     fn from(inputs: &CircuitInputs) -> Self {
-        Self::new(inputs.private.unspendable_account, &inputs.private.secret)
+        Self::new(inputs.private.unspendable_account, inputs.private.secret)
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct UnspendableAccountTargets {
     pub account_id: HashOutTarget,
-    pub secret: [Target; SECRET_NUM_TARGETS],
+    pub secret: HashOutTarget,
 }
 
 impl UnspendableAccountTargets {
     pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
         Self {
             account_id: builder.add_virtual_hash(),
-            secret: builder
-                .add_virtual_targets(SECRET_NUM_TARGETS)
-                .try_into()
-                .unwrap(),
+            secret: builder.add_virtual_hash(),
         }
     }
 }
@@ -188,20 +174,15 @@ impl CircuitFragment for UnspendableAccount {
     ) {
         let salt = injective_string_to_felt(UNSPENDABLE_SALT);
         let mut preimage = Vec::new();
-        preimage.push(builder.constant(salt[0]));
-        preimage.push(builder.constant(salt[1]));
-        // Perform a range check on the salt to ensure it is 32 bits.
-        for target in preimage.iter() {
-            builder.range_check(*target, 32);
+        for felt in salt {
+            preimage.push(builder.constant(felt));
         }
-        // Don't need to perform a range check on the secret since we are already donig that on the
-        // nullifier circuit and we ensuring the secret is the same across both circuits.
-        preimage.extend(secret);
+        preimage.extend(secret.elements.iter());
 
         // Compute the `generated_account` by double-hashing the preimage (salt + secret).
-        let inner_hash = builder.hash_n_to_hash_no_pad::<PoseidonHash>(preimage.clone());
+        let inner_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(preimage.clone());
         let generated_account =
-            builder.hash_n_to_hash_no_pad::<PoseidonHash>(inner_hash.elements.to_vec());
+            builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(inner_hash.elements.to_vec());
 
         // Assert that hashes are equal.
         builder.connect_hashes(generated_account, account_id);
@@ -214,7 +195,7 @@ impl CircuitFragment for UnspendableAccount {
     ) -> anyhow::Result<()> {
         // Unspendable account circuit values.
         pw.set_hash_target(targets.account_id, self.account_id.into())?;
-        pw.set_target_arr(&targets.secret, &self.secret)?;
+        pw.set_hash_target(targets.secret, self.secret.into())?;
 
         Ok(())
     }
@@ -225,7 +206,9 @@ impl Default for UnspendableAccount {
         let preimage =
             hex::decode("cd94df2e3c38a87f3e429b62af022dbe4363143811219d80037e8798b2ec9229")
                 .unwrap();
-        let preimage: [u8; 32] = preimage.try_into().expect("Expected 32 bytes for preimage");
-        Self::from_secret(&preimage)
+        let preimage = preimage[..32]
+            .try_into()
+            .expect("Expected 32 bytes for preimage");
+        Self::from_secret(preimage)
     }
 }

@@ -3,12 +3,18 @@ use core::array;
 use core::mem::size_of;
 use zk_circuits_common::utils::digest_bytes_to_felts;
 use zk_circuits_common::utils::digest_felts_to_bytes;
+use zk_circuits_common::utils::felts_to_u64;
+use zk_circuits_common::utils::DIGEST_BYTES_LEN;
+use zk_circuits_common::utils::DIGEST_NUM_FIELD_ELEMENTS;
+use zk_circuits_common::utils::FELTS_PER_U128;
+use zk_circuits_common::utils::FELTS_PER_U64;
+use zk_circuits_common::utils::INJECTIVE_BYTES_LIMB;
 
 use crate::codec::ByteCodec;
 use crate::codec::FieldElementCodec;
 use crate::inputs::CircuitInputs;
 use plonky2::{
-    hash::{hash_types::HashOutTarget, poseidon::PoseidonHash},
+    hash::{hash_types::HashOutTarget, poseidon2::Poseidon2Hash},
     iop::{
         target::Target,
         witness::{PartialWitness, WitnessWrite},
@@ -16,31 +22,39 @@ use plonky2::{
     plonk::{circuit_builder::CircuitBuilder, config::Hasher},
 };
 use zk_circuits_common::circuit::{CircuitFragment, D, F};
-use zk_circuits_common::utils::{
-    injective_bytes_to_felts, injective_felts_to_bytes, injective_string_to_felt, u64_to_felts,
-    BytesDigest, Digest,
-};
+use zk_circuits_common::utils::{injective_string_to_felt, u64_to_felts, BytesDigest, Digest};
 
+pub const SALT_BYTES_LEN: usize = 8;
 pub const NULLIFIER_SALT: &str = "~nullif~";
-pub const SECRET_NUM_TARGETS: usize = 8;
-pub const NONCE_NUM_TARGETS: usize = 1;
-pub const FUNDING_ACCOUNT_NUM_TARGETS: usize = 4;
-pub const TRANSFER_COUNT_NUM_TARGETS: usize = 2;
-pub const PREIMAGE_NUM_TARGETS: usize =
-    SECRET_NUM_TARGETS + NONCE_NUM_TARGETS + FUNDING_ACCOUNT_NUM_TARGETS;
-pub const NULLIFIER_SIZE_FELTS: usize = 4 + 4 + 1 + 4;
 
+// Compile-time check: require NULLIFIER_SALT to have exactly SALT_BYTES_LEN bytes
+const _: () = {
+    assert!(
+        NULLIFIER_SALT.len() == SALT_BYTES_LEN,
+        "invalid NULLIFIER_SALT length"
+    );
+};
+pub const SECRET_BYTES_LEN: usize = 32;
+pub const SECRET_NUM_TARGETS: usize = DIGEST_NUM_FIELD_ELEMENTS;
+pub const SALT_NUM_TARGETS: usize = 3;
+pub const FUNDING_ACCOUNT_NUM_TARGETS: usize = FELTS_PER_U128;
+pub const TRANSFER_COUNT_NUM_TARGETS: usize = FELTS_PER_U64;
+pub const PREIMAGE_NUM_TARGETS: usize =
+    SECRET_NUM_TARGETS + SALT_NUM_TARGETS + FUNDING_ACCOUNT_NUM_TARGETS;
+pub const NULLIFIER_SIZE_FELTS: usize =
+    DIGEST_NUM_FIELD_ELEMENTS + SECRET_NUM_TARGETS + TRANSFER_COUNT_NUM_TARGETS;
+pub const NULLIFIER_SIZE_BYTES: usize = NULLIFIER_SIZE_FELTS * INJECTIVE_BYTES_LIMB; // 4 + 8 + 2 = 14 field elements
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Nullifier {
     pub hash: Digest,
-    pub secret: Vec<F>,
+    pub secret: Digest,
     transfer_count: [F; TRANSFER_COUNT_NUM_TARGETS],
 }
 
 impl Nullifier {
-    pub fn new(digest: BytesDigest, secret: &[u8], transfer_count: u64) -> Self {
+    pub fn new(digest: BytesDigest, secret: BytesDigest, transfer_count: u64) -> Self {
         let hash = digest_bytes_to_felts(digest);
-        let secret = injective_bytes_to_felts(secret);
+        let secret = digest_bytes_to_felts(secret);
         let transfer_count = u64_to_felts(transfer_count);
 
         Self {
@@ -50,19 +64,19 @@ impl Nullifier {
         }
     }
 
-    pub fn from_preimage(secret: &[u8], transfer_count: u64) -> Self {
+    pub fn from_preimage(secret: BytesDigest, transfer_count: u64) -> Self {
         let mut preimage = Vec::new();
 
         let salt = injective_string_to_felt(NULLIFIER_SALT);
-        let secret = injective_bytes_to_felts(secret);
+        let secret = digest_bytes_to_felts(secret);
         let transfer_count = u64_to_felts(transfer_count);
 
         preimage.extend(salt);
-        preimage.extend(secret.clone());
+        preimage.extend(secret);
         preimage.extend(transfer_count);
 
-        let inner_hash = PoseidonHash::hash_no_pad(&preimage).elements;
-        let outer_hash = PoseidonHash::hash_no_pad(&inner_hash).elements;
+        let inner_hash = Poseidon2Hash::hash_no_pad(&preimage).elements;
+        let outer_hash = Poseidon2Hash::hash_no_pad(&inner_hash).elements;
         let hash = Digest::from(outer_hash);
 
         Self {
@@ -77,16 +91,16 @@ impl ByteCodec for Nullifier {
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend(*digest_felts_to_bytes(self.hash));
-        bytes.extend(injective_felts_to_bytes(&self.secret).unwrap());
-        bytes.extend(injective_felts_to_bytes(&self.transfer_count).unwrap());
+        bytes.extend(*digest_felts_to_bytes(self.secret));
+        let transfer_count_uint = felts_to_u64(self.transfer_count).unwrap();
+        bytes.extend(transfer_count_uint.to_le_bytes());
         bytes
     }
 
     fn from_bytes(slice: &[u8]) -> anyhow::Result<Self> {
-        let f_size = size_of::<F>(); // 8 bytes
-        let hash_size = 4 * f_size; // 4 field elements
-        let secret_size = 8 * f_size; // 8 field elements
-        let transfer_count_size = 2 * f_size; // 2 field element
+        let hash_size = DIGEST_BYTES_LEN;
+        let secret_size = SECRET_BYTES_LEN;
+        let transfer_count_size = size_of::<u64>();
         let total_size = hash_size + secret_size + transfer_count_size;
 
         if slice.len() != total_size {
@@ -99,31 +113,42 @@ impl ByteCodec for Nullifier {
 
         let mut offset = 0;
         // Deserialize hash
-        let digest = slice[offset..offset + hash_size]
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("Failed to deserialize nullifier hash"))?;
+        let digest = slice[offset..offset + hash_size].try_into().map_err(|e| {
+            anyhow::anyhow!("Failed to deserialize nullifier hash with error: {:?}", e)
+        })?;
         let hash = digest_bytes_to_felts(digest);
         offset += hash_size;
 
         // Deserialize secret
-        let secret = injective_bytes_to_felts(&slice[offset..offset + secret_size]);
-        if secret.len() != 8 {
+        let secret = slice[offset..offset + secret_size]
+            .try_into()
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to deserialize nullifier secret with error: {:?}", e)
+            })?;
+        let secret = digest_bytes_to_felts(secret);
+        if secret.len() != SECRET_NUM_TARGETS {
             return Err(anyhow::anyhow!(
-                "Expected 8 field elements for secret, got: {}",
+                "Expected {} field elements for secret, got: {}",
+                SECRET_NUM_TARGETS,
                 secret.len()
             ));
         }
+
         offset += secret_size;
 
         // Deserialize transfer_count
-        let transfer_count = injective_bytes_to_felts(&slice[offset..offset + transfer_count_size]);
-        if transfer_count.len() != 2 {
-            return Err(anyhow::anyhow!(
-                "Expected 2 field elements for transfer_count, got: {}",
-                transfer_count.len()
-            ));
-        }
-        let transfer_count: [F; TRANSFER_COUNT_NUM_TARGETS] = transfer_count.try_into().unwrap();
+        // Read as u64 and then convert to felts to ensure proper encoding
+        let transfer_count_u64 = u64::from_le_bytes(
+            slice[offset..offset + transfer_count_size]
+                .try_into()
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to deserialize nullifier transfer_count with error: {:?}",
+                        e
+                    )
+                })?,
+        );
+        let transfer_count = u64_to_felts(transfer_count_u64);
 
         Ok(Self {
             hash,
@@ -137,38 +162,35 @@ impl FieldElementCodec for Nullifier {
     fn to_field_elements(&self) -> Vec<F> {
         let mut elements = Vec::new();
         elements.extend(self.hash.to_vec());
-        elements.extend(self.secret.clone());
+        elements.extend(self.secret);
         elements.extend(self.transfer_count);
         elements
     }
 
     fn from_field_elements(elements: &[F]) -> anyhow::Result<Self> {
-        let hash_size = 4; // 32 bytes w/ 64 bit limbs == 4 field elements
-        let secret_size = 8; // 32 bytes w/ 32 bit limbs == 8 field elements
-        let transfer_count_size = 2; // 8 bytes w/ 32 bit limbs == 2 field element
-        let total_size = hash_size + secret_size + transfer_count_size;
-
-        if elements.len() != total_size {
+        if elements.len() != NULLIFIER_SIZE_FELTS {
             return Err(anyhow::anyhow!(
                 "Expected {} field elements for Nullifier, got: {}",
-                total_size,
+                NULLIFIER_SIZE_FELTS,
                 elements.len()
             ));
         }
 
         let mut offset = 0;
         // Deserialize hash
-        let hash = elements[offset..offset + hash_size]
+        let hash = elements[offset..offset + DIGEST_NUM_FIELD_ELEMENTS]
             .try_into()
             .map_err(|_| anyhow::anyhow!("Failed to deserialize nullifier hash"))?;
-        offset += hash_size;
+        offset += DIGEST_NUM_FIELD_ELEMENTS;
 
         // Deserialize secret
-        let secret = elements[offset..offset + secret_size].to_vec();
-        offset += secret_size;
+        let secret = elements[offset..offset + SECRET_NUM_TARGETS]
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Failed to deserialize nullifier secret"))?;
+        offset += SECRET_NUM_TARGETS;
 
         // Deserialize funding_nonce
-        let transfer_count = elements[offset..offset + transfer_count_size]
+        let transfer_count = elements[offset..offset + TRANSFER_COUNT_NUM_TARGETS]
             .try_into()
             .map_err(|_| anyhow::anyhow!("Failed to deserialize nullifier transfer_count"))?;
 
@@ -184,7 +206,7 @@ impl From<&CircuitInputs> for Nullifier {
     fn from(inputs: &CircuitInputs) -> Self {
         Self::new(
             inputs.public.nullifier,
-            &inputs.private.secret,
+            inputs.private.secret,
             inputs.private.transfer_count,
         )
     }
@@ -193,7 +215,7 @@ impl From<&CircuitInputs> for Nullifier {
 #[derive(Debug, Clone)]
 pub struct NullifierTargets {
     pub hash: HashOutTarget,
-    pub secret: Vec<Target>,
+    pub secret: HashOutTarget,
     pub transfer_count: [Target; TRANSFER_COUNT_NUM_TARGETS],
 }
 
@@ -201,7 +223,7 @@ impl NullifierTargets {
     pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
         Self {
             hash: builder.add_virtual_hash_public_input(),
-            secret: builder.add_virtual_targets(SECRET_NUM_TARGETS),
+            secret: builder.add_virtual_hash(),
             transfer_count: array::from_fn(|_| builder.add_virtual_target()),
         }
     }
@@ -222,20 +244,16 @@ impl CircuitFragment for Nullifier {
     ) {
         let mut preimage = Vec::new();
         let salt_felts = injective_string_to_felt(NULLIFIER_SALT);
-        preimage.push(builder.constant(salt_felts[0]));
-        preimage.push(builder.constant(salt_felts[1]));
-        preimage.extend(secret);
+        for &f in salt_felts.iter() {
+            preimage.push(builder.constant(f));
+        }
+        preimage.extend(secret.elements.iter());
         preimage.extend(transfer_count);
 
-        // Range check all the preimage targets to be 32 bits.
-        for target in preimage.iter() {
-            builder.range_check(*target, 32);
-        }
-
         // Compute the `generated_account` by double-hashing the preimage (salt + secret).
-        let inner_hash = builder.hash_n_to_hash_no_pad::<PoseidonHash>(preimage.clone());
+        let inner_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(preimage);
         let computed_hash =
-            builder.hash_n_to_hash_no_pad::<PoseidonHash>(inner_hash.elements.to_vec());
+            builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(inner_hash.elements.to_vec());
 
         // Assert that hashes are equal.
         builder.connect_hashes(computed_hash, hash);
@@ -247,7 +265,7 @@ impl CircuitFragment for Nullifier {
         targets: Self::Targets,
     ) -> anyhow::Result<()> {
         pw.set_hash_target(targets.hash, self.hash.into())?;
-        pw.set_target_arr(&targets.secret, &self.secret)?;
+        pw.set_hash_target(targets.secret, self.secret.into())?;
         pw.set_target_arr(&targets.transfer_count, &self.transfer_count)?;
         Ok(())
     }

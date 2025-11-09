@@ -19,9 +19,7 @@ use subxt::ext::codec::Encode;
 use subxt::ext::jsonrpsee::core::client::ClientT;
 use subxt::ext::jsonrpsee::rpc_params;
 use subxt::utils::{to_hex, AccountId32 as SubxtAccountId};
-use wormhole_circuit::inputs::{
-    BlockHeaderInputs, CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs, DIGEST_LOGS_SIZE,
-};
+use wormhole_circuit::inputs::{CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs};
 use wormhole_circuit::nullifier::Nullifier;
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::utils::{BytesDigest, Digest};
@@ -121,20 +119,11 @@ async fn main() -> anyhow::Result<()> {
     println!("state root {:?}", header.state_root.clone());
     let state_root = BytesDigest::try_from(header.state_root.as_bytes())?;
     let parent_hash = BytesDigest::try_from(header.parent_hash.as_bytes())?;
-    let extrinsics_root = BytesDigest::try_from(header.extrinsics_root.as_bytes())?;
     let block_number = header.number;
-    let block_hash = block_hash;
-    let parent_hash = parent_hash;
-    let digest_logs: [u8; DIGEST_LOGS_SIZE] = header
-        .digest
-        .encode()
-        .try_into()
-        .expect("Digest logs size len issue; qed");
-
     println!("Assembling circuit inputs...");
-    let secret = [1u8; 32];
+    let secret: BytesDigest = [1u8; 32].try_into()?;
     let unspendable_account =
-        wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(&secret).account_id;
+        wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(secret).account_id;
 
     let (_, last_idx) = check_leaf(
         &transfer_proof_hash,
@@ -155,20 +144,16 @@ async fn main() -> anyhow::Result<()> {
             funding_account: BytesDigest::try_from(alice_account.as_ref() as &[u8])?,
             storage_proof: processed_storage_proof,
             unspendable_account: Digest::from(unspendable_account).into(),
-            block_header: BlockHeaderInputs {
-                block_hash: BytesDigest::try_from(block_hash.as_ref())?,
-                parent_hash,
-                block_number: block_number as u32,
-                state_root,
-                extrinsics_root,
-                digest_logs,
-            },
+            block_header: header.encode().try_into().expect("block header size; qed"),
+            state_root,
         },
         public: PublicCircuitInputs {
             funding_amount,
-            nullifier: Nullifier::from_preimage(&secret, 0).hash.into(),
+            nullifier: Nullifier::from_preimage(secret, 0).hash.into(),
             exit_account: BytesDigest::try_from(dest_account_id.as_ref() as &[u8])?,
             block_hash: BytesDigest::try_from(block_hash.as_ref())?,
+            parent_hash,
+            block_number,
         },
     };
 

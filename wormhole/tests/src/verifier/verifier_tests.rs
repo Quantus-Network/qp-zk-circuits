@@ -1,6 +1,6 @@
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
-use test_helpers::storage_proof::TestInputs;
+use test_helpers::TestInputs;
 use wormhole_circuit::codec::FieldElementCodec;
 use wormhole_circuit::inputs::{CircuitInputs, EXIT_ACCOUNT_END_INDEX, EXIT_ACCOUNT_START_INDEX};
 use wormhole_circuit::substrate_account::SubstrateAccount;

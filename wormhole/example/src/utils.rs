@@ -1,9 +1,6 @@
 //! Utility functions for the wormhole example.
-use anyhow::{anyhow, bail};
-use hex;
 use qp_poseidon::PoseidonHasher;
-use sp_core::{Hasher, H256};
-use std::collections::{HashMap, HashSet};
+use sp_core::Hasher;
 use subxt::backend::legacy::rpc_methods::Bytes;
 use wormhole_circuit::storage_proof::ProcessedStorageProof;
 
@@ -32,75 +29,6 @@ pub fn check_leaf(leaf_hash: &[u8; 32], leaf_node: Vec<u8>) -> (bool, usize) {
     (found, (last_idx * 2).saturating_sub(16))
 }
 
-// pub fn tree_structure_check(proof: &[Vec<u8>]) -> Result<()> {
-//     for (i, node_data) in proof.iter().enumerate() {
-//         let node_hash = <PoseidonHasher as Hasher>::hash(node_data);
-//         match <sp_trie::LayoutV1<PoseidonHasher> as TrieLayout>::Codec::decode(node_data) {
-//             Ok(node) => match &node {
-//                 Node::Empty => println!("Proof node {}: Empty", i),
-//                 Node::Leaf(partial, value) => {
-//                     let nibbles: Vec<u8> = partial.right_iter().collect();
-//                     println!(
-//                         "Proof node {}: Leaf, partial: {:?}, value: {:?} hash: {:?} bytes: {:?}",
-//                         i,
-//                         hex::encode(&nibbles),
-//                         value,
-//                         node_hash,
-//                         hex::encode(node_data)
-//                     );
-//                 }
-//                 ::Extension(partial, _) => {
-//                     let nibbles: Vec<u8> = partial.right_iter().collect();
-//                     println!(
-//                         "Proof node {}: Extension, partial: {:?} hash: {:?} bytes: {:?}",
-//                         i,
-//                         hex::encode(&nibbles),
-//                         node_hash,
-//                         hex::encode(node_data)
-//                     );
-//                 }
-//                 Node::Branch(children, value) => {
-//                     println!(
-//                         "Proof node {}: Branch, value: {:?} hash: {:?} bytes: {:?}",
-//                         i,
-//                         value,
-//                         node_hash,
-//                         hex::encode(node_data)
-//                     );
-//                     for (j, child) in children.iter().enumerate() {
-//                         if let Some(child) = child {
-//                             println!("  Child {}: {:?}", j, child);
-//                         }
-//                     }
-//                 }
-//                 Node::NibbledBranch(partial, children, value) => {
-//                     let nibbles: Vec<u8> = partial.right_iter().collect();
-//                     let children = children
-//                         .iter()
-//                         .filter_map(|x| {
-//                             x.as_ref().map(|val| match val {
-//                                 NodeHandle::Hash(h) => hex::encode(h),
-//                                 NodeHandle::Inline(i) => hex::encode(i),
-//                             })
-//                         })
-//                         .collect::<Vec<String>>();
-//                     println!(
-//                         "Proof node {}: NibbledBranch, partial: {:?}, value: {:?}, children: {:?} hash: {:?} bytes: {:?}",
-//                         i,
-//                         hex::encode(&nibbles),
-//                         value,
-//                         children,
-//                         node_hash,
-//                         hex::encode(node_data)
-//                     );
-//                 }
-//             },
-//             Err(e) => println!("Failed to decode proof node {}: {:?}", i, e),
-//         }
-//     }
-//     Ok(())
-// }
-
 /// Prepares the storage proof for circuit consumption by finding the proof's root,
 /// verifying it against the state root, and ordering the nodes from root to leaf.
 pub fn prepare_proof_for_circuit(
@@ -114,7 +42,7 @@ pub fn prepare_proof_for_circuit(
     let mut storage_proof = Vec::<String>::new();
     for node_data in proof.iter() {
         let hash = hex::encode(<PoseidonHasher as Hasher>::hash(node_data));
-        let node_bytes = hex::encode(node_data.0.to_vec());
+        let node_bytes = hex::encode(&node_data.0);
         if hash == state_root {
             storage_proof.push(node_bytes);
         } else {

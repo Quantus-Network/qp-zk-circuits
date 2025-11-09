@@ -1,4 +1,5 @@
 #![allow(clippy::new_without_default)]
+use crate::block_header::DIGEST_LOGS_SIZE;
 use crate::storage_proof::ProcessedStorageProof;
 use alloc::vec::Vec;
 use anyhow::{bail, Context};
@@ -6,20 +7,22 @@ use plonky2::field::goldilocks_field::GoldilocksField;
 use plonky2::field::types::PrimeField64;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use zk_circuits_common::circuit::{C, D, F};
-use zk_circuits_common::utils::{felts_to_u128, BytesDigest};
+use zk_circuits_common::utils::{felts_to_u128, BytesDigest, DIGEST_BYTES_LEN};
 
 /// The total size of the public inputs field element vector.
-pub const PUBLIC_INPUTS_FELTS_LEN: usize = 16;
+pub const PUBLIC_INPUTS_FELTS_LEN: usize = 21;
 pub const NULLIFIER_START_INDEX: usize = 0;
 pub const NULLIFIER_END_INDEX: usize = 4;
-pub const BLOCK_HASH_START_INDEX: usize = 4;
-pub const BLOCK_HASH_END_INDEX: usize = 8;
-pub const FUNDING_AMOUNT_START_INDEX: usize = 8;
-pub const FUNDING_AMOUNT_END_INDEX: usize = 12;
-pub const EXIT_ACCOUNT_START_INDEX: usize = 12;
-pub const EXIT_ACCOUNT_END_INDEX: usize = 16;
-
-pub const DIGEST_LOGS_SIZE: usize = 110;
+pub const FUNDING_AMOUNT_START_INDEX: usize = 4;
+pub const FUNDING_AMOUNT_END_INDEX: usize = 8;
+pub const EXIT_ACCOUNT_START_INDEX: usize = 8;
+pub const EXIT_ACCOUNT_END_INDEX: usize = 12;
+pub const BLOCK_HASH_START_INDEX: usize = 12;
+pub const BLOCK_HASH_END_INDEX: usize = 16;
+pub const PARENT_HASH_START_INDEX: usize = 16;
+pub const PARENT_HASH_END_INDEX: usize = 20;
+pub const BLOCK_NUMBER_INDEX: usize = 20;
+pub const BLOCK_NUMBER_END_INDEX: usize = 21;
 
 /// Inputs required to commit to the wormhole circuit.
 #[derive(Debug, Clone)]
@@ -39,6 +42,10 @@ pub struct PublicCircuitInputs {
     pub exit_account: BytesDigest,
     /// The hash of the block header.
     pub block_hash: BytesDigest,
+    /// The parent hash of the block, parsed from the block header
+    pub parent_hash: BytesDigest,
+    /// The block number, parsed from the block header
+    pub block_number: u32,
 }
 
 /// The exit account and its given sum total funding amount
@@ -61,11 +68,13 @@ pub struct AggregatedPublicCircuitInputs {
     pub nullifiers: Vec<BytesDigest>,
 }
 
+pub const BLOCK_HEADER_SIZE: usize = (DIGEST_BYTES_LEN * 3) + 4 + DIGEST_LOGS_SIZE; // 32 bytes each for parent hash, state root, extrinsics root + 4 bytes for block number + digest logs
+
 /// All of the private inputs required for the circuit.
 #[derive(Debug, Clone)]
 pub struct PrivateCircuitInputs {
     /// Raw bytes of the secret of the nullifier and the unspendable account
-    pub secret: [u8; 32],
+    pub secret: BytesDigest,
     /// A sequence of key-value nodes representing the storage proof.
     ///
     /// Each element is a tuple where the items are the left and right splits of a proof node split
@@ -76,18 +85,9 @@ pub struct PrivateCircuitInputs {
     /// The unspendable account hash.
     pub unspendable_account: BytesDigest,
     /// The block header data.
-    pub block_header: BlockHeaderInputs,
-}
-
-/// The private inputs required for the block header circuit.
-#[derive(Debug, Clone)]
-pub struct BlockHeaderInputs {
-    pub block_hash: BytesDigest,
-    pub parent_hash: BytesDigest,
-    pub block_number: u32,
+    pub block_header: [u8; BLOCK_HEADER_SIZE],
+    /// The state root of the storage proof
     pub state_root: BytesDigest,
-    pub extrinsics_root: BytesDigest,
-    pub digest_logs: [u8; DIGEST_LOGS_SIZE],
 }
 
 impl AggregatedPublicCircuitInputs {
@@ -182,9 +182,11 @@ impl PublicCircuitInputs {
     pub fn try_from_slice(pis: &[GoldilocksField]) -> anyhow::Result<Self> {
         // Public inputs are ordered as follows:
         // Nullifier.hash: 4 felts
-        // BlockHeader.block_hash: 4 felts
         // StorageProof.funding_amount: 4 felts
         // ExitAccount.address: 4 felts
+        // BlockHeader.block_hash: 4 felts
+        // BlockHeader.parent_hash: 4 felts
+        // BlockHeader.block_number: 1 felt
         if pis.len() != PUBLIC_INPUTS_FELTS_LEN {
             bail!(
                 "public inputs should contain: {} field elements, got: {}",
@@ -204,12 +206,22 @@ impl PublicCircuitInputs {
         let exit_account =
             BytesDigest::try_from(&pis[EXIT_ACCOUNT_START_INDEX..EXIT_ACCOUNT_END_INDEX])
                 .context("failed to deserialize exit account")?;
+        let parent_hash =
+            BytesDigest::try_from(&pis[PARENT_HASH_START_INDEX..PARENT_HASH_END_INDEX])
+                .context("failed to deserialize parent hash")?;
+        let block_number_felt = pis[BLOCK_NUMBER_INDEX];
+        let block_number = block_number_felt
+            .to_canonical_u64()
+            .try_into()
+            .context("failed to convert block number felt to u32")?;
 
         Ok(PublicCircuitInputs {
             funding_amount,
             nullifier,
             block_hash,
             exit_account,
+            parent_hash,
+            block_number,
         })
     }
 }
