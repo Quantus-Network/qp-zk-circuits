@@ -134,7 +134,7 @@ pub mod circuit_logic {
 
         // The state_root from the block_header must be the same as the root_hash for the storage_proof
         builder.connect_hashes(
-            targets.block_header.state_root,
+            targets.block_header.header.state_root,
             targets.storage_proof.root_hash,
         );
     }

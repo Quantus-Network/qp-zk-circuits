@@ -6,11 +6,9 @@
 //! - Generate the proof for the wormhole transfer
 
 use anyhow::anyhow;
-use parity_scale_codec::Decode;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_poseidon::PoseidonHasher;
-use quantus_cli::chain::client::SubxtPoseidonHasher;
 use quantus_cli::chain::quantus_subxt as quantus_node;
 use quantus_cli::cli::common::submit_transaction;
 use quantus_cli::qp_dilithium_crypto::DilithiumPair;
@@ -20,7 +18,6 @@ use serde::{Deserialize, Serialize};
 use sp_core::{Hasher, H256};
 use std::str::FromStr;
 use subxt::backend::legacy::rpc_methods::{Bytes, ReadProof};
-use subxt::config::substrate::SubstrateHeader;
 use subxt::ext::codec::Encode;
 use subxt::ext::jsonrpsee::core::client::ClientT;
 use subxt::ext::jsonrpsee::rpc_params;
@@ -48,21 +45,24 @@ struct DebugInputs {
     dest_account_hex: String,
     funding_amount: u128,
     block_hash_hex: String,
-    header_hex: String,
+    extrinsics_root_hex: String,
+    digest_hex: String,
+    parent_hash_hex: String,
+    block_number: u32,
 }
 
 impl From<CircuitInputs> for DebugInputs {
     fn from(inputs: CircuitInputs) -> Self {
         DebugInputs {
-            secret_hex: hex::encode(&inputs.private.secret.as_ref()),
+            secret_hex: hex::encode(inputs.private.secret.as_ref()),
             proof_hex: inputs
                 .private
                 .storage_proof
                 .proof
                 .iter()
-                .map(|p| hex::encode(&p))
+                .map(hex::encode)
                 .collect(),
-            state_root_hex: hex::encode(&inputs.private.state_root.as_ref()),
+            state_root_hex: hex::encode(inputs.private.state_root.as_ref()),
             last_idx: *inputs
                 .private
                 .storage_proof
@@ -74,8 +74,11 @@ impl From<CircuitInputs> for DebugInputs {
             funding_account_hex: hex::encode(inputs.private.funding_account.as_ref()),
             dest_account_hex: hex::encode(inputs.public.exit_account.as_ref()),
             funding_amount: inputs.public.funding_amount,
-            block_hash_hex: hex::encode(&inputs.public.block_hash.as_ref()),
-            header_hex: hex::encode(&inputs.private.block_header),
+            block_hash_hex: hex::encode(inputs.public.block_hash.as_ref()),
+            extrinsics_root_hex: hex::encode(inputs.private.extrinsics_root.as_ref()),
+            digest_hex: hex::encode(inputs.private.digest.as_ref()),
+            parent_hash_hex: hex::encode(inputs.public.parent_hash.as_ref()),
+            block_number: inputs.public.block_number,
         }
     }
 }
@@ -88,23 +91,23 @@ fn generate_zk_proof(inputs: DebugInputs) -> anyhow::Result<()> {
         .into_iter()
         .map(|s| Bytes(hex::decode(s.trim_start_matches("0x")).unwrap()))
         .collect();
-    let processed_storage_proof =
-        utils::prepare_proof_for_circuit(proof_bytes, inputs.state_root_hex, inputs.last_idx)?;
+    let processed_storage_proof = utils::prepare_proof_for_circuit(
+        proof_bytes,
+        inputs.state_root_hex.clone(),
+        inputs.last_idx,
+    )?;
 
     println!("Assembling circuit inputs...");
     let secret =
         BytesDigest::try_from(&hex::decode(inputs.secret_hex)?[..]).expect("valid secret; qed");
     let unspendable_account =
-        wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(secret.clone())
-            .account_id;
+        wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(secret).account_id;
 
     let alice_account =
         AccountId32::from_str(&inputs.funding_account_hex).map_err(|e| anyhow!(e))?;
     let dest_account_id =
         SubxtAccountId::from_str(&inputs.dest_account_hex).map_err(|e| anyhow!(e))?;
     let block_hash = H256::from_str(&inputs.block_hash_hex).map_err(|e| anyhow!(e))?;
-    let mut header_bytes = &hex::decode(inputs.header_hex).expect("valid header bytes; qed")[..];
-    let header = SubstrateHeader::<u32, SubxtPoseidonHasher>::decode(&mut header_bytes)?;
 
     let circuit_inputs = CircuitInputs {
         private: PrivateCircuitInputs {
@@ -113,16 +116,19 @@ fn generate_zk_proof(inputs: DebugInputs) -> anyhow::Result<()> {
             funding_account: BytesDigest::try_from(alice_account.as_ref() as &[u8])?,
             storage_proof: processed_storage_proof,
             unspendable_account: Digest::from(unspendable_account).into(),
-            block_header: header_bytes.try_into().expect("valid header bytes; qed"),
-            state_root: BytesDigest::try_from(&header.state_root.0[..])?,
+            state_root: BytesDigest::try_from(&hex::decode(inputs.state_root_hex)?[..])?,
+            extrinsics_root: BytesDigest::try_from(&hex::decode(inputs.extrinsics_root_hex)?[..])?,
+            digest: hex::decode(inputs.digest_hex)?[..]
+                .try_into()
+                .expect("digest size; qed"),
         },
         public: PublicCircuitInputs {
             funding_amount: inputs.funding_amount,
             nullifier: Nullifier::from_preimage(secret, 0).hash.into(),
             exit_account: BytesDigest::try_from(dest_account_id.as_ref() as &[u8])?,
             block_hash: BytesDigest::try_from(block_hash.as_ref())?,
-            parent_hash: BytesDigest::try_from(header.parent_hash.as_ref())?,
-            block_number: header.number,
+            parent_hash: BytesDigest::try_from(&hex::decode(inputs.parent_hash_hex)?[..])?,
+            block_number: inputs.block_number,
         },
     };
 
@@ -246,6 +252,9 @@ async fn main() -> anyhow::Result<()> {
     println!("state root {:?}", header.state_root.clone());
     let state_root = BytesDigest::try_from(header.state_root.as_bytes())?;
     let parent_hash = BytesDigest::try_from(header.parent_hash.as_bytes())?;
+    let extrinsics_root = BytesDigest::try_from(header.extrinsics_root.as_bytes())?;
+    let digest = header.digest.encode().try_into().unwrap();
+
     let block_number = header.number;
     println!("Assembling circuit inputs...");
     let secret: BytesDigest = [1u8; 32].try_into()?;
@@ -270,8 +279,9 @@ async fn main() -> anyhow::Result<()> {
             funding_account: BytesDigest::try_from(alice_account.as_ref() as &[u8])?,
             storage_proof: processed_storage_proof,
             unspendable_account: Digest::from(unspendable_account).into(),
-            block_header: header.encode().try_into().expect("block header size; qed"),
             state_root,
+            extrinsics_root,
+            digest,
         },
         public: PublicCircuitInputs {
             funding_amount,

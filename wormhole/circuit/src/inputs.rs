@@ -1,5 +1,5 @@
 #![allow(clippy::new_without_default)]
-use crate::block_header::DIGEST_LOGS_SIZE;
+use crate::block_header::header::DIGEST_LOGS_SIZE;
 use crate::storage_proof::ProcessedStorageProof;
 use alloc::vec::Vec;
 use anyhow::{bail, Context};
@@ -67,7 +67,7 @@ pub struct AggregatedPublicCircuitInputs {
     /// The nullifiers of each individual transfer proof
     pub nullifiers: Vec<BytesDigest>,
 }
-
+pub const BLOCK_HEADER_PADDING_FELTS: usize = 53;
 pub const BLOCK_HEADER_SIZE: usize = (DIGEST_BYTES_LEN * 3) + 4 + DIGEST_LOGS_SIZE; // 32 bytes each for parent hash, state root, extrinsics root + 4 bytes for block number + digest logs
 
 /// All of the private inputs required for the circuit.
@@ -84,10 +84,12 @@ pub struct PrivateCircuitInputs {
     pub funding_account: BytesDigest,
     /// The unspendable account hash.
     pub unspendable_account: BytesDigest,
-    /// The block header data.
-    pub block_header: [u8; BLOCK_HEADER_SIZE],
     /// The state root of the storage proof
     pub state_root: BytesDigest,
+    /// The extrinsics root of the block header
+    pub extrinsics_root: BytesDigest,
+    /// The digest logs of the block header
+    pub digest: [u8; DIGEST_LOGS_SIZE],
 }
 
 impl AggregatedPublicCircuitInputs {
