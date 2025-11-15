@@ -163,5 +163,27 @@ pub fn prepare_proof_for_circuit(
 
     println!("Indices: {:?}", indices);
 
+    // Debug: Print detailed info about what we're passing to the circuit
+    println!("\n=== STORAGE PROOF DEBUG ===");
+    println!("Total proof nodes: {}", ordered_nodes.len());
+    for (i, node) in ordered_nodes.iter().enumerate() {
+        println!("  Node {}: {} bytes", i, node.len());
+    }
+    println!("Total indices: {}", indices.len());
+    println!(
+        "Indices match nodes-1? {}",
+        indices.len() == ordered_nodes.len()
+    );
+
+    if indices.len() != ordered_nodes.len() {
+        println!(
+            "WARNING: indices.len() = {}, ordered_nodes.len() = {}",
+            indices.len(),
+            ordered_nodes.len()
+        );
+        println!("This will cause circuit failures!");
+    }
+    println!("========================\n");
+
     ProcessedStorageProof::new(ordered_nodes, indices)
 }
