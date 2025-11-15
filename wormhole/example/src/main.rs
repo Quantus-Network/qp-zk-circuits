@@ -136,7 +136,7 @@ fn generate_zk_proof(inputs: DebugInputs) -> anyhow::Result<()> {
         },
         public: PublicCircuitInputs {
             funding_amount: inputs.funding_amount,
-            nullifier: Nullifier::from_preimage(secret, 0).hash.into(),
+            nullifier: Nullifier::from_preimage(secret, inputs.transfer_count).hash.into(),
             exit_account: BytesDigest::try_from(dest_account_id.as_ref() as &[u8])?,
             block_hash: BytesDigest::try_from(block_hash.as_ref())?,
             parent_hash,
