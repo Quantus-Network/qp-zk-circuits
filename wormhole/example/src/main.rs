@@ -101,13 +101,19 @@ fn generate_zk_proof(inputs: DebugInputs) -> anyhow::Result<()> {
         wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(secret.clone())
             .account_id;
 
-    let alice_account =
-        AccountId32::from_str(&inputs.funding_account_hex).map_err(|e| anyhow!(e))?;
-    let dest_account_id =
-        SubxtAccountId::from_str(&inputs.dest_account_hex).map_err(|e| anyhow!(e))?;
+    let alice_account_bytes = hex::decode(&inputs.funding_account_hex)?;
+    let alice_account = AccountId32::try_from(&alice_account_bytes[..])
+        .map_err(|_| anyhow!("Invalid funding account length"))?;
+    let dest_account_bytes = hex::decode(&inputs.dest_account_hex)?;
+    let dest_account_id = SubxtAccountId(
+        dest_account_bytes
+            .try_into()
+            .map_err(|_| anyhow!("Invalid dest account length"))?
+    );
     let block_hash = H256::from_str(&inputs.block_hash_hex).map_err(|e| anyhow!(e))?;
-    let mut header_bytes = &hex::decode(inputs.header_hex).expect("valid header bytes; qed")[..];
-    let header = SubstrateHeader::<u32, SubxtPoseidonHasher>::decode(&mut header_bytes)?;
+    let header_bytes_vec = hex::decode(inputs.header_hex).expect("valid header bytes; qed");
+    let mut header_bytes_slice = &header_bytes_vec[..];
+    let header = SubstrateHeader::<u32, SubxtPoseidonHasher>::decode(&mut header_bytes_slice)?;
 
     let circuit_inputs = CircuitInputs {
         private: PrivateCircuitInputs {
@@ -116,7 +122,7 @@ fn generate_zk_proof(inputs: DebugInputs) -> anyhow::Result<()> {
             funding_account: BytesDigest::try_from(alice_account.as_ref() as &[u8])?,
             storage_proof: processed_storage_proof,
             unspendable_account: Digest::from(unspendable_account).into(),
-            block_header: header_bytes.try_into().expect("valid header bytes; qed"),
+            block_header: header_bytes_vec.try_into().expect("valid header bytes; qed"),
             state_root: BytesDigest::try_from(&header.state_root.0[..])?,
         },
         public: PublicCircuitInputs {
@@ -204,7 +210,8 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // The exit account is where funds will eventually be withdrawn to
-    let exit_account_id = SubxtAccountId([255u8; 32]);
+    // NOTE: Cannot use [255u8; 32] as it contains u64::MAX which is out of Goldilocks field range
+    let exit_account_id = SubxtAccountId([42u8; 32]);
     println!(
         "Exit account (withdrawal destination): {:?}",
         &exit_account_id
