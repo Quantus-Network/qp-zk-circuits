@@ -15,22 +15,24 @@ use quantus_cli::chain::quantus_subxt as quantus_node;
 use quantus_cli::cli::common::submit_transaction;
 use quantus_cli::qp_dilithium_crypto::DilithiumPair;
 use quantus_cli::wallet::QuantumKeyPair;
-use quantus_cli::{AccountId32, QuantusClient};
+use quantus_cli::{AccountId32, ChainConfig, QuantusClient};
 use serde::{Deserialize, Serialize};
 use sp_core::{Hasher, H256};
 use std::str::FromStr;
 use subxt::backend::legacy::rpc_methods::{Bytes, ReadProof};
+use subxt::blocks::Block;
 use subxt::config::substrate::SubstrateHeader;
 use subxt::ext::codec::Encode;
 use subxt::ext::jsonrpsee::core::client::ClientT;
 use subxt::ext::jsonrpsee::rpc_params;
 use subxt::utils::{to_hex, AccountId32 as SubxtAccountId};
+use subxt::OnlineClient;
 use wormhole_circuit::inputs::{CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs};
 use wormhole_circuit::nullifier::Nullifier;
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::utils::{BytesDigest, Digest};
 
-use crate::utils::check_leaf;
+// use crate::utils::check_leaf; // No longer needed
 
 mod utils;
 
@@ -88,8 +90,9 @@ fn generate_zk_proof(inputs: DebugInputs) -> anyhow::Result<()> {
         .into_iter()
         .map(|s| Bytes(hex::decode(s.trim_start_matches("0x")).unwrap()))
         .collect();
+
     let processed_storage_proof =
-        utils::prepare_proof_for_circuit(proof_bytes, inputs.state_root_hex, inputs.last_idx)?;
+        utils::prepare_proof_for_circuit(proof_bytes, inputs.state_root_hex)?;
 
     println!("Assembling circuit inputs...");
     let secret =
@@ -146,6 +149,18 @@ fn generate_zk_proof(inputs: DebugInputs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Fetches the block at the best block number from the Quantus client.
+///
+/// Unlike `Block::at_latest()`, this doesn't get the finalized block details.
+async fn at_best_block(
+    quantus_client: &QuantusClient,
+) -> anyhow::Result<Block<ChainConfig, OnlineClient<ChainConfig>>> {
+    let best_block = quantus_client.get_latest_block().await?;
+    let block = quantus_client.client().blocks().at(best_block).await?;
+
+    Ok(block)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     if std::path::Path::new(DEBUG_FILE).exists() {
@@ -163,12 +178,6 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Connected to Substrate node.");
 
-    // get latest header
-    let blocks = client.blocks().at_latest().await?;
-    let header = blocks.header();
-
-    println!("digests {:?}", header.digest);
-
     let alice_pair = DilithiumPair::from_seed(&[0u8; 32]).expect("valid seed");
     let quantum_keypair = QuantumKeyPair {
         public_key: alice_pair.public().0.to_vec(),
@@ -176,29 +185,47 @@ async fn main() -> anyhow::Result<()> {
     };
     let alice_account = AccountId32::new(PoseidonHasher::hash(alice_pair.public().as_ref()).0);
 
-    // Generate a random destination account to ensure the transaction is unique.
-    let dest_account_id = SubxtAccountId([255u8; 32]);
+    // Generate secret and unspendable account for the wormhole transfer
+    let secret: BytesDigest = [1u8; 32].try_into()?;
+    let unspendable_account =
+        wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(secret).account_id;
+    // Convert Digest (field elements) to BytesDigest (bytes)
+    use zk_circuits_common::utils::digest_felts_to_bytes;
+    let unspendable_account_bytes_digest = digest_felts_to_bytes(unspendable_account);
+    let unspendable_account_bytes: [u8; 32] = unspendable_account_bytes_digest
+        .as_ref()
+        .try_into()
+        .expect("BytesDigest is always 32 bytes");
+    let unspendable_account_id = SubxtAccountId(unspendable_account_bytes);
 
     println!(
-        "Generated random destination account: {:?}",
-        &dest_account_id
+        "Unspendable account (transfer destination): {:?}",
+        &unspendable_account_id
+    );
+
+    // The exit account is where funds will eventually be withdrawn to
+    let exit_account_id = SubxtAccountId([255u8; 32]);
+    println!(
+        "Exit account (withdrawal destination): {:?}",
+        &exit_account_id
     );
 
     let funding_amount = 1_000_000_000_001u128;
 
-    // 3. Create and submit a balances transfer extrinsic.
+    // Make the transfer TO the unspendable account
     let transfer_tx = quantus_cli::chain::quantus_subxt::api::tx()
         .balances()
         .transfer_keep_alive(
-            subxt::ext::subxt_core::utils::MultiAddress::Id(dest_account_id.clone()),
+            subxt::ext::subxt_core::utils::MultiAddress::Id(unspendable_account_id.clone()),
             funding_amount,
         );
 
-    println!("Submitting transfer from Alice to {}...", &dest_account_id);
+    println!("Submitting transfer from Alice to unspendable account...");
 
     submit_transaction(&quantus_client, &quantum_keypair, transfer_tx, None).await?;
 
-    let block_hash = client.blocks().at_latest().await?.hash();
+    let blocks = at_best_block(&quantus_client).await?;
+    let block_hash = blocks.hash();
 
     println!("Transfer finalized in block: {:?}", block_hash);
 
@@ -212,7 +239,7 @@ async fn main() -> anyhow::Result<()> {
         &(
             transfer_count,
             alice_account.clone(),
-            dest_account_id.clone(),
+            unspendable_account_id.clone(),
             funding_amount,
         )
             .encode(),
@@ -221,7 +248,7 @@ async fn main() -> anyhow::Result<()> {
     let proof_address = quantus_node::api::storage().balances().transfer_proof((
         transfer_count,
         SubxtAccountId(alice_account.clone().into()),
-        dest_account_id.clone(),
+        unspendable_account_id.clone(),
         funding_amount,
     ));
     let mut final_key = proof_address.to_root_bytes();
@@ -231,42 +258,58 @@ async fn main() -> anyhow::Result<()> {
     assert!(storage_api.fetch_raw_keys(final_key.clone()).await.is_ok());
 
     println!("Fetching storage proof for Alice's account...");
-    let proof_params = rpc_params![vec![to_hex(final_key)], block_hash];
+    let proof_params = rpc_params![vec![to_hex(&final_key)], block_hash];
     let read_proof: ReadProof<H256> = quantus_client
         .rpc_client()
         .request("state_getReadProof", proof_params)
         .await?;
 
-    println!("storage proofs {:?}", read_proof);
+    println!(
+        "storage proofs {:?}",
+        read_proof
+            .proof
+            .iter()
+            .map(|proof| hex::encode(&proof.0))
+            .collect::<Vec<String>>()
+    );
 
     println!("Fetching block header...");
-    let blocks = client.blocks().at(block_hash).await?;
     let header = blocks.header();
+    println!("header {:?}", header);
 
     println!("state root {:?}", header.state_root.clone());
+
+    // Debug: Save proof nodes to a file for analysis
+    println!("\n=== Saving proof data for analysis ===");
+    let proof_data: Vec<String> = read_proof.proof.iter().map(|p| hex::encode(&p.0)).collect();
+    let debug_data = serde_json::json!({
+        "state_root": hex::encode(&header.state_root.0),
+        "transfer_count": transfer_count,
+        "funding_account": hex::encode(alice_account.as_ref() as &[u8]),
+        "unspendable_account": hex::encode(&unspendable_account_bytes),
+        "funding_amount": funding_amount,
+        "proof_nodes": proof_data,
+        "storage_key": hex::encode(&final_key),
+    });
+    std::fs::write(
+        "proof_debug.json",
+        serde_json::to_string_pretty(&debug_data)?,
+    )?;
+    println!("✓ Proof data saved to proof_debug.json");
+
     let state_root = BytesDigest::try_from(header.state_root.as_bytes())?;
     let parent_hash = BytesDigest::try_from(header.parent_hash.as_bytes())?;
     let block_number = header.number;
     println!("Assembling circuit inputs...");
-    let secret: BytesDigest = [1u8; 32].try_into()?;
-    let unspendable_account =
-        wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(secret).account_id;
 
-    let (_, last_idx) = check_leaf(
-        &transfer_proof_hash,
-        read_proof.proof[read_proof.proof.len() - 1].clone().0,
-    );
-
-    let processed_storage_proof = utils::prepare_proof_for_circuit(
-        read_proof.proof,
-        hex::encode(header.state_root.0),
-        last_idx,
-    )?;
+    // Prepare the storage proof with the correct accounts
+    let processed_storage_proof =
+        utils::prepare_proof_for_circuit(read_proof.proof, hex::encode(header.state_root.0))?;
 
     let inputs = CircuitInputs {
         private: PrivateCircuitInputs {
             secret,
-            transfer_count: 0, // In a real scenario, this would be tracked.
+            transfer_count, // Use the actual transfer count from storage
             funding_account: BytesDigest::try_from(alice_account.as_ref() as &[u8])?,
             storage_proof: processed_storage_proof,
             unspendable_account: Digest::from(unspendable_account).into(),
@@ -275,8 +318,8 @@ async fn main() -> anyhow::Result<()> {
         },
         public: PublicCircuitInputs {
             funding_amount,
-            nullifier: Nullifier::from_preimage(secret, 0).hash.into(),
-            exit_account: BytesDigest::try_from(dest_account_id.as_ref() as &[u8])?,
+            nullifier: Nullifier::from_preimage(secret, transfer_count).hash.into(),
+            exit_account: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
             block_hash: BytesDigest::try_from(block_hash.as_ref())?,
             parent_hash,
             block_number,

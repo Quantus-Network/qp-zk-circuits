@@ -3703,15 +3703,13 @@ dependencies = [
 
 [[package]]
 name = "qp-poseidon"
-version = "0.9.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33181134496120c212a0a2098215cf45a68d50fe656de6fb30b31e73babe9383"
+version = "1.0.1"
 dependencies = [
  "log",
  "p3-field",
  "p3-goldilocks",
  "parity-scale-codec",
- "qp-poseidon-core 0.9.5",
+ "qp-poseidon-core 1.0.1",
  "scale-info",
  "serde",
  "sp-core 37.0.0",
@@ -3760,6 +3758,17 @@ dependencies = [
 [[package]]
 name = "qp-poseidon-constants"
 version = "1.0.1"
+dependencies = [
+ "p3-field",
+ "p3-goldilocks",
+ "p3-poseidon2",
+ "rand 0.9.2",
+ "rand_chacha 0.9.0",
+]
+
+[[package]]
+name = "qp-poseidon-constants"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4d56b56652e9f44a43de9593e75d7c3e0c3a352e10675cf3024e5b3175711cd3"
 dependencies = [
@@ -3793,6 +3802,18 @@ dependencies = [
  "p3-poseidon2",
  "p3-symmetric",
  "rand 0.9.2",
+ "rand_chacha 0.9.0",
+]
+
+[[package]]
+name = "qp-poseidon-core"
+version = "1.0.1"
+dependencies = [
+ "p3-field",
+ "p3-goldilocks",
+ "p3-poseidon2",
+ "p3-symmetric",
+ "qp-poseidon-constants 1.0.1",
  "rand_chacha 0.9.0",
 ]
 
@@ -7017,7 +7038,8 @@ dependencies = [
  "hex",
  "parity-scale-codec",
  "qp-plonky2",
- "qp-poseidon 0.9.5",
+ "qp-poseidon 1.0.1",
+ "qp-poseidon-core 1.0.1",
  "qp-wormhole-circuit",
  "qp-wormhole-prover",
  "qp-zk-circuits-common",
