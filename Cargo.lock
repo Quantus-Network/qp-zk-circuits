@@ -5874,9 +5874,16 @@ name = "test-helpers"
 version = "0.1.2"
 dependencies = [
  "hex",
+ "parity-scale-codec",
  "qp-plonky2",
+ "qp-poseidon 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "qp-wormhole-circuit",
  "qp-zk-circuits-common",
+ "scale-info",
+ "serde",
+ "sp-core 37.0.0",
+ "sp-runtime 42.0.0",
+ "sp-storage",
 ]
 
 [[package]]

@@ -1,4 +1,10 @@
-use crate::storage_proof::DEFAULT_ROOT_HASHES;
+use crate::{
+    block_header::{
+        DEFAULT_BLOCK_HASHES, DEFAULT_BLOCK_NUMBERS, DEFAULT_DIGESTS, DEFAULT_EXTRINSICS_ROOTS,
+        DEFAULT_PARENT_HASHES,
+    },
+    storage_proof::DEFAULT_ROOT_HASHES,
+};
 use wormhole_circuit::{
     inputs::{CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs},
     nullifier::Nullifier,
@@ -30,53 +36,6 @@ pub const DEFAULT_TO_ACCOUNTS: [[u8; 32]; 2] = [
         228, 176, 60, 119, 12, 162, 198, 135, 176, 237, 4,
     ],
 ];
-pub const DEFAULT_BLOCK_HEADERS: [[u8; 210]; 2] = [
-    [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 1, 0, 0, 0, 36, 214, 163, 227, 135, 124, 248, 106, 94, 23, 163, 46, 63, 38, 155, 112,
-        150, 63, 186, 244, 176, 80, 224, 73, 17, 207, 17, 175, 163, 180, 131, 80, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    ],
-    [
-        192, 67, 20, 169, 149, 49, 100, 157, 150, 138, 26, 67, 220, 186, 184, 61, 228, 27, 179,
-        207, 69, 27, 4, 130, 131, 25, 91, 155, 143, 93, 32, 197, 2, 0, 0, 0, 77, 114, 212, 11, 35,
-        155, 211, 24, 157, 11, 27, 128, 183, 39, 26, 117, 97, 228, 148, 71, 18, 112, 155, 233, 78,
-        67, 170, 171, 49, 16, 122, 179, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0,
-    ],
-];
-
-pub const DEFAULT_BLOCK_HASHES: [[u8; 32]; 2] = [
-    [
-        192, 67, 20, 169, 149, 49, 100, 157, 150, 138, 26, 67, 220, 186, 184, 61, 228, 27, 179,
-        207, 69, 27, 4, 130, 131, 25, 91, 155, 143, 93, 32, 197,
-    ],
-    [
-        142, 24, 217, 174, 214, 22, 86, 127, 186, 164, 177, 203, 65, 68, 6, 192, 125, 104, 218, 59,
-        144, 133, 208, 254, 157, 58, 124, 68, 44, 247, 24, 107,
-    ],
-];
-
-pub const DEFAULT_PARENT_HASHES: [[u8; 32]; 2] = [
-    [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0,
-    ],
-    [
-        192, 67, 20, 169, 149, 49, 100, 157, 150, 138, 26, 67, 220, 186, 184, 61, 228, 27, 179,
-        207, 69, 27, 4, 130, 131, 25, 91, 155, 143, 93, 32, 197,
-    ],
-];
-
-pub const DEFAULT_BLOCK_NUMBERS: [u32; 2] = [1, 2];
 
 pub const DEFAULT_EXIT_ACCOUNT: [u8; 32] = [4u8; 32];
 
@@ -125,8 +84,9 @@ impl TestInputs for CircuitInputs {
                 transfer_count: DEFAULT_TRANSFER_COUNTS[0],
                 funding_account,
                 unspendable_account,
-                block_header: DEFAULT_BLOCK_HEADERS[0],
                 state_root: root_hash,
+                extrinsics_root: DEFAULT_EXTRINSICS_ROOTS[0].try_into().unwrap(),
+                digest: DEFAULT_DIGESTS[0],
             },
         }
     }
@@ -163,8 +123,9 @@ impl TestInputs for CircuitInputs {
                 transfer_count: DEFAULT_TRANSFER_COUNTS[1],
                 funding_account,
                 unspendable_account,
-                block_header: DEFAULT_BLOCK_HEADERS[1],
                 state_root: root_hash,
+                extrinsics_root: DEFAULT_EXTRINSICS_ROOTS[1].try_into().unwrap(),
+                digest: DEFAULT_DIGESTS[1],
             },
         }
     }
@@ -283,40 +244,98 @@ pub mod storage_proof {
 
 pub mod block_header {
     use crate::TestInputs;
-    use wormhole_circuit::block_header::BlockHeader;
+    use wormhole_circuit::block_header::{header::HeaderInputs, BlockHeader};
     use zk_circuits_common::utils::BytesDigest;
 
-    use crate::{
-        storage_proof::{default_root_hash, DEFAULT_ROOT_HASHES},
-        DEFAULT_BLOCK_HASHES, DEFAULT_BLOCK_HEADERS, DEFAULT_BLOCK_NUMBERS, DEFAULT_PARENT_HASHES,
-    };
+    use crate::storage_proof::{default_root_hash, DEFAULT_ROOT_HASHES};
 
-    impl TestInputs for BlockHeader {
+    pub const DEFAULT_BLOCK_HASHES: [[u8; 32]; 2] = [
+        [
+            60, 206, 110, 191, 44, 109, 228, 120, 184, 243, 225, 209, 238, 255, 239, 110, 235, 156,
+            185, 133, 181, 165, 152, 99, 48, 220, 169, 124, 120, 139, 215, 88,
+        ],
+        [
+            92, 82, 46, 175, 151, 80, 102, 47, 254, 201, 108, 211, 181, 181, 35, 54, 87, 31, 250,
+            176, 17, 87, 152, 12, 88, 152, 15, 178, 127, 27, 86, 249,
+        ],
+    ];
+
+    pub const DEFAULT_PARENT_HASHES: [[u8; 32]; 2] = [
+        [
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0,
+        ],
+        [
+            60, 206, 110, 191, 44, 109, 228, 120, 184, 243, 225, 209, 238, 255, 239, 110, 235, 156,
+            185, 133, 181, 165, 152, 99, 48, 220, 169, 124, 120, 139, 215, 88,
+        ],
+    ];
+    pub const DEFAULT_EXTRINSICS_ROOTS: [[u8; 32]; 2] = [
+        [
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0,
+        ],
+        [
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0,
+        ],
+    ];
+    pub const DEFAULT_DIGESTS: [[u8; 110]; 2] = [
+        [
+            8, 6, 112, 111, 119, 95, 128, 233, 182, 183, 107, 158, 1, 115, 19, 219, 126, 253, 86,
+            30, 208, 176, 70, 21, 45, 180, 229, 9, 62, 91, 4, 6, 53, 245, 52, 48, 38, 123, 225, 5,
+            112, 111, 119, 95, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 79, 226,
+        ],
+        [
+            8, 6, 112, 111, 119, 95, 128, 233, 182, 183, 107, 158, 1, 115, 19, 219, 126, 253, 86,
+            30, 208, 176, 70, 21, 45, 180, 229, 9, 62, 91, 4, 6, 53, 245, 52, 48, 38, 123, 225, 5,
+            112, 111, 119, 95, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 79, 226,
+        ],
+    ];
+
+    pub const DEFAULT_BLOCK_NUMBERS: [u32; 2] = [1, 2];
+
+    impl TestInputs for HeaderInputs {
         fn test_inputs_0() -> Self {
             let parent_hash = BytesDigest::try_from(DEFAULT_PARENT_HASHES[0]).unwrap();
-            BlockHeader::new(
-                &DEFAULT_BLOCK_HEADERS[0],
+            HeaderInputs::new(
                 parent_hash,
                 DEFAULT_BLOCK_NUMBERS[0],
                 default_root_hash().try_into().unwrap(),
-                DEFAULT_BLOCK_HASHES[0].try_into().unwrap(),
+                DEFAULT_EXTRINSICS_ROOTS[0].try_into().unwrap(),
+                &DEFAULT_DIGESTS[0],
             )
             .unwrap()
         }
         fn test_inputs_1() -> Self {
             let parent_hash = BytesDigest::try_from(DEFAULT_PARENT_HASHES[1]).unwrap();
-            let state_root: [u8; 32] = hex::decode(DEFAULT_ROOT_HASHES[1])
-                .unwrap()
-                .try_into()
-                .unwrap();
-            BlockHeader::new(
-                &DEFAULT_BLOCK_HEADERS[1],
+            HeaderInputs::new(
                 parent_hash,
                 DEFAULT_BLOCK_NUMBERS[1],
-                state_root.try_into().unwrap(),
-                DEFAULT_BLOCK_HASHES[1].try_into().unwrap(),
+                hex::decode(DEFAULT_ROOT_HASHES[1])
+                    .unwrap()
+                    .as_slice()
+                    .try_into()
+                    .unwrap(),
+                DEFAULT_EXTRINSICS_ROOTS[1].try_into().unwrap(),
+                &DEFAULT_DIGESTS[1],
             )
             .unwrap()
+        }
+    }
+
+    impl TestInputs for BlockHeader {
+        fn test_inputs_0() -> Self {
+            let block_hash = BytesDigest::try_from(DEFAULT_BLOCK_HASHES[0]).unwrap();
+            BlockHeader::new(block_hash, HeaderInputs::test_inputs_0()).unwrap()
+        }
+        fn test_inputs_1() -> Self {
+            let block_hash = BytesDigest::try_from(DEFAULT_BLOCK_HASHES[1]).unwrap();
+            BlockHeader::new(block_hash, HeaderInputs::test_inputs_1()).unwrap()
         }
     }
 }
@@ -345,12 +364,119 @@ pub mod nullifier {
 // Run with: cargo test -q -- --nocapture
 #[cfg(test)]
 mod regen_block_constants {
-    use super::*;
+    use crate::block_header::DEFAULT_PARENT_HASHES;
     use crate::storage_proof;
-    use plonky2::hash::poseidon2::Poseidon2Hash;
-    use plonky2::plonk::config::Hasher;
-    use wormhole_circuit::inputs::BLOCK_HEADER_SIZE;
-    use zk_circuits_common::utils::{digest_felts_to_bytes, injective_bytes_to_felts};
+    use codec::{Decode, Encode};
+    use plonky2::field::goldilocks_field::GoldilocksField;
+    use plonky2::field::types::Field;
+    use qp_poseidon::PoseidonHasher;
+    use scale_info::TypeInfo;
+    use serde::{Deserialize, Serialize};
+    use sp_core::{Hasher, H256};
+    use sp_runtime::generic::{Digest, DigestItem, Header};
+    use sp_runtime::traits::Hash as HashT;
+    use sp_runtime::traits::Header as HeaderT;
+    use zk_circuits_common::utils::{digest_bytes_to_felts, injective_bytes_to_felts};
+
+    /// Hash for quantus block header
+    /// This function should only be used to compute the quantus block hash
+    /// It breaks up the bytes input in a specific way that mimics how our zk-circuit does it.
+    /// It makes parsing the input fields much easier inside the circuit.
+    fn hash_header(x: &[u8]) -> [u8; 32] {
+        let max_encoded_len = 211; // BLOCK_HEADER_SIZE
+
+        debug_assert!(
+            x.len() <= max_encoded_len,
+            "Input must be less than or equal to {} bytes, but was {}",
+            max_encoded_len,
+            x.len()
+        );
+        let max_encoded_felts = 4 * 3 + 1 + 28; // 3 hashout fields + 1 u32 + 28 felts for injective digest encoding
+        let mut felts = Vec::with_capacity(max_encoded_felts);
+        let mut y = x;
+        let header: Header<u32, PoseidonHeaderHasher> =
+            Header::<u32, PoseidonHeaderHasher>::decode(&mut y)
+                .expect("already asserted input length. qed");
+        let parent_hash = header.parent_hash().as_bytes();
+        let number = header.number();
+        let state_root = header.state_root().as_bytes();
+        let extrinsics_root = header.extrinsics_root().as_bytes();
+        let digest = header.digest().encode();
+        felts.extend(digest_bytes_to_felts(
+            parent_hash
+                .try_into()
+                .expect("Parent hash expected to equal 32 bytes"),
+        ));
+        felts.push(GoldilocksField::from_noncanonical_u64(*number as u64));
+        felts.extend(digest_bytes_to_felts(
+            state_root
+                .try_into()
+                .expect("State root expected to equal 32 bytes"),
+        ));
+        felts.extend(digest_bytes_to_felts(
+            extrinsics_root
+                .try_into()
+                .expect("Extrinsics root expected to equal 32 bytes"),
+        ));
+        felts.extend(injective_bytes_to_felts(&digest));
+        plonky2::hash::poseidon2::hash_no_pad_bytes(&felts)
+    }
+
+    /// A standard library hasher implementation using Poseidon
+    #[derive(Default)]
+    pub struct PoseidonStdHasher(Vec<u8>);
+
+    impl core::hash::Hasher for PoseidonStdHasher {
+        fn finish(&self) -> u64 {
+            let hash = hash_header(self.0.as_slice());
+            u64::from_le_bytes(hash[0..8].try_into().unwrap())
+        }
+
+        fn write(&mut self, bytes: &[u8]) {
+            self.0.extend_from_slice(bytes)
+        }
+    }
+
+    #[derive(PartialEq, Eq, Clone, Debug, Encode, Decode, TypeInfo, Serialize, Deserialize)]
+    pub struct PoseidonHeaderHasher;
+
+    impl Hasher for PoseidonHeaderHasher {
+        type Out = H256;
+        type StdHasher = PoseidonStdHasher;
+        const LENGTH: usize = 32;
+
+        fn hash(x: &[u8]) -> H256 {
+            let h = hash_header(x);
+            H256::from_slice(&h)
+        }
+    }
+
+    impl HashT for PoseidonHeaderHasher {
+        type Output = H256;
+
+        fn hash(s: &[u8]) -> Self::Output {
+            H256::from_slice(&hash_header(s))
+        }
+
+        /// Produce the hash of some codec-encodable value.
+        fn hash_of<S: Encode>(s: &S) -> Self::Output {
+            Encode::using_encoded(s, <Self as Hasher>::hash)
+        }
+
+        fn ordered_trie_root(
+            input: Vec<Vec<u8>>,
+            state_version: sp_storage::StateVersion,
+        ) -> Self::Output {
+            PoseidonHasher::ordered_trie_root(input, state_version)
+        }
+
+        fn trie_root(
+            input: Vec<(Vec<u8>, Vec<u8>)>,
+            version: sp_storage::StateVersion,
+        ) -> Self::Output {
+            PoseidonHasher::trie_root(input, version)
+        }
+    }
 
     fn fmt_byte_array(buf: &[u8]) -> String {
         // Format as Rust array: [a, b, c, ...]
@@ -367,68 +493,70 @@ mod regen_block_constants {
     }
     #[test]
     fn regenerate_and_print() {
-        // Decode state roots from DEFAULT_ROOT_HASHES hex -> [u8;32]
-        let state_roots: Vec<[u8; 32]> = storage_proof::DEFAULT_ROOT_HASHES
-            .iter()
-            .map(|h| {
-                let v = hex::decode(h).expect("valid hex root");
-                <[u8; 32]>::try_from(v.as_slice()).expect("32-byte root")
-            })
-            .collect();
-
-        // Block numbers from constants
-        let nums = DEFAULT_BLOCK_NUMBERS;
-
-        // Parent hashes and outputs
-        let mut parent_hashes = [[0u8; 32]; 2];
-        let mut block_hashes = [[0u8; 32]; 2];
-        let mut headers = [[0u8; BLOCK_HEADER_SIZE]; 2];
-
-        // Genesis parent = 32 zero bytes
-        parent_hashes[0] = [0u8; 32];
-
-        for i in 0..2 {
-            let mut hdr = [0u8; BLOCK_HEADER_SIZE];
-
-            // Layout (byte offsets):
-            // 0..32   : parent hash (32 bytes)
-            // 32..36  : block number (LE u32)
-            // 36..68  : state root (32 bytes)
-            // 68..210 : zero padding (this is where the extrinsic root and digest logs will go. We don't utilize these in the circuit currently.)
-            hdr[0..32].copy_from_slice(&parent_hashes[i]);
-            hdr[32..36].copy_from_slice(&nums[i].to_le_bytes());
-            hdr[36..68].copy_from_slice(&state_roots[i]);
-
-            // Poseidon2 hash over the same felts the circuit uses
-            let felts = injective_bytes_to_felts(&hdr); // Vec<F> (4-byte limbs per felt)
-            let digest = Poseidon2Hash::hash_no_pad(&felts); // HashOut<F> with 4 elements
-            let bh_bytes = digest_felts_to_bytes(digest.elements);
-
-            headers[i] = hdr;
-            block_hashes[i] = *bh_bytes;
-
-            // Set next parent to this block's hash
-            if i + 1 < 2 {
-                parent_hashes[i + 1] = *bh_bytes;
-            }
-        }
+        let sample_digest: Digest = Digest {
+            logs: vec![
+                DigestItem::PreRuntime(
+                    [112, 111, 119, 95],
+                    [
+                        233, 182, 183, 107, 158, 1, 115, 19, 219, 126, 253, 86, 30, 208, 176, 70,
+                        21, 45, 180, 229, 9, 62, 91, 4, 6, 53, 245, 52, 48, 38, 123, 225,
+                    ]
+                    .to_vec(),
+                ),
+                DigestItem::Seal(
+                    [112, 111, 119, 95],
+                    [
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 79, 226,
+                    ]
+                    .to_vec(),
+                ),
+            ],
+        };
+        let header_1 = Header::<u32, PoseidonHeaderHasher> {
+            parent_hash: H256::from_slice(&DEFAULT_PARENT_HASHES[0]),
+            number: 1,
+            state_root: H256::from_slice(
+                hex::decode(storage_proof::DEFAULT_ROOT_HASHES[0])
+                    .expect("valid hex root")
+                    .as_slice(),
+            ),
+            extrinsics_root: H256::zero(),
+            digest: sample_digest.clone(),
+        };
+        let header_2 = Header::<u32, PoseidonHeaderHasher> {
+            parent_hash: header_1.hash(),
+            number: 2,
+            state_root: H256::from_slice(
+                hex::decode(storage_proof::DEFAULT_ROOT_HASHES[1])
+                    .expect("valid hex root")
+                    .as_slice(),
+            ),
+            extrinsics_root: H256::zero(),
+            digest: sample_digest,
+        };
 
         // Print copy-pasteable Rust constants
         println!(
-            "pub const DEFAULT_BLOCK_HEADERS: [[u8; {}]; 2] = [\n    {},\n    {}\n];\n",
-            BLOCK_HEADER_SIZE,
-            fmt_byte_array(&headers[0]),
-            fmt_byte_array(&headers[1]),
-        );
-        println!(
             "pub const DEFAULT_BLOCK_HASHES: [[u8; 32]; 2] = [\n    {},\n    {}\n];\n",
-            fmt_byte_array(&block_hashes[0]),
-            fmt_byte_array(&block_hashes[1]),
+            fmt_byte_array(header_1.hash().as_bytes()),
+            fmt_byte_array(header_2.hash().as_bytes()),
         );
         println!(
             "pub const DEFAULT_PARENT_HASHES: [[u8; 32]; 2] = [\n    {},\n    {}\n];",
-            fmt_byte_array(&parent_hashes[0]),
-            fmt_byte_array(&parent_hashes[1]),
+            fmt_byte_array(header_1.parent_hash.as_bytes()),
+            fmt_byte_array(header_2.parent_hash.as_bytes()),
+        );
+        println!(
+            "pub const DEFAULT_EXTRINSICS_ROOTS: [[u8; 32]; 2] = [\n    {},\n    {}\n];",
+            fmt_byte_array(header_1.extrinsics_root.as_bytes()),
+            fmt_byte_array(header_2.extrinsics_root.as_bytes()),
+        );
+        println!(
+            "pub const DEFAULT_DIGESTS: [[u8; 110]; 2] = [\n    {},\n    {}\n];",
+            fmt_byte_array(&header_1.digest.encode()),
+            fmt_byte_array(&header_2.digest.encode()),
         );
     }
 }

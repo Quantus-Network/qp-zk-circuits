@@ -3,7 +3,8 @@ use std::fs;
 use hex;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use test_helpers::{
-    TestInputs, DEFAULT_BLOCK_HASHES, DEFAULT_BLOCK_NUMBERS, DEFAULT_PARENT_HASHES,
+    block_header::{DEFAULT_BLOCK_HASHES, DEFAULT_BLOCK_NUMBERS, DEFAULT_PARENT_HASHES},
+    TestInputs,
 };
 use wormhole_circuit::inputs::{CircuitInputs, PublicCircuitInputs};
 use wormhole_prover::WormholeProver;

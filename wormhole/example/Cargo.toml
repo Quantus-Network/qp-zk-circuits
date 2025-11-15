@@ -7,10 +7,13 @@ version.workspace = true
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
 hex = { workspace = true, features = ["alloc"] }
+parity-scale-codec = "3.7.5"
 qp-plonky2 = { workspace = true, features = ["default"] }
 qp-poseidon-core = { path = "/Users/dastansam/Documents/work/poseidon-resonance/core", features = ["p3"] }
 qp-poseidon = { path = "/Users/dastansam/Documents/work/poseidon-resonance/substrate" }
 quantus-cli = { git = "https://github.com/Quantus-Network/quantus-cli.git", branch = "chore/poseidon-release", default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["alloc"] }
 sp-core = "38.1.0"
 sp-runtime = "44.0.0"
 sp-trie = { git = "https://github.com/Quantus-Network/chain.git", default-features = false, features = ["std"] }
@@ -21,6 +24,3 @@ wormhole-circuit = { package = "qp-wormhole-circuit", version = "0.1.2", path = 
 ] }
 wormhole-prover = { package = "qp-wormhole-prover", version = "0.1.2", path = "../prover", default-features = false }
 zk-circuits-common = { package = "qp-zk-circuits-common", version = "0.1.2", path = "../../common" }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0", features = ["alloc"] }
-parity-scale-codec = "3.7.5"
