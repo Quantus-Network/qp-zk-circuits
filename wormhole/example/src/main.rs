@@ -19,7 +19,6 @@ use sp_core::{Hasher, H256};
 use std::str::FromStr;
 use subxt::backend::legacy::rpc_methods::{Bytes, ReadProof};
 use subxt::blocks::Block;
-use subxt::config::substrate::SubstrateHeader;
 use subxt::ext::codec::Encode;
 use subxt::ext::jsonrpsee::core::client::ClientT;
 use subxt::ext::jsonrpsee::rpc_params;
@@ -96,7 +95,7 @@ fn generate_zk_proof(inputs: DebugInputs) -> anyhow::Result<()> {
         .collect();
 
     let processed_storage_proof =
-        utils::prepare_proof_for_circuit(proof_bytes, inputs.state_root_hex)?;
+        utils::prepare_proof_for_circuit(proof_bytes, inputs.state_root_hex.clone())?;
 
     println!("Assembling circuit inputs...");
     let secret =
@@ -111,12 +110,18 @@ fn generate_zk_proof(inputs: DebugInputs) -> anyhow::Result<()> {
     let dest_account_id = SubxtAccountId(
         dest_account_bytes
             .try_into()
-            .map_err(|_| anyhow!("Invalid dest account length"))?
+            .map_err(|_| anyhow!("Invalid dest account length"))?,
     );
     let block_hash = H256::from_str(&inputs.block_hash_hex).map_err(|e| anyhow!(e))?;
-    let header_bytes_vec = hex::decode(inputs.header_hex).expect("valid header bytes; qed");
-    let mut header_bytes_slice = &header_bytes_vec[..];
-    let header = SubstrateHeader::<u32, SubxtPoseidonHasher>::decode(&mut header_bytes_slice)?;
+
+    // Decode individual header components
+    let state_root = BytesDigest::try_from(&hex::decode(&inputs.state_root_hex)?[..])?;
+    let extrinsics_root = BytesDigest::try_from(&hex::decode(inputs.extrinsics_root_hex)?[..])?;
+    let digest_bytes = hex::decode(inputs.digest_hex)?;
+    let digest: [u8; 110] = digest_bytes
+        .try_into()
+        .map_err(|_| anyhow!("Invalid digest length, expected 110 bytes"))?;
+    let parent_hash = BytesDigest::try_from(&hex::decode(inputs.parent_hash_hex)?[..])?;
 
     let circuit_inputs = CircuitInputs {
         private: PrivateCircuitInputs {
@@ -125,15 +130,16 @@ fn generate_zk_proof(inputs: DebugInputs) -> anyhow::Result<()> {
             funding_account: BytesDigest::try_from(alice_account.as_ref() as &[u8])?,
             storage_proof: processed_storage_proof,
             unspendable_account: Digest::from(unspendable_account).into(),
-            block_header: header_bytes_vec.try_into().expect("valid header bytes; qed"),
-            state_root: BytesDigest::try_from(&header.state_root.0[..])?,
+            state_root,
+            extrinsics_root,
+            digest,
         },
         public: PublicCircuitInputs {
             funding_amount: inputs.funding_amount,
             nullifier: Nullifier::from_preimage(secret, 0).hash.into(),
             exit_account: BytesDigest::try_from(dest_account_id.as_ref() as &[u8])?,
             block_hash: BytesDigest::try_from(block_hash.as_ref())?,
-            parent_hash: BytesDigest::try_from(&hex::decode(inputs.parent_hash_hex)?[..])?,
+            parent_hash,
             block_number: inputs.block_number,
         },
     };
