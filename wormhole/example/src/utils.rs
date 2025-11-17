@@ -28,6 +28,31 @@ fn test_hash_verification() {
     println!("=============================\n");
 }
 
+// Function to check that the 24 byte suffix of the leaf hash is the last [-32, -8] bytes of the
+// leaf node
+pub fn check_leaf(leaf_hash: &[u8; 32], leaf_node: Vec<u8>) -> (bool, usize) {
+    let hash_suffix = &leaf_hash[8..32];
+    let mut last_idx = 0usize;
+    let mut found = false;
+
+    for i in 0..=leaf_node.len().saturating_sub(hash_suffix.len()) {
+        if &leaf_node[i..i + hash_suffix.len()] == hash_suffix {
+            last_idx = i;
+            found = true;
+            break;
+        }
+    }
+
+    println!(
+        "Checking leaf hash suffix: {:?} in leaf_node at index: {:?}",
+        hex::encode(hash_suffix),
+        last_idx
+    );
+    println!("leaf_node: {:?}", hex::encode(leaf_node.clone()));
+
+    (found, (last_idx * 2).saturating_sub(16))
+}
+
 /// Prepares the storage proof for circuit consumption by ordering nodes from root to leaf.
 ///
 /// The RPC returns an UNORDERED list of proof node preimages. We need to:
@@ -36,6 +61,7 @@ fn test_hash_verification() {
 pub fn prepare_proof_for_circuit(
     proof: Vec<Bytes>,
     state_root: String,
+    leaf_hash: [u8; 32],
 ) -> anyhow::Result<ProcessedStorageProof> {
     // DEBUG: Test hashing with known data
     test_hash_verification();
@@ -49,7 +75,7 @@ pub fn prepare_proof_for_circuit(
         std::collections::HashMap::new();
     for (idx, node) in proof.iter().enumerate() {
         let hash = hash_node_with_poseidon_padded(&node.0);
-        let hash_hex = hex::encode(&hash);
+        let hash_hex = hex::encode(hash);
         let node_hex = hex::encode(&node.0);
         println!("Node {}: hash = {}", idx, &hash_hex);
         node_map.insert(hash_hex.clone(), (idx, node.0.clone(), node_hex));
@@ -140,7 +166,6 @@ pub fn prepare_proof_for_circuit(
     );
 
     // Now compute the indices - where child hashes appear within parent nodes
-    const INJECTIVE_BYTES_LIMB: usize = 4;
     let mut indices = Vec::<usize>::new();
 
     // Compute indices only for parent-child relationships (not for the last node)
@@ -150,16 +175,28 @@ pub fn prepare_proof_for_circuit(
         let next_hash = hex::encode(hash_node_with_poseidon_padded(next_node));
 
         if let Some(hex_idx) = current_hex.find(&next_hash) {
-            let felt_idx = hex_idx / (INJECTIVE_BYTES_LIMB * 2);
+            let felt_idx = hex_idx;
             indices.push(felt_idx);
         } else {
             anyhow::bail!("Could not find child hash in ordered node {}", i);
         }
     }
 
-    // For the last node, use index 0 as placeholder (circuit will verify the actual storage key)
-    indices.push(0);
-    println!("Last node: using index 0 (storage key verification done by circuit)");
+    let (found, last_idx) = check_leaf(&leaf_hash, ordered_nodes.last().unwrap().clone());
+    if !found {
+        anyhow::bail!("Leaf hash suffix not found in leaf node!");
+    }
+    println!(
+        "✓ Leaf hash suffix found in leaf node at byte index {}",
+        last_idx
+    );
+
+    // Set the last index to the found leaf index
+    indices.push(last_idx);
+    println!(
+        "Last node: using index {} (storage key verification done by circuit)",
+        last_idx
+    );
 
     println!("Indices: {:?}", indices);
 

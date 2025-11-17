@@ -216,9 +216,9 @@ impl CircuitFragment for StorageProof {
                 builder.range_check(*felt, 32);
             }
 
-            // For the leaf node, the value is the hash of the leaf inputs. The hash of the
-            // leaf node itself (prev_hash) is the hash of that value.
-            for y in 0..4 {
+            // For the leaf node, the value is the hash of the leaf inputs. We don't check the full hash
+            // here, only the last 3 felts b/c zk trie's length prefix overwrites the 8 bytes of the hash.
+            for y in 1..4 {
                 let diff = builder.sub(leaf_inputs_hash.elements[y], prev_hash.elements[y]);
                 let result = builder.mul(diff, is_leaf_node.target);
                 let zero = builder.zero();

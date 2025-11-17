@@ -1,5 +1,6 @@
 use alloc::vec::Vec;
 use core::array;
+use plonky2::hash::poseidon2::hash_no_pad_bytes;
 use plonky2::{
     hash::hash_types::HashOutTarget, iop::target::Target, plonk::circuit_builder::CircuitBuilder,
 };
@@ -80,6 +81,16 @@ impl LeafInputs {
             to_account,
             funding_amount,
         })
+    }
+
+    pub fn leaf_hash(&self) -> [u8; 32] {
+        let mut leaf_elements = Vec::new();
+        leaf_elements.extend_from_slice(&self.transfer_count);
+        leaf_elements.extend_from_slice(&self.funding_account.0);
+        leaf_elements.extend_from_slice(&self.to_account.0);
+        leaf_elements.extend_from_slice(&self.funding_amount);
+
+        hash_no_pad_bytes(&leaf_elements)
     }
 }
 

@@ -9,9 +9,11 @@ anyhow = { workspace = true, features = ["std"] }
 hex = { workspace = true, features = ["alloc"] }
 parity-scale-codec = "3.7.5"
 qp-plonky2 = { workspace = true, features = ["default"] }
-qp-poseidon-core = { path = "/Users/dastansam/Documents/work/poseidon-resonance/core", features = ["p3"] }
-qp-poseidon = { path = "/Users/dastansam/Documents/work/poseidon-resonance/substrate" }
-quantus-cli = { git = "https://github.com/Quantus-Network/quantus-cli.git", branch = "chore/poseidon-release", default-features = false }
+qp-poseidon = { version = "1.0.1" }
+qp-poseidon-core = { version = "1.0.1", default-features = false, features = [
+	"p3",
+] }
+quantus-cli = { git = "https://github.com/Quantus-Network/quantus-cli.git", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["alloc"] }
 sp-core = "38.1.0"
