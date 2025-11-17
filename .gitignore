@@ -21,3 +21,4 @@ transfer_proof.json
 # wormhole example artifacts
 debug_inputs.json
 proof_debug.json
+proof.hex

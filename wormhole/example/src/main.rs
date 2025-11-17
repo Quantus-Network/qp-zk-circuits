@@ -10,6 +10,7 @@ use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_poseidon::PoseidonHasher;
 use quantus_cli::chain::quantus_subxt as quantus_node;
+use quantus_cli::chain::quantus_subxt::api::balances;
 use quantus_cli::cli::common::submit_transaction;
 use quantus_cli::qp_dilithium_crypto::DilithiumPair;
 use quantus_cli::wallet::QuantumKeyPair;
@@ -20,7 +21,6 @@ use std::str::FromStr;
 use subxt::backend::legacy::rpc_methods::{Bytes, ReadProof};
 use subxt::blocks::Block;
 use subxt::ext::codec::Encode;
-use subxt::ext::futures::StreamExt;
 use subxt::ext::jsonrpsee::core::client::ClientT;
 use subxt::ext::jsonrpsee::rpc_params;
 use subxt::utils::{to_hex, AccountId32 as SubxtAccountId};
@@ -30,11 +30,9 @@ use wormhole_circuit::nullifier::Nullifier;
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::utils::{BytesDigest, Digest};
 
-// use crate::utils::check_leaf; // No longer needed
-
 mod utils;
 
-const DEBUG_FILE: &str = "debug_inputs.json";
+const DEBUG_FILE: &str = "proof_debug.json";
 
 #[derive(Serialize, Deserialize, Debug)]
 struct DebugInputs {
@@ -56,6 +54,16 @@ struct DebugInputs {
 
 impl From<CircuitInputs> for DebugInputs {
     fn from(inputs: CircuitInputs) -> Self {
+        let hash = qp_poseidon::PoseidonHasher::hash_storage::<AccountId32>(
+            &(
+                inputs.private.transfer_count,
+                AccountId32::new(*inputs.private.funding_account),
+                AccountId32::new(*inputs.private.unspendable_account),
+                inputs.public.funding_amount,
+            )
+                .encode(),
+        );
+
         DebugInputs {
             secret_hex: hex::encode(inputs.private.secret.as_ref()),
             proof_hex: inputs
@@ -72,13 +80,7 @@ impl From<CircuitInputs> for DebugInputs {
                 .indices
                 .last()
                 .expect("non-empty indices; qed"),
-            leaf_hash_hex: inputs
-                .private
-                .storage_proof
-                .proof
-                .iter()
-                .map(hex::encode)
-                .collect(),
+            leaf_hash_hex: hex::encode(hash),
             transfer_count: inputs.private.transfer_count,
             funding_account_hex: hex::encode(inputs.private.funding_account.as_ref()),
             dest_account_hex: hex::encode(inputs.public.exit_account.as_ref()),
@@ -92,6 +94,7 @@ impl From<CircuitInputs> for DebugInputs {
     }
 }
 
+/// Generate a proof from the given inputs
 fn generate_zk_proof(inputs: DebugInputs) -> anyhow::Result<()> {
     // Print the debug inputs being used
     println!(
@@ -109,10 +112,10 @@ fn generate_zk_proof(inputs: DebugInputs) -> anyhow::Result<()> {
     let processed_storage_proof = utils::prepare_proof_for_circuit(
         proof_bytes,
         inputs.state_root_hex.clone(),
-        hex::encode(inputs.leaf_hash_hex)
-            .as_bytes()
+        hex::decode(inputs.leaf_hash_hex)
+            .expect("couldn't decode leaf hash")
             .try_into()
-            .unwrap(),
+            .expect("stored leaf hash len is not 32;"),
     )?;
 
     println!("Assembling circuit inputs...");
@@ -262,6 +265,7 @@ async fn main() -> anyhow::Result<()> {
 
     let blocks = at_best_block(&quantus_client).await?;
     let block_hash = blocks.hash();
+    println!("Transfer submitted in block: {:?}", block_hash);
 
     let storage_api = client.storage().at(block_hash);
     let transfer_count_previous = storage_api
@@ -274,7 +278,10 @@ async fn main() -> anyhow::Result<()> {
     let blocks = at_best_block(&quantus_client).await?;
     let block_hash = blocks.hash();
 
-    println!("Transfer finalized in block: {:?}", block_hash);
+    println!("Transfer included in block: {:?}", block_hash);
+
+    let events_api = client.events().at(block_hash).await?;
+    // let event = events_api.find::<balances::Event::TransferProofStored>();
 
     let storage_api = client.storage().at(block_hash);
     let transfer_count = storage_api
@@ -282,48 +289,34 @@ async fn main() -> anyhow::Result<()> {
         .await?
         .unwrap_or_default();
 
-    let mut final_key: Vec<u8> = vec![];
-    let mut leaf_hash: [u8; 32] = [0u8; 32];
-    let mut match_count = 0u64;
-
-    for count in transfer_count_previous..transfer_count {
-        let hash = qp_poseidon::PoseidonHasher::hash_storage::<AccountId32>(
-            &(
-                count,
-                alice_account.clone(),
-                unspendable_account_id.clone(),
-                funding_amount,
-            )
-                .encode(),
-        );
-        let proof_address = quantus_node::api::storage().balances().transfer_proof((
-            count,
-            SubxtAccountId(alice_account.clone().into()),
+    assert!(
+        transfer_count > transfer_count_previous,
+        "Transfer count should've been incremented"
+    );
+    println!(
+        "Transfer count before {} and after {}",
+        transfer_count_previous, transfer_count
+    );
+    let leaf_hash = qp_poseidon::PoseidonHasher::hash_storage::<AccountId32>(
+        &(
+            transfer_count_previous,
+            alice_account.clone(),
             unspendable_account_id.clone(),
             funding_amount,
-        ));
-        let mut key = proof_address.to_root_bytes();
-        key.extend_from_slice(&hash);
+        )
+            .encode(),
+    );
+    let proof_address = quantus_node::api::storage().balances().transfer_proof((
+        transfer_count_previous,
+        SubxtAccountId(alice_account.clone().into()),
+        unspendable_account_id.clone(),
+        funding_amount,
+    ));
+    let mut final_key = proof_address.to_root_bytes();
+    final_key.extend_from_slice(&leaf_hash);
+    let val = storage_api.fetch_raw(final_key.clone()).await?;
+    assert!(val.is_some(), "Storage key not found");
 
-        // assert the above key exists
-        let stream_of_keys = storage_api.fetch_raw_keys(key.clone()).await?;
-        // there should be at least one key
-        let keys: Vec<_> = stream_of_keys.collect().await;
-        if !keys.is_empty() {
-            final_key = key;
-            leaf_hash = hash;
-            match_count = count;
-            println!(
-                "🍀 Found matching storage key: {:?} for transfer proof with leaf hash: {:?} for transfer count {:?}",
-                hex::encode(&final_key),
-                hex::encode(hash),
-                count
-            );
-            break;
-        }
-    }
-
-    println!("Fetching storage proof for Alice's account...");
     let proof_params = rpc_params![vec![to_hex(&final_key)], block_hash];
     let read_proof: ReadProof<H256> = quantus_client
         .rpc_client()
@@ -350,7 +343,7 @@ async fn main() -> anyhow::Result<()> {
     let proof_data: Vec<String> = read_proof.proof.iter().map(|p| hex::encode(&p.0)).collect();
     let debug_data = serde_json::json!({
         "state_root": hex::encode(header.state_root.0),
-        "transfer_count": match_count,
+        "transfer_count": transfer_count_previous,
         "funding_account": hex::encode(alice_account.as_ref() as &[u8]),
         "unspendable_account": hex::encode(unspendable_account_bytes),
         "funding_amount": funding_amount,
@@ -381,7 +374,7 @@ async fn main() -> anyhow::Result<()> {
     let inputs = CircuitInputs {
         private: PrivateCircuitInputs {
             secret,
-            transfer_count: match_count, // Use the actual transfer count from storage
+            transfer_count: transfer_count_previous, // Use the actual transfer count from storage
             funding_account: BytesDigest::try_from(alice_account.as_ref() as &[u8])?,
             storage_proof: processed_storage_proof,
             unspendable_account: Digest::from(unspendable_account).into(),
@@ -391,7 +384,7 @@ async fn main() -> anyhow::Result<()> {
         },
         public: PublicCircuitInputs {
             funding_amount,
-            nullifier: Nullifier::from_preimage(secret, match_count).hash.into(),
+            nullifier: Nullifier::from_preimage(secret, transfer_count).hash.into(),
             exit_account: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
             block_hash: BytesDigest::try_from(block_hash.as_ref())?,
             parent_hash,
@@ -399,22 +392,6 @@ async fn main() -> anyhow::Result<()> {
         },
     };
 
-    let config = CircuitConfig::standard_recursion_config();
-    let prover = WormholeProver::new(config);
-    let prover_next = prover.commit(&inputs)?;
-    let proof: ProofWithPublicInputs<_, _, 2> = prover_next.prove().expect("proof failed; qed");
-
-    let public_inputs = PublicCircuitInputs::try_from(&proof)?;
-
-    println!(
-        "\nSuccessfully generated and verified proof!\nPublic Inputs: {:?}\n",
-        public_inputs
-    );
-
-    let proof_hex = hex::encode(proof.to_bytes());
-    let proof_file = "proof.hex";
-    std::fs::write(proof_file, proof_hex)?;
-    println!("Proof written to {}", proof_file);
-
+    generate_zk_proof(inputs.into())?;
     Ok(())
 }

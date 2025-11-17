@@ -30,7 +30,7 @@ pub enum DigestError {
 }
 
 impl Display for DigestError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut alloc::fmt::Formatter<'_>) -> alloc::fmt::Result {
         match self {
             DigestError::ChunkOutOfFieldRange { chunk_index, value } => {
                 write!(
@@ -47,6 +47,7 @@ impl Display for DigestError {
     }
 }
 
+#[cfg(feature = "std")]
 impl std::error::Error for DigestError {}
 
 impl From<Error> for DigestError {
