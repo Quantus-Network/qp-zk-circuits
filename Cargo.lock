@@ -3647,7 +3647,7 @@ checksum = "fb2f13d8793f7a79c42d33e4ebe9d470fe938dc55592ef97ef42d4298aa6a976"
 dependencies = [
  "log",
  "parity-scale-codec",
- "qp-poseidon 1.0.1",
+ "qp-poseidon",
  "qp-rusty-crystals-dilithium",
  "qp-rusty-crystals-hdwallet",
  "scale-info",
@@ -3704,25 +3704,6 @@ dependencies = [
 
 [[package]]
 name = "qp-poseidon"
-version = "0.9.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33181134496120c212a0a2098215cf45a68d50fe656de6fb30b31e73babe9383"
-dependencies = [
- "log",
- "p3-field",
- "p3-goldilocks",
- "parity-scale-codec",
- "qp-poseidon-core 0.9.5",
- "scale-info",
- "serde",
- "sp-core 37.0.0",
- "sp-runtime 42.0.0",
- "sp-storage",
- "sp-trie 40.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "qp-poseidon"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0353086f7af1df7d45a1ecb995cf84b583c8211d7122f542044b37388b5effcd"
@@ -3731,7 +3712,7 @@ dependencies = [
  "p3-field",
  "p3-goldilocks",
  "parity-scale-codec",
- "qp-poseidon-core 1.0.1",
+ "qp-poseidon-core",
  "scale-info",
  "serde",
  "sp-core 37.0.0",
@@ -3749,20 +3730,6 @@ dependencies = [
  "p3-field",
  "p3-goldilocks",
  "p3-poseidon2",
- "rand 0.9.2",
- "rand_chacha 0.9.0",
-]
-
-[[package]]
-name = "qp-poseidon-core"
-version = "0.9.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec326fc2631a929de09a38af2613a3db5230882c12a2f68205693ec632751e8b"
-dependencies = [
- "p3-field",
- "p3-goldilocks",
- "p3-poseidon2",
- "p3-symmetric",
  "rand 0.9.2",
  "rand_chacha 0.9.0",
 ]
@@ -3804,7 +3771,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "nam-tiny-hderive",
- "qp-poseidon-core 1.0.1",
+ "qp-poseidon-core",
  "qp-rusty-crystals-dilithium",
  "rand_chacha 0.9.0",
  "rand_core 0.9.3",
@@ -3845,7 +3812,7 @@ dependencies = [
  "anyhow",
  "hex",
  "qp-plonky2",
- "qp-poseidon-core 1.0.1",
+ "qp-poseidon-core",
  "qp-zk-circuits-common",
 ]
 
@@ -3889,14 +3856,14 @@ version = "0.1.2"
 dependencies = [
  "anyhow",
  "qp-plonky2",
- "qp-poseidon-core 1.0.1",
+ "qp-poseidon-core",
  "serde",
 ]
 
 [[package]]
 name = "quantus-cli"
 version = "0.3.0"
-source = "git+https://github.com/Quantus-Network/quantus-cli.git?branch=feat%2Fupdated-metadata#c8385efaadb96bd08577e41e4034efe7290ab926"
+source = "git+https://github.com/Quantus-Network/quantus-cli.git?branch=feat%2Fupdated-metadata#424236808424c358c12269ee4bd80e2954fab435"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -3908,7 +3875,7 @@ dependencies = [
  "jsonrpsee",
  "parity-scale-codec",
  "qp-dilithium-crypto",
- "qp-poseidon 0.9.5",
+ "qp-poseidon",
  "qp-rusty-crystals-dilithium",
  "qp-rusty-crystals-hdwallet",
  "rand 0.9.2",
@@ -5787,7 +5754,7 @@ dependencies = [
  "hex",
  "parity-scale-codec",
  "qp-plonky2",
- "qp-poseidon 1.0.1",
+ "qp-poseidon",
  "qp-wormhole-circuit",
  "qp-zk-circuits-common",
  "scale-info",
@@ -6956,8 +6923,8 @@ dependencies = [
  "hex",
  "parity-scale-codec",
  "qp-plonky2",
- "qp-poseidon 1.0.1",
- "qp-poseidon-core 1.0.1",
+ "qp-poseidon",
+ "qp-poseidon-core",
  "qp-wormhole-circuit",
  "qp-wormhole-prover",
  "qp-zk-circuits-common",
