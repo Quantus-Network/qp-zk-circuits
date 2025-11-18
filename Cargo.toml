@@ -21,7 +21,6 @@ qp-plonky2 = { git = "https://github.com/Quantus-Network/qp-plonky2", default-fe
 	"no_random",
 ] }
 qp-poseidon-core = { version = "1.0.1", default-features = false, features = [
-	"p2",
 	"p3",
 ] }
 serde = { version = "1.0", default-features = false, features = ["derive"] }

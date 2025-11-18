@@ -10,6 +10,7 @@ version.workspace = true
 anyhow = { workspace = true, default-features = false }
 qp-plonky2 = { workspace = true, default-features = false }
 qp-poseidon-core = { workspace = true, default-features = false, features = [
+    "p2",
 	"p3",
 ] }
 serde = { workspace = true }

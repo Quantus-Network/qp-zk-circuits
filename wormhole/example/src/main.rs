@@ -10,7 +10,6 @@ use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_poseidon::PoseidonHasher;
 use quantus_cli::chain::quantus_subxt as quantus_node;
-use quantus_cli::chain::quantus_subxt::api::balances;
 use quantus_cli::cli::common::submit_transaction;
 use quantus_cli::qp_dilithium_crypto::DilithiumPair;
 use quantus_cli::wallet::QuantumKeyPair;
@@ -280,7 +279,7 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Transfer included in block: {:?}", block_hash);
 
-    let events_api = client.events().at(block_hash).await?;
+    // let events_api = client.events().at(block_hash).await?;
     // let event = events_api.find::<balances::Event::TransferProofStored>();
 
     let storage_api = client.storage().at(block_hash);
