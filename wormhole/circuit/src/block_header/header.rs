@@ -1,5 +1,5 @@
+use alloc::vec::Vec;
 use core::array;
-
 use plonky2::{
     field::types::Field, hash::hash_types::HashOutTarget, iop::target::Target,
     plonk::circuit_builder::CircuitBuilder,

@@ -20,7 +20,7 @@ hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 qp-plonky2 = { git = "https://github.com/Quantus-Network/qp-plonky2", default-features = false, features = [
 	"no_random",
 ] }
-qp-poseidon-core = { version = "1.0.1", default-features = false, features = [
+qp-poseidon-core = { git = "https://github.com/Quantus-Network/qp-poseidon.git", branch = "feat/plonky2-update", default-features = false, features = [
 	"p3",
 ] }
 serde = { version = "1.0", default-features = false, features = ["derive"] }

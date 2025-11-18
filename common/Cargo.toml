@@ -18,4 +18,4 @@ serde = { workspace = true }
 [features]
 default = ["std"]
 no_random = ["qp-plonky2/no_random"]
-std = ["anyhow/std", "qp-plonky2/std", "serde/std"]
+std = ["anyhow/std", "qp-plonky2/std", "qp-poseidon-core/std", "serde/std"]

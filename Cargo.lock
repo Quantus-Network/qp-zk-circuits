@@ -3677,7 +3677,7 @@ dependencies = [
  "plonky2_maybe_rayon",
  "plonky2_util",
  "qp-plonky2-field",
- "qp-poseidon-constants",
+ "qp-poseidon-constants 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "serde",
@@ -3712,7 +3712,7 @@ dependencies = [
  "p3-field",
  "p3-goldilocks",
  "parity-scale-codec",
- "qp-poseidon-core",
+ "qp-poseidon-core 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "scale-info",
  "serde",
  "sp-core 37.0.0",
@@ -3735,6 +3735,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "qp-poseidon-constants"
+version = "1.0.1"
+source = "git+https://github.com/Quantus-Network/qp-poseidon.git?branch=feat%2Fplonky2-update#57ed5087c8f9a21762ed63af64d6614e8f3194fd"
+dependencies = [
+ "p3-field",
+ "p3-goldilocks",
+ "p3-poseidon2",
+ "rand 0.9.2",
+ "rand_chacha 0.9.0",
+]
+
+[[package]]
 name = "qp-poseidon-core"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3744,8 +3756,21 @@ dependencies = [
  "p3-goldilocks",
  "p3-poseidon2",
  "p3-symmetric",
+ "qp-poseidon-constants 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rand_chacha 0.9.0",
+]
+
+[[package]]
+name = "qp-poseidon-core"
+version = "1.0.1"
+source = "git+https://github.com/Quantus-Network/qp-poseidon.git?branch=feat%2Fplonky2-update#57ed5087c8f9a21762ed63af64d6614e8f3194fd"
+dependencies = [
+ "p3-field",
+ "p3-goldilocks",
+ "p3-poseidon2",
+ "p3-symmetric",
  "qp-plonky2",
- "qp-poseidon-constants",
+ "qp-poseidon-constants 1.0.1 (git+https://github.com/Quantus-Network/qp-poseidon.git?branch=feat%2Fplonky2-update)",
  "rand_chacha 0.9.0",
 ]
 
@@ -3771,7 +3796,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "nam-tiny-hderive",
- "qp-poseidon-core",
+ "qp-poseidon-core 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "qp-rusty-crystals-dilithium",
  "rand_chacha 0.9.0",
  "rand_core 0.9.3",
@@ -3812,7 +3837,7 @@ dependencies = [
  "anyhow",
  "hex",
  "qp-plonky2",
- "qp-poseidon-core",
+ "qp-poseidon-core 1.0.1 (git+https://github.com/Quantus-Network/qp-poseidon.git?branch=feat%2Fplonky2-update)",
  "qp-zk-circuits-common",
 ]
 
@@ -3856,7 +3881,7 @@ version = "0.1.2"
 dependencies = [
  "anyhow",
  "qp-plonky2",
- "qp-poseidon-core",
+ "qp-poseidon-core 1.0.1 (git+https://github.com/Quantus-Network/qp-poseidon.git?branch=feat%2Fplonky2-update)",
  "serde",
 ]
 
@@ -6924,7 +6949,7 @@ dependencies = [
  "parity-scale-codec",
  "qp-plonky2",
  "qp-poseidon",
- "qp-poseidon-core",
+ "qp-poseidon-core 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "qp-wormhole-circuit",
  "qp-wormhole-prover",
  "qp-zk-circuits-common",
