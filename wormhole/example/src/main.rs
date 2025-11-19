@@ -10,6 +10,7 @@ use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_poseidon::PoseidonHasher;
 use quantus_cli::chain::quantus_subxt as quantus_node;
+use quantus_cli::chain::quantus_subxt::api::balances;
 use quantus_cli::cli::common::submit_transaction;
 use quantus_cli::qp_dilithium_crypto::DilithiumPair;
 use quantus_cli::wallet::QuantumKeyPair;
@@ -200,7 +201,10 @@ async fn at_best_block(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    if std::path::Path::new(DEBUG_FILE).exists() {
+    // Parse command-line arguments
+    let args: Vec<String> = std::env::args().collect();
+    let use_live = args.iter().any(|arg| arg == "--live");
+    if !use_live && std::path::Path::new(DEBUG_FILE).exists() {
         println!("Found {}, running in offline debug mode.", DEBUG_FILE);
         let data = std::fs::read_to_string(DEBUG_FILE)?;
         let inputs: DebugInputs = serde_json::from_str(&data)?;
@@ -279,8 +283,13 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Transfer included in block: {:?}", block_hash);
 
-    // let events_api = client.events().at(block_hash).await?;
-    // let event = events_api.find::<balances::Event::TransferProofStored>();
+    let events_api = client.events().at(block_hash).await?;
+
+    let event = events_api
+        .find::<balances::events::TransferProofStored>()
+        .next()
+        .expect("should find transfer proof event")
+        .expect("should be valid transfer proof");
 
     let storage_api = client.storage().at(block_hash);
     let transfer_count = storage_api
@@ -292,30 +301,33 @@ async fn main() -> anyhow::Result<()> {
         transfer_count > transfer_count_previous,
         "Transfer count should've been incremented"
     );
-    println!(
-        "Transfer count before {} and after {}",
-        transfer_count_previous, transfer_count
-    );
+
     let leaf_hash = qp_poseidon::PoseidonHasher::hash_storage::<AccountId32>(
         &(
-            transfer_count_previous,
-            alice_account.clone(),
-            unspendable_account_id.clone(),
-            funding_amount,
+            event.transfer_count,
+            event.source.clone(),
+            event.dest.clone(),
+            event.funding_amount,
         )
             .encode(),
     );
     let proof_address = quantus_node::api::storage().balances().transfer_proof((
-        transfer_count_previous,
-        SubxtAccountId(alice_account.clone().into()),
-        unspendable_account_id.clone(),
-        funding_amount,
+        event.transfer_count,
+        event.source.clone(),
+        event.dest.clone(),
+        event.funding_amount,
     ));
     let mut final_key = proof_address.to_root_bytes();
     final_key.extend_from_slice(&leaf_hash);
     let val = storage_api.fetch_raw(final_key.clone()).await?;
     assert!(val.is_some(), "Storage key not found");
 
+    println!(
+        "final key {}, leaf_hash: {}, count: {}",
+        hex::encode(&final_key),
+        hex::encode(&leaf_hash),
+        event.transfer_count
+    );
     let proof_params = rpc_params![vec![to_hex(&final_key)], block_hash];
     let read_proof: ReadProof<H256> = quantus_client
         .rpc_client()
@@ -333,16 +345,13 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Fetching block header...");
     let header = blocks.header();
-    println!("header {:?}", header);
-
-    println!("state root {:?}", header.state_root.clone());
 
     // Debug: Save proof nodes to a file for analysis
     println!("\n=== Saving proof data for analysis ===");
     let proof_data: Vec<String> = read_proof.proof.iter().map(|p| hex::encode(&p.0)).collect();
     let debug_data = serde_json::json!({
         "state_root": hex::encode(header.state_root.0),
-        "transfer_count": transfer_count_previous,
+        "transfer_count": event.transfer_count,
         "funding_account": hex::encode(alice_account.as_ref() as &[u8]),
         "unspendable_account": hex::encode(unspendable_account_bytes),
         "funding_amount": funding_amount,
@@ -363,6 +372,19 @@ async fn main() -> anyhow::Result<()> {
     let block_number = header.number;
     println!("Assembling circuit inputs...");
 
+    // Verify that our local unspendable_account matches event.dest
+    println!("\n=== UNSPENDABLE ACCOUNT VERIFICATION ===");
+    println!(
+        "Local unspendable_account_id: {}",
+        hex::encode(unspendable_account_id.0)
+    );
+    println!(
+        "Event dest:                   {}",
+        hex::encode(event.dest.0)
+    );
+    println!("Match: {}", unspendable_account_id.0 == event.dest.0);
+    println!("=====================================\n");
+
     // Prepare the storage proof with the correct accounts
     let processed_storage_proof = utils::prepare_proof_for_circuit(
         read_proof.proof,
@@ -373,7 +395,7 @@ async fn main() -> anyhow::Result<()> {
     let inputs = CircuitInputs {
         private: PrivateCircuitInputs {
             secret,
-            transfer_count: transfer_count_previous, // Use the actual transfer count from storage
+            transfer_count: event.transfer_count, // Use the actual transfer count from the event
             funding_account: BytesDigest::try_from(alice_account.as_ref() as &[u8])?,
             storage_proof: processed_storage_proof,
             unspendable_account: Digest::from(unspendable_account).into(),
@@ -383,7 +405,9 @@ async fn main() -> anyhow::Result<()> {
         },
         public: PublicCircuitInputs {
             funding_amount,
-            nullifier: Nullifier::from_preimage(secret, transfer_count).hash.into(),
+            nullifier: Nullifier::from_preimage(secret, event.transfer_count)
+                .hash
+                .into(),
             exit_account: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
             block_hash: BytesDigest::try_from(block_hash.as_ref())?,
             parent_hash,
