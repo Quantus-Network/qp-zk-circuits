@@ -9,25 +9,6 @@ fn hash_node_with_poseidon_padded(node_bytes: &[u8]) -> [u8; 32] {
     hash_padded_bytes::<FIELD_ELEMENT_PREIMAGE_PADDING_LEN>(node_bytes)
 }
 
-/// DEBUG: Test the hashing logic with known test data
-#[allow(dead_code)]
-fn test_hash_verification() {
-    let proof_node_0_hex = "0000000000000020bfb500000000000020000000000000005d7c4eb0b2a8bb01872f88950f8c736fc72a250c32b4bdad9a50e7b5163a27aa20000000000000008f6440ed6cd23d75bfdd64b70ec7b0c969bd03e53f9fc1df688f8538dad89f402000000000000000545576a55a3f69e109b776d252064d3c9bf2fd3a0cd0447c8d82ec12b0343f3a20000000000000000f3ed746dd90e0e2a0d3f8faf0b8a41d5fafd9edcbc88630e389f2db76dd44b7200000000000000091c3eead5530405e48b8df6453a60be878eb1fa46c2a95638cdec8c8d722b46020000000000000008475575039b5b19da2901935792d5b1d5f9a09e08065e4d27a438329710120002000000000000000e6f538f42cbc6e72d6a302a648da34c475bcfa104e7cb80625fcf3219bd12172200000000000000056c6d22ef15fbb6005782db4c357b38cb53f5d39e5d8abdb3efffaec0537381420000000000000007f7b9a72037f9305f49bb2c25aa2f2c0108753ae606e1f094e887071e2596cfb2000000000000000d549afac7285d8e774c1ae9fc95e7348bf41355780363b8fae5f9419d102ac862000000000000000a22c86fb54dbd5c704fc4d849c715109d7cb3167b0eb2ed270ca658bd9dcca2a20000000000000003687179c5ce1cb12b50e50d421bcbdceb82ec583de7585fb7898e167108168b5";
-    let expected_root_hash = "24d6a3e3877cf86a5e17a32e3f269b70963fbaf4b050e04911cf11afa3b48350";
-
-    let proof_node_0_bytes = hex::decode(proof_node_0_hex).unwrap();
-
-    // Test: Hash with qp_poseidon_core's hash_padded_bytes (blockchain's hash function)
-    let computed_hash = hash_node_with_poseidon_padded(&proof_node_0_bytes);
-    let computed_hash_hex = hex::encode(computed_hash);
-
-    println!("\n=== HASH VERIFICATION TEST ===");
-    println!("Expected root hash:  {}", expected_root_hash);
-    println!("Computed hash:       {}", computed_hash_hex);
-    println!("Match: {}", computed_hash_hex == expected_root_hash);
-    println!("=============================\n");
-}
-
 // Function to check that the 24 byte suffix of the leaf hash is the last [-32, -8] bytes of the
 // leaf node
 pub fn check_leaf(leaf_hash: &[u8; 32], leaf_node: Vec<u8>) -> (bool, usize) {
@@ -63,9 +44,6 @@ pub fn prepare_proof_for_circuit(
     state_root: String,
     leaf_hash: [u8; 32],
 ) -> anyhow::Result<ProcessedStorageProof> {
-    // DEBUG: Test hashing with known data
-    test_hash_verification();
-
     println!("Total proof nodes: {}", proof.len());
     println!("State root: {}", state_root);
 

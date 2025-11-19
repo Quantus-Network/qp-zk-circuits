@@ -325,7 +325,7 @@ async fn main() -> anyhow::Result<()> {
     println!(
         "final key {}, leaf_hash: {}, count: {}",
         hex::encode(&final_key),
-        hex::encode(&leaf_hash),
+        hex::encode(leaf_hash),
         event.transfer_count
     );
     let proof_params = rpc_params![vec![to_hex(&final_key)], block_hash];
