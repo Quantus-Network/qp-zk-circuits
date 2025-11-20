@@ -4,14 +4,7 @@ name = "test-helpers"
 version.workspace = true
 
 [dependencies]
-codec = { version = "3.7.5", features = ["derive"], package = "parity-scale-codec" }
 hex = { workspace = true }
 qp-plonky2 = { workspace = true, default-features = true }
-qp-poseidon = { version = "1.0.1" }
-scale-info = "2.11.6"
-serde = { version = "1.0.226", default-features = false, features = ["derive"] }
-sp-core = "37.0.0"
-sp-runtime = "42.0.0"
-sp-storage = { version = "22.0.0", default-features = false }
 wormhole-circuit = { package = "qp-wormhole-circuit", version = "0.1.2", path = "../../circuit" }
 zk-circuits-common = { package = "qp-zk-circuits-common", version = "0.1.2", path = "../../../common" }

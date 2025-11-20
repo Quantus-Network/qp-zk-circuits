@@ -10,62 +10,93 @@ Provides a Zero-Knowledge circuit that can verify wormhole transactions.
 
 - `funding_amount`: The value or quantity of funds being transacted.
 - `nullifier`: A unique, transaction-specific value derived from private information. Its purpose is to prevent double-spending by ensuring that a given set of private inputs can only be used to generate one valid proof.
-- `exit_account`: The public address where the funding_amount is intended to be sent after the transaction is verified.
-- `block_hash`: The hash of the substrate block header that the tx was included in
-- `parent_hash`: The parent hash of the tx's block. We commit to this as a public input so aggregators can efficiently verify the connection between tx included in adjacent blocks.
-This way the verifier needs to only check that the hash of the latest block real. 
-- `block_number`: We commit the block number so we can check the verifier can assure that it matches up with the associated block hash during on-chain verification and so aggregators know which blocks to verify connections between.
+- `exit_account`: The public address where the `funding_amount` is intended to be sent after the transaction is verified.
+- `block_hash`: A commitment (Poseidon2 hash) to the block header fields used inside the circuit.
+- `parent_hash`: The parent hash of the transaction’s block. We expose this publicly so proof aggregators can efficiently verify the connection between transactions included in adjacent blocks.
+- `block_number`: The block height corresponding to `block_hash`. This is public so the verifier/aggregator can check that it matches the associated header and to know which blocks to connect when aggregating proofs.
 
 **Private Inputs:**
 
 - `secret`: A confidential, randomly generated value unique to the prover, often serving as a primary secret for deriving other transaction components.
 - `storage_proof`: A storage proof of a Merkle Patricia trie proving inclusion of the transaction event.
 - `transfer_count`: A globally unique ID for a transfer. Gets incremented with each transfer, ensuring that each transaction is unique.
-- `funding_account`: The private key or identifier associated with the source of the funds, used to derive the nullifier and confirm ownership.
-- `root_hash`: The root hash of a Substrate Merkle Patricia storage proof trie.
-- `unspendable_account`: A private identifier derived from the secret that, when hashed, provides a verifiable unspendable (burn) address.
-- `block_header`: Constant size raw bytes pre-image to the `block_hash`. It contains metadata about the block and 3 fields that we use in the circuit: `parent_hash`, `block_number`, `root_hash`.
+- `funding_account`: The account ID associated with the source of the funds (the sender). Used to derive the nullifier and confirm ownership.
+- `state_root`: The state root of the Substrate block (the Merkle-Patricia trie root for the state).
+- `extrinsics_root`: The extrinsics root of the block header.
+- `digest`: The raw header digest field (110 bytes), encoded injectively into a fixed number of field elements for use inside the circuit.
+- `unspendable_account`: An account ID derived from the `secret` that, when hashed, produces a verifiable “burn” (unspendable) address.
+
+> Note: Instead of passing a monolithic `block_header` preimage into the circuit, we pass the structured header fields
+> (`parent_hash`, `block_number`, `state_root`, `extrinsics_root`, `digest`) and recompute a Poseidon2 hash from them
+> inside the circuit. That hash is constrained to equal the public `block_hash`.
 
 #### Logic Flow
 
 **The circuit does the following**:
 
-1. **Nullifier Derivation:**
+1. **Nullifier Derivation**
 
-- Computes `H(H(salt || secret || transfer_count))`.
-- Compares the derived value against the provided `nullifier` public input.
+   - Computes `H(H(salt || secret || transfer_count))`.
+   - Compares the derived value against the provided `nullifier` public input.
 
-2. **Unspendable Account Derivation:**
+2. **Unspendable Account Derivation**
 
-- Computes `H(H(salt || secret))`
-- Compare the derived value with the provided `unspendable_account`.
+   - Computes `H(H(salt || secret))`.
+   - Compares the derived value with the provided `unspendable_account`.
 
-3. **Storage Proof Verification:**
+3. **Storage Proof Verification**
 
-- The circuit verifies the `storage_proof` to confirm that a specific leaf (the transaction event) is part of the proof.
-- To verify that the storage proof is valid, the circuit traverses the tree in root-to-leaf order, and for each node:
-  1. Compares the expected hash against the hash of the current node (verifies inclusion).
-  2. Updates the expected hash to be equal to the hash of the current node.
-  3. If this node is the leaf node: additionally verify that it includes hash of the leaf inputs.
+   - The circuit verifies the `storage_proof` to confirm that a specific leaf (the transfer event) is part of the Merkle Patricia trie with root `state_root`.
+   - To verify that the storage proof is valid, the circuit traverses the tree in root-to-leaf order, and for each node:
+     1. Compares the expected hash against the hash of the current node (verifies inclusion).
+     2. Updates the expected hash to be equal to the hash of the current node.
+     3. If this node is the leaf node: additionally verifies that it includes the hash of the leaf inputs (transfer event).
 
-4. **Block Header Verification:**
+4. **Block Header Commitment Verification**
 
-- The circuit verifies the `block_header` hashes to the committed `block_hash` and parses the `parent_hash`, `block_number`, and `root_hash`. 
-- To verify that the block header is valid, the circuit checks the following fields:
-  1. Compares the expected `block_hash` against the hash of the `block_header`.
-  2. For the `parent_hash` and `root_hash` digest fields in the `block_header`, we extract the 8x32 limb offsets in which they are encoded in the `block_header` at a fixed location. For the `block_number` we extract the 32 bit limb field element from the block_header.
-  3. We connect all these extract fields from the 32 byte limb injective encoding of the `block_header` with their corresponding input targets.
+   The circuit does **not** parse a raw header byte blob; instead, it works over structured header fields and enforces that they are all tied together via a Poseidon2 commitment:
+
+   - Inputs:
+     - `parent_hash` (public)
+     - `block_number` (public)
+     - `state_root` (private)
+     - `extrinsics_root` (private)
+     - `digest` (private, 110 bytes mapped injectively to field elements)
+   - Steps:
+     1. **Range-check `block_number`**:  
+        The circuit constrains `block_number` to be a 32-bit value to ensure it matches the canonical encoding used outside the circuit.
+     2. **Build header preimage**:  
+        The above fields are collected into a vector of field elements:
+        ```text
+        preimage = parent_hash || block_number || state_root || extrinsics_root || digest
+        ```
+     3. **Poseidon2 hash**:  
+        The circuit computes:
+        ```text
+        computed_hash = Poseidon2Hash(preimage)
+        ```
+        using `hash_n_to_hash_no_pad_p2::<Poseidon2Hash>`.
+     4. **Connect to public `block_hash`**:  
+        The circuit enforces:
+        ```text
+        block_hash == computed_hash
+        ```
+        where `block_hash` is a public input (`HashOutTarget`).
+   
+   As a result:
+   - Once an on-chain verifier or aggregator checks that the public `block_hash` corresponds to a real block in the underlying chain,
+   - all of the internal header fields (`parent_hash`, `block_number`, `state_root`, `extrinsics_root`, `digest`) are cryptographically bound to that real header via Poseidon2.
+   - Because the same `state_root` is also used in the storage proof, this ties the storage proof, the header, and the public block commitment together.
 
 ## Testing
 
 To run the tests for this circuit, please follow the instructions in the [tests](./tests/) crate.
 
-## Building the Circuit binary
+## Building the Circuit Binary
 
-The core circuit logic can be compiled into a binary artifact
-(`circuit_data.bin`) that can be used by other parts of the system. This file
-must be generated manually after cloning the repository or after making any
-changes to the circuit logic.
+The core circuit logic can be compiled into a binary artifact (`circuit_data.bin`) that can be used by other parts of the system. This file
+must be generated manually after cloning the repository or after making any changes to the circuit logic.
+
 To build the circuit binary, run the following command from the root of the workspace:
 
 ```sh
