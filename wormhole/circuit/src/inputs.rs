@@ -57,11 +57,22 @@ pub struct PublicInputsByAccount {
     pub exit_account: BytesDigest,
 }
 
+/// The block data (block_hash, parent_hash, block_number) in the aggregated proofs
+#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd)]
+pub struct BlockData {
+    /// The hash of the block header.
+    pub block_hash: BytesDigest,
+    /// The block number, parsed from the block header
+    pub block_number: u32,
+}
+
 /// Aggregated public inputs
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AggregatedPublicCircuitInputs {
-    /// The set of root hashes in the aggregated proofs
-    pub root_hashes: Vec<BytesDigest>,
+    /// The last set block data (block_hash, block_number) in the aggregated proofs.
+    /// This the only block data we need to commit to in the aggregated proof.
+    /// All prior blocks are enforced to be contigious and their connectivity is verified via parent_hash checks.
+    pub block_data: BlockData,
     /// The set of exit accounts and their summed funding amounts
     pub account_data: Vec<PublicInputsByAccount>,
     /// The nullifiers of each individual transfer proof
@@ -95,21 +106,18 @@ pub struct PrivateCircuitInputs {
 impl AggregatedPublicCircuitInputs {
     pub fn try_from_slice(pis: &[GoldilocksField]) -> anyhow::Result<Self> {
         // Layout in the FINAL (deduped) wrapper proof PIs:
-        // [block_count, account_count, root_hashes(4)*, [funding_sum(4), exit_account(4)]*, nullifiers(4)*]
-
-        let block_count = pis[0].to_canonical_u64() as usize;
-        let account_count = pis[1].to_canonical_u64() as usize;
+        // [account_count, block_data(5), [funding_sum(4), exit_account(4)]*, nullifiers(4)*]
+        let account_count = pis[0].to_canonical_u64() as usize;
 
         // Numbers of leaf proofs we aggregated over into a tree according the length of the public inputs.
         let n_leaf = pis.len() / PUBLIC_INPUTS_FELTS_LEN;
         // Compute expected total PI length from indices and sanity-check.
 
-        let mut expected_felts = 2usize; // for block_count and account_count
+        let mut expected_felts = 6usize; // for account_count + block_data (5 felts)
 
-        let data_item_felts = 4;
-        expected_felts += data_item_felts * (block_count); // root_hashes (4 felts each)
-        expected_felts += data_item_felts * (account_count * 2); // funding_sum + exit_account (4 felts each)
-        expected_felts += data_item_felts * (n_leaf); // nullifiers (4 felts each)
+        let hash_item_felts = 4;
+        expected_felts += hash_item_felts * (account_count * 2); // funding_sum + exit_account (4 felts each)
+        expected_felts += hash_item_felts * (n_leaf); // nullifiers (4 felts each)
         anyhow::ensure!(
             expected_felts <= pis.len(),
             "Deduped PI length must be less than or equal to {}, but got {} (computed from indices).",
@@ -128,18 +136,17 @@ impl AggregatedPublicCircuitInputs {
             felts_to_u128(arr).map_err(|e| anyhow::anyhow!("felts_to_u128 error: {:?}", e))
         }
 
-        let mut cursor = 2usize; // start after block_count and account_count
-        let mut root_hashes: Vec<BytesDigest> = Vec::with_capacity(block_count);
+        let block_data = BlockData {
+            block_hash: read_digest(&pis[1..5]).context("parsing block_hash")?,
+            block_number: pis[5]
+                .to_canonical_u64()
+                .try_into()
+                .context("parsing block_number")?,
+        };
+
+        let mut cursor = 6usize; // start after account_count and block_data
         let mut account_data: Vec<PublicInputsByAccount> = Vec::with_capacity(account_count);
         let mut nullifiers: Vec<BytesDigest> = Vec::with_capacity(n_leaf);
-
-        for _ in 0..block_count {
-            // 1) root hash
-            let root_hash =
-                read_digest(&pis[cursor..cursor + 4]).context("parsing root_hash for block")?;
-            cursor += data_item_felts;
-            root_hashes.push(root_hash);
-        }
 
         for _ in 0..account_count {
             // funding_sum (4 felts, BE limbs)
@@ -173,7 +180,7 @@ impl AggregatedPublicCircuitInputs {
         }
 
         Ok(AggregatedPublicCircuitInputs {
-            root_hashes,
+            block_data,
             account_data,
             nullifiers,
         })

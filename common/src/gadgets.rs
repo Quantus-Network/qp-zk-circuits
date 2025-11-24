@@ -97,6 +97,14 @@ pub fn limbs4_at_offset<const LEAF_PI_LEN: usize, const KEY_OFFSET: usize>(
     let base = index * LEAF_PI_LEN + KEY_OFFSET;
     [pis[base], pis[base + 1], pis[base + 2], pis[base + 3]]
 }
+#[inline]
+pub fn limb1_at_offset<const LEAF_PI_LEN: usize, const KEY_OFFSET: usize>(
+    pis: &[Target],
+    index: usize,
+) -> Target {
+    let base = index * LEAF_PI_LEN + KEY_OFFSET;
+    pis[base]
+}
 
 /// Count unique 4x32-bit keys (big-endian limbs) among N leaves each of LEAF_PI_LEN:
 /// KEY_OFFSET is the offset of the 4x32-bit key within each leaf's public inputs.
