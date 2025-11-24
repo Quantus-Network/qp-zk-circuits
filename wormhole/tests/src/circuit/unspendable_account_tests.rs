@@ -1,10 +1,8 @@
 use plonky2::{field::types::Field, plonk::proof::ProofWithPublicInputs};
-use wormhole_circuit::{
-    codec::FieldElementCodec,
-    unspendable_account::{UnspendableAccount, UnspendableAccountTargets},
-};
+use wormhole_circuit::unspendable_account::{UnspendableAccount, UnspendableAccountTargets};
 use zk_circuits_common::{
     circuit::{CircuitFragment, C, D, F},
+    codec::FieldElementCodec,
     utils::BytesDigest,
 };
 
