@@ -6,6 +6,7 @@
 //! - Generate the proof for the wormhole transfer
 
 use anyhow::{anyhow, Context};
+use clap::Parser;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_poseidon::PoseidonHasher;
@@ -28,9 +29,8 @@ use subxt::OnlineClient;
 use wormhole_circuit::inputs::{CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs};
 use wormhole_circuit::nullifier::Nullifier;
 use wormhole_prover::WormholeProver;
+use zk_circuits_common::storage_proof::prepare_proof_for_circuit;
 use zk_circuits_common::utils::{digest_felts_to_bytes, BytesDigest, Digest};
-
-mod utils;
 
 const DEBUG_FILE: &str = "proof_debug.json";
 
@@ -132,9 +132,12 @@ impl TryFrom<DebugInputs> for CircuitInputs {
 
         let leaf_hash: [u8; 32] = hex_to_array::<32>(&inputs.leaf_hash_hex, "leaf_hash_hex")?;
 
-        let processed_storage_proof =
-            utils::prepare_proof_for_circuit(proof_bytes, inputs.state_root_hex.clone(), leaf_hash)
-                .context("failed to prepare storage proof for circuit")?;
+        let processed_storage_proof = prepare_proof_for_circuit(
+            proof_bytes.iter().map(|bytes| bytes.0.clone()).collect(),
+            inputs.state_root_hex.clone(),
+            leaf_hash,
+        )
+        .context("failed to prepare storage proof for circuit")?;
 
         // --- Secret & derived unspendable account ---
 
@@ -235,104 +238,80 @@ async fn at_best_block(
 // Minimum allowed funding amount
 const MIN_FUNDING_AMOUNT: u128 = 1_000_000_000_000;
 
-// Adjust these seeds to match your actual dev accounts if needed.
+// Dev account seeds
 const ALICE_SEED: [u8; 32] = [0u8; 32];
 const BOB_SEED: [u8; 32] = [1u8; 32];
 const CHARLIE_SEED: [u8; 32] = [2u8; 32];
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+#[clap(rename_all = "lowercase")]
 enum DevAccount {
     Alice,
     Bob,
     Charlie,
 }
 
-struct LiveCliConfig {
-    dev_account: DevAccount,
-    secret_bytes: [u8; 32],
-    exit_account_bytes: [u8; 32],
-    funding_amount: u128,
-}
-
-fn get_arg_value(args: &[String], flag: &str) -> Option<String> {
-    args.windows(2).find(|w| w[0] == flag).map(|w| w[1].clone())
-}
-
-fn parse_fixed_hex_32(hex_str: &str, name: &str) -> anyhow::Result<[u8; 32]> {
-    let s = hex_str.trim_start_matches("0x");
-
-    if s.len() != 64 {
-        return Err(anyhow!(
-            "{} must be a 64-character hex string (32 bytes), got length {}",
-            name,
-            s.len()
-        ));
-    }
-
-    let bytes = hex::decode(s).with_context(|| format!("{} must be valid hex", name))?;
-    let len = bytes.len();
-
-    let arr: [u8; 32] = bytes
-        .try_into()
-        .map_err(|_| anyhow!("{} must decode to exactly 32 bytes (got {})", name, len))?;
-
-    Ok(arr)
-}
-
-fn parse_live_cli_args(args: &[String]) -> anyhow::Result<LiveCliConfig> {
-    let funding_account_str = get_arg_value(args, "--funding-account")
-        .context("Missing required argument `--funding-account` (alice|bob|charlie)")?;
-
-    let dev_account = match funding_account_str.to_lowercase().as_str() {
-        "alice" => DevAccount::Alice,
-        "bob" => DevAccount::Bob,
-        "charlie" => DevAccount::Charlie,
-        other => {
-            return Err(anyhow!(
-                "Invalid funding account `{}`. Expected one of: alice, bob, charlie",
-                other
-            ))
+impl DevAccount {
+    fn seed(&self) -> [u8; 32] {
+        match self {
+            DevAccount::Alice => ALICE_SEED,
+            DevAccount::Bob => BOB_SEED,
+            DevAccount::Charlie => CHARLIE_SEED,
         }
-    };
-
-    let secret_hex = get_arg_value(args, "--secret")
-        .context("Missing required argument `--secret` (64-char hex)")?;
-    let secret_bytes = parse_fixed_hex_32(&secret_hex, "secret")?;
-
-    let exit_hex = get_arg_value(args, "--exit-account")
-        .context("Missing required argument `--exit-account` (64-char hex)")?;
-    let exit_account_bytes = parse_fixed_hex_32(&exit_hex, "exit account")?;
-
-    let funding_amount_str = get_arg_value(args, "--funding-amount")
-        .context("Missing required argument `--funding-amount`")?;
-    let funding_amount: u128 = funding_amount_str
-        .parse()
-        .context("`--funding-amount` must be a valid u128")?;
-
-    if funding_amount < MIN_FUNDING_AMOUNT {
-        return Err(anyhow!(
-            "`--funding-amount` must be >= {} (got {})",
-            MIN_FUNDING_AMOUNT,
-            funding_amount
-        ));
     }
+}
 
-    Ok(LiveCliConfig {
-        dev_account,
-        secret_bytes,
-        exit_account_bytes,
-        funding_amount,
-    })
+/// Wormhole proof generator
+#[derive(Parser, Debug)]
+#[command(name = "wormhole-example")]
+#[command(about = "Generate and verify Wormhole ZK proofs", long_about = None)]
+struct Cli {
+    /// Run in live mode (connect to blockchain)
+    #[arg(long)]
+    live: bool,
+
+    /// Funding account (alice, bob, or charlie)
+    #[arg(long, value_enum, required_if_eq("live", "true"))]
+    funding_account: Option<DevAccount>,
+
+    /// Secret as 64-character hex string (32 bytes)
+    #[arg(long, value_parser = parse_hex_32, required_if_eq("live", "true"))]
+    secret: Option<[u8; 32]>,
+
+    /// Exit account as 64-character hex string (32 bytes)
+    #[arg(long, value_parser = parse_hex_32, required_if_eq("live", "true"))]
+    exit_account: Option<[u8; 32]>,
+
+    /// Funding amount (minimum: 1_000_000_000_000)
+    #[arg(long, value_parser = parse_funding_amount, required_if_eq("live", "true"))]
+    funding_amount: Option<u128>,
+}
+
+fn parse_hex_32(s: &str) -> Result<[u8; 32], String> {
+    let s = s.trim_start_matches("0x");
+    if s.len() != 64 {
+        return Err(format!("Expected 64-character hex string, got {}", s.len()));
+    }
+    let bytes = hex::decode(s).map_err(|e| format!("Invalid hex: {}", e))?;
+    bytes
+        .try_into()
+        .map_err(|_| "Failed to convert to [u8; 32]".to_string())
+}
+
+fn parse_funding_amount(s: &str) -> Result<u128, String> {
+    let amount: u128 = s.parse().map_err(|e| format!("Invalid u128: {}", e))?;
+    if amount < MIN_FUNDING_AMOUNT {
+        return Err(format!("Amount must be >= {}", MIN_FUNDING_AMOUNT));
+    }
+    Ok(amount)
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Parse command-line arguments
-    let args: Vec<String> = std::env::args().collect();
-    let use_live = args.iter().any(|arg| arg == "--live");
+    let cli = Cli::parse();
 
-    // Offline debug mode (unchanged)
-    if !use_live && std::path::Path::new(DEBUG_FILE).exists() {
+    // Offline debug mode
+    if !cli.live && std::path::Path::new(DEBUG_FILE).exists() {
         println!("Found {}, running in offline debug mode.", DEBUG_FILE);
         let data = std::fs::read_to_string(DEBUG_FILE)?;
         let inputs: DebugInputs = serde_json::from_str(&data)?;
@@ -341,27 +320,21 @@ async fn main() -> anyhow::Result<()> {
         return generate_zk_proof(circuit_inputs);
     }
 
-    // Live mode: require CLI arguments
-    let cli = parse_live_cli_args(&args)?;
+    // Live mode - all required fields are enforced by clap
+    let dev_account = cli.funding_account.context("Missing funding account")?;
+    let secret_bytes = cli.secret.context("Missing secret")?;
+    let exit_account_bytes = cli.exit_account.context("Missing exit account")?;
+    let funding_amount = cli.funding_amount.context("Missing funding amount")?;
 
-    if use_live {
-        println!("Running in live mode (forced by --live).");
-    } else {
-        println!("{} not found, running in live mode.", DEBUG_FILE);
-    }
+    println!("Running in live mode.");
 
     let quantus_client = QuantusClient::new("ws://localhost:9944").await?;
     let client = quantus_client.client();
 
     println!("Connected to Substrate node.");
 
-    // Select dev account seed based on CLI
-    let seed: [u8; 32] = match cli.dev_account {
-        DevAccount::Alice => ALICE_SEED,
-        DevAccount::Bob => BOB_SEED,
-        DevAccount::Charlie => CHARLIE_SEED,
-    };
-
+    // Get dev account seed
+    let seed = dev_account.seed();
     let funding_pair =
         DilithiumPair::from_seed(&seed).expect("valid dev account seed for DilithiumPair");
 
@@ -371,14 +344,13 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let funding_account = AccountId32::new(PoseidonHasher::hash(funding_pair.public().as_ref()).0);
-
     println!(
         "Funding account ({:?}): {:?}",
-        cli.dev_account, &funding_account
+        dev_account, &funding_account
     );
 
-    // Secret from CLI (64-char hex -> [u8;32] -> BytesDigest)
-    let secret: BytesDigest = cli.secret_bytes.try_into()?;
+    // Secret from CLI
+    let secret: BytesDigest = secret_bytes.try_into()?;
     let unspendable_account =
         wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(secret).account_id;
 
@@ -395,14 +367,12 @@ async fn main() -> anyhow::Result<()> {
         &unspendable_account_id
     );
 
-    // Exit account from CLI (64-char hex -> [u8;32])
-    let exit_account_id = SubxtAccountId(cli.exit_account_bytes);
+    // Exit account from CLI
+    let exit_account_id = SubxtAccountId(exit_account_bytes);
     println!(
         "Exit account (withdrawal destination): {:?}",
         &exit_account_id
     );
-
-    let funding_amount = cli.funding_amount;
 
     // Make the transfer TO the unspendable account
     let transfer_tx = quantus_cli::chain::quantus_subxt::api::tx()
@@ -478,24 +448,6 @@ async fn main() -> anyhow::Result<()> {
     println!("Fetching block header...");
     let header = blocks.header();
 
-    // Debug: Save proof nodes to a file for analysis
-    println!("\n=== Saving proof data for analysis ===");
-    let proof_data: Vec<String> = read_proof.proof.iter().map(|p| hex::encode(&p.0)).collect();
-    let debug_data = serde_json::json!({
-        "state_root": hex::encode(header.state_root.0),
-        "transfer_count": event.transfer_count,
-        "funding_account": hex::encode(funding_account.as_ref() as &[u8]),
-        "unspendable_account": hex::encode(unspendable_account_bytes),
-        "funding_amount": funding_amount,
-        "proof_nodes": proof_data,
-        "storage_key": hex::encode(&final_key),
-    });
-    std::fs::write(
-        "proof_debug.json",
-        serde_json::to_string_pretty(&debug_data)?,
-    )?;
-    println!("✓ Proof data saved to proof_debug.json");
-
     let state_root = BytesDigest::try_from(header.state_root.as_bytes())?;
     let parent_hash = BytesDigest::try_from(header.parent_hash.as_bytes())?;
     let extrinsics_root = BytesDigest::try_from(header.extrinsics_root.as_bytes())?;
@@ -518,11 +470,9 @@ async fn main() -> anyhow::Result<()> {
     println!("=====================================\n");
 
     // Prepare the storage proof with the correct accounts
-    let processed_storage_proof = utils::prepare_proof_for_circuit(
-        read_proof.proof,
-        hex::encode(header.state_root.0),
-        leaf_hash,
-    )?;
+    let proof_bytes: Vec<Vec<u8>> = read_proof.proof.iter().map(|b| b.0.clone()).collect();
+    let processed_storage_proof =
+        prepare_proof_for_circuit(proof_bytes, hex::encode(header.state_root.0), leaf_hash)?;
 
     let inputs = CircuitInputs {
         private: PrivateCircuitInputs {
@@ -547,6 +497,15 @@ async fn main() -> anyhow::Result<()> {
         },
     };
 
-    generate_zk_proof(inputs)?;
+    generate_zk_proof(inputs.clone())?;
+
+    // Debug: Save proof nodes to a file for analysis
+    println!("\n=== Saving proof data for analysis ===");
+    let debug_data = DebugInputs::from(inputs);
+    std::fs::write(
+        "proof_debug.json",
+        serde_json::to_string_pretty(&debug_data)?,
+    )?;
+    println!("✓ Proof data saved to proof_debug.json");
     Ok(())
 }

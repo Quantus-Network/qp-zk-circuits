@@ -13,12 +13,11 @@ use crate::{
 };
 use zk_circuits_common::{
     circuit::{CircuitFragment, D, F},
-    utils::INJECTIVE_BYTES_LIMB,
-};
-use zk_circuits_common::{
     gadgets::digest4_from_le32x8,
-    utils::{digest_bytes_to_felts, injective_bytes_to_felts},
+    utils::{digest_bytes_to_felts, injective_bytes_to_felts, INJECTIVE_BYTES_LIMB},
 };
+// Re-export ProcessedStorageProof for convenience
+pub use zk_circuits_common::storage_proof::ProcessedStorageProof;
 
 pub mod leaf;
 
@@ -55,27 +54,6 @@ impl StorageProofTargets {
             indices,
             leaf_inputs: LeafTargets::new(builder),
         }
-    }
-}
-
-/// A storage proof along with an array of indices where the hash child nodes are placed.
-#[derive(Debug, Clone)]
-pub struct ProcessedStorageProof {
-    pub proof: Vec<Vec<u8>>,
-    pub indices: Vec<usize>,
-}
-
-impl ProcessedStorageProof {
-    pub fn new(proof: Vec<Vec<u8>>, indices: Vec<usize>) -> anyhow::Result<Self> {
-        if proof.len() != indices.len() {
-            bail!(
-                "indices length must be equal to proof length, actual lengths: {}, {}",
-                proof.len(),
-                indices.len()
-            );
-        }
-
-        Ok(Self { proof, indices })
     }
 }
 

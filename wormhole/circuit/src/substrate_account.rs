@@ -1,14 +1,13 @@
 use alloc::vec::Vec;
 use core::ops::Deref;
 use plonky2::iop::witness::PartialWitness;
-use zk_circuits_common::circuit::CircuitFragment;
-
-use crate::codec::{ByteCodec, FieldElementCodec};
 use plonky2::{
     hash::hash_types::HashOutTarget, iop::witness::WitnessWrite,
     plonk::circuit_builder::CircuitBuilder,
 };
+use zk_circuits_common::circuit::CircuitFragment;
 use zk_circuits_common::circuit::{D, F};
+use zk_circuits_common::codec::{ByteCodec, FieldElementCodec};
 use zk_circuits_common::utils::{
     digest_bytes_to_felts, digest_felts_to_bytes, BytesDigest, Digest,
 };

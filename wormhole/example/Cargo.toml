@@ -6,6 +6,7 @@ version.workspace = true
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
+clap = { version = "4.5", features = ["derive"] }
 hex = { workspace = true, features = ["alloc"] }
 parity-scale-codec = "3.7.5"
 qp-plonky2 = { workspace = true, features = ["default"] }

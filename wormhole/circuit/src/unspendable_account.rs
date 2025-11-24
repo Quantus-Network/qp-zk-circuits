@@ -7,9 +7,9 @@ use plonky2::{
     plonk::{circuit_builder::CircuitBuilder, config::Hasher},
 };
 
-use crate::codec::FieldElementCodec;
-use crate::{codec::ByteCodec, inputs::CircuitInputs};
+use crate::inputs::CircuitInputs;
 use zk_circuits_common::circuit::{CircuitFragment, D, F};
+use zk_circuits_common::codec::{ByteCodec, FieldElementCodec};
 use zk_circuits_common::utils::{
     digest_bytes_to_felts, digest_felts_to_bytes, injective_string_to_felt, BytesDigest, Digest,
 };

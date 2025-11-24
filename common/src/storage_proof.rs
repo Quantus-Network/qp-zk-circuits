@@ -1,17 +1,45 @@
-//! Utility functions for the wormhole example.
-use subxt::backend::legacy::rpc_methods::Bytes;
-use wormhole_circuit::storage_proof::ProcessedStorageProof;
+//! Storage proof utilities for processing blockchain storage proofs.
+//!
+//! This module provides utilities for:
+//! - Converting unordered RPC proof nodes into circuit-ready ordered proofs
+//! - Verifying leaf node placement in storage proofs
+//! - Computing indices for parent-child relationships in trie structures
+
+use anyhow::bail;
+
+/// A storage proof along with an array of indices where the hash child nodes are placed.
+#[derive(Debug, Clone)]
+pub struct ProcessedStorageProof {
+    pub proof: Vec<Vec<u8>>,
+    pub indices: Vec<usize>,
+}
+
+impl ProcessedStorageProof {
+    pub fn new(proof: Vec<Vec<u8>>, indices: Vec<usize>) -> anyhow::Result<Self> {
+        if proof.len() != indices.len() {
+            bail!(
+                "indices length must be equal to proof length, actual lengths: {}, {}",
+                proof.len(),
+                indices.len()
+            );
+        }
+
+        Ok(Self { proof, indices })
+    }
+}
 
 /// Hash a node preimage exactly as the blockchain does.
 /// Uses qp_poseidon_core's hash_padded_bytes which pads to 189 felts.
-fn hash_node_with_poseidon_padded(node_bytes: &[u8]) -> [u8; 32] {
+pub fn hash_node_with_poseidon_padded(node_bytes: &[u8]) -> [u8; 32] {
     use qp_poseidon_core::{hash_padded_bytes, FIELD_ELEMENT_PREIMAGE_PADDING_LEN};
     hash_padded_bytes::<FIELD_ELEMENT_PREIMAGE_PADDING_LEN>(node_bytes)
 }
 
-// Function to check that the 24 byte suffix of the leaf hash is the last [-32, -8] bytes of the
-// leaf node
-pub fn check_leaf(leaf_hash: &[u8; 32], leaf_node: Vec<u8>) -> (bool, usize) {
+/// Check that the 24 byte suffix of the leaf hash is in the leaf node.
+///
+/// Returns a tuple of (found: bool, byte_index: usize) where byte_index is
+/// the hex character index (multiplied by 2 and adjusted by -16).
+pub fn check_leaf(leaf_hash: &[u8; 32], leaf_node: &[u8]) -> (bool, usize) {
     let hash_suffix = &leaf_hash[8..32];
     let mut last_idx = 0usize;
     let mut found = false;
@@ -24,13 +52,6 @@ pub fn check_leaf(leaf_hash: &[u8; 32], leaf_node: Vec<u8>) -> (bool, usize) {
         }
     }
 
-    println!(
-        "Checking leaf hash suffix: {:?} in leaf_node at index: {:?}",
-        hex::encode(hash_suffix),
-        last_idx
-    );
-    println!("leaf_node: {:?}", hex::encode(leaf_node.clone()));
-
     (found, (last_idx * 2).saturating_sub(16))
 }
 
@@ -39,43 +60,42 @@ pub fn check_leaf(leaf_hash: &[u8; 32], leaf_node: Vec<u8>) -> (bool, usize) {
 /// The RPC returns an UNORDERED list of proof node preimages. We need to:
 /// 1. Find which node, when hashed with Poseidon2, equals the state_root
 /// 2. Build the path from root to leaf by finding parent-child relationships
-pub fn prepare_proof_for_circuit(
-    proof: Vec<Bytes>,
+/// 3. Compute indices where child hashes appear in parent nodes
+/// 4. Verify the leaf hash suffix appears in the leaf node
+///
+/// # Arguments
+/// * `proof` - Unordered list of proof node bytes
+/// * `state_root` - The state root hash (with or without 0x prefix)
+/// * `leaf_hash` - The hash of the leaf data
+///
+/// # Returns
+/// A `ProcessedStorageProof` with ordered nodes and corresponding indices
+pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
+    proof: Vec<T>,
     state_root: String,
     leaf_hash: [u8; 32],
 ) -> anyhow::Result<ProcessedStorageProof> {
-    println!("Total proof nodes: {}", proof.len());
-    println!("State root: {}", state_root);
-
     // Create a map of hash -> (index, node_bytes, node_hex)
     // Hash each trie node with the blockchain's hash function (hash_padded_bytes)
     let mut node_map: std::collections::HashMap<String, (usize, Vec<u8>, String)> =
         std::collections::HashMap::new();
+
     for (idx, node) in proof.iter().enumerate() {
-        let hash = hash_node_with_poseidon_padded(&node.0);
+        let node_bytes = node.as_ref();
+        let hash = hash_node_with_poseidon_padded(node_bytes);
         let hash_hex = hex::encode(hash);
-        let node_hex = hex::encode(&node.0);
-        println!("Node {}: hash = {}", idx, &hash_hex);
-        node_map.insert(hash_hex.clone(), (idx, node.0.clone(), node_hex));
+        let node_hex = hex::encode(node_bytes);
+        node_map.insert(hash_hex.clone(), (idx, node_bytes.to_vec(), node_hex));
     }
 
     // Find which node hashes to the state root
     let state_root_hex = state_root.trim_start_matches("0x").to_string();
-    println!(
-        "\nSearching for node that hashes to state root: {}",
-        state_root_hex
-    );
 
     // Check if any node's hash equals the state root
     let root_hash = if node_map.contains_key(&state_root_hex) {
-        println!("✓ Found node that hashes to state root!");
         state_root_hex.clone()
     } else {
-        anyhow::bail!(
-            "No node hashes to state root!\nState root: {}\nNode hashes: {:?}",
-            state_root_hex,
-            node_map.keys().collect::<Vec<_>>()
-        );
+        bail!("No node hashes to state root!");
     };
 
     let root_entry = node_map
@@ -85,63 +105,34 @@ pub fn prepare_proof_for_circuit(
     let mut ordered_nodes = vec![root_entry.1.clone()];
     let mut current_node_hex = root_entry.2.clone();
 
-    println!(
-        "Root node index: {}, first 200 chars: {}",
-        root_entry.0,
-        &current_node_hex[..200.min(current_node_hex.len())]
-    );
-    println!("\nDEBUG: Full root node:");
-    println!("{}", current_node_hex);
-    println!("\nDEBUG: Searching for child hashes in root node:");
-    for (hash, (idx, _, _)) in &node_map {
-        if current_node_hex.contains(hash) {
-            println!("  ✓ Node {} hash FOUND in root", idx);
-        }
-    }
-
     // Build the path from root to leaf by finding which child hash appears in current node
     // NOTE: In ZK-trie, child hashes are stored with an 8-byte length prefix:
     // [8-byte length (0x20 = 32 in little-endian)] + [32-byte hash]
     const HASH_LENGTH_PREFIX: &str = "2000000000000000"; // 32 as little-endian u64
 
     loop {
-        println!(
-            "\nCurrent node (first 200 chars): {}",
-            &current_node_hex[..200.min(current_node_hex.len())]
-        );
-
         // Try to find which node's hash appears in the current node
         // Child hashes are prefixed with their length (32 bytes = 0x2000000000000000 in little-endian)
         let mut found_child = None;
-        for (child_hash, (idx, child_bytes, _)) in &node_map {
+        for (child_hash, (_, child_bytes, _)) in &node_map {
             let hash_with_prefix = format!("{}{}", HASH_LENGTH_PREFIX, child_hash);
             if current_node_hex.contains(&hash_with_prefix) {
                 // Make sure we haven't already added this node
                 if !ordered_nodes.iter().any(|n| n == child_bytes) {
-                    found_child = Some((child_hash.clone(), child_bytes.clone()));
-                    println!(
-                        "Found child node {} in current node (with length prefix)",
-                        idx
-                    );
+                    found_child = Some(child_bytes.clone());
                     break;
                 }
             }
         }
 
-        if let Some((_, child_bytes)) = found_child {
+        if let Some(child_bytes) = found_child {
             ordered_nodes.push(child_bytes.clone());
             current_node_hex = hex::encode(ordered_nodes.last().unwrap());
         } else {
             // No more children found - we've reached the end of the proof path
-            println!("No more child nodes found - reached end of proof path");
             break;
         }
     }
-
-    println!(
-        "Ordered {} nodes from root to leaf parent",
-        ordered_nodes.len()
-    );
 
     // Now compute the indices - where child hashes appear within parent nodes
     let mut indices = Vec::<usize>::new();
@@ -153,52 +144,27 @@ pub fn prepare_proof_for_circuit(
         let next_hash = hex::encode(hash_node_with_poseidon_padded(next_node));
 
         if let Some(hex_idx) = current_hex.find(&next_hash) {
-            let felt_idx = hex_idx;
-            indices.push(felt_idx);
+            indices.push(hex_idx);
         } else {
-            anyhow::bail!("Could not find child hash in ordered node {}", i);
+            bail!("Could not find child hash in ordered node {}", i);
         }
     }
 
-    let (found, last_idx) = check_leaf(&leaf_hash, ordered_nodes.last().unwrap().clone());
+    let (found, last_idx) = check_leaf(&leaf_hash, ordered_nodes.last().unwrap());
     if !found {
-        anyhow::bail!("Leaf hash suffix not found in leaf node!");
+        bail!("Leaf hash suffix not found in leaf node!");
     }
-    println!(
-        "✓ Leaf hash suffix found in leaf node at byte index {}",
-        last_idx
-    );
 
     // Set the last index to the found leaf index
     indices.push(last_idx);
-    println!(
-        "Last node: using index {} (storage key verification done by circuit)",
-        last_idx
-    );
-
-    println!("Indices: {:?}", indices);
-
-    // Debug: Print detailed info about what we're passing to the circuit
-    println!("\n=== STORAGE PROOF DEBUG ===");
-    println!("Total proof nodes: {}", ordered_nodes.len());
-    for (i, node) in ordered_nodes.iter().enumerate() {
-        println!("  Node {}: {} bytes", i, node.len());
-    }
-    println!("Total indices: {}", indices.len());
-    println!(
-        "Indices match nodes-1? {}",
-        indices.len() == ordered_nodes.len()
-    );
 
     if indices.len() != ordered_nodes.len() {
-        println!(
-            "WARNING: indices.len() = {}, ordered_nodes.len() = {}",
+        bail!(
+            "Indices length mismatch: indices.len() = {}, ordered_nodes.len() = {}",
             indices.len(),
             ordered_nodes.len()
         );
-        println!("This will cause circuit failures!");
     }
-    println!("========================\n");
 
     ProcessedStorageProof::new(ordered_nodes, indices)
 }

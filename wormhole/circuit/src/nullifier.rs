@@ -10,8 +10,6 @@ use zk_circuits_common::utils::FELTS_PER_U128;
 use zk_circuits_common::utils::FELTS_PER_U64;
 use zk_circuits_common::utils::INJECTIVE_BYTES_LIMB;
 
-use crate::codec::ByteCodec;
-use crate::codec::FieldElementCodec;
 use crate::inputs::CircuitInputs;
 use plonky2::{
     hash::{hash_types::HashOutTarget, poseidon2::Poseidon2Hash},
@@ -22,6 +20,7 @@ use plonky2::{
     plonk::{circuit_builder::CircuitBuilder, config::Hasher},
 };
 use zk_circuits_common::circuit::{CircuitFragment, D, F};
+use zk_circuits_common::codec::{ByteCodec, FieldElementCodec};
 use zk_circuits_common::utils::{injective_string_to_felt, u64_to_felts, BytesDigest, Digest};
 
 pub const SALT_BYTES_LEN: usize = 8;
