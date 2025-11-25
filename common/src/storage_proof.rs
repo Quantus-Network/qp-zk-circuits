@@ -5,6 +5,11 @@
 //! - Verifying leaf node placement in storage proofs
 //! - Computing indices for parent-child relationships in trie structures
 
+use alloc::format;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec;
+use alloc::vec::Vec;
 use anyhow::bail;
 
 /// A storage proof along with an array of indices where the hash child nodes are placed.
@@ -77,8 +82,8 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
 ) -> anyhow::Result<ProcessedStorageProof> {
     // Create a map of hash -> (index, node_bytes, node_hex)
     // Hash each trie node with the blockchain's hash function (hash_padded_bytes)
-    let mut node_map: std::collections::HashMap<String, (usize, Vec<u8>, String)> =
-        std::collections::HashMap::new();
+    let mut node_map: alloc::collections::BTreeMap<String, (usize, Vec<u8>, String)> =
+        alloc::collections::BTreeMap::new();
 
     for (idx, node) in proof.iter().enumerate() {
         let node_bytes = node.as_ref();
