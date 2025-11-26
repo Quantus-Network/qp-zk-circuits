@@ -63,8 +63,8 @@ use plonky2::{
 #[cfg(feature = "std")]
 use std::{fs, path::Path};
 
-use wormhole_circuit::codec::ByteCodec;
 use wormhole_circuit::nullifier::Nullifier;
+use wormhole_circuit::ByteCodec;
 use wormhole_circuit::{
     block_header::BlockHeader,
     circuit::circuit_logic::{CircuitTargets, WormholeCircuit},

@@ -2,12 +2,12 @@ use plonky2::{
     field::types::{Field, Field64},
     plonk::proof::ProofWithPublicInputs,
 };
-use wormhole_circuit::{
-    codec::FieldElementCodec,
-    substrate_account::{ExitAccountTargets, SubstrateAccount},
-};
+use wormhole_circuit::substrate_account::{ExitAccountTargets, SubstrateAccount};
 use zk_circuits_common::circuit::{CircuitFragment, C, D, F};
-use zk_circuits_common::utils::{digest_felts_to_bytes, ZERO_DIGEST};
+use zk_circuits_common::{
+    codec::FieldElementCodec,
+    utils::{digest_felts_to_bytes, ZERO_DIGEST},
+};
 
 #[cfg(test)]
 fn run_test(exit_account: &SubstrateAccount) -> anyhow::Result<ProofWithPublicInputs<F, C, D>> {

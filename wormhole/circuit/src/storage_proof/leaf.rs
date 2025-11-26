@@ -5,10 +5,10 @@ use plonky2::{
     hash::hash_types::HashOutTarget, iop::target::Target, plonk::circuit_builder::CircuitBuilder,
 };
 
-use crate::codec::ByteCodec;
 use crate::inputs::CircuitInputs;
 use crate::substrate_account::SubstrateAccount;
 use zk_circuits_common::circuit::{D, F};
+use zk_circuits_common::codec::ByteCodec;
 use zk_circuits_common::utils::{
     u128_to_felts, u64_to_felts, BytesDigest, FELTS_PER_U128, FELTS_PER_U64,
 };

@@ -1,5 +1,5 @@
+use crate::circuit::F;
 use alloc::vec::Vec;
-use zk_circuits_common::circuit::F;
 
 pub trait FieldElementCodec: Sized {
     fn to_field_elements(&self) -> Vec<F>;
