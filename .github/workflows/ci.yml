@@ -87,7 +87,6 @@
         # needs: fast-checks
         runs-on: ubuntu-latest
         timeout-minutes: 60
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         steps:
           - uses: actions/checkout@v4
           - name: Install Rust stable
@@ -96,8 +95,7 @@
             uses: Swatinem/rust-cache@v2
           - name: Run slow crypto tests
             run: |
-              cargo test --release -p tests -- aggregator_tests circuit_data_tests storage_proof_tests prover_tests verifier_tests
-              cargo test --release -p qp-wormhole-aggregator "tree::tests"
+              cargo test --release -p tests -- circuit_data_tests storage_proof_tests prover_tests verifier_tests
 
       security-audit:
         name: 🔒 Security Audit

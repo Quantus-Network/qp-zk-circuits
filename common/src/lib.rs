@@ -3,5 +3,7 @@
 extern crate alloc;
 
 pub mod circuit;
+pub mod codec;
 pub mod gadgets;
+pub mod storage_proof;
 pub mod utils;

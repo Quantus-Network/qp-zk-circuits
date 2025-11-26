@@ -11,16 +11,18 @@ use crate::{
     inputs::CircuitInputs,
     storage_proof::leaf::{LeafInputs, LeafTargets},
 };
-use zk_circuits_common::utils::{digest_bytes_to_felts, injective_bytes_to_felts};
 use zk_circuits_common::{
     circuit::{CircuitFragment, D, F},
-    utils::INJECTIVE_BYTES_PER_ELEMENT,
+    gadgets::digest4_from_le32x8,
+    utils::{digest_bytes_to_felts, injective_bytes_to_felts, INJECTIVE_BYTES_LIMB},
 };
+// Re-export ProcessedStorageProof for convenience
+pub use zk_circuits_common::storage_proof::ProcessedStorageProof;
 
 pub mod leaf;
 
 pub const MAX_PROOF_LEN: usize = 20;
-pub const PROOF_NODE_MAX_SIZE_F: usize = 188; // Should match the felt preimage max set on poseidon-resonance crate.
+pub const PROOF_NODE_MAX_SIZE_F: usize = 189; // Should match the felt preimage max set on poseidon-resonance crate.
 pub const PROOF_NODE_MAX_SIZE_B: usize = 256;
 pub const FELTS_PER_AMOUNT: usize = 2;
 
@@ -46,33 +48,12 @@ impl StorageProofTargets {
             .collect();
 
         Self {
-            root_hash: builder.add_virtual_hash_public_input(),
+            root_hash: builder.add_virtual_hash(),
             proof_len: builder.add_virtual_target(),
             proof_data,
             indices,
             leaf_inputs: LeafTargets::new(builder),
         }
-    }
-}
-
-/// A storgae proof along with an array of indices where the hash child ndoes are placed.
-#[derive(Debug, Clone)]
-pub struct ProcessedStorageProof {
-    pub proof: Vec<Vec<u8>>,
-    pub indices: Vec<usize>,
-}
-
-impl ProcessedStorageProof {
-    pub fn new(proof: Vec<Vec<u8>>, indices: Vec<usize>) -> anyhow::Result<Self> {
-        if proof.len() != indices.len() {
-            bail!(
-                "indices length must be equal to proof length, actual lengths: {}, {}",
-                proof.len(),
-                indices.len()
-            );
-        }
-
-        Ok(Self { proof, indices })
     }
 }
 
@@ -96,18 +77,13 @@ impl StorageProof {
             .iter()
             .map(|node| injective_bytes_to_felts(node))
             .collect();
-        // print the length of the proof at index 4
-        // println!(
-        //     "[+] StorageProof: proof length at index 4: {}",
-        //     proof.get(4).map_or(0, |node| node.len())
-        // );
 
         let indices = processed_proof
             .indices
             .iter()
             .map(|&i| {
                 // Divide by 8 to get the field element index instead of the hex index.
-                let i = i / (INJECTIVE_BYTES_PER_ELEMENT * 2);
+                let i = i / (INJECTIVE_BYTES_LIMB * 2);
                 F::from_canonical_usize(i)
             })
             .collect();
@@ -127,7 +103,7 @@ impl TryFrom<&CircuitInputs> for StorageProof {
     fn try_from(inputs: &CircuitInputs) -> Result<Self, Self::Error> {
         Ok(Self::new(
             &inputs.private.storage_proof,
-            *inputs.public.root_hash,
+            *inputs.private.state_root,
             LeafInputs::try_from(inputs)?,
         ))
     }
@@ -147,7 +123,7 @@ impl CircuitFragment for StorageProof {
         }: &Self::Targets,
         builder: &mut CircuitBuilder<F, D>,
     ) {
-        use plonky2::hash::poseidon::PoseidonHash;
+        use plonky2::hash::poseidon2::Poseidon2Hash;
         use zk_circuits_common::gadgets::is_const_less_than;
 
         let leaf_targets_32_bit = leaf_inputs.collect_32_bit_targets();
@@ -158,7 +134,7 @@ impl CircuitFragment for StorageProof {
 
         // Calculate the leaf inputs hash.
         let leaf_inputs_hash =
-            builder.hash_n_to_hash_no_pad::<PoseidonHash>(leaf_inputs.collect_to_vec());
+            builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(leaf_inputs.collect_to_vec());
 
         // constant 2^32 for (lo + hi * 2^32) reconstruction
         let two_pow_32 = builder.constant(F::from_canonical_u64(1u64 << 32));
@@ -177,7 +153,7 @@ impl CircuitFragment for StorageProof {
             let is_leaf_node = builder.is_equal(i_t, proof_len);
 
             // Compute the hash of this node and compare it against the previous hash.
-            let computed_hash = builder.hash_n_to_hash_no_pad::<PoseidonHash>(node.clone());
+            let computed_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(node.clone());
             for y in 0..4 {
                 let diff = builder.sub(computed_hash.elements[y], prev_hash.elements[y]);
                 let result = builder.mul(diff, is_proof_node.target);
@@ -202,21 +178,10 @@ impl CircuitFragment for StorageProof {
 
                 // If this is the start of the hash, set the next 4 felts of `found_hash`.
                 // Combine pairs (lo, hi) -> lo + hi * 2^32 (little-endian)
-                let mut combine_le_32x2 = |lo: Target, hi: Target| {
-                    let hi_shifted = builder.mul(hi, two_pow_32);
-                    builder.add(lo, hi_shifted)
-                };
-
-                // Reconstruct the 4 hash elements from the next 8 felts (32-bit limbs).
-                // Layout (little-endian pairs):
-                // h0 = node[j+0] (lo) , node[j+1] (hi)
-                // h1 = node[j+2] (lo) , node[j+3] (hi)
-                // h2 = node[j+4] (lo) , node[j+5] (hi)
-                // h3 = node[j+6] (lo) , node[j+7] (hi)
-                let h0 = combine_le_32x2(node[j], node[j + 1]);
-                let h1 = combine_le_32x2(node[j + 2], node[j + 3]);
-                let h2 = combine_le_32x2(node[j + 4], node[j + 5]);
-                let h3 = combine_le_32x2(node[j + 6], node[j + 7]);
+                // Gather the 8 consecutive 32-bit felts into a small array first for clarity.
+                let limbs = node[j..j + 8].try_into().unwrap();
+                let [h0, h1, h2, h3] =
+                    digest4_from_le32x8::<F, D>(builder, limbs, Some(two_pow_32));
 
                 // If this is the start of the hash, set the 4 reconstructed felts into found_hash.
                 found_hash[0] = builder.select(is_start_of_hash, h0, found_hash[0]);
@@ -229,9 +194,8 @@ impl CircuitFragment for StorageProof {
                 builder.range_check(*felt, 32);
             }
 
-            // Lastly, we do an additional check if this is the leaf node - that the hash of its
-            // inputs is contained within the node. Note: we only compare the last 3 felts since
-            // the stored leaf inputs hash does not always contain the first nibble.
+            // For the leaf node, the value is the hash of the leaf inputs. We don't check the full hash
+            // here, only the last 3 felts b/c zk trie's length prefix overwrites the 8 bytes of the hash.
             for y in 1..4 {
                 let diff = builder.sub(leaf_inputs_hash.elements[y], prev_hash.elements[y]);
                 let result = builder.mul(diff, is_leaf_node.target);

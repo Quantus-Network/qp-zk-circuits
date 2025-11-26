@@ -125,7 +125,7 @@ fn aggregate_public_inputs(
     let nullifiers: Vec<BytesDigest> = leaves.iter().map(|leaf| leaf.nullifier).collect();
 
     for leaf in leaves {
-        by_block.insert(leaf.root_hash);
+        by_block.insert(leaf.block_hash);
         let acct_entry =
             by_account
                 .entry(leaf.exit_account)

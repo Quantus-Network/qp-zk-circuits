@@ -5,7 +5,7 @@ use wormhole_circuit::inputs::{AggregatedPublicCircuitInputs, CircuitInputs, Pub
 use wormhole_prover::WormholeProver;
 
 use crate::aggregator::circuit_config;
-use test_helpers::storage_proof::{TestAggrInputs, TestInputs};
+use test_helpers::{TestAggrInputs, TestInputs};
 
 #[test]
 fn push_proof_to_buffer() {

@@ -1,17 +1,15 @@
 use plonky2::{field::types::Field, plonk::proof::ProofWithPublicInputs};
-use wormhole_circuit::{
-    codec::FieldElementCodec,
-    unspendable_account::{UnspendableAccount, UnspendableAccountTargets},
-};
+use wormhole_circuit::unspendable_account::{UnspendableAccount, UnspendableAccountTargets};
 use zk_circuits_common::{
     circuit::{CircuitFragment, C, D, F},
+    codec::FieldElementCodec,
     utils::BytesDigest,
 };
 
 #[cfg(test)]
 const SECRETS: [&str; 5] = [
-    "cd94df2e3c38a87f3e429b62af022dbe4363143811219d80037e8798b2ec9229",
-    "8b680b2421968a0c1d3cff6f3408e9d780157ae725724a78c3bc0998d1ac8194",
+    "4c8587bd422e01d961acdc75e7d66f6761b7af7c9b1864a492f369c9d6724f05",
+    "c6034553e5556630d24a593d2c92de9f1ede81d48f0fb3371764462cc3594b3f",
     "87f5fc11df0d12f332ccfeb92ddd8995e6c11709501a8b59c2aaf9eefee63ec1",
     "ef69da4e3aa2a6f15b3a9eec5e481f17260ac812faf1e685e450713327c3ab1c",
     "9aa84f99ef2de22e3070394176868df41d6a148117a36132d010529e19b018b7",
@@ -19,11 +17,11 @@ const SECRETS: [&str; 5] = [
 
 #[cfg(test)]
 const ADDRESSES: [&str; 5] = [
-    "582d3b97e9b09c7776921d3ead2d8186e3aa199cf8d63f5d014e65d04ac80f26",
-    "b0807446c24263def407aa8328400fef981ec30fc8453d7adbcc57bcf8af3bbf",
-    "ac081f035cc995574fef749f33b455c31cb02759932d01b6367ab852bb5599ac",
-    "a5073c13573f10552c37f35080dc0118bda22f1217381611cf4644909377ce05",
-    "73378f4b54f48a38b17073e08440531594f2b771ceefc5c3cd621e1309fbe927",
+    "4d38abc959eb7e11526fd632c73d47e8945972fa3d9ce3d62532d5f386353993",
+    "8213d62e0104abe36482ef26346e0d5cd1d7511b22e4b03c770ca2c687b0ed04",
+    "7c281f0265adab691f06195b30deb4d133477a363355c584143827210b19bb09",
+    "5511b416ec05918b6fbc78fbd61d2575be3bd9d5f931b0f2438f7f5f7d46ae6e",
+    "ae18069d04d3fb4b3eb1fb41d6b5bf51b1bad41ff95d067b65116a1f5a68ba09",
 ];
 
 #[cfg(test)]
@@ -49,7 +47,10 @@ fn preimage_matches_right_address() {
     for (secret, address) in SECRETS.iter().zip(ADDRESSES) {
         let decoded_secret: [u8; 32] = hex::decode(secret).unwrap().try_into().unwrap();
         let decoded_address = hex::decode(address).unwrap();
-        let unspendable_account = UnspendableAccount::from_secret(&decoded_secret);
+        // print the decoded address
+        println!("decoded_address: {:?}", decoded_address);
+        let unspendable_account =
+            UnspendableAccount::from_secret(decoded_secret.try_into().unwrap());
 
         let decoded_address = BytesDigest::try_from(decoded_address.as_slice()).unwrap();
 
@@ -64,7 +65,8 @@ fn preimage_matches_right_address() {
 fn preimage_does_not_match_wrong_address() {
     let (secret, wrong_address) = (SECRETS[0], ADDRESSES[1]);
     let decoded_secret: [u8; 32] = hex::decode(secret).unwrap().try_into().unwrap();
-    let mut unspendable_account = UnspendableAccount::from_secret(&decoded_secret);
+    let mut unspendable_account =
+        UnspendableAccount::from_secret(decoded_secret.try_into().unwrap());
 
     // Override the correct hash with the wrong one.
     let wrong_address =
@@ -79,7 +81,7 @@ fn preimage_does_not_match_wrong_address() {
 #[test]
 fn all_zero_preimage_is_valid_and_hashes() {
     let preimage_bytes = [0u8; 32];
-    let account = UnspendableAccount::from_secret(&preimage_bytes);
+    let account = UnspendableAccount::from_secret(preimage_bytes.try_into().unwrap());
     assert!(!account.account_id.to_vec().iter().all(Field::is_zero));
 }
 
@@ -97,16 +99,12 @@ fn unspendable_account_codec() {
             F::from_noncanonical_u64(6),
             F::from_noncanonical_u64(7),
             F::from_noncanonical_u64(8),
-            F::from_noncanonical_u64(9),
-            F::from_noncanonical_u64(10),
-            F::from_noncanonical_u64(11),
-            F::from_noncanonical_u64(12),
         ],
     };
 
     // Encode the account as field elements and compare.
     let field_elements = account.to_field_elements();
-    assert_eq!(field_elements.len(), 12);
+    assert_eq!(field_elements.len(), 8);
     assert_eq!(field_elements[0], F::from_noncanonical_u64(1));
     assert_eq!(field_elements[1], F::from_noncanonical_u64(2));
     assert_eq!(field_elements[2], F::from_noncanonical_u64(3));
@@ -115,10 +113,6 @@ fn unspendable_account_codec() {
     assert_eq!(field_elements[5], F::from_noncanonical_u64(6));
     assert_eq!(field_elements[6], F::from_noncanonical_u64(7));
     assert_eq!(field_elements[7], F::from_noncanonical_u64(8));
-    assert_eq!(field_elements[8], F::from_noncanonical_u64(9));
-    assert_eq!(field_elements[9], F::from_noncanonical_u64(10));
-    assert_eq!(field_elements[10], F::from_noncanonical_u64(11));
-    assert_eq!(field_elements[11], F::from_noncanonical_u64(12));
 
     // Decode the field elements back into an UnspendableAccount
     let recovered_account = UnspendableAccount::from_field_elements(&field_elements).unwrap();

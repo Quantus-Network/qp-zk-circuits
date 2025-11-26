@@ -1,4 +1,6 @@
 #[cfg(test)]
+pub mod block_header_tests;
+#[cfg(test)]
 pub mod circuit_data_tests;
 #[cfg(test)]
 pub mod nullifier_tests;

@@ -184,3 +184,37 @@ pub fn add_u128_base2_32_split<F: RichField + Extendable<D>, const D: usize>(
     // carry_prev is the carry out of the MSB.
     (sum, carry_prev)
 }
+
+/// Pack two 32-bit limbs (little-endian) into one felt: `lo + hi * 2^32`.
+#[inline]
+pub fn pack_le_32x2<F: RichField + Extendable<D>, const D: usize>(
+    b: &mut CircuitBuilder<F, D>,
+    lo: Target,
+    hi: Target,
+    two_pow_32_opt: Option<Target>,
+) -> Target {
+    // Reuse a provided 2^32 constant if the caller already has it, otherwise create it here.
+    let two_pow_32 =
+        two_pow_32_opt.unwrap_or_else(|| b.constant(F::from_canonical_u64(1u64 << 32)));
+
+    let hi_shifted = b.mul(hi, two_pow_32);
+    b.add(lo, hi_shifted)
+}
+
+/// Reconstruct 4 felts from 8 little-endian 32-bit limbs:
+/// h0=(l0,l1), h1=(l2,l3), h2=(l4,l5), h3=(l6,l7) with `lo + hi*2^32`.
+#[inline]
+pub fn digest4_from_le32x8<F: RichField + Extendable<D>, const D: usize>(
+    b: &mut CircuitBuilder<F, D>,
+    limbs: [Target; 8],
+    two_pow_32_opt: Option<Target>,
+) -> [Target; 4] {
+    let two_pow_32 =
+        two_pow_32_opt.unwrap_or_else(|| b.constant(F::from_canonical_u64(1u64 << 32)));
+    [
+        pack_le_32x2(b, limbs[0], limbs[1], Some(two_pow_32)),
+        pack_le_32x2(b, limbs[2], limbs[3], Some(two_pow_32)),
+        pack_le_32x2(b, limbs[4], limbs[5], Some(two_pow_32)),
+        pack_le_32x2(b, limbs[6], limbs[7], Some(two_pow_32)),
+    ]
+}

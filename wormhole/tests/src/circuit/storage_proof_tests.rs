@@ -9,7 +9,8 @@ use zk_circuits_common::{
     utils::u64_to_felts,
 };
 
-use test_helpers::storage_proof::{default_root_hash, TestInputs};
+use test_helpers::storage_proof::default_root_hash;
+use test_helpers::TestInputs;
 
 #[cfg(test)]
 fn run_test(storage_proof: &StorageProof) -> anyhow::Result<ProofWithPublicInputs<F, C, D>> {

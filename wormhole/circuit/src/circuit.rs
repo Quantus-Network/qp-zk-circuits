@@ -31,6 +31,7 @@ pub fn circuit_data_from_bytes(
 
 #[cfg(feature = "std")]
 pub mod circuit_logic {
+    use crate::block_header::BlockHeaderTargets;
     use crate::nullifier::{Nullifier, NullifierTargets};
     use crate::storage_proof::{StorageProof, StorageProofTargets};
     use crate::substrate_account::{ExitAccountTargets, SubstrateAccount};
@@ -47,6 +48,7 @@ pub mod circuit_logic {
         pub unspendable_account: UnspendableAccountTargets,
         pub storage_proof: StorageProofTargets,
         pub exit_account: ExitAccountTargets,
+        pub block_header: BlockHeaderTargets,
     }
 
     impl CircuitTargets {
@@ -56,6 +58,7 @@ pub mod circuit_logic {
                 unspendable_account: UnspendableAccountTargets::new(builder),
                 storage_proof: StorageProofTargets::new(builder),
                 exit_account: ExitAccountTargets::new(builder),
+                block_header: BlockHeaderTargets::new(builder),
             }
         }
     }
@@ -80,10 +83,12 @@ pub mod circuit_logic {
             let targets = CircuitTargets::new(&mut builder);
 
             // Setup circuits.
+            use crate::block_header::BlockHeader;
             Nullifier::circuit(&targets.nullifier, &mut builder);
             UnspendableAccount::circuit(&targets.unspendable_account, &mut builder);
             StorageProof::circuit(&targets.storage_proof, &mut builder);
             SubstrateAccount::circuit(&targets.exit_account, &mut builder);
+            BlockHeader::circuit(&targets.block_header, &mut builder);
 
             // Ensure that shared inputs to each fragment are the same.
             connect_shared_targets(&targets, &mut builder);
@@ -110,15 +115,7 @@ pub mod circuit_logic {
 
     fn connect_shared_targets(targets: &CircuitTargets, builder: &mut CircuitBuilder<F, D>) {
         // Secret.
-        for (&a, &b) in targets
-            .nullifier
-            .secret
-            .iter()
-            .zip(&targets.unspendable_account.secret)
-        {
-            builder.connect(a, b);
-        }
-
+        builder.connect_hashes(targets.unspendable_account.secret, targets.nullifier.secret);
         // Transfer count.
         for (&a, &b) in targets
             .nullifier
@@ -133,6 +130,12 @@ pub mod circuit_logic {
         builder.connect_hashes(
             targets.unspendable_account.account_id,
             targets.storage_proof.leaf_inputs.to_account,
+        );
+
+        // The state_root from the block_header must be the same as the root_hash for the storage_proof
+        builder.connect_hashes(
+            targets.block_header.header.state_root,
+            targets.storage_proof.root_hash,
         );
     }
 }
