@@ -3406,7 +3406,7 @@ dependencies = [
 [[package]]
 name = "plonky2_maybe_rayon"
 version = "1.0.0"
-source = "git+https://github.com/Quantus-Network/qp-plonky2#a7f257a234c40d252da33efdcd5f51f1f5a5b647"
+source = "git+https://github.com/Quantus-Network/qp-plonky2#ca7b32508208ec47927ee43624e03954d781e1ec"
 dependencies = [
  "rayon",
 ]
@@ -3414,7 +3414,7 @@ dependencies = [
 [[package]]
 name = "plonky2_util"
 version = "1.0.0"
-source = "git+https://github.com/Quantus-Network/qp-plonky2#a7f257a234c40d252da33efdcd5f51f1f5a5b647"
+source = "git+https://github.com/Quantus-Network/qp-plonky2#ca7b32508208ec47927ee43624e03954d781e1ec"
 
 [[package]]
 name = "polkavm-common"
@@ -3659,8 +3659,8 @@ dependencies = [
 
 [[package]]
 name = "qp-plonky2"
-version = "1.1.1"
-source = "git+https://github.com/Quantus-Network/qp-plonky2#a7f257a234c40d252da33efdcd5f51f1f5a5b647"
+version = "1.1.2"
+source = "git+https://github.com/Quantus-Network/qp-plonky2#ca7b32508208ec47927ee43624e03954d781e1ec"
 dependencies = [
  "ahash",
  "anyhow",
@@ -3688,8 +3688,8 @@ dependencies = [
 
 [[package]]
 name = "qp-plonky2-field"
-version = "1.1.1"
-source = "git+https://github.com/Quantus-Network/qp-plonky2#a7f257a234c40d252da33efdcd5f51f1f5a5b647"
+version = "1.1.2"
+source = "git+https://github.com/Quantus-Network/qp-plonky2#ca7b32508208ec47927ee43624e03954d781e1ec"
 dependencies = [
  "anyhow",
  "itertools 0.11.0",
@@ -3737,7 +3737,7 @@ dependencies = [
 [[package]]
 name = "qp-poseidon-constants"
 version = "1.0.1"
-source = "git+https://github.com/Quantus-Network/qp-poseidon.git?branch=feat%2Fplonky2-update#57ed5087c8f9a21762ed63af64d6614e8f3194fd"
+source = "git+https://github.com/Quantus-Network/qp-poseidon.git?branch=default-feats-plonky2#7434c6e2779b9c2202f8ca0b85cfdd39102007ad"
 dependencies = [
  "p3-field",
  "p3-goldilocks",
@@ -3763,14 +3763,14 @@ dependencies = [
 [[package]]
 name = "qp-poseidon-core"
 version = "1.0.1"
-source = "git+https://github.com/Quantus-Network/qp-poseidon.git?branch=feat%2Fplonky2-update#57ed5087c8f9a21762ed63af64d6614e8f3194fd"
+source = "git+https://github.com/Quantus-Network/qp-poseidon.git?branch=default-feats-plonky2#7434c6e2779b9c2202f8ca0b85cfdd39102007ad"
 dependencies = [
  "p3-field",
  "p3-goldilocks",
  "p3-poseidon2",
  "p3-symmetric",
  "qp-plonky2",
- "qp-poseidon-constants 1.0.1 (git+https://github.com/Quantus-Network/qp-poseidon.git?branch=feat%2Fplonky2-update)",
+ "qp-poseidon-constants 1.0.1 (git+https://github.com/Quantus-Network/qp-poseidon.git?branch=default-feats-plonky2)",
  "rand_chacha 0.9.0",
 ]
 
@@ -3837,7 +3837,7 @@ dependencies = [
  "anyhow",
  "hex",
  "qp-plonky2",
- "qp-poseidon-core 1.0.1 (git+https://github.com/Quantus-Network/qp-poseidon.git?branch=feat%2Fplonky2-update)",
+ "qp-poseidon-core 1.0.1 (git+https://github.com/Quantus-Network/qp-poseidon.git?branch=default-feats-plonky2)",
  "qp-zk-circuits-common",
 ]
 
@@ -3882,7 +3882,7 @@ dependencies = [
  "anyhow",
  "hex",
  "qp-plonky2",
- "qp-poseidon-core 1.0.1 (git+https://github.com/Quantus-Network/qp-poseidon.git?branch=feat%2Fplonky2-update)",
+ "qp-poseidon-core 1.0.1 (git+https://github.com/Quantus-Network/qp-poseidon.git?branch=default-feats-plonky2)",
  "serde",
 ]
 

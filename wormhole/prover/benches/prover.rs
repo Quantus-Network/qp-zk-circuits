@@ -6,7 +6,7 @@ use qp_wormhole_prover::WormholeProver;
 use test_helpers::TestInputs;
 use wormhole_circuit::inputs::CircuitInputs;
 
-const MEASUREMENT_TIME_S: u64 = 20;
+const MEASUREMENT_TIME_S: u64 = 88;
 
 fn create_proof_benchmark(c: &mut Criterion) {
     let config = CircuitConfig::standard_recursion_zk_config();
