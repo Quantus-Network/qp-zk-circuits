@@ -69,7 +69,7 @@ impl WormholeProofAggregator {
     }
 
     /// Extract and aggregate leaf public inputs from the filled proof buffer OUTSIDE the circuit.
-    /// Groups by `root_hash`, then `exit_account`, sums `funding_amount`, and collects `nullifiers`.
+    /// Groups by `blocks`, then `exit_account`, sums `funding_amount`, and collects `nullifiers`.
     /// Used for sanity checks to ensure it matches the public inputs results from the aggregation circuit.
     pub fn parse_aggregated_public_inputs_from_proof_buffer(
         &self,
