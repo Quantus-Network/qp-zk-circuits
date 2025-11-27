@@ -19,12 +19,13 @@ fn verify_proof_benchmark(c: &mut Criterion) {
         let proof_data = fs::read(format!("{DATA_PATH}/proof.bin")).unwrap();
         let proof = ProofWithPublicInputs::from_bytes(proof_data, &common_circuit_data).unwrap();
 
+        let verifier = WormholeVerifier::new_from_files(
+            std::path::Path::new(&format!("{DATA_PATH}/verifier.bin")),
+            std::path::Path::new(&format!("{DATA_PATH}/common.bin")),
+        )
+        .unwrap();
+
         b.iter(|| {
-            let verifier = WormholeVerifier::new_from_files(
-                std::path::Path::new(&format!("{DATA_PATH}/verifier.bin")),
-                std::path::Path::new(&format!("{DATA_PATH}/common.bin")),
-            )
-            .unwrap();
             verifier.verify(proof.clone()).unwrap();
         });
     });
