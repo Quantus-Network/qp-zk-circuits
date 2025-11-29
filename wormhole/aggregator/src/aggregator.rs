@@ -123,10 +123,7 @@ fn aggregate_public_inputs(
     let mut by_account: BTreeMap<BytesDigest, PublicInputsByAccount> = BTreeMap::new();
     let nullifiers: Vec<BytesDigest> = leaves.iter().map(|leaf| leaf.nullifier).collect();
 
-    let mut block_data = BlockData {
-        block_hash: BytesDigest::default(),
-        block_number: 0u32,
-    };
+    let mut block_data = BlockData::default();
 
     for leaf in leaves {
         // If the block number is greater than the current, update block_data.

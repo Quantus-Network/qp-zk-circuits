@@ -58,7 +58,7 @@ pub struct PublicInputsByAccount {
 }
 
 /// The block data (block_hash, parent_hash, block_number) in the aggregated proofs
-#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Ord, PartialOrd)]
 pub struct BlockData {
     /// The hash of the block header.
     pub block_hash: BytesDigest,
