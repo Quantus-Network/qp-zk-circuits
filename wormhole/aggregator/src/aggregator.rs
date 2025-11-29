@@ -1,9 +1,9 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use anyhow::bail;
 use plonky2::plonk::circuit_data::{CircuitConfig, VerifierCircuitData};
 use wormhole_circuit::inputs::{
-    AggregatedPublicCircuitInputs, PublicCircuitInputs, PublicInputsByAccount,
+    AggregatedPublicCircuitInputs, BlockData, PublicCircuitInputs, PublicInputsByAccount,
 };
 use wormhole_verifier::{ProofWithPublicInputs, WormholeVerifier};
 use zk_circuits_common::{
@@ -69,7 +69,7 @@ impl WormholeProofAggregator {
     }
 
     /// Extract and aggregate leaf public inputs from the filled proof buffer OUTSIDE the circuit.
-    /// Groups by `root_hash`, then `exit_account`, sums `funding_amount`, and collects `nullifiers`.
+    /// Groups by `blocks`, then `exit_account`, sums `funding_amount`, and collects `nullifiers`.
     /// Used for sanity checks to ensure it matches the public inputs results from the aggregation circuit.
     pub fn parse_aggregated_public_inputs_from_proof_buffer(
         &self,
@@ -120,12 +120,17 @@ impl WormholeProofAggregator {
 fn aggregate_public_inputs(
     leaves: Vec<PublicCircuitInputs>,
 ) -> anyhow::Result<AggregatedPublicCircuitInputs> {
-    let mut by_block: BTreeSet<BytesDigest> = BTreeSet::new();
     let mut by_account: BTreeMap<BytesDigest, PublicInputsByAccount> = BTreeMap::new();
     let nullifiers: Vec<BytesDigest> = leaves.iter().map(|leaf| leaf.nullifier).collect();
 
+    let mut block_data = BlockData::default();
+
     for leaf in leaves {
-        by_block.insert(leaf.block_hash);
+        // If the block number is greater than the current, update block_data.
+        if leaf.block_number > block_data.block_number {
+            block_data.block_number = leaf.block_number;
+            block_data.block_hash = leaf.block_hash;
+        }
         let acct_entry =
             by_account
                 .entry(leaf.exit_account)
@@ -146,17 +151,13 @@ fn aggregate_public_inputs(
             })?;
     }
 
-    // Materialize the nested maps into the desired Vec<PublicInputsByBlock> shape.
-    let mut blocks: Vec<BytesDigest> = by_block.into_iter().collect();
     let mut accounts: Vec<PublicInputsByAccount> = by_account.into_values().collect();
 
-    // Sort blocks by the same comparator on the root hash.
-    blocks.sort_by_key(digest_key_le_u64x4);
     // Sort accounts by the same comparator on the exit account.
     accounts.sort_by_key(|a| digest_key_le_u64x4(&a.exit_account));
 
     Ok(AggregatedPublicCircuitInputs {
-        root_hashes: blocks,
+        block_data,
         account_data: accounts,
         nullifiers,
     })

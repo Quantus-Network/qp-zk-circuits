@@ -95,7 +95,8 @@
             uses: Swatinem/rust-cache@v2
           - name: Run slow crypto tests
             run: |
-              cargo test --release -p tests -- circuit_data_tests storage_proof_tests prover_tests verifier_tests
+              cargo test --release -p tests -- aggregator_tests circuit_data_tests storage_proof_tests prover_tests verifier_tests
+              cargo test --release -p qp-wormhole-aggregator "tree::tests"
 
       security-audit:
         name: 🔒 Security Audit
