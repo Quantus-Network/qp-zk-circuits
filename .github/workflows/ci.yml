@@ -62,7 +62,7 @@
           - name: Cache Rust dependencies
             uses: Swatinem/rust-cache@v2
           - name: Test workspace (release, fast tests)
-            run: cargo test --workspace --locked --release --lib --bins -- --skip aggregator_tests --skip circuit_data_tests --skip storage_proof_tests --skip prover_tests --skip verifier_tests
+            run: cargo test --workspace --locked --release --lib --bins --doc -- --skip aggregator_tests --skip circuit_data_tests --skip storage_proof_tests --skip prover_tests --skip verifier_tests
 
       analysis:
         name: 🤖 Analysis (Clippy & Doc)

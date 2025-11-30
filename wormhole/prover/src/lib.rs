@@ -24,17 +24,22 @@
 //! // Create inputs. In practice, each input would be gathered from the real node.
 //! let inputs = CircuitInputs {
 //!     private: PrivateCircuitInputs {
-//!         secret: [1u8; 32],
+//!         secret: [1u8; 32].try_into().unwrap(),
 //!         transfer_count: 0,
 //!         funding_account: [2u8; 32].try_into().unwrap(),
 //!         storage_proof: ProcessedStorageProof::new(vec![], vec![]).unwrap(),
 //!         unspendable_account: [1u8; 32].try_into().unwrap(),
+//!         state_root: [3u8; 32].try_into().unwrap(),
+//!         extrinsics_root: [4u8; 32].try_into().unwrap(),
+//!         digest: [0u8; 110],
 //!     },
 //!     public: PublicCircuitInputs {
 //!         funding_amount: 1000,
 //!         nullifier: [1u8; 32].try_into().unwrap(),
-//!         root_hash: [0u8; 32].try_into().unwrap(),
+//!         block_hash: [0u8; 32].try_into().unwrap(),
+//!         parent_hash: [5u8; 32].try_into().unwrap(),
 //!         exit_account: [2u8; 32].try_into().unwrap(),
+//!         block_number: 1,
 //!     },
 //! };
 //!
