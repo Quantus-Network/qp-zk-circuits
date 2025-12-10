@@ -3868,9 +3868,9 @@ dependencies = [
 [[package]]
 name = "quantus-cli"
 version = "0.3.0"
-source = "git+https://github.com/Quantus-Network/quantus-cli.git?branch=feat%2Fupdated-metadata#68a430f2c5c70b2de8a0b8e17a68c6072d4e2990"
 dependencies = [
  "aes-gcm",
+ "anyhow",
  "argon2",
  "chrono",
  "clap",
@@ -3880,9 +3880,14 @@ dependencies = [
  "jsonrpsee",
  "parity-scale-codec",
  "qp-dilithium-crypto",
+ "qp-plonky2",
  "qp-poseidon",
+ "qp-poseidon-core",
  "qp-rusty-crystals-dilithium",
  "qp-rusty-crystals-hdwallet",
+ "qp-wormhole-circuit",
+ "qp-wormhole-prover",
+ "qp-zk-circuits-common",
  "rand 0.9.2",
  "rpassword",
  "serde",

@@ -71,6 +71,7 @@ impl TestInputs for CircuitInputs {
         let storage_proof = ProcessedStorageProof::test_inputs_0();
         Self {
             public: PublicCircuitInputs {
+                asset_id: 0u32,
                 funding_amount: DEFAULT_FUNDING_AMOUNTS[0],
                 nullifier,
                 exit_account,
@@ -110,6 +111,7 @@ impl TestInputs for CircuitInputs {
         let storage_proof = ProcessedStorageProof::test_inputs_1();
         Self {
             public: PublicCircuitInputs {
+                asset_id: 0u32,
                 funding_amount: DEFAULT_FUNDING_AMOUNTS[1],
                 nullifier,
                 exit_account,
@@ -194,6 +196,7 @@ pub mod storage_proof {
             let funding_account = BytesDigest::try_from(DEFAULT_FUNDING_ACCOUNT).unwrap();
             let to_account = BytesDigest::try_from(DEFAULT_TO_ACCOUNTS[0]).unwrap();
             LeafInputs::new(
+                0u32,
                 DEFAULT_TRANSFER_COUNTS[0],
                 funding_account,
                 to_account,
@@ -205,6 +208,7 @@ pub mod storage_proof {
             let funding_account = BytesDigest::try_from(DEFAULT_FUNDING_ACCOUNT).unwrap();
             let to_account = BytesDigest::try_from(DEFAULT_TO_ACCOUNTS[1]).unwrap();
             LeafInputs::new(
+                0u32,
                 DEFAULT_TRANSFER_COUNTS[1],
                 funding_account,
                 to_account,

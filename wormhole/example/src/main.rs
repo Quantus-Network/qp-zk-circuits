@@ -11,9 +11,9 @@ use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_poseidon::PoseidonHasher;
 use quantus_cli::chain::quantus_subxt as quantus_node;
-use quantus_cli::chain::quantus_subxt::api::balances;
 use quantus_cli::cli::common::submit_transaction;
 use quantus_cli::qp_dilithium_crypto::DilithiumPair;
+use quantus_cli::chain::quantus_subxt::api::wormhole;
 use quantus_cli::wallet::QuantumKeyPair;
 use quantus_cli::{AccountId32, ChainConfig, QuantusClient};
 use serde::{Deserialize, Serialize};
@@ -118,8 +118,6 @@ impl TryFrom<DebugInputs> for CircuitInputs {
                 .map_err(|_| anyhow!("invalid {name} length, expected {N} bytes, got {}", len))
         }
 
-        // --- Proof and storage proof ---
-
         let proof_bytes: Vec<Bytes> = inputs
             .proof_hex
             .into_iter()
@@ -139,14 +137,10 @@ impl TryFrom<DebugInputs> for CircuitInputs {
         )
         .context("failed to prepare storage proof for circuit")?;
 
-        // --- Secret & derived unspendable account ---
-
         let secret = hex_to_bytes_digest(&inputs.secret_hex, "secret_hex")?;
         let unspendable_account =
             wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(secret)
                 .account_id;
-
-        // --- Accounts ---
 
         let funding_account_bytes = hex::decode(&inputs.funding_account_hex)
             .context("failed to decode funding_account_hex")?;
@@ -162,8 +156,6 @@ impl TryFrom<DebugInputs> for CircuitInputs {
                 .map_err(|_| anyhow!("invalid dest account length"))?,
         );
 
-        // --- Header components ---
-
         let block_hash = H256::from_str(&inputs.block_hash_hex)
             .map_err(anyhow::Error::from)
             .context("invalid block_hash_hex")?;
@@ -173,8 +165,6 @@ impl TryFrom<DebugInputs> for CircuitInputs {
             hex_to_bytes_digest(&inputs.extrinsics_root_hex, "extrinsics_root_hex")?;
         let digest: [u8; 110] = hex_to_array::<110>(&inputs.digest_hex, "digest_hex")?;
         let parent_hash = hex_to_bytes_digest(&inputs.parent_hash_hex, "parent_hash_hex")?;
-
-        // --- Assemble final CircuitInputs ---
 
         Ok(CircuitInputs {
             private: PrivateCircuitInputs {
@@ -188,6 +178,7 @@ impl TryFrom<DebugInputs> for CircuitInputs {
                 digest,
             },
             public: PublicCircuitInputs {
+                asset_id: 0u32,
                 funding_amount: inputs.funding_amount,
                 nullifier: Nullifier::from_preimage(secret, inputs.transfer_count)
                     .hash
@@ -397,27 +388,31 @@ async fn main() -> anyhow::Result<()> {
     let events_api = client.events().at(block_hash).await?;
 
     let event = events_api
-        .find::<balances::events::TransferProofStored>()
+        .find::<wormhole::events::NativeTransferred>()
         .next()
         .expect("should find transfer proof event")
         .expect("should be valid transfer proof");
 
     let storage_api = client.storage().at(block_hash);
 
+    // Native token transfers use asset_id = 0
+    let asset_id = 0u32;
     let leaf_hash = qp_poseidon::PoseidonHasher::hash_storage::<AccountId32>(
         &(
+            asset_id,
             event.transfer_count,
-            event.source.clone(),
-            event.dest.clone(),
-            event.funding_amount,
+            event.from.clone(),
+            event.to.clone(),
+            event.amount,
         )
             .encode(),
     );
-    let proof_address = quantus_node::api::storage().balances().transfer_proof((
+    let proof_address = quantus_node::api::storage().wormhole().transfer_proof((
+        asset_id,
         event.transfer_count,
-        event.source.clone(),
-        event.dest.clone(),
-        event.funding_amount,
+        event.from.clone(),
+        event.to.clone(),
+        event.amount,
     ));
     let mut final_key = proof_address.to_root_bytes();
     final_key.extend_from_slice(&leaf_hash);
@@ -464,9 +459,9 @@ async fn main() -> anyhow::Result<()> {
     );
     println!(
         "Event dest:                   {}",
-        hex::encode(event.dest.0)
+        hex::encode(event.to.0)
     );
-    println!("Match: {}", unspendable_account_id.0 == event.dest.0);
+    println!("Match: {}", unspendable_account_id.0 == event.to.0);
     println!("=====================================\n");
 
     // Prepare the storage proof with the correct accounts
@@ -486,7 +481,8 @@ async fn main() -> anyhow::Result<()> {
             digest,
         },
         public: PublicCircuitInputs {
-            funding_amount,
+            asset_id: 0u32,
+            funding_amount: event.amount,
             nullifier: Nullifier::from_preimage(secret, event.transfer_count)
                 .hash
                 .into(),
