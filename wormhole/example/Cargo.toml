@@ -14,7 +14,7 @@ qp-poseidon = { version = "1.0.1" }
 qp-poseidon-core = { version = "1.0.1", default-features = false, features = [
 	"p3",
 ] }
-quantus-cli = { path = "../../../quantus-cli", default-features = false }
+quantus-cli = { git = "https://github.com/Quantus-Network/quantus-cli", branch = "feat/updated-metadata", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["alloc"] }
 sp-core = "38.1.0"

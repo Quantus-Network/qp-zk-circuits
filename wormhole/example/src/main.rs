@@ -11,9 +11,9 @@ use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_poseidon::PoseidonHasher;
 use quantus_cli::chain::quantus_subxt as quantus_node;
+use quantus_cli::chain::quantus_subxt::api::wormhole;
 use quantus_cli::cli::common::submit_transaction;
 use quantus_cli::qp_dilithium_crypto::DilithiumPair;
-use quantus_cli::chain::quantus_subxt::api::wormhole;
 use quantus_cli::wallet::QuantumKeyPair;
 use quantus_cli::{AccountId32, ChainConfig, QuantusClient};
 use serde::{Deserialize, Serialize};
@@ -457,10 +457,7 @@ async fn main() -> anyhow::Result<()> {
         "Local unspendable_account_id: {}",
         hex::encode(unspendable_account_id.0)
     );
-    println!(
-        "Event dest:                   {}",
-        hex::encode(event.to.0)
-    );
+    println!("Event dest:                   {}", hex::encode(event.to.0));
     println!("Match: {}", unspendable_account_id.0 == event.to.0);
     println!("=====================================\n");
 

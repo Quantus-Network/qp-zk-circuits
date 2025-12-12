@@ -3947,6 +3947,7 @@ dependencies = [
 [[package]]
 name = "quantus-cli"
 version = "0.3.0"
+source = "git+https://github.com/Quantus-Network/quantus-cli?branch=feat%2Fupdated-metadata#f9037fab4687583634c8ac4bb1123c4e108fdebb"
 dependencies = [
  "aes-gcm",
  "anyhow",
