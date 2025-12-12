@@ -27,7 +27,8 @@ pub struct LeafTargets {
 
 impl LeafTargets {
     pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
-        let asset_id = builder.add_virtual_target();
+        // Register asset_id as a public input (should be first if this is called before other targets)
+        let asset_id = builder.add_virtual_public_input();
         let transfer_count = array::from_fn(|_| builder.add_virtual_target());
         let funding_account = builder.add_virtual_hash();
         let to_account = builder.add_virtual_hash();

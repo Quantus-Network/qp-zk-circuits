@@ -12,10 +12,12 @@ use zk_circuits_common::utils::{felts_to_u128, BytesDigest, DIGEST_BYTES_LEN};
 /// The total size of the public inputs field element vector.
 pub const PUBLIC_INPUTS_FELTS_LEN: usize = 22;
 pub const ASSET_ID_INDEX: usize = 0;
-pub const NULLIFIER_START_INDEX: usize = 1;
-pub const NULLIFIER_END_INDEX: usize = 5;
-pub const FUNDING_AMOUNT_START_INDEX: usize = 5;
-pub const FUNDING_AMOUNT_END_INDEX: usize = 9;
+// Note: funding_amount comes before nullifier because LeafTargets::new() is called
+// before NullifierTargets::new() to ensure asset_id is the first public input.
+pub const FUNDING_AMOUNT_START_INDEX: usize = 1;
+pub const FUNDING_AMOUNT_END_INDEX: usize = 5;
+pub const NULLIFIER_START_INDEX: usize = 5;
+pub const NULLIFIER_END_INDEX: usize = 9;
 pub const EXIT_ACCOUNT_START_INDEX: usize = 9;
 pub const EXIT_ACCOUNT_END_INDEX: usize = 13;
 pub const BLOCK_HASH_START_INDEX: usize = 13;
@@ -194,8 +196,8 @@ impl PublicCircuitInputs {
     pub fn try_from_slice(pis: &[GoldilocksField]) -> anyhow::Result<Self> {
         // Public inputs are ordered as follows:
         // asset_id: 1 felt
-        // Nullifier.hash: 4 felts
         // StorageProof.funding_amount: 4 felts
+        // Nullifier.hash: 4 felts
         // ExitAccount.address: 4 felts
         // BlockHeader.block_hash: 4 felts
         // BlockHeader.parent_hash: 4 felts
