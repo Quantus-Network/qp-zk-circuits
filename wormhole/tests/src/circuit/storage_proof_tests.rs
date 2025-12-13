@@ -22,10 +22,6 @@ fn run_test(storage_proof: &StorageProof) -> anyhow::Result<ProofWithPublicInput
     crate::circuit_helpers::build_and_prove_test(builder, pw)
 }
 
-// NOTE: These tests are ignored because the storage proof fixtures were generated before
-// asset_id was added to the leaf hash computation. The fixtures need to be regenerated
-// from a live node with the updated circuit. See pallet-wormhole tests for a working
-// implementation that generates proofs dynamically.
 #[test]
 fn build_and_verify_proof() {
     let storage_proof = StorageProof::test_inputs_0();
