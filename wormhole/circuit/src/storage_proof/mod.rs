@@ -37,6 +37,9 @@ pub struct StorageProofTargets {
 
 impl StorageProofTargets {
     pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
+        // LeafTargets::new() registers asset_id as a public input first
+        let leaf_inputs = LeafTargets::new(builder);
+
         // Setup targets. Each 8-bytes are represented as their equivalent field element. We also
         // need to track total proof length to allow for variable length.
         let proof_data: Vec<_> = (0..MAX_PROOF_LEN)
@@ -52,7 +55,7 @@ impl StorageProofTargets {
             proof_len: builder.add_virtual_target(),
             proof_data,
             indices,
-            leaf_inputs: LeafTargets::new(builder),
+            leaf_inputs,
         }
     }
 }
@@ -256,6 +259,7 @@ impl CircuitFragment for StorageProof {
         let funding_account = felts_to_hashout(&self.leaf_inputs.funding_account.0);
         let to_account = felts_to_hashout(&self.leaf_inputs.to_account.0);
 
+        pw.set_target(targets.leaf_inputs.asset_id, self.leaf_inputs.asset_id)?;
         pw.set_target_arr(
             &targets.leaf_inputs.transfer_count,
             &self.leaf_inputs.transfer_count,

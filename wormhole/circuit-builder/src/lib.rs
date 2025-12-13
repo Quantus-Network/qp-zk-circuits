@@ -13,7 +13,7 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
     include_prover: bool,
 ) -> Result<()> {
     println!("Building wormhole circuit...");
-    let config = CircuitConfig::standard_recursion_zk_config();
+    let config = CircuitConfig::standard_recursion_config();
     let circuit = WormholeCircuit::new(config);
     let circuit_data = circuit.build_circuit();
     println!("Circuit built.");
