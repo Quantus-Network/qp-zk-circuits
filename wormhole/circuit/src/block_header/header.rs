@@ -1,7 +1,9 @@
 use alloc::vec::Vec;
 use core::array;
 use plonky2::{
-    field::types::Field, hash::hash_types::HashOutTarget, iop::target::Target,
+    field::types::Field,
+    hash::{hash_types::HashOutTarget, poseidon2::hash_no_pad_bytes},
+    iop::target::Target,
     plonk::circuit_builder::CircuitBuilder,
 };
 use zk_circuits_common::{
@@ -72,6 +74,15 @@ impl HeaderInputs {
             extrinsics_root: digest_bytes_to_felts(extrinsics_root),
             digest: injective_bytes_to_felts(digest).try_into().unwrap(),
         })
+    }
+    pub fn block_hash(&self) -> BytesDigest {
+        let mut pre_image = Vec::new();
+        pre_image.extend_from_slice(&self.parent_hash);
+        pre_image.push(self.block_number);
+        pre_image.extend_from_slice(&self.state_root);
+        pre_image.extend_from_slice(&self.extrinsics_root);
+        pre_image.extend_from_slice(&self.digest);
+        hash_no_pad_bytes(&pre_image).try_into().unwrap()
     }
 }
 

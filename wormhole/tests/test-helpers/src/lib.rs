@@ -255,12 +255,12 @@ pub mod block_header {
 
     pub const DEFAULT_BLOCK_HASHES: [[u8; 32]; 2] = [
         [
-            60, 206, 110, 191, 44, 109, 228, 120, 184, 243, 225, 209, 238, 255, 239, 110, 235, 156,
-            185, 133, 181, 165, 152, 99, 48, 220, 169, 124, 120, 139, 215, 88,
+            3, 56, 139, 199, 43, 62, 30, 65, 234, 30, 148, 62, 168, 150, 133, 239, 51, 219, 71, 7,
+            25, 211, 5, 20, 99, 242, 46, 237, 43, 85, 10, 187,
         ],
         [
-            92, 82, 46, 175, 151, 80, 102, 47, 254, 201, 108, 211, 181, 181, 35, 54, 87, 31, 250,
-            176, 17, 87, 152, 12, 88, 152, 15, 178, 127, 27, 86, 249,
+            188, 232, 72, 112, 213, 110, 236, 148, 50, 112, 51, 0, 64, 27, 30, 236, 137, 91, 77,
+            87, 218, 238, 222, 213, 95, 29, 120, 49, 143, 92, 144, 43,
         ],
     ];
 
@@ -270,8 +270,8 @@ pub mod block_header {
             0, 0, 0,
         ],
         [
-            60, 206, 110, 191, 44, 109, 228, 120, 184, 243, 225, 209, 238, 255, 239, 110, 235, 156,
-            185, 133, 181, 165, 152, 99, 48, 220, 169, 124, 120, 139, 215, 88,
+            3, 56, 139, 199, 43, 62, 30, 65, 234, 30, 148, 62, 168, 150, 133, 239, 51, 219, 71, 7,
+            25, 211, 5, 20, 99, 242, 46, 237, 43, 85, 10, 187,
         ],
     ];
     pub const DEFAULT_EXTRINSICS_ROOTS: [[u8; 32]; 2] = [
@@ -364,16 +364,15 @@ pub mod nullifier {
     }
 }
 #[cfg(test)]
-mod regen_storage_proof_constants_test {
-
+mod fixture_updates {
     use anyhow::{anyhow, bail, Context, Result};
     use hex::{decode, encode};
-    use wormhole_circuit::storage_proof::leaf::LeafInputs;
+    use wormhole_circuit::{block_header::header::HeaderInputs, storage_proof::leaf::LeafInputs};
     use zk_circuits_common::{storage_proof::hash_node_with_poseidon_padded, utils::BytesDigest};
 
     fn decode_hex_bytes(s: &str) -> Result<Vec<u8>> {
         let s = s.strip_prefix("0x").unwrap_or(s);
-        if s.len() % 2 != 0 {
+        if !s.len().is_multiple_of(2) {
             return Err(anyhow!("hex string has odd length: {}", s.len()));
         }
         Ok(decode(s).unwrap())
@@ -468,6 +467,8 @@ mod regen_storage_proof_constants_test {
 
         let leaf_a = LeafInputs::test_inputs_0();
         let leaf_b = LeafInputs::test_inputs_1();
+        let block_hash_a = HeaderInputs::test_inputs_0().block_hash();
+        let block_hash_b = HeaderInputs::test_inputs_1().block_hash();
         let leaf_hash_a = leaf_hash_for(&leaf_a);
         let leaf_hash_b = leaf_hash_for(&leaf_b);
 
@@ -484,6 +485,12 @@ mod regen_storage_proof_constants_test {
             &leaf_hash_b,
         )
         .context("processing proof B")?;
+        // print the updated block hashes
+        println!(
+            "pub const DEFAULT_BLOCK_HASHES: [[u8; 32]; 2] = [\n    {:?},\n    {:?},\n];\n",
+            block_hash_a.as_ref(),
+            block_hash_b.as_ref()
+        );
 
         print_const_array("DEFAULT_STORAGE_PROOF_A", &updated_a);
         print_const_array("DEFAULT_STORAGE_PROOF_B", &updated_b);

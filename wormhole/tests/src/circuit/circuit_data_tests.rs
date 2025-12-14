@@ -36,7 +36,6 @@ fn test_circuit_data_serialization() {
 }
 
 #[test]
-#[ignore = "fixtures need regeneration after asset_id was added to leaf hash"]
 fn test_prover_and_verifier_from_file_e2e() -> Result<()> {
     // Create a temp directory for the test files
     let temp_dir = "temp_test_bins_e2e";
