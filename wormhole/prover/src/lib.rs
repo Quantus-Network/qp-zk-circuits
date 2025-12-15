@@ -35,6 +35,7 @@
 //!     },
 //!     public: PublicCircuitInputs {
 //!         funding_amount: 1000,
+//!         asset_id: 0_u32,
 //!         nullifier: [1u8; 32].try_into().unwrap(),
 //!         block_hash: [0u8; 32].try_into().unwrap(),
 //!         parent_hash: [5u8; 32].try_into().unwrap(),
