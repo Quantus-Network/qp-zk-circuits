@@ -5,6 +5,7 @@
 //! - Combines and passes the necessary inputs to the wormhole prover
 //! - Generate the proof for the wormhole transfer
 
+use anyhow::Context;
 use clap::Parser;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
