@@ -3734,7 +3734,7 @@ dependencies = [
  "p3-field",
  "p3-goldilocks",
  "parity-scale-codec",
- "qp-poseidon-core 1.0.3",
+ "qp-poseidon-core 1.0.4",
  "scale-info",
  "serde",
  "sp-core 37.0.0",
@@ -3784,9 +3784,9 @@ dependencies = [
 
 [[package]]
 name = "qp-poseidon-core"
-version = "1.0.3"
+version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f52c70df221c356b3ce63afabfae623aae632c27d3e078cd20eec4348096c2d7"
+checksum = "9e513413affb8c745e368503b50b629e4b2f764e15b1622b8980eec20fbfccfd"
 dependencies = [
  "p3-field",
  "p3-goldilocks",
@@ -3819,7 +3819,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "nam-tiny-hderive",
- "qp-poseidon-core 1.0.3",
+ "qp-poseidon-core 1.0.4",
  "qp-rusty-crystals-dilithium",
  "rand_chacha 0.9.0",
  "rand_core 0.9.3",
@@ -3860,7 +3860,7 @@ dependencies = [
  "anyhow",
  "hex",
  "qp-plonky2",
- "qp-poseidon-core 1.0.2",
+ "qp-poseidon-core 1.0.4",
  "qp-zk-circuits-common 0.1.4",
 ]
 
@@ -3872,7 +3872,7 @@ dependencies = [
  "anyhow",
  "hex",
  "qp-plonky2",
- "qp-poseidon-core 1.0.3",
+ "qp-poseidon-core 1.0.4",
  "qp-zk-circuits-common 0.1.4 (git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole)",
 ]
 
@@ -3928,7 +3928,7 @@ dependencies = [
  "anyhow",
  "hex",
  "qp-plonky2",
- "qp-poseidon-core 1.0.2",
+ "qp-poseidon-core 1.0.4",
  "serde",
 ]
 
@@ -3940,7 +3940,7 @@ dependencies = [
  "anyhow",
  "hex",
  "qp-plonky2",
- "qp-poseidon-core 1.0.3",
+ "qp-poseidon-core 1.0.4",
  "serde",
 ]
 
@@ -7009,7 +7009,7 @@ dependencies = [
  "parity-scale-codec",
  "qp-plonky2",
  "qp-poseidon",
- "qp-poseidon-core 1.0.3",
+ "qp-poseidon-core 1.0.4",
  "qp-wormhole-circuit 0.1.4",
  "qp-wormhole-prover 0.1.4",
  "qp-zk-circuits-common 0.1.4",
