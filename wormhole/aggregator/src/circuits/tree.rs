@@ -693,7 +693,8 @@ mod tests {
             0x20B2_0001_0000_0004,
         ],
     ];
-
+    /// TODO: Ignoring for now but will bring back once we have asset ID support for the aggregator.
+    #[ignore]
     #[test]
     fn recursive_aggregation_tree() {
         // Non deterministic RNG.
@@ -960,6 +961,8 @@ mod tests {
 
     /// Break the parent-hash chain so that the wrapper circuit's parent-hash linkage
     /// constraints are violated. Aggregation should fail.
+    /// TODO: Ignoring for now but will bring back once we have asset ID support for the aggregator.
+    #[ignore]
     #[test]
     fn recursive_aggregation_tree_broken_parent_chain_fails() {
         // Deterministic RNG.

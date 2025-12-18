@@ -53,10 +53,13 @@ pub mod circuit_logic {
 
     impl CircuitTargets {
         pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
+            // storage_proof must be created first so asset_id is registered as public input at index 0
+            let storage_proof = StorageProofTargets::new(builder);
+
             Self {
                 nullifier: NullifierTargets::new(builder),
                 unspendable_account: UnspendableAccountTargets::new(builder),
-                storage_proof: StorageProofTargets::new(builder),
+                storage_proof,
                 exit_account: ExitAccountTargets::new(builder),
                 block_header: BlockHeaderTargets::new(builder),
             }

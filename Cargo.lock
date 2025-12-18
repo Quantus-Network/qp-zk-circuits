@@ -683,9 +683,9 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "base64ct"
-version = "1.8.0"
+version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55248b47b0caf0546f7988906588779981c43bb1bc9d0c44087278f80cdb44ba"
+checksum = "0e050f626429857a27ddccb31e0aca21356bfa709c04041aefddac081a8f068a"
 
 [[package]]
 name = "binary-merkle-tree"
@@ -700,11 +700,11 @@ dependencies = [
 
 [[package]]
 name = "bip39"
-version = "2.2.0"
+version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43d193de1f7487df1914d3a568b772458861d33f9c54249612cc2893d6915054"
+checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
- "bitcoin_hashes",
+ "bitcoin_hashes 0.14.1",
 ]
 
 [[package]]
@@ -720,7 +720,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1930a4dabfebb8d7d9992db18ebe3ae2876f0a305fab206fd168df931ede293b"
 dependencies = [
  "bitcoin-internals",
- "hex-conservative",
+ "hex-conservative 0.1.2",
+]
+
+[[package]]
+name = "bitcoin_hashes"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26ec84b80c482df901772e931a9a681e26a1b9ee2302edeff23cb30328745c8b"
+dependencies = [
+ "hex-conservative 0.2.2",
 ]
 
 [[package]]
@@ -874,9 +883,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.2.46"
+version = "1.2.49"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b97463e1064cb1b1c1384ad0a0b9c8abd0988e2a91f52606c80ef14aadb63e36"
+checksum = "90583009037521a116abf44494efecd645ba48b6622457080f080b85544e2215"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -1096,9 +1105,9 @@ checksum = "7c74b8349d32d297c9134b8c88677813a227df8f779daa29bfc29c183fe3dca6"
 
 [[package]]
 name = "convert_case"
-version = "0.7.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb402b8d4c85569410425650ce3eddc7d698ed96d39a73f941b08fb63082f1e7"
+checksum = "633458d4ef8c78b72454de2d54fd6ab2e60f9e02be22f3c6104cdc8a4e0fceb9"
 dependencies = [
  "unicode-segmentation",
 ]
@@ -1370,11 +1379,11 @@ dependencies = [
 
 [[package]]
 name = "derive_more"
-version = "2.0.1"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "093242cf7570c207c83073cf82f79706fe7b8317e98620a47d5be7c3d8497678"
+checksum = "10b768e943bed7bf2cab53df09f4bc34bfd217cdb57d971e769874c9a6710618"
 dependencies = [
- "derive_more-impl 2.0.1",
+ "derive_more-impl 2.1.0",
 ]
 
 [[package]]
@@ -1390,13 +1399,14 @@ dependencies = [
 
 [[package]]
 name = "derive_more-impl"
-version = "2.0.1"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bda628edc44c4bb645fbe0f758797143e4e07926f7ebf4e9bdfbd3d2ce621df3"
+checksum = "6d286bfdaf75e988b4a78e013ecd79c581e06399ab53fbacd2d916c2f904f30b"
 dependencies = [
  "convert_case",
  "proc-macro2",
  "quote",
+ "rustc_version",
  "syn 2.0.110",
  "unicode-xid",
 ]
@@ -1760,9 +1770,9 @@ dependencies = [
 
 [[package]]
 name = "frame-metadata"
-version = "23.0.0"
+version = "23.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8c26fcb0454397c522c05fdad5380c4e622f8a875638af33bff5a320d1fc965"
+checksum = "9ba5be0edbdb824843a0f9c6f0906ecfc66c5316218d74457003218b24909ed0"
 dependencies = [
  "cfg-if",
  "parity-scale-codec",
@@ -2097,9 +2107,9 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.16.0"
+version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5419bdc4f6a9207fbeba6d11b604d481addf78ecd10c11ad51e76c2f6482748d"
+checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 
 [[package]]
 name = "heck"
@@ -2124,6 +2134,15 @@ name = "hex-conservative"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "212ab92002354b4819390025006c897e8140934349e8635c9b077f47b4dcbd20"
+
+[[package]]
+name = "hex-conservative"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fda06d18ac606267c40c04e41b9947729bf8b9efe74bd4e82b61a5f26a510b9f"
+dependencies = [
+ "arrayvec 0.7.6",
+]
 
 [[package]]
 name = "hex-literal"
@@ -2163,12 +2182,11 @@ dependencies = [
 
 [[package]]
 name = "http"
-version = "1.3.1"
+version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4a85d31aea989eead29a3aaf9e1115a180df8282431156e533de47660892565"
+checksum = "e3ba2a386d7f85a81f119ad7498ebe444d2e22c2af0b86b069416ace48b3311a"
 dependencies = [
  "bytes",
- "fnv",
  "itoa",
 ]
 
@@ -2249,9 +2267,9 @@ dependencies = [
 
 [[package]]
 name = "hyper-util"
-version = "0.1.18"
+version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52e9a2a24dc5c6821e71a7030e1e14b7b632acac55c40e9d2e082c621261bb56"
+checksum = "727805d60e7938b76b826a6ef209eb70eaa1812794f9424d4a4e2d740662df5f"
 dependencies = [
  "bytes",
  "futures-channel",
@@ -2340,9 +2358,9 @@ checksum = "7aedcccd01fc5fe81e6b489c15b247b8b0690feb23304303a9e560f37efc560a"
 
 [[package]]
 name = "icu_properties"
-version = "2.1.1"
+version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e93fcd3157766c0c8da2f8cff6ce651a31f0810eaa1c51ec363ef790bbb5fb99"
+checksum = "020bfc02fe870ec3a66d93e677ccca0562506e5872c650f893269e08615d74ec"
 dependencies = [
  "icu_collections",
  "icu_locale_core",
@@ -2354,9 +2372,9 @@ dependencies = [
 
 [[package]]
 name = "icu_properties_data"
-version = "2.1.1"
+version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02845b3647bb045f1100ecd6480ff52f34c35f82d9880e029d329c21d1054899"
+checksum = "616c294cf8d725c6afcd8f55abc17c56464ef6211f9ed59cccffe534129c77af"
 
 [[package]]
 name = "icu_provider"
@@ -2442,12 +2460,12 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.12.0"
+version = "2.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6717a8d2a5a929a1a2eb43a12812498ed141a0bcfb7e8f7844fbdbe4303bba9f"
+checksum = "0ad4bb2b565bca0645f4d68c5c9af97fba094e9791da685bf83cb5f3ce74acf2"
 dependencies = [
  "equivalent",
- "hashbrown 0.16.0",
+ "hashbrown 0.16.1",
 ]
 
 [[package]]
@@ -2579,9 +2597,9 @@ checksum = "8eaf4bc02d17cbdd7ff4c7438cafcdf7fb9a4613313ad11b4f8fefe7d3fa0130"
 
 [[package]]
 name = "js-sys"
-version = "0.3.82"
+version = "0.3.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b011eec8cc36da2aab2d5cff675ec18454fad408585853910a202391cf9f8e65"
+checksum = "464a3709c7f55f1f721e5389aa6ea4e3bc6aba669353300af094b29ffbdde1d8"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
@@ -2764,9 +2782,9 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "libc"
-version = "0.2.177"
+version = "0.2.178"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2874a2af47a2325c2001a6e6fad9b16a53b802102b528163885171cf92b15976"
+checksum = "37c93d8daa9d8a012fd8ab92f088405fb202ea0b6ab73ee2482ae66af4f42091"
 
 [[package]]
 name = "libm"
@@ -2917,9 +2935,9 @@ dependencies = [
 
 [[package]]
 name = "mio"
-version = "1.1.0"
+version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69d83b0086dc8ecf3ce9ae2874b2d1290252e2a30720bea58a5c6639b0092873"
+checksum = "a69bcab0ad47271a0234d9422b131806bf3968021e5dc9328caf2d4cd58557fc"
 dependencies = [
  "libc",
  "wasi",
@@ -3243,7 +3261,7 @@ version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e69bf016dc406eff7d53a7d3f7cf1c2e72c82b9088aac1118591e36dd2cd3e9"
 dependencies = [
- "bitcoin_hashes",
+ "bitcoin_hashes 0.13.0",
  "rand 0.8.5",
  "rand_core 0.6.4",
  "serde",
@@ -3593,7 +3611,7 @@ version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "219cb19e96be00ab2e37d6e299658a0cfa83e52429179969b0f0121b4ac46983"
 dependencies = [
- "toml_edit 0.23.7",
+ "toml_edit 0.23.9",
 ]
 
 [[package]]
@@ -3680,7 +3698,7 @@ dependencies = [
  "plonky2_maybe_rayon",
  "plonky2_util",
  "qp-plonky2-field",
- "qp-poseidon-constants",
+ "qp-poseidon-constants 1.0.1",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "serde",
@@ -3708,15 +3726,15 @@ dependencies = [
 
 [[package]]
 name = "qp-poseidon"
-version = "1.0.1"
+version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0353086f7af1df7d45a1ecb995cf84b583c8211d7122f542044b37388b5effcd"
+checksum = "8ebc5e9fe1f91f5006aa2b45650d0049887d41d80c669ef5a78a45086895054d"
 dependencies = [
  "log",
  "p3-field",
  "p3-goldilocks",
  "parity-scale-codec",
- "qp-poseidon-core",
+ "qp-poseidon-core 1.0.5",
  "scale-info",
  "serde",
  "sp-core 37.0.0",
@@ -3739,17 +3757,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "qp-poseidon-constants"
+version = "1.0.2"
+source = "git+https://github.com/Quantus-Network/qp-poseidon?branch=feat%2Ftransfer-proof-asset-id#9ae96dea18464d6ea43de5c78a066f9d1f17b801"
+dependencies = [
+ "p3-field",
+ "p3-goldilocks",
+ "p3-poseidon2",
+ "rand 0.9.2",
+ "rand_chacha 0.9.0",
+]
+
+[[package]]
 name = "qp-poseidon-core"
-version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f52c70df221c356b3ce63afabfae623aae632c27d3e078cd20eec4348096c2d7"
+version = "1.0.2"
+source = "git+https://github.com/Quantus-Network/qp-poseidon?branch=feat%2Ftransfer-proof-asset-id#9ae96dea18464d6ea43de5c78a066f9d1f17b801"
 dependencies = [
  "p3-field",
  "p3-goldilocks",
  "p3-poseidon2",
  "p3-symmetric",
  "qp-plonky2",
- "qp-poseidon-constants",
+ "qp-poseidon-constants 1.0.2",
+ "rand_chacha 0.9.0",
+]
+
+[[package]]
+name = "qp-poseidon-core"
+version = "1.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71dd1bf5d2997abf70247fcd23c8f04d7093b1faf33b775a42fb00c07e0a0e05"
+dependencies = [
+ "p3-field",
+ "p3-goldilocks",
+ "p3-poseidon2",
+ "p3-symmetric",
+ "qp-plonky2",
+ "qp-poseidon-constants 1.0.1",
  "rand_chacha 0.9.0",
 ]
 
@@ -3775,7 +3819,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "nam-tiny-hderive",
- "qp-poseidon-core",
+ "qp-poseidon-core 1.0.5",
  "qp-rusty-crystals-dilithium",
  "rand_chacha 0.9.0",
  "rand_core 0.9.3",
@@ -3790,7 +3834,7 @@ version = "0.1.4"
 dependencies = [
  "anyhow",
  "qp-plonky2",
- "qp-zk-circuits-common",
+ "qp-zk-circuits-common 0.1.4",
 ]
 
 [[package]]
@@ -3800,10 +3844,10 @@ dependencies = [
  "anyhow",
  "criterion",
  "qp-plonky2",
- "qp-wormhole-circuit",
- "qp-wormhole-prover",
+ "qp-wormhole-circuit 0.1.4",
+ "qp-wormhole-prover 0.1.4",
  "qp-wormhole-verifier",
- "qp-zk-circuits-common",
+ "qp-zk-circuits-common 0.1.4",
  "rand 0.8.5",
  "rayon",
  "test-helpers",
@@ -3816,8 +3860,20 @@ dependencies = [
  "anyhow",
  "hex",
  "qp-plonky2",
- "qp-poseidon-core",
- "qp-zk-circuits-common",
+ "qp-poseidon-core 1.0.5",
+ "qp-zk-circuits-common 0.1.4",
+]
+
+[[package]]
+name = "qp-wormhole-circuit"
+version = "0.1.4"
+source = "git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole#b97f33e7db8d4f07d6817883e434c86565959046"
+dependencies = [
+ "anyhow",
+ "hex",
+ "qp-plonky2",
+ "qp-poseidon-core 1.0.5",
+ "qp-zk-circuits-common 0.1.4 (git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole)",
 ]
 
 [[package]]
@@ -3826,8 +3882,8 @@ version = "0.1.4"
 dependencies = [
  "anyhow",
  "qp-plonky2",
- "qp-wormhole-circuit",
- "qp-zk-circuits-common",
+ "qp-wormhole-circuit 0.1.4",
+ "qp-zk-circuits-common 0.1.4",
 ]
 
 [[package]]
@@ -3837,9 +3893,20 @@ dependencies = [
  "anyhow",
  "criterion",
  "qp-plonky2",
- "qp-wormhole-circuit",
- "qp-zk-circuits-common",
+ "qp-wormhole-circuit 0.1.4",
+ "qp-zk-circuits-common 0.1.4",
  "test-helpers",
+]
+
+[[package]]
+name = "qp-wormhole-prover"
+version = "0.1.4"
+source = "git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole#b97f33e7db8d4f07d6817883e434c86565959046"
+dependencies = [
+ "anyhow",
+ "qp-plonky2",
+ "qp-wormhole-circuit 0.1.4 (git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole)",
+ "qp-zk-circuits-common 0.1.4 (git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole)",
 ]
 
 [[package]]
@@ -3849,9 +3916,9 @@ dependencies = [
  "anyhow",
  "criterion",
  "qp-plonky2",
- "qp-wormhole-circuit",
- "qp-wormhole-prover",
- "qp-zk-circuits-common",
+ "qp-wormhole-circuit 0.1.4",
+ "qp-wormhole-prover 0.1.4",
+ "qp-zk-circuits-common 0.1.4",
 ]
 
 [[package]]
@@ -3861,16 +3928,29 @@ dependencies = [
  "anyhow",
  "hex",
  "qp-plonky2",
- "qp-poseidon-core",
+ "qp-poseidon-core 1.0.5",
+ "serde",
+]
+
+[[package]]
+name = "qp-zk-circuits-common"
+version = "0.1.4"
+source = "git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole#b97f33e7db8d4f07d6817883e434c86565959046"
+dependencies = [
+ "anyhow",
+ "hex",
+ "qp-plonky2",
+ "qp-poseidon-core 1.0.5",
  "serde",
 ]
 
 [[package]]
 name = "quantus-cli"
 version = "0.3.0"
-source = "git+https://github.com/Quantus-Network/quantus-cli.git?branch=feat%2Fupdated-metadata#68a430f2c5c70b2de8a0b8e17a68c6072d4e2990"
+source = "git+https://github.com/Quantus-Network/quantus-cli?branch=feat%2Fupdated-metadata#f9037fab4687583634c8ac4bb1123c4e108fdebb"
 dependencies = [
  "aes-gcm",
+ "anyhow",
  "argon2",
  "chrono",
  "clap",
@@ -3880,9 +3960,14 @@ dependencies = [
  "jsonrpsee",
  "parity-scale-codec",
  "qp-dilithium-crypto",
+ "qp-plonky2",
  "qp-poseidon",
+ "qp-poseidon-core 1.0.2",
  "qp-rusty-crystals-dilithium",
  "qp-rusty-crystals-hdwallet",
+ "qp-wormhole-circuit 0.1.4 (git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole)",
+ "qp-wormhole-prover 0.1.4 (git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole)",
+ "qp-zk-circuits-common 0.1.4 (git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole)",
  "rand 0.9.2",
  "rpassword",
  "serde",
@@ -4180,9 +4265,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-pki-types"
-version = "1.13.0"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94182ad936a0c91c324cd46c6511b9510ed16af436d7b5bab34beab0afd55f7a"
+checksum = "708c0f9d5f54ba0272468c1d306a52c495b31fa155e91bc25371e6df7996908c"
 dependencies = [
  "zeroize",
 ]
@@ -4266,9 +4351,9 @@ dependencies = [
 
 [[package]]
 name = "scale-decode"
-version = "0.16.0"
+version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d78196772d25b90a98046794ce0fe2588b39ebdfbdc1e45b4c6c85dd43bebad"
+checksum = "8d6ed61699ad4d54101ab5a817169259b5b0efc08152f8632e61482d8a27ca3d"
 dependencies = [
  "parity-scale-codec",
  "primitive-types 0.13.1",
@@ -4281,9 +4366,9 @@ dependencies = [
 
 [[package]]
 name = "scale-decode-derive"
-version = "0.16.0"
+version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f4b54a1211260718b92832b661025d1f1a4b6930fbadd6908e00edd265fa5f7"
+checksum = "65cb245f7fdb489e7ba43a616cbd34427fe3ba6fe0edc1d0d250085e6c84f3ec"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -4652,9 +4737,9 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "signal-hook-registry"
-version = "1.4.6"
+version = "1.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2a4719bff48cee6b39d12c020eeb490953ad2443b7055bd0b21fca26bd8c28b"
+checksum = "7664a098b8e616bdfcc2dc0e9ac44eb231eedf41db4e9fe95d8d32ec728dedad"
 dependencies = [
  "libc",
 ]
@@ -4725,7 +4810,7 @@ dependencies = [
  "bs58",
  "chacha20",
  "crossbeam-queue",
- "derive_more 2.0.1",
+ "derive_more 2.1.0",
  "ed25519-zebra",
  "either",
  "event-listener",
@@ -4775,7 +4860,7 @@ dependencies = [
  "base64",
  "blake2-rfc",
  "bs58",
- "derive_more 2.0.1",
+ "derive_more 2.1.0",
  "either",
  "event-listener",
  "fnv",
@@ -5344,7 +5429,7 @@ dependencies = [
 [[package]]
 name = "sp-trie"
 version = "40.0.0"
-source = "git+https://github.com/Quantus-Network/chain.git#6cfb191b50d5a2359fb553c602a1ce93d795426a"
+source = "git+https://github.com/Quantus-Network/chain.git#4a9df72d1f579579c0d1375ab2cf2fd0c08da54b"
 dependencies = [
  "ahash",
  "foldhash",
@@ -5538,9 +5623,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "subxt"
-version = "0.43.0"
+version = "0.43.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74791ddeaaa6de42e7cc8a715c83eb73303f513f90af701fd07eb2caad92ed84"
+checksum = "f8c6dc0f90e23c521465b8f7e026af04a48cc6f00c51d88a8d313d33096149de"
 dependencies = [
  "async-trait",
  "derive-where",
@@ -5639,9 +5724,9 @@ dependencies = [
 
 [[package]]
 name = "subxt-macro"
-version = "0.43.0"
+version = "0.43.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69516e8ff0e9340a0f21b8398da7f997571af4734ee81deada5150a2668c8443"
+checksum = "c269228a2e5de4c0c61ed872b701967ee761df0f167d5b91ecec1185bca65793"
 dependencies = [
  "darling",
  "parity-scale-codec",
@@ -5756,10 +5841,11 @@ dependencies = [
 name = "test-helpers"
 version = "0.1.4"
 dependencies = [
+ "anyhow",
  "hex",
  "qp-plonky2",
- "qp-wormhole-circuit",
- "qp-zk-circuits-common",
+ "qp-wormhole-circuit 0.1.4",
+ "qp-zk-circuits-common 0.1.4",
 ]
 
 [[package]]
@@ -5770,10 +5856,10 @@ dependencies = [
  "hex",
  "qp-plonky2",
  "qp-wormhole-aggregator",
- "qp-wormhole-circuit",
- "qp-wormhole-prover",
+ "qp-wormhole-circuit 0.1.4",
+ "qp-wormhole-prover 0.1.4",
  "qp-wormhole-verifier",
- "qp-zk-circuits-common",
+ "qp-zk-circuits-common 0.1.4",
  "rand 0.9.2",
  "serde",
  "serde_json",
@@ -6028,9 +6114,9 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
-version = "0.23.7"
+version = "0.23.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6485ef6d0d9b5d0ec17244ff7eb05310113c3f316f2d14200d4de56b3cb98f8d"
+checksum = "5d7cbc3b4b49633d57a0509303158ca50de80ae32c265093b24c414705807832"
 dependencies = [
  "indexmap",
  "toml_datetime 0.7.3",
@@ -6433,9 +6519,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.105"
+version = "0.2.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da95793dfc411fbbd93f5be7715b0578ec61fe87cb1a42b12eb625caa5c5ea60"
+checksum = "0d759f433fa64a2d763d1340820e46e111a7a5ab75f993d1852d70b03dbb80fd"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -6446,9 +6532,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-futures"
-version = "0.4.55"
+version = "0.4.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "551f88106c6d5e7ccc7cd9a16f312dd3b5d36ea8b4954304657d5dfba115d4a0"
+checksum = "836d9622d604feee9e5de25ac10e3ea5f2d65b41eac0d9ce72eb5deae707ce7c"
 dependencies = [
  "cfg-if",
  "js-sys",
@@ -6459,9 +6545,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.105"
+version = "0.2.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04264334509e04a7bf8690f2384ef5265f05143a4bff3889ab7a3269adab59c2"
+checksum = "48cb0d2638f8baedbc542ed444afc0644a29166f1595371af4fecf8ce1e7eeb3"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -6469,9 +6555,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.105"
+version = "0.2.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "420bc339d9f322e562942d52e115d57e950d12d88983a14c79b86859ee6c7ebc"
+checksum = "cefb59d5cd5f92d9dcf80e4683949f15ca4b511f4ac0a6e14d4e1ac60c6ecd40"
 dependencies = [
  "bumpalo",
  "proc-macro2",
@@ -6482,9 +6568,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.105"
+version = "0.2.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76f218a38c84bcb33c25ec7059b07847d465ce0e0a76b995e134a45adcb6af76"
+checksum = "cbc538057e648b67f72a982e708d485b2efa771e1ac05fec311f9f63e5800db4"
 dependencies = [
  "unicode-ident",
 ]
@@ -6541,9 +6627,9 @@ dependencies = [
 
 [[package]]
 name = "web-sys"
-version = "0.3.82"
+version = "0.3.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a1f95c0d03a47f4ae1f7a64643a6bb97465d9b740f0fa8f90ea33915c99a9a1"
+checksum = "9b32828d774c412041098d182a8b38b16ea816958e07cf40eec2bc080ae137ac"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -6900,9 +6986,9 @@ checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
 
 [[package]]
 name = "winnow"
-version = "0.7.13"
+version = "0.7.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21a0236b59786fed61e2a80582dd500fe61f18b5dca67a4a067d0bc9039339cf"
+checksum = "5a5364e9d77fcdeeaa6062ced926ee3381faa2ee02d3eb83a5c27a8825540829"
 dependencies = [
  "memchr",
 ]
@@ -6923,10 +7009,10 @@ dependencies = [
  "parity-scale-codec",
  "qp-plonky2",
  "qp-poseidon",
- "qp-poseidon-core",
- "qp-wormhole-circuit",
- "qp-wormhole-prover",
- "qp-zk-circuits-common",
+ "qp-poseidon-core 1.0.5",
+ "qp-wormhole-circuit 0.1.4",
+ "qp-wormhole-prover 0.1.4",
+ "qp-zk-circuits-common 0.1.4",
  "quantus-cli",
  "serde",
  "serde_json",

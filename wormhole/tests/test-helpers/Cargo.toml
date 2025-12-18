@@ -4,6 +4,7 @@ name = "test-helpers"
 version.workspace = true
 
 [dependencies]
+anyhow = { workspace = true, default-features = false }
 hex = { workspace = true }
 qp-plonky2 = { workspace = true, default-features = true }
 wormhole-circuit = { package = "qp-wormhole-circuit", version = "0.1.4", path = "../../circuit" }

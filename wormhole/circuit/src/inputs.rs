@@ -10,19 +10,22 @@ use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::utils::{felts_to_u128, BytesDigest, DIGEST_BYTES_LEN};
 
 /// The total size of the public inputs field element vector.
-pub const PUBLIC_INPUTS_FELTS_LEN: usize = 21;
-pub const NULLIFIER_START_INDEX: usize = 0;
-pub const NULLIFIER_END_INDEX: usize = 4;
-pub const FUNDING_AMOUNT_START_INDEX: usize = 4;
-pub const FUNDING_AMOUNT_END_INDEX: usize = 8;
-pub const EXIT_ACCOUNT_START_INDEX: usize = 8;
-pub const EXIT_ACCOUNT_END_INDEX: usize = 12;
-pub const BLOCK_HASH_START_INDEX: usize = 12;
-pub const BLOCK_HASH_END_INDEX: usize = 16;
-pub const PARENT_HASH_START_INDEX: usize = 16;
-pub const PARENT_HASH_END_INDEX: usize = 20;
-pub const BLOCK_NUMBER_INDEX: usize = 20;
-pub const BLOCK_NUMBER_END_INDEX: usize = 21;
+pub const PUBLIC_INPUTS_FELTS_LEN: usize = 22;
+pub const ASSET_ID_INDEX: usize = 0;
+// Note: funding_amount comes before nullifier because LeafTargets::new() is called
+// before NullifierTargets::new() to ensure asset_id is the first public input.
+pub const FUNDING_AMOUNT_START_INDEX: usize = 1;
+pub const FUNDING_AMOUNT_END_INDEX: usize = 5;
+pub const NULLIFIER_START_INDEX: usize = 5;
+pub const NULLIFIER_END_INDEX: usize = 9;
+pub const EXIT_ACCOUNT_START_INDEX: usize = 9;
+pub const EXIT_ACCOUNT_END_INDEX: usize = 13;
+pub const BLOCK_HASH_START_INDEX: usize = 13;
+pub const BLOCK_HASH_END_INDEX: usize = 17;
+pub const PARENT_HASH_START_INDEX: usize = 17;
+pub const PARENT_HASH_END_INDEX: usize = 21;
+pub const BLOCK_NUMBER_INDEX: usize = 21;
+pub const BLOCK_NUMBER_END_INDEX: usize = 22;
 
 /// Inputs required to commit to the wormhole circuit.
 #[derive(Debug, Clone)]
@@ -34,6 +37,8 @@ pub struct CircuitInputs {
 /// All of the public inputs required for the circuit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicCircuitInputs {
+    /// The asset ID (0 for native token).
+    pub asset_id: u32,
     /// Amount to be withdrawn.
     pub funding_amount: u128,
     /// The nullifier.
@@ -190,8 +195,9 @@ impl AggregatedPublicCircuitInputs {
 impl PublicCircuitInputs {
     pub fn try_from_slice(pis: &[GoldilocksField]) -> anyhow::Result<Self> {
         // Public inputs are ordered as follows:
-        // Nullifier.hash: 4 felts
+        // asset_id: 1 felt
         // StorageProof.funding_amount: 4 felts
+        // Nullifier.hash: 4 felts
         // ExitAccount.address: 4 felts
         // BlockHeader.block_hash: 4 felts
         // BlockHeader.parent_hash: 4 felts
@@ -203,6 +209,10 @@ impl PublicCircuitInputs {
                 pis.len()
             )
         }
+        let asset_id = pis[ASSET_ID_INDEX]
+            .to_canonical_u64()
+            .try_into()
+            .context("failed to convert asset_id felt to u32")?;
         let nullifier = BytesDigest::try_from(&pis[NULLIFIER_START_INDEX..NULLIFIER_END_INDEX])
             .context("failed to deserialize nullifier hash")?;
         let block_hash = BytesDigest::try_from(&pis[BLOCK_HASH_START_INDEX..BLOCK_HASH_END_INDEX])
@@ -225,6 +235,7 @@ impl PublicCircuitInputs {
             .context("failed to convert block number felt to u32")?;
 
         Ok(PublicCircuitInputs {
+            asset_id,
             funding_amount,
             nullifier,
             block_hash,
