@@ -3830,24 +3830,24 @@ dependencies = [
 
 [[package]]
 name = "qp-voting-circuit"
-version = "0.1.5"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "qp-plonky2",
- "qp-zk-circuits-common 0.1.5",
+ "qp-zk-circuits-common 0.1.4",
 ]
 
 [[package]]
 name = "qp-wormhole-aggregator"
-version = "0.1.5"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "criterion",
  "qp-plonky2",
- "qp-wormhole-circuit 0.1.5",
- "qp-wormhole-prover 0.1.5",
+ "qp-wormhole-circuit 0.1.4",
+ "qp-wormhole-prover 0.1.4",
  "qp-wormhole-verifier",
- "qp-zk-circuits-common 0.1.5",
+ "qp-zk-circuits-common 0.1.4",
  "rand 0.8.5",
  "rayon",
  "test-helpers",
@@ -3856,7 +3856,6 @@ dependencies = [
 [[package]]
 name = "qp-wormhole-circuit"
 version = "0.1.4"
-source = "git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole#b97f33e7db8d4f07d6817883e434c86565959046"
 dependencies = [
  "anyhow",
  "hex",
@@ -3867,29 +3866,19 @@ dependencies = [
 
 [[package]]
 name = "qp-wormhole-circuit"
-version = "0.1.5"
+version = "0.1.4"
+source = "git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole#b97f33e7db8d4f07d6817883e434c86565959046"
 dependencies = [
  "anyhow",
  "hex",
  "qp-plonky2",
  "qp-poseidon-core 1.0.5",
- "qp-zk-circuits-common 0.1.5",
+ "qp-zk-circuits-common 0.1.4 (git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole)",
 ]
 
 [[package]]
 name = "qp-wormhole-circuit-builder"
-version = "0.1.5"
-dependencies = [
- "anyhow",
- "qp-plonky2",
- "qp-wormhole-circuit 0.1.5",
- "qp-zk-circuits-common 0.1.5",
-]
-
-[[package]]
-name = "qp-wormhole-prover"
 version = "0.1.4"
-source = "git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole#b97f33e7db8d4f07d6817883e434c86565959046"
 dependencies = [
  "anyhow",
  "qp-plonky2",
@@ -3899,32 +3888,42 @@ dependencies = [
 
 [[package]]
 name = "qp-wormhole-prover"
-version = "0.1.5"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "criterion",
  "qp-plonky2",
- "qp-wormhole-circuit 0.1.5",
- "qp-zk-circuits-common 0.1.5",
+ "qp-wormhole-circuit 0.1.4",
+ "qp-zk-circuits-common 0.1.4",
  "test-helpers",
 ]
 
 [[package]]
+name = "qp-wormhole-prover"
+version = "0.1.4"
+source = "git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole#b97f33e7db8d4f07d6817883e434c86565959046"
+dependencies = [
+ "anyhow",
+ "qp-plonky2",
+ "qp-wormhole-circuit 0.1.4 (git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole)",
+ "qp-zk-circuits-common 0.1.4 (git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole)",
+]
+
+[[package]]
 name = "qp-wormhole-verifier"
-version = "0.1.5"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "criterion",
  "qp-plonky2",
- "qp-wormhole-circuit 0.1.5",
- "qp-wormhole-prover 0.1.5",
- "qp-zk-circuits-common 0.1.5",
+ "qp-wormhole-circuit 0.1.4",
+ "qp-wormhole-prover 0.1.4",
+ "qp-zk-circuits-common 0.1.4",
 ]
 
 [[package]]
 name = "qp-zk-circuits-common"
 version = "0.1.4"
-source = "git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole#b97f33e7db8d4f07d6817883e434c86565959046"
 dependencies = [
  "anyhow",
  "hex",
@@ -3935,7 +3934,8 @@ dependencies = [
 
 [[package]]
 name = "qp-zk-circuits-common"
-version = "0.1.5"
+version = "0.1.4"
+source = "git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole#b97f33e7db8d4f07d6817883e434c86565959046"
 dependencies = [
  "anyhow",
  "hex",
@@ -3965,9 +3965,9 @@ dependencies = [
  "qp-poseidon-core 1.0.2",
  "qp-rusty-crystals-dilithium",
  "qp-rusty-crystals-hdwallet",
- "qp-wormhole-circuit 0.1.4",
- "qp-wormhole-prover 0.1.4",
- "qp-zk-circuits-common 0.1.4",
+ "qp-wormhole-circuit 0.1.4 (git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole)",
+ "qp-wormhole-prover 0.1.4 (git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole)",
+ "qp-zk-circuits-common 0.1.4 (git+https://github.com/Quantus-Network/zk-circuits?branch=feat%2Fasset-id-wormhole)",
  "rand 0.9.2",
  "rpassword",
  "serde",
@@ -5839,27 +5839,27 @@ dependencies = [
 
 [[package]]
 name = "test-helpers"
-version = "0.1.5"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "hex",
  "qp-plonky2",
- "qp-wormhole-circuit 0.1.5",
- "qp-zk-circuits-common 0.1.5",
+ "qp-wormhole-circuit 0.1.4",
+ "qp-zk-circuits-common 0.1.4",
 ]
 
 [[package]]
 name = "tests"
-version = "0.1.5"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "hex",
  "qp-plonky2",
  "qp-wormhole-aggregator",
- "qp-wormhole-circuit 0.1.5",
- "qp-wormhole-prover 0.1.5",
+ "qp-wormhole-circuit 0.1.4",
+ "qp-wormhole-prover 0.1.4",
  "qp-wormhole-verifier",
- "qp-zk-circuits-common 0.1.5",
+ "qp-zk-circuits-common 0.1.4",
  "rand 0.9.2",
  "serde",
  "serde_json",
@@ -7001,7 +7001,7 @@ checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
 
 [[package]]
 name = "wormhole-example"
-version = "0.1.5"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -7010,9 +7010,9 @@ dependencies = [
  "qp-plonky2",
  "qp-poseidon",
  "qp-poseidon-core 1.0.5",
- "qp-wormhole-circuit 0.1.5",
- "qp-wormhole-prover 0.1.5",
- "qp-zk-circuits-common 0.1.5",
+ "qp-wormhole-circuit 0.1.4",
+ "qp-wormhole-prover 0.1.4",
+ "qp-zk-circuits-common 0.1.4",
  "quantus-cli",
  "serde",
  "serde_json",
