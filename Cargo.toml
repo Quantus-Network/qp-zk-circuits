@@ -29,7 +29,7 @@ edition = "2021"
 keywords = ["circuits", "plonky2", "quantus-network", "wormhole", "zk"]
 license = "MIT"
 repository = "https://github.com/Quantus-Network/qp-zk-circuits"
-version = "0.1.4"
+version = "0.1.5"
 
 [workspace.lints.clippy]
 uninlined_format_args = "allow"
