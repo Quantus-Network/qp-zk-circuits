@@ -103,311 +103,153 @@ fn nary_merkle_proof_circuit(
     current
 }
 
+/// Generic function to benchmark merkle proof circuit building
+fn bench_merkle_circuit_build(c: &mut Criterion, name: &str, depth: usize, arity: usize) {
+    let mut rng = StdRng::seed_from_u64(12345);
+
+    c.bench_function(&format!("{}_circuit_build", name), move |b| {
+        if arity == 2 {
+            // Binary case
+            let leaf = generate_random_hash(&mut rng);
+            let siblings: Vec<HashOut<F>> =
+                (0..depth).map(|_| generate_random_hash(&mut rng)).collect();
+            let path_indices: Vec<bool> = (0..depth).map(|_| rng.gen()).collect();
+
+            b.iter(|| {
+                let config = CircuitConfig::standard_recursion_config();
+                let mut builder = CircuitBuilder::<F, D>::new(config);
+
+                let _root =
+                    binary_merkle_proof_circuit(&mut builder, leaf, &siblings, &path_indices);
+
+                let _circuit = builder.build::<C>();
+            });
+        } else {
+            // N-ary case
+            let leaf = generate_random_hash(&mut rng);
+            let siblings_per_level: Vec<Vec<HashOut<F>>> = (0..depth)
+                .map(|_| {
+                    (0..arity - 1)
+                        .map(|_| generate_random_hash(&mut rng))
+                        .collect()
+                })
+                .collect();
+            let indices_per_level: Vec<usize> =
+                (0..depth).map(|_| rng.gen_range(0..arity)).collect();
+
+            b.iter(|| {
+                let config = CircuitConfig::standard_recursion_config();
+                let mut builder = CircuitBuilder::<F, D>::new(config);
+
+                let _root = nary_merkle_proof_circuit(
+                    &mut builder,
+                    leaf,
+                    &siblings_per_level,
+                    &indices_per_level,
+                    arity,
+                );
+
+                let _circuit = builder.build::<C>();
+            });
+        }
+    });
+}
+
+/// Generic function to benchmark merkle proof proving
+fn bench_merkle_proving(c: &mut Criterion, name: &str, depth: usize, arity: usize) {
+    let mut rng = StdRng::seed_from_u64(98765);
+
+    c.bench_function(&format!("{}_proving", name), move |b| {
+        if arity == 2 {
+            // Binary case
+            let leaf = generate_random_hash(&mut rng);
+            let siblings: Vec<HashOut<F>> =
+                (0..depth).map(|_| generate_random_hash(&mut rng)).collect();
+            let path_indices: Vec<bool> = (0..depth).map(|_| rng.gen()).collect();
+
+            b.iter_batched(
+                || {
+                    let config = CircuitConfig::standard_recursion_config();
+                    let mut builder = CircuitBuilder::<F, D>::new(config);
+                    let root_target =
+                        binary_merkle_proof_circuit(&mut builder, leaf, &siblings, &path_indices);
+                    builder.register_public_inputs(&root_target.elements);
+                    let data = builder.build::<C>();
+                    let pw = PartialWitness::new();
+                    (data, pw)
+                },
+                |(data, pw)| data.prove(pw).unwrap(),
+                criterion::BatchSize::SmallInput,
+            )
+        } else {
+            // N-ary case
+            let leaf = generate_random_hash(&mut rng);
+            let siblings_per_level: Vec<Vec<HashOut<F>>> = (0..depth)
+                .map(|_| {
+                    (0..arity - 1)
+                        .map(|_| generate_random_hash(&mut rng))
+                        .collect()
+                })
+                .collect();
+            let indices_per_level: Vec<usize> =
+                (0..depth).map(|_| rng.gen_range(0..arity)).collect();
+
+            b.iter_batched(
+                || {
+                    let config = CircuitConfig::standard_recursion_config();
+                    let mut builder = CircuitBuilder::<F, D>::new(config);
+                    let root_target = nary_merkle_proof_circuit(
+                        &mut builder,
+                        leaf,
+                        &siblings_per_level,
+                        &indices_per_level,
+                        arity,
+                    );
+                    builder.register_public_inputs(&root_target.elements);
+                    let data = builder.build::<C>();
+                    let pw = PartialWitness::new();
+                    (data, pw)
+                },
+                |(data, pw)| data.prove(pw).unwrap(),
+                criterion::BatchSize::SmallInput,
+            )
+        }
+    });
+}
+
 fn benchmark_storage_proof_circuits(c: &mut Criterion) {
-    let mut group = c.benchmark_group("storage_proof_circuit_build");
+    // Binary sparse merkle tree - always depth 256
+    bench_merkle_circuit_build(c, "binary_depth_256_arity_2", 256, 2);
 
-    let mut rng = StdRng::seed_from_u64(12345); // Fixed seed for reproducible benchmarks
+    // Hexary cases
+    bench_merkle_circuit_build(c, "hexary_worst_depth_64_arity_16", 64, 16);
+    bench_merkle_circuit_build(c, "hexary_avg_depth_20_arity_16", 20, 16);
 
-    // Case 1: Binary - always depth 256 (sparse merkle tree), arity 2
-    let binary_depth = 256;
-    let binary_leaf = generate_random_hash(&mut rng);
-    let binary_siblings: Vec<HashOut<F>> = (0..binary_depth)
-        .map(|_| generate_random_hash(&mut rng))
-        .collect();
-    let binary_path_indices: Vec<bool> = (0..binary_depth).map(|_| rng.gen()).collect();
-
-    group.bench_function("binary_depth_256_arity_2", |b| {
-        b.iter(|| {
-            let config = CircuitConfig::standard_recursion_config();
-            let mut builder = CircuitBuilder::<F, D>::new(config);
-
-            let _root = binary_merkle_proof_circuit(
-                &mut builder,
-                binary_leaf,
-                &binary_siblings,
-                &binary_path_indices,
-            );
-
-            let _circuit = builder.build::<C>();
-        });
-    });
-
-    // Case 2: Hexary - worst case depth 64, arity 16
-    let hexary_depth = 64;
-    let mut rng2 = StdRng::seed_from_u64(12345);
-    let hexary_leaf = generate_random_hash(&mut rng2);
-    let hexary_siblings_per_level: Vec<Vec<HashOut<F>>> = (0..hexary_depth)
-        .map(|_| (0..15).map(|_| generate_random_hash(&mut rng2)).collect())
-        .collect();
-    let hexary_indices_per_level: Vec<usize> =
-        (0..hexary_depth).map(|_| rng2.gen_range(0..16)).collect();
-
-    group.bench_function("hexary_worst_depth_64_arity_16", |b| {
-        b.iter(|| {
-            let config = CircuitConfig::standard_recursion_config();
-            let mut builder = CircuitBuilder::<F, D>::new(config);
-
-            let _root = nary_merkle_proof_circuit(
-                &mut builder,
-                hexary_leaf,
-                &hexary_siblings_per_level,
-                &hexary_indices_per_level,
-                16,
-            );
-
-            let _circuit = builder.build::<C>();
-        });
-    });
-
-    // Case 2b: Hexary - average case depth 20, arity 16
-    let hexary_avg_depth = 20;
-    let hexary_avg_leaf = generate_random_hash(&mut rng2);
-    let hexary_avg_siblings_per_level: Vec<Vec<HashOut<F>>> = (0..hexary_avg_depth)
-        .map(|_| (0..15).map(|_| generate_random_hash(&mut rng2)).collect())
-        .collect();
-    let hexary_avg_indices_per_level: Vec<usize> = (0..hexary_avg_depth)
-        .map(|_| rng2.gen_range(0..16))
-        .collect();
-
-    group.bench_function("hexary_avg_depth_20_arity_16", |b| {
-        b.iter(|| {
-            let config = CircuitConfig::standard_recursion_config();
-            let mut builder = CircuitBuilder::<F, D>::new(config);
-
-            let _root = nary_merkle_proof_circuit(
-                &mut builder,
-                hexary_avg_leaf,
-                &hexary_avg_siblings_per_level,
-                &hexary_avg_indices_per_level,
-                16,
-            );
-
-            let _circuit = builder.build::<C>();
-        });
-    });
-
-    // Case 3: 256-ary - worst case depth 32, arity 256
-    let ary256_depth = 32;
-    let mut rng3 = StdRng::seed_from_u64(12345);
-    let ary256_leaf = generate_random_hash(&mut rng3);
-    let ary256_siblings_per_level: Vec<Vec<HashOut<F>>> = (0..ary256_depth)
-        .map(|_| (0..255).map(|_| generate_random_hash(&mut rng3)).collect())
-        .collect();
-    let ary256_indices_per_level: Vec<usize> =
-        (0..ary256_depth).map(|_| rng3.gen_range(0..256)).collect();
-
-    group.bench_function("256ary_worst_depth_32_arity_256", |b| {
-        b.iter(|| {
-            let config = CircuitConfig::standard_recursion_config();
-            let mut builder = CircuitBuilder::<F, D>::new(config);
-
-            let _root = nary_merkle_proof_circuit(
-                &mut builder,
-                ary256_leaf,
-                &ary256_siblings_per_level,
-                &ary256_indices_per_level,
-                256,
-            );
-
-            let _circuit = builder.build::<C>();
-        });
-    });
-
-    // Case 3b: 256-ary - average case depth 16, arity 256
-    let ary256_avg_depth = 16;
-    let ary256_avg_leaf = generate_random_hash(&mut rng3);
-    let ary256_avg_siblings_per_level: Vec<Vec<HashOut<F>>> = (0..ary256_avg_depth)
-        .map(|_| (0..255).map(|_| generate_random_hash(&mut rng3)).collect())
-        .collect();
-    let ary256_avg_indices_per_level: Vec<usize> = (0..ary256_avg_depth)
-        .map(|_| rng3.gen_range(0..256))
-        .collect();
-
-    group.bench_function("256ary_avg_depth_16_arity_256", |b| {
-        b.iter(|| {
-            let config = CircuitConfig::standard_recursion_config();
-            let mut builder = CircuitBuilder::<F, D>::new(config);
-
-            let _root = nary_merkle_proof_circuit(
-                &mut builder,
-                ary256_avg_leaf,
-                &ary256_avg_siblings_per_level,
-                &ary256_avg_indices_per_level,
-                256,
-            );
-
-            let _circuit = builder.build::<C>();
-        });
-    });
-
-    group.finish();
+    // 256-ary cases
+    bench_merkle_circuit_build(c, "256ary_avg_depth_10_arity_256", 10, 256);
+    bench_merkle_circuit_build(c, "256ary_worst_depth_32_arity_256", 32, 256);
 }
 
 fn benchmark_storage_proof_proving(c: &mut Criterion) {
-    let mut group = c.benchmark_group("storage_proof_proving_time");
+    // Binary sparse merkle tree - always depth 256
+    bench_merkle_proving(c, "binary_depth_256_arity_2", 256, 2);
 
-    let mut rng = StdRng::seed_from_u64(98765); // Fixed seed for reproducible benchmarks
+    // Hexary cases
+    bench_merkle_proving(c, "hexary_avg_depth_20_arity_16", 20, 16);
+    bench_merkle_proving(c, "hexary_avg_depth_25_arity_16", 25, 16);
+    bench_merkle_proving(c, "hexary_avg_depth_28_arity_16", 28, 16);
+    bench_merkle_proving(c, "hexary_avg_depth_29_arity_16", 29, 16);
+    bench_merkle_proving(c, "hexary_avg_depth_30_arity_16", 30, 16);
+    bench_merkle_proving(c, "hexary_avg_depth_40_arity_16", 40, 16);
+    bench_merkle_proving(c, "hexary_avg_depth_50_arity_16", 50, 16);
+    bench_merkle_proving(c, "hexary_avg_depth_60_arity_16", 60, 16);
+    bench_merkle_proving(c, "hexary_worst_depth_64_arity_16", 64, 16);
 
-    // Case 1: Binary - always depth 256 (sparse merkle tree), arity 2
-    let binary_depth = 256;
-    let binary_leaf = generate_random_hash(&mut rng);
-    let binary_siblings: Vec<HashOut<F>> = (0..binary_depth)
-        .map(|_| generate_random_hash(&mut rng))
-        .collect();
-    let binary_path_indices: Vec<bool> = (0..binary_depth).map(|_| rng.gen()).collect();
-
-    group.bench_function("binary_depth_256_arity_2", |b| {
-        b.iter_batched(
-            || {
-                let config = CircuitConfig::standard_recursion_config();
-                let mut builder = CircuitBuilder::<F, D>::new(config);
-                let root_target = binary_merkle_proof_circuit(
-                    &mut builder,
-                    binary_leaf,
-                    &binary_siblings,
-                    &binary_path_indices,
-                );
-                builder.register_public_inputs(&root_target.elements);
-                let data = builder.build::<C>();
-                let pw = PartialWitness::new();
-                (data, pw)
-            },
-            |(data, pw)| data.prove(pw).unwrap(),
-            criterion::BatchSize::SmallInput,
-        )
-    });
-
-    // Case 2: Hexary - worst case depth 64, arity 16
-    let hexary_depth = 64;
-    let mut rng2 = StdRng::seed_from_u64(98765);
-    let hexary_leaf = generate_random_hash(&mut rng2);
-    let hexary_siblings_per_level: Vec<Vec<HashOut<F>>> = (0..hexary_depth)
-        .map(|_| (0..15).map(|_| generate_random_hash(&mut rng2)).collect())
-        .collect();
-    let hexary_indices_per_level: Vec<usize> =
-        (0..hexary_depth).map(|_| rng2.gen_range(0..16)).collect();
-
-    group.bench_function("hexary_worst_depth_64_arity_16", |b| {
-        b.iter_batched(
-            || {
-                let config = CircuitConfig::standard_recursion_config();
-                let mut builder = CircuitBuilder::<F, D>::new(config);
-                let root_target = nary_merkle_proof_circuit(
-                    &mut builder,
-                    hexary_leaf,
-                    &hexary_siblings_per_level,
-                    &hexary_indices_per_level,
-                    16,
-                );
-                builder.register_public_inputs(&root_target.elements);
-                let data = builder.build::<C>();
-                let pw = PartialWitness::new();
-                (data, pw)
-            },
-            |(data, pw)| data.prove(pw).unwrap(),
-            criterion::BatchSize::SmallInput,
-        )
-    });
-
-    // Case 2b: Hexary - average case depth 20, arity 16
-    let hexary_avg_depth = 20;
-    let hexary_avg_leaf = generate_random_hash(&mut rng2);
-    let hexary_avg_siblings_per_level: Vec<Vec<HashOut<F>>> = (0..hexary_avg_depth)
-        .map(|_| (0..15).map(|_| generate_random_hash(&mut rng2)).collect())
-        .collect();
-    let hexary_avg_indices_per_level: Vec<usize> = (0..hexary_avg_depth)
-        .map(|_| rng2.gen_range(0..16))
-        .collect();
-
-    group.bench_function("hexary_avg_depth_20_arity_16", |b| {
-        b.iter_batched(
-            || {
-                let config = CircuitConfig::standard_recursion_config();
-                let mut builder = CircuitBuilder::<F, D>::new(config);
-                let root_target = nary_merkle_proof_circuit(
-                    &mut builder,
-                    hexary_avg_leaf,
-                    &hexary_avg_siblings_per_level,
-                    &hexary_avg_indices_per_level,
-                    16,
-                );
-                builder.register_public_inputs(&root_target.elements);
-                let data = builder.build::<C>();
-                let pw = PartialWitness::new();
-                (data, pw)
-            },
-            |(data, pw)| data.prove(pw).unwrap(),
-            criterion::BatchSize::SmallInput,
-        )
-    });
-
-    
-    // Case 3: 256-ary - average case depth 16, arity 256
-    let mut rng3 = StdRng::seed_from_u64(98765);
-    let ary256_avg_depth = 10;
-    let ary256_avg_leaf = generate_random_hash(&mut rng3);
-    let ary256_avg_siblings_per_level: Vec<Vec<HashOut<F>>> = (0..ary256_avg_depth)
-        .map(|_| (0..255).map(|_| generate_random_hash(&mut rng3)).collect())
-        .collect();
-    let ary256_avg_indices_per_level: Vec<usize> = (0..ary256_avg_depth)
-        .map(|_| rng3.gen_range(0..256))
-        .collect();
-
-    group.bench_function("256ary_avg_depth_10_arity_256", |b| {
-        b.iter_batched(
-            || {
-                let config = CircuitConfig::standard_recursion_config();
-                let mut builder = CircuitBuilder::<F, D>::new(config);
-                let root_target = nary_merkle_proof_circuit(
-                    &mut builder,
-                    ary256_avg_leaf,
-                    &ary256_avg_siblings_per_level,
-                    &ary256_avg_indices_per_level,
-                    256,
-                );
-                builder.register_public_inputs(&root_target.elements);
-                let data = builder.build::<C>();
-                let pw = PartialWitness::new();
-                (data, pw)
-            },
-            |(data, pw)| data.prove(pw).unwrap(),
-            criterion::BatchSize::SmallInput,
-        )
-    });
-    
-    // Case 3b: 256-ary - worst case depth 32, arity 256
-    let ary256_depth = 32;
-    let ary256_leaf = generate_random_hash(&mut rng3);
-    let ary256_siblings_per_level: Vec<Vec<HashOut<F>>> = (0..ary256_depth)
-        .map(|_| (0..255).map(|_| generate_random_hash(&mut rng3)).collect())
-        .collect();
-    let ary256_indices_per_level: Vec<usize> =
-        (0..ary256_depth).map(|_| rng3.gen_range(0..256)).collect();
-
-    group.bench_function("256ary_worst_depth_32_arity_256", |b| {
-        b.iter_batched(
-            || {
-                let config = CircuitConfig::standard_recursion_config();
-                let mut builder = CircuitBuilder::<F, D>::new(config);
-                let root_target = nary_merkle_proof_circuit(
-                    &mut builder,
-                    ary256_leaf,
-                    &ary256_siblings_per_level,
-                    &ary256_indices_per_level,
-                    256,
-                );
-                builder.register_public_inputs(&root_target.elements);
-                let data = builder.build::<C>();
-                let pw = PartialWitness::new();
-                (data, pw)
-            },
-            |(data, pw)| data.prove(pw).unwrap(),
-            criterion::BatchSize::SmallInput,
-        )
-    });
-
-
-    group.finish();
+    // 256-ary cases - using smaller depths to avoid memory issues
+    bench_merkle_proving(c, "256ary_small_depth_5_arity_256", 5, 256);
+    bench_merkle_proving(c, "256ary_avg_depth_10_arity_256", 10, 256);
+    bench_merkle_proving(c, "256ary_avg_depth_20_arity_256", 20, 256);
+    bench_merkle_proving(c, "256ary_worst_depth_32_arity_256", 32, 256);
 }
 
 criterion_group!(
