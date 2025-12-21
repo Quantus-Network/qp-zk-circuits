@@ -22,8 +22,8 @@ sp-runtime = "44.0.0"
 sp-trie = { git = "https://github.com/Quantus-Network/chain.git", default-features = false, features = ["std"] }
 subxt = "0.43.0"
 tokio = "1.48.0"
-wormhole-circuit = { package = "qp-wormhole-circuit", version = "0.1.6", path = "../circuit", default-features = false, features = [
+wormhole-circuit = { package = "qp-wormhole-circuit", version = "0.1.7", path = "../circuit", default-features = false, features = [
 	"std",
 ] }
-wormhole-prover = { package = "qp-wormhole-prover", version = "0.1.6", path = "../prover", default-features = false }
-zk-circuits-common = { package = "qp-zk-circuits-common", version = "0.1.6", path = "../../common" }
+wormhole-prover = { package = "qp-wormhole-prover", version = "0.1.7", path = "../prover", default-features = false }
+zk-circuits-common = { package = "qp-zk-circuits-common", version = "0.1.7", path = "../../common" }

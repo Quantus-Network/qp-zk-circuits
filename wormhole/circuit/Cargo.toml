@@ -14,7 +14,7 @@ qp-poseidon-core = { workspace = true, default-features = false, features = [
 	"p2",
 	"p3",
 ] }
-zk-circuits-common = { package = "qp-zk-circuits-common", version = "0.1.6", path = "../../common", default-features = false }
+zk-circuits-common = { package = "qp-zk-circuits-common", version = "0.1.7", path = "../../common", default-features = false }
 
 [features]
 default = ["std"]
