@@ -242,7 +242,7 @@ fn find_group_indices(leaves_public_inputs: &[F]) -> anyhow::Result<Groupings> {
 ///  - sums funding across members with add_u128_base2_32 (big-endian),
 ///  - forwards all nullifiers,
 ///  - and PREPENDS number of exit accounts, the asset ID, deduped root_hashes, funding account and summed funding amounts and the nullifiers:
-///   [num_exit_accounts(1),
+///    [num_exit_accounts(1),
 ///    asset_id(1),
 ///    root_hashes(4)*,
 ///    root_hash(4)*,
