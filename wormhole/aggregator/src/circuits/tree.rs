@@ -32,8 +32,8 @@ pub const DEFAULT_TREE_DEPTH: u32 = 3;
 
 const LEAF_PI_LEN: usize = 22;
 const ASSET_ID_START: usize = 0; // 1 felt
-const NULLIFIER_START: usize = 1; // 4 felts (not used in dedupe output)
-const FUNDING_START: usize = 5; // 4 felts
+const FUNDING_START: usize = 1; // 4 felts (not used in dedupe output)
+const NULLIFIER_START: usize = 5; // 4 felts
 const EXIT_START: usize = 9; // 4 felts
 const BLOCK_HASH_START: usize = 13; // 4 felts
 const PARENT_HASH_START: usize = 17; // 4 felts
@@ -237,7 +237,7 @@ fn find_group_indices(leaves_public_inputs: &[F]) -> anyhow::Result<Groupings> {
 /// Build a wrapper circuit around the root aggregated proof that:
 ///  - verifies that proof,
 ///  - enforces groups have identical root/exit among members,
-///  - enforces asset ID consistency (TODO),
+///  - enforces asset ID consistency
 ///  - enforces that adjacent blocks are connected via parent_hash
 ///  - sums funding across members with add_u128_base2_32 (big-endian),
 ///  - forwards all nullifiers,
@@ -438,8 +438,8 @@ mod tests {
     ///
     /// PIs per leaf (length = LEAF_PI_LEN = 22):
     ///   [ asset_id(1×felt),
-    ///     nullifier(4×felt),
     ///     funding(4×felt, 32-bit limbs, BE),
+    ///     nullifier(4×felt),
     ///     exit(4×felt, 32-bit limbs, BE),
     ///     block_hash(4×felt),
     ///     parent_hash(4×felt),
@@ -519,8 +519,8 @@ mod tests {
     #[inline]
     fn make_pi_from_felts(
         asset_id: F, //
-        nullifier: [F; 4],
         funding: [F; 4],
+        nullifier: [F; 4],
         exit: [F; 4],
         block_hash: [F; 4],
         parent_hash: [F; 4],
@@ -528,8 +528,8 @@ mod tests {
     ) -> [F; LEAF_PI_LEN] {
         let mut out = [F::ZERO; LEAF_PI_LEN];
         out[ASSET_ID_START] = asset_id; // <-- new
-        out[NULLIFIER_START..NULLIFIER_START + 4].copy_from_slice(&nullifier);
         out[FUNDING_START..FUNDING_START + 4].copy_from_slice(&funding);
+        out[NULLIFIER_START..NULLIFIER_START + 4].copy_from_slice(&nullifier);
         out[EXIT_START..EXIT_START + 4].copy_from_slice(&exit);
         out[BLOCK_HASH_START..BLOCK_HASH_START + 4].copy_from_slice(&block_hash);
         out[PARENT_HASH_START..PARENT_HASH_START + 4].copy_from_slice(&parent_hash);
@@ -786,7 +786,7 @@ mod tests {
             let bnum = block_numbers[i];
 
             pis_list.push(make_pi_from_felts(
-                asset_id, nfel, ffel, efel, bhash, phash, bnum,
+                asset_id, ffel, nfel, efel, bhash, phash, bnum,
             ));
         }
 
@@ -1032,7 +1032,7 @@ mod tests {
             let bnum = block_numbers[i];
 
             pis_list.push(make_pi_from_felts(
-                asset_id, nfel, ffel, efel, bhash, phash, bnum,
+                asset_id, ffel, nfel, efel, bhash, phash, bnum,
             ));
         }
 
@@ -1107,7 +1107,7 @@ mod tests {
             let bnum = block_numbers[i];
 
             pis_list.push(make_pi_from_felts(
-                asset_id, nfel, ffel, efel, bhash, phash, bnum,
+                asset_id, ffel, nfel, efel, bhash, phash, bnum,
             ));
         }
 
@@ -1155,8 +1155,8 @@ mod tests {
             let asset_id = if i == 3 { asset_b } else { asset_a }; // one bad leaf
             pis_list.push(make_pi_from_felts(
                 asset_id,
-                nullifiers_felts[i],
                 funding_felts[i],
+                nullifiers_felts[i],
                 exits_felts[i],
                 block_hashes_felts[i],
                 parent_hashes_felts[i],
