@@ -13,7 +13,6 @@ use plonky2::{
         config::GenericConfig,
     },
 };
-#[cfg(feature = "multithread")]
 use rayon::{iter::ParallelIterator, slice::ParallelSlice};
 use wormhole_verifier::ProofWithPublicInputs;
 use zk_circuits_common::{
