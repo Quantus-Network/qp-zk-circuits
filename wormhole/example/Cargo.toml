@@ -10,8 +10,8 @@ clap = { version = "4.5", features = ["derive"] }
 hex = { workspace = true, features = ["alloc"] }
 parity-scale-codec = "3.7.5"
 qp-plonky2 = { workspace = true, features = ["default"] }
-qp-poseidon = { version = "1.0.1" }
-qp-poseidon-core = { version = "1.0.1", default-features = false, features = [
+qp-poseidon = { version = "1.0.5" }
+qp-poseidon-core = { version = "1.0.5", default-features = false, features = [
 	"p3",
 ] }
 quantus-cli = { git = "https://github.com/Quantus-Network/quantus-cli", branch = "feat/updated-metadata", default-features = false }
@@ -26,4 +26,5 @@ wormhole-circuit = { package = "qp-wormhole-circuit", version = "0.1.7", path = 
 	"std",
 ] }
 wormhole-prover = { package = "qp-wormhole-prover", version = "0.1.7", path = "../prover", default-features = false }
+wormhole-aggregator = { package = "qp-wormhole-aggregator", version = "0.1.7", path = "../aggregator", default-features = false, features = ["std", "no_zk"] }
 zk-circuits-common = { package = "qp-zk-circuits-common", version = "0.1.7", path = "../../common" }
