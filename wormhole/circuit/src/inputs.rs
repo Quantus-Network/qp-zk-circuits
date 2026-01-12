@@ -74,6 +74,8 @@ pub struct BlockData {
 /// Aggregated public inputs
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AggregatedPublicCircuitInputs {
+    /// The asset ID of the set (0 for native token).
+    pub asset_id: u32,
     /// The last set block data (block_hash, block_number) in the aggregated proofs.
     /// This the only block data we need to commit to in the aggregated proof.
     /// All prior blocks are enforced to be contigious and their connectivity is verified via parent_hash checks.
@@ -113,12 +115,13 @@ impl AggregatedPublicCircuitInputs {
         // Layout in the FINAL (deduped) wrapper proof PIs:
         // [account_count, block_data(5), [funding_sum(4), exit_account(4)]*, nullifiers(4)*]
         let account_count = pis[0].to_canonical_u64() as usize;
+        let asset_id = pis[1].to_canonical_u64() as u32;
 
         // Numbers of leaf proofs we aggregated over into a tree according the length of the public inputs.
         let n_leaf = pis.len() / PUBLIC_INPUTS_FELTS_LEN;
         // Compute expected total PI length from indices and sanity-check.
 
-        let mut expected_felts = 6usize; // for account_count + block_data (5 felts)
+        let mut expected_felts = 7usize; // for account_count + asset_id + block_data (5 felts)
 
         let hash_item_felts = 4;
         expected_felts += hash_item_felts * (account_count * 2); // funding_sum + exit_account (4 felts each)
@@ -142,14 +145,14 @@ impl AggregatedPublicCircuitInputs {
         }
 
         let block_data = BlockData {
-            block_hash: read_digest(&pis[1..5]).context("parsing block_hash")?,
-            block_number: pis[5]
+            block_hash: read_digest(&pis[2..6]).context("parsing block_hash")?,
+            block_number: pis[6]
                 .to_canonical_u64()
                 .try_into()
                 .context("parsing block_number")?,
         };
 
-        let mut cursor = 6usize; // start after account_count and block_data
+        let mut cursor = 7usize; // start after metadata felts
         let mut account_data: Vec<PublicInputsByAccount> = Vec::with_capacity(account_count);
         let mut nullifiers: Vec<BytesDigest> = Vec::with_capacity(n_leaf);
 
@@ -185,6 +188,7 @@ impl AggregatedPublicCircuitInputs {
         }
 
         Ok(AggregatedPublicCircuitInputs {
+            asset_id,
             block_data,
             account_data,
             nullifiers,

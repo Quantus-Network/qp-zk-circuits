@@ -120,6 +120,10 @@ impl WormholeProofAggregator {
 fn aggregate_public_inputs(
     leaves: Vec<PublicCircuitInputs>,
 ) -> anyhow::Result<AggregatedPublicCircuitInputs> {
+    let asset_id = leaves
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("no leaves provided"))?
+        .asset_id;
     let mut by_account: BTreeMap<BytesDigest, PublicInputsByAccount> = BTreeMap::new();
     let nullifiers: Vec<BytesDigest> = leaves.iter().map(|leaf| leaf.nullifier).collect();
 
@@ -157,6 +161,7 @@ fn aggregate_public_inputs(
     accounts.sort_by_key(|a| digest_key_le_u64x4(&a.exit_account));
 
     Ok(AggregatedPublicCircuitInputs {
+        asset_id,
         block_data,
         account_data: accounts,
         nullifiers,

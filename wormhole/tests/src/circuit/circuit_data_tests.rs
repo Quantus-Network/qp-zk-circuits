@@ -82,7 +82,7 @@ fn test_prover_and_verifier_from_file_e2e() -> Result<()> {
     let verifier = WormholeVerifier::new_from_files(&verifier_path, &common_path)?;
 
     // Create inputs
-    let inputs = CircuitInputs::test_inputs_0();
+    let inputs = CircuitInputs::test_inputs_1();
 
     // Generate and verify a proof
     let prover_next = prover.commit(&inputs)?;

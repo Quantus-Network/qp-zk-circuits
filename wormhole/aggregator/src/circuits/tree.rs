@@ -30,13 +30,14 @@ pub const DEFAULT_TREE_BRANCHING_FACTOR: usize = 2;
 /// leaf nodes and the root node.
 pub const DEFAULT_TREE_DEPTH: u32 = 3;
 
-const LEAF_PI_LEN: usize = 21;
-const NULLIFIER_START: usize = 0; // 4 felts (not used in dedupe output)
-const FUNDING_START: usize = 4; // 4 felts
-const EXIT_START: usize = 8; // 4 felts
-const BLOCK_HASH_START: usize = 12; // 4 felts
-const PARENT_HASH_START: usize = 16; // 4 felts
-const BLOCK_NUMBER_START: usize = 20; // 1 felt
+const LEAF_PI_LEN: usize = 22;
+const ASSET_ID_START: usize = 0; // 1 felt
+const FUNDING_START: usize = 1; // 4 felts (not used in dedupe output)
+const NULLIFIER_START: usize = 5; // 4 felts
+const EXIT_START: usize = 9; // 4 felts
+const BLOCK_HASH_START: usize = 13; // 4 felts
+const PARENT_HASH_START: usize = 17; // 4 felts
+const BLOCK_NUMBER_START: usize = 21; // 1 felt
 
 /// A proof containing both the proof data and the circuit data needed to verify it.
 #[derive(Debug)]
@@ -208,7 +209,7 @@ fn find_group_indices(leaves_public_inputs: &[F]) -> anyhow::Result<Groupings> {
     let mut block_groups = BTreeMap::<F, Vec<usize>>::new();
     let mut exit_account_groups = BTreeMap::<[F; 4], Vec<usize>>::new();
 
-    // chunk leaves into groups of 21
+    // chunk leaves into groups of `LEAF_PI_LEN`
     for (i, chunk) in leaves_public_inputs.chunks(LEAF_PI_LEN).enumerate() {
         let block_number = chunk[BLOCK_NUMBER_START];
         let exit_account = chunk[EXIT_START..EXIT_START + 4].try_into().unwrap();
@@ -236,11 +237,14 @@ fn find_group_indices(leaves_public_inputs: &[F]) -> anyhow::Result<Groupings> {
 /// Build a wrapper circuit around the root aggregated proof that:
 ///  - verifies that proof,
 ///  - enforces groups have identical root/exit among members,
+///  - enforces asset ID consistency
 ///  - enforces that adjacent blocks are connected via parent_hash
 ///  - sums funding across members with add_u128_base2_32 (big-endian),
 ///  - forwards all nullifiers,
-///  - and PREPENDS number of orphan blocks, number of exit accounts, and the last block data to the PI vector:
-///    [num_orphan_blocks(1), num_exit_accounts(1),
+///  - and PREPENDS number of exit accounts, the asset ID, deduped root_hashes, funding account and summed funding amounts and the nullifiers:
+///    [num_exit_accounts(1),
+///    asset_id(1),
+///    root_hashes(4)*,
 ///    root_hash(4)*,
 ///    [funding_sum(4), exit(4)]*,
 ///    nullifiers(4)*,
@@ -289,11 +293,16 @@ fn aggregate_dedupe_public_inputs(
         n_leaf,
     );
 
+    // Retrive the asset ID from the first leaf proof
+    let asset_ref = limb1_at_offset::<LEAF_PI_LEN, ASSET_ID_START>(child_pi_targets, 0);
+
     // Build deduped output
     let mut deduped_pis: Vec<Target> = Vec::new();
 
     // 1) PREPEND the number of exit accounts (needed for the aggregated circuit public input parser)
     deduped_pis.push(num_exits_t);
+    // 2) PREPEND the asset ID
+    deduped_pis.push(asset_ref);
 
     let one: Target = builder.one();
 
@@ -355,16 +364,18 @@ fn aggregate_dedupe_public_inputs(
         deduped_pis.extend_from_slice(&acc);
         deduped_pis.extend_from_slice(&exit_ref);
     }
-    // Forward ALL nullifiers
+    // Forward ALL nullifiers and enforce single-asset tree
     for i in 0..n_leaf {
         deduped_pis.extend_from_slice(&limbs4_at_offset::<LEAF_PI_LEN, NULLIFIER_START>(
             child_pi_targets,
             i,
         ));
+        let asset_i = limb1_at_offset::<LEAF_PI_LEN, ASSET_ID_START>(child_pi_targets, i);
+        builder.connect(asset_i, asset_ref);
     }
 
-    // Pad the rest of the deduped_pis until it is equal to root_pi_len + 1 (for the one count)
-    while deduped_pis.len() < root_pi_len + 1 {
+    // Pad the rest of the deduped_pis until it is equal to root_pi_len + 2 (for the exit account count and asset ID metadata)
+    while deduped_pis.len() < root_pi_len + 2 {
         deduped_pis.push(builder.zero());
     }
 
@@ -407,18 +418,20 @@ mod tests {
     use zk_circuits_common::circuit::{C, D, F};
 
     use super::{
-        aggregate_to_tree, AggregatedProof, TreeAggregationConfig, BLOCK_HASH_START,
-        BLOCK_NUMBER_START, EXIT_START, FUNDING_START, LEAF_PI_LEN, NULLIFIER_START,
-        PARENT_HASH_START,
+        aggregate_to_tree, AggregatedProof, TreeAggregationConfig, ASSET_ID_START,
+        BLOCK_HASH_START, BLOCK_NUMBER_START, EXIT_START, FUNDING_START, LEAF_PI_LEN,
+        NULLIFIER_START, PARENT_HASH_START,
     };
+    const TEST_ASSET_ID_U64: u64 = 0;
 
     // ---------------- Circuit ----------------
 
     /// Dummy wormhole leaf for the *new* aggregator layout:
     ///
-    /// PIs per leaf (length = LEAF_PI_LEN = 21):
-    ///   [ nullifier(4×felt),
+    /// PIs per leaf (length = LEAF_PI_LEN = 22):
+    ///   [ asset_id(1×felt),
     ///     funding(4×felt, 32-bit limbs, BE),
+    ///     nullifier(4×felt),
     ///     exit(4×felt, 32-bit limbs, BE),
     ///     block_hash(4×felt),
     ///     parent_hash(4×felt),
@@ -497,16 +510,18 @@ mod tests {
     /// Build one leaf PI in the new layout.
     #[inline]
     fn make_pi_from_felts(
-        nullifier: [F; 4],   // 4×felt
-        funding: [F; 4],     // 4×felt, 32-bit limbs
-        exit: [F; 4],        // 4×felt, 32-bit limbs
-        block_hash: [F; 4],  // 4×felt
-        parent_hash: [F; 4], // 4×felt
-        block_number: F,     // 1×felt
+        asset_id: F, //
+        funding: [F; 4],
+        nullifier: [F; 4],
+        exit: [F; 4],
+        block_hash: [F; 4],
+        parent_hash: [F; 4],
+        block_number: F,
     ) -> [F; LEAF_PI_LEN] {
         let mut out = [F::ZERO; LEAF_PI_LEN];
-        out[NULLIFIER_START..NULLIFIER_START + 4].copy_from_slice(&nullifier);
+        out[ASSET_ID_START] = asset_id;
         out[FUNDING_START..FUNDING_START + 4].copy_from_slice(&funding);
+        out[NULLIFIER_START..NULLIFIER_START + 4].copy_from_slice(&nullifier);
         out[EXIT_START..EXIT_START + 4].copy_from_slice(&exit);
         out[BLOCK_HASH_START..BLOCK_HASH_START + 4].copy_from_slice(&block_hash);
         out[PARENT_HASH_START..PARENT_HASH_START + 4].copy_from_slice(&parent_hash);
@@ -693,8 +708,7 @@ mod tests {
             0x20B2_0001_0000_0004,
         ],
     ];
-    /// TODO: Ignoring for now but will bring back once we have asset ID support for the aggregator.
-    #[ignore]
+
     #[test]
     fn recursive_aggregation_tree() {
         // Non deterministic RNG.
@@ -745,6 +759,8 @@ mod tests {
         // Block numbers: 0..8 as field elements.
         let block_numbers: [F; 8] = core::array::from_fn(|i| F::from_canonical_u64(i as u64));
 
+        let asset_id = F::from_canonical_u64(TEST_ASSET_ID_U64);
+
         // Build 8 leaf PI sets:
         // - Nullifiers: all 8 (distinct).
         // - Exits: cycle through the chosen k_exits (different phase to avoid perfect pairing).
@@ -761,7 +777,9 @@ mod tests {
             let phash = parent_hashes_felts[i];
             let bnum = block_numbers[i];
 
-            pis_list.push(make_pi_from_felts(nfel, ffel, efel, bhash, phash, bnum));
+            pis_list.push(make_pi_from_felts(
+                asset_id, ffel, nfel, efel, bhash, phash, bnum,
+            ));
         }
 
         // Prove 8 leaf proofs.
@@ -844,25 +862,31 @@ mod tests {
         let root_pi_len = n_leaf * LEAF_PI_LEN;
         assert_eq!(
             pis.len(),
-            root_pi_len + 1,
-            "aggregated PI length must be root_pi_len + 1"
+            root_pi_len + 2,
+            "aggregated PI length must be root_pi_len + 2"
         );
 
         // Layout:
         //   [ num_exits(1),
+        //     asset_id(1),
         //     last_block_hash(4),
         //     last_block_number(1),
         //     [funding_sum(4), exit(4)]*,
         //     nullifiers(4)*,
         //     padding... ]
         let num_exits_circuit = pis[0].to_canonical_u64() as usize;
+        assert_eq!(num_exits_circuit, num_exits_ref, "num_exits mismatch");
+
+        let asset_id_circuit = pis[1];
         assert_eq!(
-            num_exits_circuit, num_exits_ref,
-            "num_exits mismatch between circuit and reference"
+            asset_id_circuit,
+            F::from_canonical_u64(TEST_ASSET_ID_U64),
+            "asset_id mismatch"
         );
 
-        let last_block_hash_circuit: [F; 4] = [pis[1], pis[2], pis[3], pis[4]];
-        let last_block_num_circuit = pis[5];
+        // last_block_hash now starts at 2
+        let last_block_hash_circuit: [F; 4] = [pis[2], pis[3], pis[4], pis[5]];
+        let last_block_num_circuit = pis[6];
 
         assert_eq!(
             last_block_hash_circuit, last_block_hash_ref,
@@ -873,8 +897,8 @@ mod tests {
             "last_block_number mismatch between circuit and reference"
         );
 
-        // Exit data region starts at index 6.
-        let mut idx = 6usize;
+        // Exit data region starts at index 7.
+        let mut idx = 7usize;
 
         // Reconstruct exit_sums from circuit PIs and compare with exit_sums (BTreeMap).
         let mut exit_sums_from_circuit: BTreeMap<[F; 4], u128> = BTreeMap::new();
@@ -961,8 +985,6 @@ mod tests {
 
     /// Break the parent-hash chain so that the wrapper circuit's parent-hash linkage
     /// constraints are violated. Aggregation should fail.
-    /// TODO: Ignoring for now but will bring back once we have asset ID support for the aggregator.
-    #[ignore]
     #[test]
     fn recursive_aggregation_tree_broken_parent_chain_fails() {
         // Deterministic RNG.
@@ -992,6 +1014,7 @@ mod tests {
 
         // Build 8 leaf PI sets.
         let mut pis_list: Vec<[F; LEAF_PI_LEN]> = Vec::with_capacity(8);
+        let asset_id = F::from_canonical_u64(TEST_ASSET_ID_U64);
         for i in 0..8 {
             let nfel = nullifiers_felts[i];
             let efel = exits_felts[exit_idxs[(7 - i) % k_exits]];
@@ -1000,7 +1023,9 @@ mod tests {
             let phash = parent_hashes_felts[i];
             let bnum = block_numbers[i];
 
-            pis_list.push(make_pi_from_felts(nfel, ffel, efel, bhash, phash, bnum));
+            pis_list.push(make_pi_from_felts(
+                asset_id, ffel, nfel, efel, bhash, phash, bnum,
+            ));
         }
 
         // Prove 8 leaf proofs.
@@ -1060,6 +1085,7 @@ mod tests {
         // - Leaves 0 and 1 share the same exit account, so they end up in the same exit group.
         //   Their funding sums to 2 * 2^127 = 2^128, which overflows 128 bits.
         let mut pis_list: Vec<[F; LEAF_PI_LEN]> = Vec::with_capacity(8);
+        let asset_id = F::from_canonical_u64(TEST_ASSET_ID_U64);
         for i in 0..8 {
             let nfel = nullifiers_felts[i];
             let efel = if i < 2 {
@@ -1072,7 +1098,9 @@ mod tests {
             let phash = parent_hashes_felts[i];
             let bnum = block_numbers[i];
 
-            pis_list.push(make_pi_from_felts(nfel, ffel, efel, bhash, phash, bnum));
+            pis_list.push(make_pi_from_felts(
+                asset_id, ffel, nfel, efel, bhash, phash, bnum,
+            ));
         }
 
         // Prove 8 leaf proofs.
@@ -1093,6 +1121,56 @@ mod tests {
         assert!(
             res.is_err(),
             "expected aggregation to fail due to funding overflow in an exit group, but it succeeded"
+        );
+    }
+    #[test]
+    fn recursive_aggregation_tree_mismatched_asset_id_fails() {
+        let asset_a = F::from_canonical_u64(7);
+        let asset_b = F::from_canonical_u64(9);
+
+        // Use simple deterministic funding etc; can reuse your existing hardcoded digests.
+        let funding_vals = [1u128; 8];
+        let funding_felts: [[F; 4]; 8] =
+            funding_vals.map(|v| limbs_u32_to_felts_be(u128_to_be_u32x4(v)));
+
+        let exits_felts: [[F; 4]; 8] = EXIT_ACCOUNTS.map(limbs_u64_to_felts_be);
+        let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs_u64_to_felts_be);
+        let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs_u64_to_felts_be);
+
+        let mut parent_hashes_felts: [[F; 4]; 8] = [[F::ZERO; 4]; 8];
+        parent_hashes_felts[1..8].copy_from_slice(&block_hashes_felts[..7]);
+
+        let block_numbers: [F; 8] = core::array::from_fn(|i| F::from_canonical_u64(i as u64));
+
+        let mut pis_list: Vec<[F; LEAF_PI_LEN]> = Vec::with_capacity(8);
+        for i in 0..8 {
+            let asset_id = if i == 3 { asset_b } else { asset_a }; // one bad leaf
+            pis_list.push(make_pi_from_felts(
+                asset_id,
+                funding_felts[i],
+                nullifiers_felts[i],
+                exits_felts[i],
+                block_hashes_felts[i],
+                parent_hashes_felts[i],
+                block_numbers[i],
+            ));
+        }
+
+        let leaves = pis_list
+            .into_iter()
+            .map(prove_dummy_wormhole)
+            .collect::<Vec<_>>();
+
+        let common_data = &leaves[0].circuit_data.common.clone();
+        let verifier_data = &leaves[0].circuit_data.verifier_only.clone();
+        let to_aggregate = leaves.into_iter().map(|p| p.proof).collect();
+
+        let config = TreeAggregationConfig::default();
+        let res = aggregate_to_tree(to_aggregate, common_data, verifier_data, config);
+
+        assert!(
+            res.is_err(),
+            "expected aggregation to fail due to mismatched asset IDs"
         );
     }
 }

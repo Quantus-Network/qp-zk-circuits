@@ -42,7 +42,6 @@ fn push_proof_to_full_buffer() {
     assert_eq!(proofs_buffer.len(), aggregator.config.num_leaf_proofs);
 }
 
-#[ignore]
 #[test]
 fn aggregate_single_proof() {
     // Create a proof.
@@ -56,8 +55,6 @@ fn aggregate_single_proof() {
     aggregator.aggregate().unwrap();
 }
 
-/// We are ignoring ths test for now. We need to update the aggregator to handle the new asset id leaf input.
-#[ignore]
 #[test]
 fn aggregate_proofs_into_tree() {
     // Create a proof.
@@ -105,8 +102,6 @@ fn aggregate_proofs_into_tree() {
         .unwrap();
 }
 
-/// We are ignoring ths test for now. We need to update the aggregator to handle the new asset id leaf input.
-#[ignore]
 #[test]
 fn aggregate_half_full_proof_array_into_tree() {
     // Create a proof.
