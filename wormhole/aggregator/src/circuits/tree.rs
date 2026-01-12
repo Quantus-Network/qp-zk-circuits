@@ -418,17 +418,9 @@ mod tests {
     use zk_circuits_common::circuit::{C, D, F};
 
     use super::{
-        aggregate_to_tree,
-        AggregatedProof,
-        TreeAggregationConfig,
-        ASSET_ID_START, // <-- add
-        BLOCK_HASH_START,
-        BLOCK_NUMBER_START,
-        EXIT_START,
-        FUNDING_START,
-        LEAF_PI_LEN,
-        NULLIFIER_START,
-        PARENT_HASH_START,
+        aggregate_to_tree, AggregatedProof, TreeAggregationConfig, ASSET_ID_START,
+        BLOCK_HASH_START, BLOCK_NUMBER_START, EXIT_START, FUNDING_START, LEAF_PI_LEN,
+        NULLIFIER_START, PARENT_HASH_START,
     };
     const TEST_ASSET_ID_U64: u64 = 0;
 
@@ -527,7 +519,7 @@ mod tests {
         block_number: F,
     ) -> [F; LEAF_PI_LEN] {
         let mut out = [F::ZERO; LEAF_PI_LEN];
-        out[ASSET_ID_START] = asset_id; // <-- new
+        out[ASSET_ID_START] = asset_id;
         out[FUNDING_START..FUNDING_START + 4].copy_from_slice(&funding);
         out[NULLIFIER_START..NULLIFIER_START + 4].copy_from_slice(&nullifier);
         out[EXIT_START..EXIT_START + 4].copy_from_slice(&exit);
