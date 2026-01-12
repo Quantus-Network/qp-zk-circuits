@@ -88,12 +88,7 @@ fn invalid_funding_amount() {
     let mut leaf_inputs = LeafInputs::test_inputs_0();
 
     // Alter the funding amount.
-    leaf_inputs.funding_amount = [
-        F::from_canonical_u64(1000),
-        F::from_canonical_u64(0),
-        F::from_canonical_u64(0),
-        F::from_canonical_u64(0),
-    ];
+    leaf_inputs.funding_amount = F::from_canonical_u64(1000);
 
     let proof = StorageProof::new(&proof, default_root_hash(), leaf_inputs);
 

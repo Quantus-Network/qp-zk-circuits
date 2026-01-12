@@ -44,7 +44,7 @@ struct DebugInputs {
     transfer_count: u64,
     funding_account_hex: String,
     dest_account_hex: String,
-    funding_amount: u128,
+    funding_amount: u32,
     block_hash_hex: String,
     extrinsics_root_hex: String,
     digest_hex: String,
@@ -466,6 +466,9 @@ async fn main() -> anyhow::Result<()> {
     let processed_storage_proof =
         prepare_proof_for_circuit(proof_bytes, hex::encode(header.state_root.0), leaf_hash)?;
 
+    // We need to quantize the funding amount to use 2 decimal places of precision (multiply by 10^10 since original uses 12)
+    let funding_amount = (event.amount / 10_000_000_000u128) as u32;
+
     let inputs = CircuitInputs {
         private: PrivateCircuitInputs {
             secret,
@@ -479,7 +482,7 @@ async fn main() -> anyhow::Result<()> {
         },
         public: PublicCircuitInputs {
             asset_id: 0u32,
-            funding_amount: event.amount,
+            funding_amount,
             nullifier: Nullifier::from_preimage(secret, event.transfer_count)
                 .hash
                 .into(),

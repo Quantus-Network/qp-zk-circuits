@@ -8,7 +8,7 @@ Provides a Zero-Knowledge circuit that can verify wormhole transactions.
 
 **Public Inputs:**
 
-- `funding_amount`: The value or quantity of funds being transacted.
+- `funding_amount`: The value or quantity of funds being transacted. This amount is quantized with 0.01 units of precision. The on-chain unit is still u128 with 12 decimals so we will need to scale by 10^10 when constructing the funding amount during on-chain verification.
 - `nullifier`: A unique, transaction-specific value derived from private information. Its purpose is to prevent double-spending by ensuring that a given set of private inputs can only be used to generate one valid proof.
 - `exit_account`: The public address where the `funding_amount` is intended to be sent after the transaction is verified.
 - `block_hash`: A commitment (Poseidon2 hash) to the block header fields used inside the circuit.

@@ -10,8 +10,8 @@ clap = { version = "4.5", features = ["derive"] }
 hex = { workspace = true, features = ["alloc"] }
 parity-scale-codec = "3.7.5"
 qp-plonky2 = { workspace = true, features = ["default"] }
-qp-poseidon = { version = "1.0.1" }
-qp-poseidon-core = { version = "1.0.1", default-features = false, features = [
+qp-poseidon = { git = "https://github.com/Quantus-Network/qp-poseidon", branch = "feat/funding_amount_quantization", features = ["default"] }
+qp-poseidon-core = { git = "https://github.com/Quantus-Network/qp-poseidon", package = "qp-poseidon-core", branch = "feat/funding_amount_quantization", default-features = false, features = [
 	"p3",
 ] }
 quantus-cli = { git = "https://github.com/Quantus-Network/quantus-cli", branch = "feat/updated-metadata", default-features = false }

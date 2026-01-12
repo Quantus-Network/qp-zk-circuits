@@ -10,9 +10,7 @@ use crate::inputs::CircuitInputs;
 use crate::substrate_account::SubstrateAccount;
 use zk_circuits_common::circuit::{D, F};
 use zk_circuits_common::codec::ByteCodec;
-use zk_circuits_common::utils::{
-    u128_to_felts, u64_to_felts, BytesDigest, FELTS_PER_U128, FELTS_PER_U64,
-};
+use zk_circuits_common::utils::{u64_to_felts, BytesDigest, FELTS_PER_U64};
 
 pub const NUM_LEAF_INPUT_FELTS: usize = 12;
 
@@ -22,7 +20,7 @@ pub struct LeafTargets {
     pub transfer_count: [Target; FELTS_PER_U64],
     pub funding_account: HashOutTarget,
     pub to_account: HashOutTarget,
-    pub funding_amount: [Target; FELTS_PER_U128],
+    pub funding_amount: Target,
 }
 
 impl LeafTargets {
@@ -32,7 +30,7 @@ impl LeafTargets {
         let transfer_count = array::from_fn(|_| builder.add_virtual_target());
         let funding_account = builder.add_virtual_hash();
         let to_account = builder.add_virtual_hash();
-        let funding_amount = array::from_fn(|_| builder.add_virtual_public_input());
+        let funding_amount = builder.add_virtual_public_input();
 
         Self {
             asset_id,
@@ -48,13 +46,13 @@ impl LeafTargets {
             .chain(self.transfer_count.iter().copied())
             .chain(self.funding_account.elements.iter().copied())
             .chain(self.to_account.elements.iter().copied())
-            .chain(self.funding_amount.iter().copied())
+            .chain(core::iter::once(self.funding_amount))
             .collect()
     }
     pub fn collect_32_bit_targets(&self) -> Vec<Target> {
         core::iter::once(self.asset_id)
             .chain(self.transfer_count.iter().copied())
-            .chain(self.funding_amount.iter().copied())
+            .chain(core::iter::once(self.funding_amount))
             .collect()
     }
 }
@@ -65,7 +63,7 @@ pub struct LeafInputs {
     pub transfer_count: [F; FELTS_PER_U64],
     pub funding_account: SubstrateAccount,
     pub to_account: SubstrateAccount,
-    pub funding_amount: [F; FELTS_PER_U128],
+    pub funding_amount: F,
 }
 
 impl LeafInputs {
@@ -74,11 +72,11 @@ impl LeafInputs {
         transfer_count: u64,
         funding_account: BytesDigest,
         to_account: BytesDigest,
-        funding_amount: u128,
+        funding_amount: u32,
     ) -> anyhow::Result<Self> {
         let asset_id = F::from_canonical_u32(asset_id);
         let transfer_count = u64_to_felts(transfer_count);
-        let funding_amount = u128_to_felts(funding_amount);
+        let funding_amount = F::from_canonical_u32(funding_amount);
         let funding_account = SubstrateAccount::from_bytes(funding_account.as_slice())?;
         let to_account = SubstrateAccount::from_bytes(to_account.as_slice())?;
         Ok(Self {
@@ -96,7 +94,7 @@ impl LeafInputs {
         leaf_elements.extend_from_slice(&self.transfer_count);
         leaf_elements.extend_from_slice(&self.funding_account.0);
         leaf_elements.extend_from_slice(&self.to_account.0);
-        leaf_elements.extend_from_slice(&self.funding_amount);
+        leaf_elements.push(self.funding_amount);
 
         hash_no_pad_bytes(&leaf_elements)
     }
