@@ -656,10 +656,12 @@ mod tests {
         let k_exits: usize = rng.gen_range(1..=8);
         let exit_idxs: Vec<usize> = (0..k_exits).collect();
 
-        // Funding values as *one felt each* (keep in 64-bit range for canonical conversion).
-        let funding_vals_u64: [u64; 8] = core::array::from_fn(|_| rng.gen::<u64>() >> 1);
+        // Funding values as *one felt each*
+        // We bit shift by 3 to ensure accumulated sums fit in 32 bits.
+        let funding_vals_u32: [u32; 8] = core::array::from_fn(|_| rng.gen::<u32>() >> 3);
+
         let funding_felts: [F; 8] =
-            core::array::from_fn(|i| F::from_canonical_u64(funding_vals_u64[i]));
+            core::array::from_fn(|i| F::from_canonical_u64(funding_vals_u32[i] as u64));
 
         let exits_felts: [[F; 4]; 8] = EXIT_ACCOUNTS.map(limbs_u64_to_felts_be);
         let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs_u64_to_felts_be);
@@ -831,9 +833,9 @@ mod tests {
         let k_exits: usize = rng.gen_range(1..=8);
         let exit_idxs: Vec<usize> = (0..k_exits).collect();
 
-        let funding_vals_u64: [u64; 8] = core::array::from_fn(|_| rng.gen::<u64>() >> 1);
+        let funding_vals_u32: [u32; 8] = core::array::from_fn(|_| rng.gen::<u32>() >> 3);
         let funding_felts: [F; 8] =
-            core::array::from_fn(|i| F::from_canonical_u64(funding_vals_u64[i]));
+            core::array::from_fn(|i| F::from_canonical_u64(funding_vals_u32[i] as u64));
 
         let exits_felts: [[F; 4]; 8] = EXIT_ACCOUNTS.map(limbs_u64_to_felts_be);
         let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs_u64_to_felts_be);
