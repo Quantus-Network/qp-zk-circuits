@@ -33,6 +33,7 @@ use zk_circuits_common::storage_proof::prepare_proof_for_circuit;
 use zk_circuits_common::utils::{digest_felts_to_bytes, BytesDigest, Digest};
 
 const DEBUG_FILE: &str = "proof_debug.json";
+const SCALE_DOWN_FACTOR: u128 = 10_000_000_000u128; // 10^10
 
 #[derive(Serialize, Deserialize, Debug)]
 struct DebugInputs {
@@ -466,8 +467,8 @@ async fn main() -> anyhow::Result<()> {
     let processed_storage_proof =
         prepare_proof_for_circuit(proof_bytes, hex::encode(header.state_root.0), leaf_hash)?;
 
-    // We need to quantize the funding amount to use 2 decimal places of precision (multiply by 10^10 since original uses 12)
-    let funding_amount = (event.amount / 10_000_000_000u128) as u32;
+    // We need to quantize the funding amount to use 2 decimal places of precision (divide by 10^10 since original uses 12)
+    let funding_amount = (event.amount / SCALE_DOWN_FACTOR) as u32;
 
     let inputs = CircuitInputs {
         private: PrivateCircuitInputs {

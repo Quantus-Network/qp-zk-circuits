@@ -348,6 +348,8 @@ fn aggregate_dedupe_public_inputs(
             let sum = builder.add(acc, fund_i);
             acc = sum;
         }
+        // Range check on accumulated sum to ensure it fits in the expected 32 bit range
+        builder.range_check(acc, 32);
         // Emit one compressed PI couplet: [funding_sum(1), exit(4)]
         deduped_pis.push(acc);
         deduped_pis.extend_from_slice(&exit_ref);
@@ -435,7 +437,7 @@ mod tests {
             .try_into()
             .expect("exactly LEAF_PI_LEN targets");
 
-        builder.range_check(pis[FUNDING_START], 64);
+        builder.range_check(pis[FUNDING_START], 32);
 
         builder.register_public_inputs(&pis_vec);
 

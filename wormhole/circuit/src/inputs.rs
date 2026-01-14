@@ -40,7 +40,7 @@ pub struct PublicCircuitInputs {
     pub asset_id: u32,
     /// Amount to be withdrawn. This value is quantized with 0.01 units of precision.
     /// **DEV NOTE**: The funding amount unit on chain is still u128 with 12 decimals so we will need to
-    /// scale by 10^10 when constructing parsing the funding amount during on-chain verification.
+    /// scale by 10^10 when constructing the funding amount during on-chain verification.
     pub funding_amount: u32,
     /// The nullifier.
     pub nullifier: BytesDigest,
