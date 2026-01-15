@@ -23,9 +23,9 @@ sp-trie = { git = "https://github.com/Quantus-Network/chain.git", default-featur
 subxt = "0.43.0"
 tokio = "1.48.0"
 wormhole-aggregator = { package = "qp-wormhole-aggregator", version = "0.1.7", path = "../aggregator", default-features = false, features = [
-	"std",
 	"multithread",
 	"no_zk",
+	"std",
 ] }
 wormhole-circuit = { package = "qp-wormhole-circuit", version = "0.1.7", path = "../circuit", default-features = false, features = [
 	"std",
