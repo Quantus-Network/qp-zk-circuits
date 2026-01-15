@@ -3726,15 +3726,15 @@ dependencies = [
 
 [[package]]
 name = "qp-poseidon"
-version = "1.0.3"
+version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ebc5e9fe1f91f5006aa2b45650d0049887d41d80c669ef5a78a45086895054d"
+checksum = "fef3bb816fc51b4ffc4524fa03376037d2531b17e2349ef6489a417cef029b3a"
 dependencies = [
  "log",
  "p3-field",
  "p3-goldilocks",
  "parity-scale-codec",
- "qp-poseidon-core 1.0.5",
+ "qp-poseidon-core 1.0.6",
  "scale-info",
  "serde",
  "sp-core 37.0.0",
@@ -3784,9 +3784,9 @@ dependencies = [
 
 [[package]]
 name = "qp-poseidon-core"
-version = "1.0.5"
+version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71dd1bf5d2997abf70247fcd23c8f04d7093b1faf33b775a42fb00c07e0a0e05"
+checksum = "e33b3fb9032ac9b197265da8fc8bdedd21ba76592ceefbf4a591286d47baec2d"
 dependencies = [
  "p3-field",
  "p3-goldilocks",
@@ -3819,7 +3819,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "nam-tiny-hderive",
- "qp-poseidon-core 1.0.5",
+ "qp-poseidon-core 1.0.6",
  "qp-rusty-crystals-dilithium",
  "rand_chacha 0.9.0",
  "rand_core 0.9.3",
@@ -3861,7 +3861,7 @@ dependencies = [
  "anyhow",
  "hex",
  "qp-plonky2",
- "qp-poseidon-core 1.0.5",
+ "qp-poseidon-core 1.0.6",
  "qp-zk-circuits-common 0.1.4",
 ]
 
@@ -3872,7 +3872,7 @@ dependencies = [
  "anyhow",
  "hex",
  "qp-plonky2",
- "qp-poseidon-core 1.0.5",
+ "qp-poseidon-core 1.0.6",
  "qp-zk-circuits-common 0.1.7",
 ]
 
@@ -3929,7 +3929,7 @@ dependencies = [
  "anyhow",
  "hex",
  "qp-plonky2",
- "qp-poseidon-core 1.0.5",
+ "qp-poseidon-core 1.0.6",
  "serde",
 ]
 
@@ -3940,7 +3940,7 @@ dependencies = [
  "anyhow",
  "hex",
  "qp-plonky2",
- "qp-poseidon-core 1.0.5",
+ "qp-poseidon-core 1.0.6",
  "serde",
 ]
 
@@ -7009,9 +7009,11 @@ dependencies = [
  "parity-scale-codec",
  "qp-plonky2",
  "qp-poseidon",
- "qp-poseidon-core 1.0.5",
+ "qp-poseidon-core 1.0.6",
+ "qp-wormhole-aggregator",
  "qp-wormhole-circuit 0.1.7",
  "qp-wormhole-prover 0.1.7",
+ "qp-wormhole-verifier",
  "qp-zk-circuits-common 0.1.7",
  "quantus-cli",
  "serde",

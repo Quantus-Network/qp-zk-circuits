@@ -1,0 +1,3 @@
+# Generated proof artifacts
+*.hex
+proof_debug.json
