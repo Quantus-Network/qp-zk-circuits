@@ -538,9 +538,9 @@ async fn perform_batched_transfers(
                 funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
                 storage_proof: processed_storage_proof,
                 unspendable_account: Digest::from(*unspendable_account).into(),
-                state_root: state_root.clone(),
-                extrinsics_root: extrinsics_root.clone(),
-                digest: digest.clone(),
+                state_root,
+                extrinsics_root,
+                digest,
             },
             public: PublicCircuitInputs {
                 asset_id: 0u32,
@@ -550,7 +550,7 @@ async fn perform_batched_transfers(
                     .into(),
                 exit_account: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
                 block_hash: BytesDigest::try_from(block_hash.as_ref())?,
-                parent_hash: parent_hash.clone(),
+                parent_hash,
                 block_number,
             },
         };
