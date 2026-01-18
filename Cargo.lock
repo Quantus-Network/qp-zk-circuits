@@ -3903,7 +3903,6 @@ dependencies = [
  "anyhow",
  "hex",
  "qp-plonky2",
- "qp-poseidon-core 1.0.5",
  "qp-zk-circuits-common 0.1.7",
 ]
 

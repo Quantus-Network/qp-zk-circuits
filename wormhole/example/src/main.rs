@@ -55,12 +55,13 @@ struct DebugInputs {
 
 impl From<CircuitInputs> for DebugInputs {
     fn from(inputs: CircuitInputs) -> Self {
-        let hash = qp_poseidon::PoseidonHasher::hash_storage::<AccountId32>(
+        type TransferKey = (u32, u64, AccountId32, AccountId32, u128);
+        let hash = qp_poseidon::PoseidonHasher::hash_storage::<TransferKey>(
             &(
                 inputs.private.transfer_count,
                 AccountId32::new(*inputs.private.funding_account),
                 AccountId32::new(*inputs.private.unspendable_account),
-                inputs.public.funding_amount,
+                (inputs.public.funding_amount as u128) * SCALE_DOWN_FACTOR,
             )
                 .encode(),
         );
@@ -398,7 +399,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Native token transfers use asset_id = 0
     let asset_id = 0u32;
-    let leaf_hash = qp_poseidon::PoseidonHasher::hash_storage::<AccountId32>(
+    type TransferKey = (u32, u64, AccountId32, AccountId32, u128);
+    let leaf_hash = qp_poseidon::PoseidonHasher::hash_storage::<TransferKey>(
         &(
             asset_id,
             event.transfer_count,
