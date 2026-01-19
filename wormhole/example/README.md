@@ -6,6 +6,7 @@
 - Fetches the corresponding on‑chain storage proof
 - Assembles the circuit inputs
 - Generates a ZK proof for the wormhole transfer circuit
+- Supports aggregating multiple proofs into a single proof
 
 ### Prerequisites
 
@@ -22,6 +23,8 @@
 
 ### Running the example
 
+#### Generate a single proof
+
 Build and run the example binary:
 
 ```bash
@@ -31,6 +34,37 @@ cargo run --release --bin wormhole-example -- \
     --secret 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
     --exit-account fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210 \
     --funding-amount 1000000000000
+```
+
+#### Generate and aggregate in one command
+
+Generate multiple proofs and aggregate them in a single run:
+
+```bash
+cargo run --release --bin wormhole-example -- \
+    --generate-and-aggregate \
+    --funding-account alice \
+    --secret 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+    --exit-account fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210 \
+    --funding-amount 1000000000000 \
+    --aggregation-depth 1 \
+    --num-proofs 2
+```
+
+This mode:
+1. Creates multiple transfers in a single batched transaction (same block)
+2. Generates a ZK proof for each transfer
+3. Aggregates all proofs into a single aggregated proof
+
+#### Aggregate existing proofs
+
+After generating multiple proofs separately, you can aggregate them:
+
+```bash
+cargo run --release --bin wormhole-example -- \
+    --aggregate \
+    --proof-files proof1.hex,proof2.hex,proof3.hex,proof4.hex \
+    --aggregated-proof-output aggregated_proof.hex
 ```
 
 ### CLI arguments (live mode)
@@ -56,14 +90,79 @@ cargo run --release --bin wormhole-example -- \
     --exit-account fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
     ```
 
-- `--funding-amount <u128>`  
-    Amount (in the chain’s base units, set at 12 decimals currently) to transfer to the unspendable account. Requirements:
+- `--funding-amount <u128>`
+    Amount (in the chain's base units, set at 12 decimals currently) to transfer to the unspendable account. Requirements:
     - A valid `u128` integer
-    - ≥ `1_000_000_000_000`  
+    - ≥ `1_000_000_000_000`
     Example:
     ```
     --funding-amount 1000000000000
     ```
+
+### CLI arguments (aggregation mode)
+
+- `--aggregate`
+    Enable proof aggregation mode. When this flag is set, the binary will aggregate multiple proofs instead of generating a new one.
+
+- `--proof-files <file1,file2,...>`
+    Comma-separated list of proof file paths to aggregate. Required when `--aggregate` is set.
+    - Maximum number of proofs: 8 (default tree configuration: branching factor=2, depth=3)
+    - Example:
+    ```
+    --proof-files proof1.hex,proof2.hex,proof3.hex,proof4.hex
+    ```
+
+- `--aggregated-proof-output <path>`
+    Output file path for the aggregated proof. Defaults to `aggregated_proof.hex`.
+    Example:
+    ```
+    --aggregated-proof-output my_aggregated_proof.hex
+    ```
+
+### CLI arguments (generate-and-aggregate mode)
+
+- `--generate-and-aggregate`
+    Generate multiple proofs and aggregate them in one run. Combines `--live` and `--aggregate` modes.
+
+- `--num-proofs <n>`
+    Number of proofs to generate. Defaults to the number of leaf proofs required by the aggregation tree configuration.
+
+- `--aggregation-depth <n>`
+    Tree depth for aggregation. Default: 3. Use 1 for minimal 2-proof aggregation.
+
+- `--aggregation-branching-factor <n>`
+    Branching factor for the aggregation tree. Default: 2.
+
+## Proof Aggregation
+
+The example now supports proof aggregation using a tree-based recursive aggregation scheme. This allows you to:
+
+1. **Batch verification**: Aggregate multiple wormhole transfer proofs into a single proof
+2. **Reduced on-chain verification cost**: Verify many transfers with a single proof verification
+3. **Privacy preservation**: Aggregate proofs while maintaining zero-knowledge properties
+
+### How it works
+
+The aggregator uses a binary tree structure (configurable branching factor and depth) to recursively aggregate proofs:
+- Default configuration: branching factor=2, depth=3 (supports up to 8 leaf proofs)
+- Aggregates public inputs by grouping by block and exit account
+- Sums funding amounts for the same exit account across multiple proofs
+- Collects all nullifiers to prevent double-spending
+- Verifies parent-hash linkage between blocks
+
+### Aggregated Public Inputs
+
+The aggregated proof contains:
+- Number of unique exit accounts
+- Asset ID (enforced to be consistent across all proofs)
+- Latest block hash and block number
+- For each exit account: summed funding amount and exit account address
+- All nullifiers from individual proofs
+- Zero-padding to maintain consistent proof size
+
+### Verification
+
+Aggregated proofs can be verified using the verifier binary from the `wormhole-verifier` crate. Note that **aggregated proof verification is currently only supported off-chain** using the verifier binary, not on-chain via the pallet.
 
 ### Offline debug mode
 

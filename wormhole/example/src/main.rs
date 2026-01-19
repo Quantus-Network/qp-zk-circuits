@@ -10,7 +10,9 @@ use clap::Parser;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_poseidon::PoseidonHasher;
-use quantus_cli::chain::quantus_subxt as quantus_node;
+use quantus_cli::chain::quantus_subxt::api as quantus_node;
+use quantus_cli::chain::quantus_subxt::api::runtime_types::pallet_wormhole::pallet::Call as WormholeCall;
+use quantus_cli::chain::quantus_subxt::api::runtime_types::quantus_runtime::RuntimeCall;
 use quantus_cli::chain::quantus_subxt::api::wormhole;
 use quantus_cli::cli::common::submit_transaction;
 use quantus_cli::qp_dilithium_crypto::DilithiumPair;
@@ -26,9 +28,15 @@ use subxt::ext::jsonrpsee::core::client::ClientT;
 use subxt::ext::jsonrpsee::rpc_params;
 use subxt::utils::{to_hex, AccountId32 as SubxtAccountId};
 use subxt::OnlineClient;
-use wormhole_circuit::inputs::{CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs};
+use wormhole_aggregator::aggregator::WormholeProofAggregator;
+use wormhole_aggregator::circuits::tree::TreeAggregationConfig;
+use wormhole_circuit::inputs::{
+    AggregatedPublicCircuitInputs, CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs,
+};
 use wormhole_circuit::nullifier::Nullifier;
 use wormhole_prover::WormholeProver;
+use wormhole_verifier::WormholeVerifier;
+use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::storage_proof::prepare_proof_for_circuit;
 use zk_circuits_common::utils::{digest_felts_to_bytes, BytesDigest, Digest};
 
@@ -54,8 +62,9 @@ struct DebugInputs {
 
 impl From<CircuitInputs> for DebugInputs {
     fn from(inputs: CircuitInputs) -> Self {
-        let hash = qp_poseidon::PoseidonHasher::hash_storage::<AccountId32>(
+        let hash = qp_poseidon::PoseidonHasher::hash_storage::<TransferProofKey>(
             &(
+                inputs.public.asset_id,
                 inputs.private.transfer_count,
                 AccountId32::new(*inputs.private.funding_account),
                 AccountId32::new(*inputs.private.unspendable_account),
@@ -93,6 +102,8 @@ impl From<CircuitInputs> for DebugInputs {
         }
     }
 }
+
+pub type TransferProofKey = (u32, u64, AccountId32, AccountId32, u128);
 
 impl TryFrom<DebugInputs> for CircuitInputs {
     type Error = anyhow::Error;
@@ -193,12 +204,13 @@ impl TryFrom<DebugInputs> for CircuitInputs {
 }
 
 /// Generate a proof from the given inputs
-fn generate_zk_proof(inputs: CircuitInputs) -> anyhow::Result<()> {
+fn generate_zk_proof(inputs: CircuitInputs) -> anyhow::Result<ProofWithPublicInputs<F, C, D>> {
     println!("Generating ZK proof...");
+    // Must use zk_config to match the aggregator's dummy proof
     let config = CircuitConfig::standard_recursion_config();
     let prover = WormholeProver::new(config);
     let prover_next = prover.commit(&inputs)?;
-    let proof: ProofWithPublicInputs<_, _, 2> = prover_next.prove().expect("proof failed; qed");
+    let proof: ProofWithPublicInputs<F, C, D> = prover_next.prove().expect("proof failed; qed");
 
     let public_inputs = PublicCircuitInputs::try_from(&proof)?;
     println!(
@@ -206,12 +218,483 @@ fn generate_zk_proof(inputs: CircuitInputs) -> anyhow::Result<()> {
         public_inputs
     );
 
+    Ok(proof)
+}
+
+/// Save a proof to a file
+fn save_proof(proof: &ProofWithPublicInputs<F, C, D>, file_path: &str) -> anyhow::Result<()> {
     let proof_hex = hex::encode(proof.to_bytes());
-    let proof_file = "proof.hex";
-    std::fs::write(proof_file, proof_hex)?;
-    println!("Proof written to {}", proof_file);
+    std::fs::write(file_path, proof_hex)?;
+    println!("Proof written to {}", file_path);
+    Ok(())
+}
+
+/// Load a proof from a file
+fn load_proof(
+    file_path: &str,
+    common_data: &plonky2::plonk::circuit_data::CommonCircuitData<F, D>,
+) -> anyhow::Result<ProofWithPublicInputs<F, C, D>> {
+    let proof_hex = std::fs::read_to_string(file_path)
+        .with_context(|| format!("Failed to read proof file: {}", file_path))?;
+    let proof_bytes = hex::decode(proof_hex.trim())
+        .with_context(|| format!("Failed to decode hex from file: {}", file_path))?;
+    let proof = ProofWithPublicInputs::from_bytes(proof_bytes, common_data)
+        .with_context(|| format!("Failed to deserialize proof from file: {}", file_path))?;
+    Ok(proof)
+}
+
+/// Aggregate multiple proofs from files
+fn aggregate_proofs(
+    proof_files: Vec<String>,
+    output_file: &str,
+    aggregation_config: TreeAggregationConfig,
+) -> anyhow::Result<()> {
+    println!("\n=== Starting Proof Aggregation ===");
+    println!("Loading {} proof files...", proof_files.len());
+
+    // Build the wormhole verifier and prover circuit data
+    let config = CircuitConfig::standard_recursion_config();
+    let verifier = WormholeVerifier::new(config.clone(), None);
+    let prover = WormholeProver::new(config);
+    let common_data = &prover.circuit_data.common;
+
+    let mut aggregator =
+        WormholeProofAggregator::new(verifier.circuit_data).with_config(aggregation_config);
+
+    println!(
+        "Aggregator configured for {} leaf proofs (branching factor: {}, depth: {})",
+        aggregator.config.num_leaf_proofs,
+        aggregator.config.tree_branching_factor,
+        aggregator.config.tree_depth
+    );
+
+    if proof_files.len() > aggregator.config.num_leaf_proofs {
+        anyhow::bail!(
+            "Too many proof files provided: {} (max: {})",
+            proof_files.len(),
+            aggregator.config.num_leaf_proofs
+        );
+    }
+
+    // Load and add proofs to aggregator
+    for (idx, proof_file) in proof_files.iter().enumerate() {
+        println!(
+            "Loading proof {}/{}: {}",
+            idx + 1,
+            proof_files.len(),
+            proof_file
+        );
+        let proof = load_proof(proof_file, common_data)?;
+        aggregator.push_proof(proof)?;
+    }
+
+    aggregate_and_save(aggregator, output_file)
+}
+
+/// Aggregate proofs directly (without loading from files)
+fn aggregate_proofs_direct(
+    proofs: Vec<ProofWithPublicInputs<F, C, D>>,
+    output_file: &str,
+    aggregation_config: TreeAggregationConfig,
+) -> anyhow::Result<()> {
+    println!("\n=== Starting Proof Aggregation ===");
+    println!("Aggregating {} proofs...", proofs.len());
+
+    // Build the wormhole verifier circuit data
+    let config = CircuitConfig::standard_recursion_config();
+    let verifier = WormholeVerifier::new(config, None);
+
+    let mut aggregator =
+        WormholeProofAggregator::new(verifier.circuit_data).with_config(aggregation_config);
+
+    println!(
+        "Aggregator configured for {} leaf proofs (branching factor: {}, depth: {})",
+        aggregator.config.num_leaf_proofs,
+        aggregator.config.tree_branching_factor,
+        aggregator.config.tree_depth
+    );
+
+    if proofs.len() > aggregator.config.num_leaf_proofs {
+        anyhow::bail!(
+            "Too many proofs provided: {} (max: {})",
+            proofs.len(),
+            aggregator.config.num_leaf_proofs
+        );
+    }
+
+    // Add proofs to aggregator
+    for proof in proofs {
+        aggregator.push_proof(proof)?;
+    }
+
+    aggregate_and_save(aggregator, output_file)
+}
+
+/// Common aggregation logic - aggregate and save
+fn aggregate_and_save(
+    mut aggregator: WormholeProofAggregator,
+    output_file: &str,
+) -> anyhow::Result<()> {
+    println!("\nRunning aggregation...");
+    let aggregated_proof = aggregator.aggregate()?;
+
+    // Parse and display aggregated public inputs
+    let aggregated_public_inputs = AggregatedPublicCircuitInputs::try_from_slice(
+        aggregated_proof.proof.public_inputs.as_slice(),
+    )?;
+    println!("\n=== Aggregated Public Inputs ===");
+    println!("{:#?}", aggregated_public_inputs);
+
+    // Verify the aggregated proof
+    println!("\nVerifying aggregated proof...");
+    aggregated_proof
+        .circuit_data
+        .verify(aggregated_proof.proof.clone())?;
+    println!("Aggregated proof verified successfully!");
+
+    // Save aggregated proof
+    save_proof(&aggregated_proof.proof, output_file)?;
+    println!("\n=== Aggregation Complete ===");
+    println!("Aggregated proof saved to: {}", output_file);
 
     Ok(())
+}
+
+/// Generates a secret by incrementing the base secret by index
+fn derive_secret(base_secret: [u8; 32], index: usize) -> [u8; 32] {
+    let mut secret = base_secret;
+    // Add index to the last 8 bytes as a little-endian u64
+    let current = u64::from_le_bytes(secret[24..32].try_into().unwrap());
+    let new_value = current.wrapping_add(index as u64);
+    secret[24..32].copy_from_slice(&new_value.to_le_bytes());
+    secret
+}
+
+/// Gets unspendable account from secret
+fn get_unspendable_account(
+    secret_bytes: [u8; 32],
+) -> anyhow::Result<(BytesDigest, SubxtAccountId, Digest)> {
+    let secret: BytesDigest = secret_bytes.try_into()?;
+    let unspendable_account =
+        wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(secret).account_id;
+
+    let unspendable_account_bytes_digest = digest_felts_to_bytes(unspendable_account);
+    let unspendable_account_bytes: [u8; 32] = unspendable_account_bytes_digest
+        .as_ref()
+        .try_into()
+        .expect("BytesDigest is always 32 bytes");
+    let unspendable_account_id = SubxtAccountId(unspendable_account_bytes);
+
+    Ok((secret, unspendable_account_id, unspendable_account))
+}
+
+/// Performs batched transfers and returns circuit inputs for all of them
+async fn perform_batched_transfers(
+    quantus_client: &QuantusClient,
+    quantum_keypair: &QuantumKeyPair,
+    funding_account: &AccountId32,
+    base_secret: [u8; 32],
+    exit_account_bytes: [u8; 32],
+    funding_amount: u128,
+    num_transfers: usize,
+) -> anyhow::Result<Vec<CircuitInputs>> {
+    let client = quantus_client.client();
+    let exit_account_id = SubxtAccountId(exit_account_bytes);
+
+    // Prepare all transfers
+    let mut secrets = Vec::with_capacity(num_transfers);
+    let mut unspendable_accounts = Vec::with_capacity(num_transfers);
+    let mut calls = Vec::with_capacity(num_transfers);
+
+    println!("\n=== Preparing {} batched transfers ===", num_transfers);
+
+    for i in 0..num_transfers {
+        let secret_bytes = derive_secret(base_secret, i);
+        let (secret, unspendable_account_id, unspendable_account) =
+            get_unspendable_account(secret_bytes)?;
+
+        println!(
+            "Transfer {}: unspendable account {:?}",
+            i + 1,
+            &unspendable_account_id
+        );
+
+        // Create transfer call
+        let call = RuntimeCall::Wormhole(WormholeCall::transfer_native {
+            dest: subxt::ext::subxt_core::utils::MultiAddress::Id(unspendable_account_id.clone()),
+            amount: funding_amount,
+        });
+
+        secrets.push(secret);
+        unspendable_accounts.push((unspendable_account_id, unspendable_account));
+        calls.push(call);
+    }
+
+    // Batch all transfers
+    println!("\nSubmitting batch of {} transfers...", num_transfers);
+    let batch_tx = quantus_node::tx().utility().batch_all(calls);
+
+    let _blocks = at_best_block(quantus_client).await?;
+    submit_transaction(quantus_client, quantum_keypair, batch_tx, None).await?;
+
+    let blocks = at_best_block(quantus_client).await?;
+    let block_hash = blocks.hash();
+
+    println!("Batch included in block: {:?}", block_hash);
+
+    // Get all events from the block and filter by our unspendable accounts
+    let events_api = client.events().at(block_hash).await?;
+    let all_transfer_events: Vec<_> = events_api
+        .find::<wormhole::events::NativeTransferred>()
+        .collect::<Result<Vec<_>, _>>()?;
+
+    println!(
+        "Found {} total transfer events in block",
+        all_transfer_events.len()
+    );
+
+    // Filter to only our transfers by matching destination addresses
+    let expected_dests: Vec<_> = unspendable_accounts.iter().map(|(id, _)| id.0).collect();
+    let transfer_events: Vec<_> = all_transfer_events
+        .into_iter()
+        .filter(|e| expected_dests.contains(&e.to.0))
+        .collect();
+
+    println!(
+        "Filtered to {} matching transfer events",
+        transfer_events.len()
+    );
+
+    if transfer_events.len() != num_transfers {
+        anyhow::bail!(
+            "Expected {} transfer events, found {}",
+            num_transfers,
+            transfer_events.len()
+        );
+    }
+
+    // Process each event and create circuit inputs
+    let header = blocks.header();
+    let state_root = BytesDigest::try_from(header.state_root.as_bytes())?;
+    let parent_hash = BytesDigest::try_from(header.parent_hash.as_bytes())?;
+    let extrinsics_root = BytesDigest::try_from(header.extrinsics_root.as_bytes())?;
+    let digest: [u8; 110] = header.digest.encode().try_into().unwrap();
+    let block_number = header.number;
+
+    let mut all_inputs = Vec::with_capacity(num_transfers);
+
+    for (i, event) in transfer_events.iter().enumerate() {
+        println!(
+            "\nProcessing transfer {}: count={}, amount={}",
+            i + 1,
+            event.transfer_count,
+            event.amount
+        );
+
+        let (secret, (_, unspendable_account)) = (&secrets[i], &unspendable_accounts[i]);
+
+        // Native token transfers use asset_id = 0
+        let asset_id = 0u32;
+
+        // Convert subxt AccountId32 to sp_core AccountId32 for hash_storage
+        let from_account = AccountId32::new(event.from.0);
+        let to_account = AccountId32::new(event.to.0);
+
+        let leaf_hash = qp_poseidon::PoseidonHasher::hash_storage::<TransferProofKey>(
+            &(
+                asset_id,
+                event.transfer_count,
+                from_account.clone(),
+                to_account.clone(),
+                event.amount,
+            )
+                .encode(),
+        );
+        let proof_address = quantus_node::storage().wormhole().transfer_proof((
+            asset_id,
+            event.transfer_count,
+            event.from.clone(),
+            event.to.clone(),
+            event.amount,
+        ));
+        let mut final_key = proof_address.to_root_bytes();
+        final_key.extend_from_slice(&leaf_hash);
+
+        let proof_params = rpc_params![vec![to_hex(&final_key)], block_hash];
+        let read_proof: ReadProof<H256> = quantus_client
+            .rpc_client()
+            .request("state_getReadProof", proof_params)
+            .await?;
+
+        // Prepare the storage proof
+        let proof_bytes: Vec<Vec<u8>> = read_proof.proof.iter().map(|b| b.0.clone()).collect();
+        let processed_storage_proof =
+            prepare_proof_for_circuit(proof_bytes, hex::encode(header.state_root.0), leaf_hash)?;
+
+        let inputs = CircuitInputs {
+            private: PrivateCircuitInputs {
+                secret: *secret,
+                transfer_count: event.transfer_count,
+                funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
+                storage_proof: processed_storage_proof,
+                unspendable_account: Digest::from(*unspendable_account).into(),
+                state_root,
+                extrinsics_root,
+                digest,
+            },
+            public: PublicCircuitInputs {
+                asset_id: 0u32,
+                funding_amount: event.amount,
+                nullifier: Nullifier::from_preimage(*secret, event.transfer_count)
+                    .hash
+                    .into(),
+                exit_account: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
+                block_hash: BytesDigest::try_from(block_hash.as_ref())?,
+                parent_hash,
+                block_number,
+            },
+        };
+
+        all_inputs.push(inputs);
+    }
+
+    Ok(all_inputs)
+}
+
+/// Performs a single transfer and generates circuit inputs
+async fn perform_transfer_and_get_inputs(
+    quantus_client: &QuantusClient,
+    quantum_keypair: &QuantumKeyPair,
+    funding_account: &AccountId32,
+    secret_bytes: [u8; 32],
+    exit_account_bytes: [u8; 32],
+    funding_amount: u128,
+    proof_index: usize,
+) -> anyhow::Result<CircuitInputs> {
+    let client = quantus_client.client();
+
+    // Secret from input
+    let secret: BytesDigest = secret_bytes.try_into()?;
+    let unspendable_account =
+        wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(secret).account_id;
+
+    // Convert Digest (field elements) to BytesDigest (bytes)
+    let unspendable_account_bytes_digest = digest_felts_to_bytes(unspendable_account);
+    let unspendable_account_bytes: [u8; 32] = unspendable_account_bytes_digest
+        .as_ref()
+        .try_into()
+        .expect("BytesDigest is always 32 bytes");
+    let unspendable_account_id = SubxtAccountId(unspendable_account_bytes);
+
+    // Exit account from input
+    let exit_account_id = SubxtAccountId(exit_account_bytes);
+
+    println!("\n=== Transfer {} ===", proof_index + 1);
+    println!("Unspendable account: {:?}", &unspendable_account_id);
+
+    // Make the transfer TO the unspendable account using wormhole pallet
+    let transfer_tx = quantus_cli::chain::quantus_subxt::api::tx()
+        .wormhole()
+        .transfer_native(
+            subxt::ext::subxt_core::utils::MultiAddress::Id(unspendable_account_id.clone()),
+            funding_amount,
+        );
+
+    println!("Submitting transfer...");
+
+    let _blocks = at_best_block(quantus_client).await?;
+    submit_transaction(quantus_client, quantum_keypair, transfer_tx, None).await?;
+
+    let blocks = at_best_block(quantus_client).await?;
+    let block_hash = blocks.hash();
+
+    println!("Transfer included in block: {:?}", block_hash);
+
+    let events_api = client.events().at(block_hash).await?;
+
+    let event = events_api
+        .find::<wormhole::events::NativeTransferred>()
+        .next()
+        .expect("should find transfer proof event")
+        .expect("should be valid transfer proof");
+
+    println!(
+        "Amount: {}, Transfer count: {}",
+        event.amount, event.transfer_count
+    );
+
+    // Native token transfers use asset_id = 0
+    let asset_id = 0u32;
+
+    // Convert subxt AccountId32 to sp_core AccountId32 for hash_storage (which requires ToFelts)
+    let from_account = AccountId32::new(event.from.0);
+    let to_account = AccountId32::new(event.to.0);
+
+    let leaf_hash = qp_poseidon::PoseidonHasher::hash_storage::<TransferProofKey>(
+        &(
+            asset_id,
+            event.transfer_count,
+            from_account.clone(),
+            to_account.clone(),
+            event.amount,
+        )
+            .encode(),
+    );
+    let proof_address = quantus_node::storage().wormhole().transfer_proof((
+        asset_id,
+        event.transfer_count,
+        event.from.clone(),
+        event.to.clone(),
+        event.amount,
+    ));
+    let mut final_key = proof_address.to_root_bytes();
+    final_key.extend_from_slice(&leaf_hash);
+
+    let proof_params = rpc_params![vec![to_hex(&final_key)], block_hash];
+    let read_proof: ReadProof<H256> = quantus_client
+        .rpc_client()
+        .request("state_getReadProof", proof_params)
+        .await?;
+
+    let header = blocks.header();
+
+    let state_root = BytesDigest::try_from(header.state_root.as_bytes())?;
+    let parent_hash = BytesDigest::try_from(header.parent_hash.as_bytes())?;
+    let extrinsics_root = BytesDigest::try_from(header.extrinsics_root.as_bytes())?;
+    let digest: [u8; 110] = header.digest.encode().try_into().unwrap();
+
+    let block_number = header.number;
+
+    // Prepare the storage proof with the correct accounts
+    let proof_bytes: Vec<Vec<u8>> = read_proof.proof.iter().map(|b| b.0.clone()).collect();
+    let processed_storage_proof =
+        prepare_proof_for_circuit(proof_bytes, hex::encode(header.state_root.0), leaf_hash)?;
+
+    let inputs = CircuitInputs {
+        private: PrivateCircuitInputs {
+            secret,
+            transfer_count: event.transfer_count,
+            funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
+            storage_proof: processed_storage_proof,
+            unspendable_account: Digest::from(unspendable_account).into(),
+            state_root,
+            extrinsics_root,
+            digest,
+        },
+        public: PublicCircuitInputs {
+            asset_id: 0u32,
+            funding_amount: event.amount,
+            nullifier: Nullifier::from_preimage(secret, event.transfer_count)
+                .hash
+                .into(),
+            exit_account: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
+            block_hash: BytesDigest::try_from(block_hash.as_ref())?,
+            parent_hash,
+            block_number,
+        },
+    };
+
+    Ok(inputs)
 }
 
 /// Fetches the block at the best block number from the Quantus client.
@@ -262,20 +745,49 @@ struct Cli {
     live: bool,
 
     /// Funding account (alice, bob, or charlie)
-    #[arg(long, value_enum, required_if_eq("live", "true"))]
+    #[arg(long, value_enum, required_if_eq_any([("live", "true"), ("generate_and_aggregate", "true")]))]
     funding_account: Option<DevAccount>,
 
     /// Secret as 64-character hex string (32 bytes)
-    #[arg(long, value_parser = parse_hex_32, required_if_eq("live", "true"))]
+    #[arg(long, value_parser = parse_hex_32, required_if_eq_any([("live", "true"), ("generate_and_aggregate", "true")]))]
     secret: Option<[u8; 32]>,
 
     /// Exit account as 64-character hex string (32 bytes)
-    #[arg(long, value_parser = parse_hex_32, required_if_eq("live", "true"))]
+    #[arg(long, value_parser = parse_hex_32, required_if_eq_any([("live", "true"), ("generate_and_aggregate", "true")]))]
     exit_account: Option<[u8; 32]>,
 
     /// Funding amount (minimum: 1_000_000_000_000)
-    #[arg(long, value_parser = parse_funding_amount, required_if_eq("live", "true"))]
+    #[arg(long, value_parser = parse_funding_amount, required_if_eq_any([("live", "true"), ("generate_and_aggregate", "true")]))]
     funding_amount: Option<u128>,
+
+    /// Enable aggregation mode
+    #[arg(long)]
+    aggregate: bool,
+
+    /// Load proofs from files for aggregation (comma-separated paths)
+    #[arg(long, value_delimiter = ',', required_if_eq_all([("aggregate", "true"), ("generate_and_aggregate", "false")]))]
+    proof_files: Option<Vec<String>>,
+
+    /// Output file for aggregated proof
+    #[arg(long, default_value = "aggregated_proof.hex")]
+    aggregated_proof_output: String,
+
+    /// Generate proof and aggregate in one run (combines --live and --aggregate)
+    #[arg(long)]
+    generate_and_aggregate: bool,
+
+    /// Tree depth for aggregation (default: 3, use 1 for minimal 2-proof aggregation)
+    #[arg(long, default_value = "3")]
+    aggregation_depth: u32,
+
+    /// Branching factor for aggregation tree (default: 2)
+    #[arg(long, default_value = "2")]
+    aggregation_branching_factor: usize,
+
+    /// Number of proofs to generate (for --generate-and-aggregate mode)
+    /// Defaults to num_leaf_proofs from aggregation config (branching_factor^depth)
+    #[arg(long)]
+    num_proofs: Option<usize>,
 }
 
 fn parse_hex_32(s: &str) -> Result<[u8; 32], String> {
@@ -301,27 +813,45 @@ fn parse_funding_amount(s: &str) -> Result<u128, String> {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
+    // Build aggregation config from CLI args
+    let aggregation_config =
+        TreeAggregationConfig::new(cli.aggregation_branching_factor, cli.aggregation_depth);
+
+    // Aggregation-only mode (from files)
+    if cli.aggregate && !cli.generate_and_aggregate {
+        let proof_files = cli
+            .proof_files
+            .context("Missing proof files for aggregation")?;
+        return aggregate_proofs(
+            proof_files,
+            &cli.aggregated_proof_output,
+            aggregation_config,
+        );
+    }
+
     // Offline debug mode
-    if !cli.live && std::path::Path::new(DEBUG_FILE).exists() {
+    if !cli.live && !cli.generate_and_aggregate && std::path::Path::new(DEBUG_FILE).exists() {
         println!("Found {}, running in offline debug mode.", DEBUG_FILE);
         let data = std::fs::read_to_string(DEBUG_FILE)?;
         let inputs: DebugInputs = serde_json::from_str(&data)?;
         println!("Loaded debug inputs: {:?}", inputs);
         let circuit_inputs = CircuitInputs::try_from(inputs)?;
-        return generate_zk_proof(circuit_inputs);
+        let proof = generate_zk_proof(circuit_inputs)?;
+        save_proof(&proof, "proof.hex")?;
+        return Ok(());
     }
 
-    // Live mode - all required fields are enforced by clap
+    // Live mode or generate-and-aggregate mode - all required fields are enforced by clap
+    if !cli.live && !cli.generate_and_aggregate {
+        anyhow::bail!("No mode specified. Use --live, --aggregate, or --generate-and-aggregate");
+    }
+
     let dev_account = cli.funding_account.context("Missing funding account")?;
     let secret_bytes = cli.secret.context("Missing secret")?;
     let exit_account_bytes = cli.exit_account.context("Missing exit account")?;
     let funding_amount = cli.funding_amount.context("Missing funding amount")?;
 
-    println!("Running in live mode.");
-
     let quantus_client = QuantusClient::new("ws://localhost:9944").await?;
-    let client = quantus_client.client();
-
     println!("Connected to Substrate node.");
 
     // Get dev account seed
@@ -340,165 +870,81 @@ async fn main() -> anyhow::Result<()> {
         dev_account, &funding_account
     );
 
-    // Secret from CLI
-    let secret: BytesDigest = secret_bytes.try_into()?;
-    let unspendable_account =
-        wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(secret).account_id;
-
-    // Convert Digest (field elements) to BytesDigest (bytes)
-    let unspendable_account_bytes_digest = digest_felts_to_bytes(unspendable_account);
-    let unspendable_account_bytes: [u8; 32] = unspendable_account_bytes_digest
-        .as_ref()
-        .try_into()
-        .expect("BytesDigest is always 32 bytes");
-    let unspendable_account_id = SubxtAccountId(unspendable_account_bytes);
-
-    println!(
-        "Unspendable account (transfer destination): {:?}",
-        &unspendable_account_id
-    );
-
-    // Exit account from CLI
-    let exit_account_id = SubxtAccountId(exit_account_bytes);
-    println!(
-        "Exit account (withdrawal destination): {:?}",
-        &exit_account_id
-    );
-
-    // Make the transfer TO the unspendable account
-    let transfer_tx = quantus_cli::chain::quantus_subxt::api::tx()
-        .balances()
-        .transfer_keep_alive(
-            subxt::ext::subxt_core::utils::MultiAddress::Id(unspendable_account_id.clone()),
-            funding_amount,
-        );
-
-    println!("Submitting transfer from funding account to unspendable account...");
-
-    let blocks = at_best_block(&quantus_client).await?;
-    let block_hash = blocks.hash();
-    println!("Transfer submitted in block: {:?}", block_hash);
-    submit_transaction(&quantus_client, &quantum_keypair, transfer_tx, None).await?;
-
-    let blocks = at_best_block(&quantus_client).await?;
-    let block_hash = blocks.hash();
-
-    println!("Transfer included in block: {:?}", block_hash);
-
-    let events_api = client.events().at(block_hash).await?;
-
-    let event = events_api
-        .find::<wormhole::events::NativeTransferred>()
-        .next()
-        .expect("should find transfer proof event")
-        .expect("should be valid transfer proof");
-
-    let storage_api = client.storage().at(block_hash);
-
-    // Native token transfers use asset_id = 0
-    let asset_id = 0u32;
-    let leaf_hash = qp_poseidon::PoseidonHasher::hash_storage::<AccountId32>(
-        &(
-            asset_id,
-            event.transfer_count,
-            event.from.clone(),
-            event.to.clone(),
-            event.amount,
-        )
-            .encode(),
-    );
-    let proof_address = quantus_node::api::storage().wormhole().transfer_proof((
-        asset_id,
-        event.transfer_count,
-        event.from.clone(),
-        event.to.clone(),
-        event.amount,
-    ));
-    let mut final_key = proof_address.to_root_bytes();
-    final_key.extend_from_slice(&leaf_hash);
-    let val = storage_api.fetch_raw(final_key.clone()).await?;
-    assert!(val.is_some(), "Storage key not found");
-
-    println!(
-        "final key {}, leaf_hash: {}, count: {}",
-        hex::encode(&final_key),
-        hex::encode(leaf_hash),
-        event.transfer_count
-    );
-    let proof_params = rpc_params![vec![to_hex(&final_key)], block_hash];
-    let read_proof: ReadProof<H256> = quantus_client
-        .rpc_client()
-        .request("state_getReadProof", proof_params)
-        .await?;
-
-    println!(
-        "storage proofs {:?}",
-        read_proof
-            .proof
-            .iter()
-            .map(|proof| hex::encode(&proof.0))
-            .collect::<Vec<String>>()
-    );
-
-    println!("Fetching block header...");
-    let header = blocks.header();
-
-    let state_root = BytesDigest::try_from(header.state_root.as_bytes())?;
-    let parent_hash = BytesDigest::try_from(header.parent_hash.as_bytes())?;
-    let extrinsics_root = BytesDigest::try_from(header.extrinsics_root.as_bytes())?;
-    let digest = header.digest.encode().try_into().unwrap();
-
-    let block_number = header.number;
-    println!("Assembling circuit inputs...");
-
-    // Verify that our local unspendable_account matches event.dest
-    println!("\n=== UNSPENDABLE ACCOUNT VERIFICATION ===");
-    println!(
-        "Local unspendable_account_id: {}",
-        hex::encode(unspendable_account_id.0)
-    );
-    println!("Event dest:                   {}", hex::encode(event.to.0));
-    println!("Match: {}", unspendable_account_id.0 == event.to.0);
-    println!("=====================================\n");
-
-    // Prepare the storage proof with the correct accounts
-    let proof_bytes: Vec<Vec<u8>> = read_proof.proof.iter().map(|b| b.0.clone()).collect();
-    let processed_storage_proof =
-        prepare_proof_for_circuit(proof_bytes, hex::encode(header.state_root.0), leaf_hash)?;
-
-    let inputs = CircuitInputs {
-        private: PrivateCircuitInputs {
-            secret,
-            transfer_count: event.transfer_count,
-            funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
-            storage_proof: processed_storage_proof,
-            unspendable_account: Digest::from(unspendable_account).into(),
-            state_root,
-            extrinsics_root,
-            digest,
-        },
-        public: PublicCircuitInputs {
-            asset_id: 0u32,
-            funding_amount: event.amount,
-            nullifier: Nullifier::from_preimage(secret, event.transfer_count)
-                .hash
-                .into(),
-            exit_account: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
-            block_hash: BytesDigest::try_from(block_hash.as_ref())?,
-            parent_hash,
-            block_number,
-        },
+    // Determine number of proofs to generate
+    let num_proofs = if cli.generate_and_aggregate {
+        cli.num_proofs.unwrap_or(aggregation_config.num_leaf_proofs)
+    } else {
+        1 // Single proof for --live mode
     };
 
-    generate_zk_proof(inputs.clone())?;
+    if cli.generate_and_aggregate {
+        println!("Running in generate-and-aggregate mode.");
+        println!(
+            "Will generate {} proofs (aggregation config: branching_factor={}, depth={})",
+            num_proofs, aggregation_config.tree_branching_factor, aggregation_config.tree_depth
+        );
+    } else {
+        println!("Running in live mode (single proof).");
+    }
 
-    // Debug: Save proof nodes to a file for analysis
-    println!("\n=== Saving proof data for analysis ===");
-    let debug_data = DebugInputs::from(inputs);
-    std::fs::write(
-        "proof_debug.json",
-        serde_json::to_string_pretty(&debug_data)?,
-    )?;
-    println!("✓ Proof data saved to proof_debug.json");
+    // Generate all circuit inputs - use batched transfers for multiple proofs (same block)
+    let all_inputs = if num_proofs > 1 {
+        perform_batched_transfers(
+            &quantus_client,
+            &quantum_keypair,
+            &funding_account,
+            secret_bytes,
+            exit_account_bytes,
+            funding_amount,
+            num_proofs,
+        )
+        .await?
+    } else {
+        // Single proof - use the original single transfer function
+        let inputs = perform_transfer_and_get_inputs(
+            &quantus_client,
+            &quantum_keypair,
+            &funding_account,
+            secret_bytes,
+            exit_account_bytes,
+            funding_amount,
+            0,
+        )
+        .await?;
+        vec![inputs]
+    };
+
+    // Generate all proofs
+    println!("\n=== Generating {} ZK Proofs ===", num_proofs);
+    let mut proofs = Vec::with_capacity(num_proofs);
+    for (i, inputs) in all_inputs.iter().enumerate() {
+        println!("Generating proof {}/{}...", i + 1, num_proofs);
+        let proof = generate_zk_proof(inputs.clone())?;
+
+        // Save individual proof
+        let proof_file = format!("proof_{}.hex", i);
+        save_proof(&proof, &proof_file)?;
+        println!("✓ Proof {} saved to {}", i + 1, proof_file);
+
+        proofs.push(proof);
+    }
+
+    // Save last proof as proof.hex for compatibility
+    if let Some(last_proof) = proofs.last() {
+        save_proof(last_proof, "proof.hex")?;
+    }
+
+    // If generate-and-aggregate mode, aggregate all proofs
+    if cli.generate_and_aggregate {
+        println!("\n=== Aggregating {} Proofs ===", proofs.len());
+        println!(
+            "Using aggregation config: branching_factor={}, depth={}, num_leaf_proofs={}",
+            aggregation_config.tree_branching_factor,
+            aggregation_config.tree_depth,
+            aggregation_config.num_leaf_proofs
+        );
+        aggregate_proofs_direct(proofs, &cli.aggregated_proof_output, aggregation_config)?;
+    }
+
     Ok(())
 }
