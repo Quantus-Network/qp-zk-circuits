@@ -58,6 +58,7 @@ impl From<CircuitInputs> for DebugInputs {
         type TransferKey = (u32, u64, AccountId32, AccountId32, u128);
         let hash = qp_poseidon::PoseidonHasher::hash_storage::<TransferKey>(
             &(
+                inputs.public.asset_id,
                 inputs.private.transfer_count,
                 AccountId32::new(*inputs.private.funding_account),
                 AccountId32::new(*inputs.private.unspendable_account),
