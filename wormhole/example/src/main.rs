@@ -12,7 +12,7 @@ use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_poseidon::PoseidonHasher;
 use quantus_cli::chain::quantus_subxt as quantus_node;
 use quantus_cli::chain::quantus_subxt::api::wormhole;
-use quantus_cli::cli::common::submit_transaction;
+use quantus_cli::cli::common::{submit_transaction, ExecutionMode};
 use quantus_cli::qp_dilithium_crypto::DilithiumPair;
 use quantus_cli::wallet::QuantumKeyPair;
 use quantus_cli::{AccountId32, ChainConfig, QuantusClient};
@@ -381,7 +381,14 @@ async fn main() -> anyhow::Result<()> {
     let blocks = at_best_block(&quantus_client).await?;
     let block_hash = blocks.hash();
     println!("Transfer submitted in block: {:?}", block_hash);
-    submit_transaction(&quantus_client, &quantum_keypair, transfer_tx, None).await?;
+    submit_transaction(
+        &quantus_client,
+        &quantum_keypair,
+        transfer_tx,
+        None,
+        ExecutionMode::default(),
+    )
+    .await?;
 
     let blocks = at_best_block(&quantus_client).await?;
     let block_hash = blocks.hash();
