@@ -442,7 +442,10 @@ async fn perform_batched_transfers(
         quantum_keypair,
         batch_tx,
         None,
-        ExecutionMode::default(),
+        ExecutionMode {
+            wait_for_transaction: true,
+            finalized: false,
+        },
     )
     .await?;
 
@@ -617,7 +620,10 @@ async fn perform_transfer_and_get_inputs(
         quantum_keypair,
         transfer_tx,
         None,
-        ExecutionMode::default(),
+        ExecutionMode {
+            wait_for_transaction: true,
+            finalized: false,
+        },
     )
     .await?;
 
