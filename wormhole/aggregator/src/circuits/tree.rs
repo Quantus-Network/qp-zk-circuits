@@ -487,6 +487,7 @@ mod tests {
 
     /// Build one leaf PI in the new layout (funding is 1 felt).
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     fn make_pi_from_felts(
         asset_id: F,
         output_amount: F,
