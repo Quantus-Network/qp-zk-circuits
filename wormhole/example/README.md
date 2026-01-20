@@ -27,6 +27,7 @@
 
 Build and run the example binary:
 
+**Note:** This script runs through the full flow of submitting a transfer, generating a proof and verifying it using the alice dev accoun, sending `1` unit of the native test asset `QUAN` (1 with 12 decimal places of precision) to the unspendable account derived from the provided secret.
 ```bash
 cargo run --release --bin wormhole-example -- \
     --live \
@@ -90,8 +91,8 @@ cargo run --release --bin wormhole-example -- \
     --exit-account fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
     ```
 
-- `--funding-amount <u128>`
-    Amount (in the chain's base units, set at 12 decimals currently) to transfer to the unspendable account. Requirements:
+- `--funding-amount <u128>`  
+    Amount (in the circuit's base units, set at 12 decimals currently) to transfer to the unspendable account. Requirements:
     - A valid `u128` integer
     - ≥ `1_000_000_000_000`
     Example:

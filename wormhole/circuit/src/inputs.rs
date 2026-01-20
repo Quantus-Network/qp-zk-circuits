@@ -7,25 +7,24 @@ use plonky2::field::goldilocks_field::GoldilocksField;
 use plonky2::field::types::PrimeField64;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use zk_circuits_common::circuit::{C, D, F};
-use zk_circuits_common::utils::{felts_to_u128, BytesDigest, DIGEST_BYTES_LEN};
+use zk_circuits_common::utils::{BytesDigest, DIGEST_BYTES_LEN};
 
 /// The total size of the public inputs field element vector.
-pub const PUBLIC_INPUTS_FELTS_LEN: usize = 22;
+pub const PUBLIC_INPUTS_FELTS_LEN: usize = 19;
 pub const ASSET_ID_INDEX: usize = 0;
 // Note: funding_amount comes before nullifier because LeafTargets::new() is called
 // before NullifierTargets::new() to ensure asset_id is the first public input.
-pub const FUNDING_AMOUNT_START_INDEX: usize = 1;
-pub const FUNDING_AMOUNT_END_INDEX: usize = 5;
-pub const NULLIFIER_START_INDEX: usize = 5;
-pub const NULLIFIER_END_INDEX: usize = 9;
-pub const EXIT_ACCOUNT_START_INDEX: usize = 9;
-pub const EXIT_ACCOUNT_END_INDEX: usize = 13;
-pub const BLOCK_HASH_START_INDEX: usize = 13;
-pub const BLOCK_HASH_END_INDEX: usize = 17;
-pub const PARENT_HASH_START_INDEX: usize = 17;
-pub const PARENT_HASH_END_INDEX: usize = 21;
-pub const BLOCK_NUMBER_INDEX: usize = 21;
-pub const BLOCK_NUMBER_END_INDEX: usize = 22;
+pub const FUNDING_AMOUNT_INDEX: usize = 1;
+pub const NULLIFIER_START_INDEX: usize = 2;
+pub const NULLIFIER_END_INDEX: usize = 6;
+pub const EXIT_ACCOUNT_START_INDEX: usize = 6;
+pub const EXIT_ACCOUNT_END_INDEX: usize = 10;
+pub const BLOCK_HASH_START_INDEX: usize = 10;
+pub const BLOCK_HASH_END_INDEX: usize = 14;
+pub const PARENT_HASH_START_INDEX: usize = 14;
+pub const PARENT_HASH_END_INDEX: usize = 18;
+pub const BLOCK_NUMBER_INDEX: usize = 18;
+pub const BLOCK_NUMBER_END_INDEX: usize = 19;
 
 /// Inputs required to commit to the wormhole circuit.
 #[derive(Debug, Clone)]
@@ -39,8 +38,10 @@ pub struct CircuitInputs {
 pub struct PublicCircuitInputs {
     /// The asset ID (0 for native token).
     pub asset_id: u32,
-    /// Amount to be withdrawn.
-    pub funding_amount: u128,
+    /// Amount to be withdrawn. This value is quantized with 0.01 units of precision.
+    /// **DEV NOTE**: The funding amount unit on chain is still u128 with 12 decimals so we will need to
+    /// scale by 10^10 when constructing the funding amount during on-chain verification.
+    pub funding_amount: u32,
     /// The nullifier.
     pub nullifier: BytesDigest,
     /// The address of the account to pay out to.
@@ -57,7 +58,7 @@ pub struct PublicCircuitInputs {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicInputsByAccount {
     /// Funding amounts of duplicate exit accounts summed.
-    pub summed_funding_amount: u128,
+    pub summed_funding_amount: u32,
     /// The address of the account to pay out to.
     pub exit_account: BytesDigest,
 }
@@ -124,7 +125,8 @@ impl AggregatedPublicCircuitInputs {
         let mut expected_felts = 7usize; // for account_count + asset_id + block_data (5 felts)
 
         let hash_item_felts = 4;
-        expected_felts += hash_item_felts * (account_count * 2); // funding_sum + exit_account (4 felts each)
+        expected_felts += account_count; // funding_sum (1 felt each)
+        expected_felts += hash_item_felts * (account_count); // exit_account (4 felts each)
         expected_felts += hash_item_felts * (n_leaf); // nullifiers (4 felts each)
         anyhow::ensure!(
             expected_felts <= pis.len(),
@@ -137,11 +139,6 @@ impl AggregatedPublicCircuitInputs {
         #[inline]
         fn read_digest(slice: &[F]) -> anyhow::Result<BytesDigest> {
             BytesDigest::try_from(slice).context("failed to deserialize BytesDigest")
-        }
-        #[inline]
-        fn read_u128(slice4: &[F]) -> anyhow::Result<u128> {
-            let arr: [F; 4] = slice4.try_into().expect("slice of 4 felts");
-            felts_to_u128(arr).map_err(|e| anyhow::anyhow!("felts_to_u128 error: {:?}", e))
         }
 
         let block_data = BlockData {
@@ -157,9 +154,9 @@ impl AggregatedPublicCircuitInputs {
         let mut nullifiers: Vec<BytesDigest> = Vec::with_capacity(n_leaf);
 
         for _ in 0..account_count {
-            // funding_sum (4 felts, BE limbs)
-            let summed_funding_amount = read_u128(&pis[cursor..cursor + 4])?;
-            cursor += 4;
+            // funding_sum (1 felt)
+            let summed_funding_amount = pis[cursor].to_canonical_u64() as u32;
+            cursor += 1;
 
             // exit_account (4 felts)
             let exit_account =
@@ -200,7 +197,7 @@ impl PublicCircuitInputs {
     pub fn try_from_slice(pis: &[GoldilocksField]) -> anyhow::Result<Self> {
         // Public inputs are ordered as follows:
         // asset_id: 1 felt
-        // StorageProof.funding_amount: 4 felts
+        // StorageProof.funding_amount: 1 felt
         // Nullifier.hash: 4 felts
         // ExitAccount.address: 4 felts
         // BlockHeader.block_hash: 4 felts
@@ -221,11 +218,11 @@ impl PublicCircuitInputs {
             .context("failed to deserialize nullifier hash")?;
         let block_hash = BytesDigest::try_from(&pis[BLOCK_HASH_START_INDEX..BLOCK_HASH_END_INDEX])
             .context("failed to deserialize block hash")?;
-        let funding_amount = felts_to_u128(
-            <[F; 4]>::try_from(&pis[FUNDING_AMOUNT_START_INDEX..FUNDING_AMOUNT_END_INDEX])
-                .context("failed to deserialize funding amount")?,
-        )
-        .unwrap();
+        let funding_amount = pis[FUNDING_AMOUNT_INDEX]
+            .to_canonical_u64()
+            .try_into()
+            .context("failed to convert asset_id felt to u32")?;
+
         let exit_account =
             BytesDigest::try_from(&pis[EXIT_ACCOUNT_START_INDEX..EXIT_ACCOUNT_END_INDEX])
                 .context("failed to deserialize exit account")?;

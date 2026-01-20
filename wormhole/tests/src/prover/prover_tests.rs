@@ -31,7 +31,7 @@ fn proof_can_be_deserialized() {
     // Build the expected values
     let expected = PublicCircuitInputs {
         asset_id: 0u32,
-        funding_amount: 1_000_000_000_000u128,
+        funding_amount: 100u32,
         nullifier: BytesDigest::try_from([
             102, 213, 23, 119, 137, 1, 172, 231, 97, 86, 27, 28, 210, 26, 24, 162, 195, 135, 231,
             170, 205, 111, 30, 63, 225, 212, 217, 138, 233, 170, 170, 122,

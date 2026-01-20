@@ -14,7 +14,7 @@ use quantus_cli::chain::quantus_subxt::api as quantus_node;
 use quantus_cli::chain::quantus_subxt::api::runtime_types::pallet_wormhole::pallet::Call as WormholeCall;
 use quantus_cli::chain::quantus_subxt::api::runtime_types::quantus_runtime::RuntimeCall;
 use quantus_cli::chain::quantus_subxt::api::wormhole;
-use quantus_cli::cli::common::submit_transaction;
+use quantus_cli::cli::common::{submit_transaction, ExecutionMode};
 use quantus_cli::qp_dilithium_crypto::DilithiumPair;
 use quantus_cli::wallet::QuantumKeyPair;
 use quantus_cli::{AccountId32, ChainConfig, QuantusClient};
@@ -41,6 +41,7 @@ use zk_circuits_common::storage_proof::prepare_proof_for_circuit;
 use zk_circuits_common::utils::{digest_felts_to_bytes, BytesDigest, Digest};
 
 const DEBUG_FILE: &str = "proof_debug.json";
+const SCALE_DOWN_FACTOR: u128 = 10_000_000_000u128; // 10^10
 
 #[derive(Serialize, Deserialize, Debug)]
 struct DebugInputs {
@@ -52,7 +53,7 @@ struct DebugInputs {
     transfer_count: u64,
     funding_account_hex: String,
     dest_account_hex: String,
-    funding_amount: u128,
+    funding_amount: u32,
     block_hash_hex: String,
     extrinsics_root_hex: String,
     digest_hex: String,
@@ -62,13 +63,14 @@ struct DebugInputs {
 
 impl From<CircuitInputs> for DebugInputs {
     fn from(inputs: CircuitInputs) -> Self {
-        let hash = qp_poseidon::PoseidonHasher::hash_storage::<TransferProofKey>(
+        type TransferKey = (u32, u64, AccountId32, AccountId32, u128);
+        let hash = qp_poseidon::PoseidonHasher::hash_storage::<TransferKey>(
             &(
                 inputs.public.asset_id,
                 inputs.private.transfer_count,
                 AccountId32::new(*inputs.private.funding_account),
                 AccountId32::new(*inputs.private.unspendable_account),
-                inputs.public.funding_amount,
+                (inputs.public.funding_amount as u128) * SCALE_DOWN_FACTOR,
             )
                 .encode(),
         );
@@ -435,7 +437,17 @@ async fn perform_batched_transfers(
     let batch_tx = quantus_node::tx().utility().batch_all(calls);
 
     let _blocks = at_best_block(quantus_client).await?;
-    submit_transaction(quantus_client, quantum_keypair, batch_tx, None).await?;
+    submit_transaction(
+        quantus_client,
+        quantum_keypair,
+        batch_tx,
+        None,
+        ExecutionMode {
+            wait_for_transaction: true,
+            finalized: false,
+        },
+    )
+    .await?;
 
     let blocks = at_best_block(quantus_client).await?;
     let block_hash = blocks.hash();
@@ -544,7 +556,7 @@ async fn perform_batched_transfers(
             },
             public: PublicCircuitInputs {
                 asset_id: 0u32,
-                funding_amount: event.amount,
+                funding_amount: (event.amount / SCALE_DOWN_FACTOR) as u32,
                 nullifier: Nullifier::from_preimage(*secret, event.transfer_count)
                     .hash
                     .into(),
@@ -603,7 +615,17 @@ async fn perform_transfer_and_get_inputs(
     println!("Submitting transfer...");
 
     let _blocks = at_best_block(quantus_client).await?;
-    submit_transaction(quantus_client, quantum_keypair, transfer_tx, None).await?;
+    submit_transaction(
+        quantus_client,
+        quantum_keypair,
+        transfer_tx,
+        None,
+        ExecutionMode {
+            wait_for_transaction: true,
+            finalized: false,
+        },
+    )
+    .await?;
 
     let blocks = at_best_block(quantus_client).await?;
     let block_hash = blocks.hash();
@@ -625,17 +647,13 @@ async fn perform_transfer_and_get_inputs(
 
     // Native token transfers use asset_id = 0
     let asset_id = 0u32;
-
-    // Convert subxt AccountId32 to sp_core AccountId32 for hash_storage (which requires ToFelts)
-    let from_account = AccountId32::new(event.from.0);
-    let to_account = AccountId32::new(event.to.0);
-
-    let leaf_hash = qp_poseidon::PoseidonHasher::hash_storage::<TransferProofKey>(
+    type TransferKey = (u32, u64, AccountId32, AccountId32, u128);
+    let leaf_hash = qp_poseidon::PoseidonHasher::hash_storage::<TransferKey>(
         &(
             asset_id,
             event.transfer_count,
-            from_account.clone(),
-            to_account.clone(),
+            event.from.clone(),
+            event.to.clone(),
             event.amount,
         )
             .encode(),
@@ -670,6 +688,9 @@ async fn perform_transfer_and_get_inputs(
     let processed_storage_proof =
         prepare_proof_for_circuit(proof_bytes, hex::encode(header.state_root.0), leaf_hash)?;
 
+    // We need to quantize the funding amount to use 2 decimal places of precision (divide by 10^10 since original uses 12)
+    let funding_amount = (event.amount / SCALE_DOWN_FACTOR) as u32;
+
     let inputs = CircuitInputs {
         private: PrivateCircuitInputs {
             secret,
@@ -683,7 +704,7 @@ async fn perform_transfer_and_get_inputs(
         },
         public: PublicCircuitInputs {
             asset_id: 0u32,
-            funding_amount: event.amount,
+            funding_amount,
             nullifier: Nullifier::from_preimage(secret, event.transfer_count)
                 .hash
                 .into(),

@@ -139,7 +139,7 @@ fn aggregate_public_inputs(
             by_account
                 .entry(leaf.exit_account)
                 .or_insert_with(|| PublicInputsByAccount {
-                    summed_funding_amount: 0u128,
+                    summed_funding_amount: 0u32,
                     exit_account: leaf.exit_account,
                 });
 

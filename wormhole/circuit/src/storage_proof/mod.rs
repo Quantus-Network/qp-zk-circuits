@@ -266,9 +266,9 @@ impl CircuitFragment for StorageProof {
         )?;
         pw.set_hash_target(targets.leaf_inputs.funding_account, funding_account)?;
         pw.set_hash_target(targets.leaf_inputs.to_account, to_account)?;
-        pw.set_target_arr(
-            &targets.leaf_inputs.funding_amount,
-            &self.leaf_inputs.funding_amount,
+        pw.set_target(
+            targets.leaf_inputs.funding_amount,
+            self.leaf_inputs.funding_amount,
         )?;
 
         Ok(())
