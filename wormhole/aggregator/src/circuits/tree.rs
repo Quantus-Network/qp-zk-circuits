@@ -27,14 +27,15 @@ pub const DEFAULT_TREE_BRANCHING_FACTOR: usize = 2;
 /// leaf nodes and the root node.
 pub const DEFAULT_TREE_DEPTH: u32 = 3;
 
-const LEAF_PI_LEN: usize = 19;
+const LEAF_PI_LEN: usize = 20;
 const ASSET_ID_START: usize = 0; // 1 felt
-const FUNDING_START: usize = 1; // 1 felt (not used in dedupe output)
-const NULLIFIER_START: usize = 2; // 4 felts
-const EXIT_START: usize = 6; // 4 felts
-const BLOCK_HASH_START: usize = 10; // 4 felts
-const PARENT_HASH_START: usize = 14; // 4 felts
-const BLOCK_NUMBER_START: usize = 18; // 1 felt
+const OUTPUT_AMOUNT_START: usize = 1; // 1 felt (output amount after fee deduction)
+const VOLUME_FEE_BPS_START: usize = 2; // 1 felt (volume fee in basis points)
+const NULLIFIER_START: usize = 3; // 4 felts
+const EXIT_START: usize = 7; // 4 felts
+const BLOCK_HASH_START: usize = 11; // 4 felts
+const PARENT_HASH_START: usize = 15; // 4 felts
+const BLOCK_NUMBER_START: usize = 19; // 1 felt
 /// A proof containing both the proof data and the circuit data needed to verify it.
 #[derive(Debug)]
 pub struct AggregatedProof<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
@@ -292,6 +293,10 @@ fn aggregate_dedupe_public_inputs(
     // Retrive the asset ID from the first leaf proof
     let asset_ref = limb1_at_offset::<LEAF_PI_LEN, ASSET_ID_START>(child_pi_targets, 0);
 
+    // Retrieve the volume_fee_bps from the first leaf proof
+    let volume_fee_bps_ref =
+        limb1_at_offset::<LEAF_PI_LEN, VOLUME_FEE_BPS_START>(child_pi_targets, 0);
+
     // Build deduped output
     let mut deduped_pis: Vec<Target> = Vec::new();
 
@@ -299,6 +304,8 @@ fn aggregate_dedupe_public_inputs(
     deduped_pis.push(num_exits_t);
     // 2) PREPEND the asset ID
     deduped_pis.push(asset_ref);
+    // 3) PREPEND the volume_fee_bps
+    deduped_pis.push(volume_fee_bps_ref);
 
     let one: Target = builder.one();
 
@@ -343,8 +350,8 @@ fn aggregate_dedupe_public_inputs(
             let exit_i = limbs4_at_offset::<LEAF_PI_LEN, EXIT_START>(child_pi_targets, idx);
             let ee = bytes_digest_eq(&mut builder, exit_i, exit_ref);
             builder.connect(ee.target, one);
-            // Sum funding amounts
-            let fund_i = limb1_at_offset::<LEAF_PI_LEN, FUNDING_START>(child_pi_targets, idx);
+            // Sum output amounts
+            let fund_i = limb1_at_offset::<LEAF_PI_LEN, OUTPUT_AMOUNT_START>(child_pi_targets, idx);
             let sum = builder.add(acc, fund_i);
             acc = sum;
         }
@@ -354,7 +361,7 @@ fn aggregate_dedupe_public_inputs(
         deduped_pis.push(acc);
         deduped_pis.extend_from_slice(&exit_ref);
     }
-    // Forward ALL nullifiers and enforce single-asset tree
+    // Forward ALL nullifiers and enforce single-asset tree with same volume_fee_bps
     for i in 0..n_leaf {
         deduped_pis.extend_from_slice(&limbs4_at_offset::<LEAF_PI_LEN, NULLIFIER_START>(
             child_pi_targets,
@@ -362,10 +369,14 @@ fn aggregate_dedupe_public_inputs(
         ));
         let asset_i = limb1_at_offset::<LEAF_PI_LEN, ASSET_ID_START>(child_pi_targets, i);
         builder.connect(asset_i, asset_ref);
+        // Enforce all leaves have the same volume_fee_bps
+        let volume_fee_bps_i =
+            limb1_at_offset::<LEAF_PI_LEN, VOLUME_FEE_BPS_START>(child_pi_targets, i);
+        builder.connect(volume_fee_bps_i, volume_fee_bps_ref);
     }
 
-    // Pad the rest of the deduped_pis until it is equal to root_pi_len + 2 (for the exit account count and asset ID metadata)
-    while deduped_pis.len() < root_pi_len + 2 {
+    // Pad the rest of the deduped_pis until it is equal to root_pi_len + 3 (for the exit account count, asset ID, and volume_fee_bps metadata)
+    while deduped_pis.len() < root_pi_len + 3 {
         deduped_pis.push(builder.zero());
     }
 
@@ -408,19 +419,21 @@ mod tests {
 
     use super::{
         aggregate_to_tree, AggregatedProof, TreeAggregationConfig, ASSET_ID_START,
-        BLOCK_HASH_START, BLOCK_NUMBER_START, EXIT_START, FUNDING_START, LEAF_PI_LEN,
-        NULLIFIER_START, PARENT_HASH_START,
+        BLOCK_HASH_START, BLOCK_NUMBER_START, EXIT_START, LEAF_PI_LEN, NULLIFIER_START,
+        OUTPUT_AMOUNT_START, PARENT_HASH_START, VOLUME_FEE_BPS_START,
     };
 
     const TEST_ASSET_ID_U64: u64 = 0;
+    const TEST_VOLUME_FEE_BPS: u64 = 10; // 0.1% = 10 basis points
 
     // ---------------- Circuit ----------------
 
     /// Dummy wormhole leaf for the *new* aggregator layout:
     ///
-    /// PIs per leaf (length = LEAF_PI_LEN = 22):
+    /// PIs per leaf (length = LEAF_PI_LEN = 20):
     ///   [ asset_id(1×felt),
-    ///     funding(1×felt),
+    ///     output_amount(1×felt),
+    ///     volume_fee_bps(1×felt),
     ///     nullifier(4×felt),
     ///     exit(4×felt),
     ///     block_hash(4×felt),
@@ -437,7 +450,8 @@ mod tests {
             .try_into()
             .expect("exactly LEAF_PI_LEN targets");
 
-        builder.range_check(pis[FUNDING_START], 32);
+        builder.range_check(pis[OUTPUT_AMOUNT_START], 32);
+        builder.range_check(pis[VOLUME_FEE_BPS_START], 32);
 
         builder.register_public_inputs(&pis_vec);
 
@@ -475,7 +489,8 @@ mod tests {
     #[inline]
     fn make_pi_from_felts(
         asset_id: F,
-        funding: F,
+        output_amount: F,
+        volume_fee_bps: F,
         nullifier: [F; 4],
         exit: [F; 4],
         block_hash: [F; 4],
@@ -484,7 +499,8 @@ mod tests {
     ) -> [F; LEAF_PI_LEN] {
         let mut out = [F::ZERO; LEAF_PI_LEN];
         out[ASSET_ID_START] = asset_id;
-        out[FUNDING_START] = funding;
+        out[OUTPUT_AMOUNT_START] = output_amount;
+        out[VOLUME_FEE_BPS_START] = volume_fee_bps;
         out[NULLIFIER_START..NULLIFIER_START + 4].copy_from_slice(&nullifier);
         out[EXIT_START..EXIT_START + 4].copy_from_slice(&exit);
         out[BLOCK_HASH_START..BLOCK_HASH_START + 4].copy_from_slice(&block_hash);
@@ -673,6 +689,7 @@ mod tests {
 
         let block_numbers: [F; 8] = core::array::from_fn(|i| F::from_canonical_u64(i as u64));
         let asset_id = F::from_canonical_u64(TEST_ASSET_ID_U64);
+        let volume_fee_bps = F::from_canonical_u64(TEST_VOLUME_FEE_BPS);
 
         // Build leaves.
         let mut pis_list: Vec<[F; LEAF_PI_LEN]> = Vec::with_capacity(8);
@@ -685,7 +702,14 @@ mod tests {
             let bnum = block_numbers[i];
 
             pis_list.push(make_pi_from_felts(
-                asset_id, ffel, nfel, efel, bhash, phash, bnum,
+                asset_id,
+                ffel,
+                volume_fee_bps,
+                nfel,
+                efel,
+                bhash,
+                phash,
+                bnum,
             ));
         }
 
@@ -758,10 +782,10 @@ mod tests {
         // ---------------------------
         let pis = &root_proof.proof.public_inputs;
         let root_pi_len = n_leaf * LEAF_PI_LEN;
-        assert_eq!(pis.len(), root_pi_len + 2);
+        assert_eq!(pis.len(), root_pi_len + 3);
 
         // Layout:
-        // [ num_exits(1), asset_id(1), last_block_hash(4), last_block_number(1),
+        // [ num_exits(1), asset_id(1), volume_fee_bps(1), last_block_hash(4), last_block_number(1),
         //   [funding_sum(1), exit(4)]*, nullifiers(4)*, padding... ]
         let num_exits_circuit = pis[0].to_canonical_u64() as usize;
         assert_eq!(num_exits_circuit, num_exits_ref);
@@ -769,12 +793,15 @@ mod tests {
         let asset_id_circuit = pis[1];
         assert_eq!(asset_id_circuit, asset_id);
 
-        let last_block_hash_circuit: [F; 4] = [pis[2], pis[3], pis[4], pis[5]];
-        let last_block_num_circuit = pis[6];
+        let volume_fee_bps_circuit = pis[2];
+        assert_eq!(volume_fee_bps_circuit, volume_fee_bps);
+
+        let last_block_hash_circuit: [F; 4] = [pis[3], pis[4], pis[5], pis[6]];
+        let last_block_num_circuit = pis[7];
         assert_eq!(last_block_hash_circuit, last_block_hash_ref);
         assert_eq!(last_block_num_circuit, last_block_num_ref);
 
-        let mut idx = 7usize;
+        let mut idx = 8usize;
 
         // Exit sums region: [funding_sum(1), exit(4)]*
         let mut exit_sums_from_circuit: BTreeMap<[F; 4], F> = BTreeMap::new();
@@ -846,6 +873,7 @@ mod tests {
 
         let block_numbers: [F; 8] = core::array::from_fn(|i| F::from_canonical_u64(i as u64));
         let asset_id = F::from_canonical_u64(TEST_ASSET_ID_U64);
+        let volume_fee_bps = F::from_canonical_u64(TEST_VOLUME_FEE_BPS);
 
         let mut pis_list: Vec<[F; LEAF_PI_LEN]> = Vec::with_capacity(8);
         for i in 0..8 {
@@ -857,7 +885,14 @@ mod tests {
             let bnum = block_numbers[i];
 
             pis_list.push(make_pi_from_felts(
-                asset_id, ffel, nfel, efel, bhash, phash, bnum,
+                asset_id,
+                ffel,
+                volume_fee_bps,
+                nfel,
+                efel,
+                bhash,
+                phash,
+                bnum,
             ));
         }
 
@@ -896,6 +931,7 @@ mod tests {
         parent_hashes_felts[1..8].copy_from_slice(&block_hashes_felts[..7]);
 
         let block_numbers: [F; 8] = core::array::from_fn(|i| F::from_canonical_u64(i as u64));
+        let volume_fee_bps = F::from_canonical_u64(TEST_VOLUME_FEE_BPS);
 
         let mut pis_list: Vec<[F; LEAF_PI_LEN]> = Vec::with_capacity(8);
         for i in 0..8 {
@@ -903,6 +939,7 @@ mod tests {
             pis_list.push(make_pi_from_felts(
                 asset_id,
                 funding_felts[i],
+                volume_fee_bps,
                 nullifiers_felts[i],
                 exits_felts[i],
                 block_hashes_felts[i],

@@ -22,7 +22,13 @@ pub const DEFAULT_FUNDING_ACCOUNT: [u8; 32] = [
     226, 124, 203, 9, 80, 60, 124, 205, 165, 5, 178, 216, 195, 15, 149, 38, 116, 1, 238, 133, 181,
     154, 106, 17, 41, 228, 118, 179, 82, 141, 225, 76,
 ];
-pub const DEFAULT_FUNDING_AMOUNTS: [u32; 2] = [100, 300];
+pub const DEFAULT_INPUT_AMOUNTS: [u32; 2] = [100, 300];
+/// Output amounts after 10 bps (0.1%) fee deduction: input - (input * 10 / 10000)
+/// 100 - (100 * 10 / 10000) = 100 - 0 = 100 (due to integer division)
+/// 300 - (300 * 10 / 10000) = 300 - 0 = 300 (due to integer division)
+/// For test purposes, we use slightly lower values to ensure the constraint passes
+pub const DEFAULT_OUTPUT_AMOUNTS: [u32; 2] = [99, 297];
+pub const DEFAULT_VOLUME_FEE_BPS: u32 = 10; // 0.1% = 10 basis points
 pub const DEFAULT_TO_ACCOUNTS: [[u8; 32]; 2] = [
     [
         77, 56, 171, 201, 89, 235, 126, 17, 82, 111, 214, 50, 199, 61, 71, 232, 148, 89, 114, 250,
@@ -69,7 +75,8 @@ impl TestInputs for CircuitInputs {
         Self {
             public: PublicCircuitInputs {
                 asset_id: 0u32,
-                funding_amount: DEFAULT_FUNDING_AMOUNTS[0],
+                output_amount: DEFAULT_OUTPUT_AMOUNTS[0],
+                volume_fee_bps: DEFAULT_VOLUME_FEE_BPS,
                 nullifier,
                 exit_account,
                 block_hash: BytesDigest::try_from(DEFAULT_BLOCK_HASHES[0]).unwrap(),
@@ -85,6 +92,7 @@ impl TestInputs for CircuitInputs {
                 state_root: root_hash,
                 extrinsics_root: DEFAULT_EXTRINSICS_ROOTS[0].try_into().unwrap(),
                 digest: DEFAULT_DIGESTS[0],
+                input_amount: DEFAULT_INPUT_AMOUNTS[0],
             },
         }
     }
@@ -109,7 +117,8 @@ impl TestInputs for CircuitInputs {
         Self {
             public: PublicCircuitInputs {
                 asset_id: 0u32,
-                funding_amount: DEFAULT_FUNDING_AMOUNTS[1],
+                output_amount: DEFAULT_OUTPUT_AMOUNTS[1],
+                volume_fee_bps: DEFAULT_VOLUME_FEE_BPS,
                 nullifier,
                 exit_account,
                 block_hash: BytesDigest::try_from(DEFAULT_BLOCK_HASHES[1]).unwrap(),
@@ -125,6 +134,7 @@ impl TestInputs for CircuitInputs {
                 state_root: root_hash,
                 extrinsics_root: DEFAULT_EXTRINSICS_ROOTS[1].try_into().unwrap(),
                 digest: DEFAULT_DIGESTS[1],
+                input_amount: DEFAULT_INPUT_AMOUNTS[1],
             },
         }
     }
@@ -138,8 +148,8 @@ impl TestAggrInputs for CircuitInputs {
 
 pub mod storage_proof {
     use crate::{
-        TestInputs, DEFAULT_FUNDING_ACCOUNT, DEFAULT_FUNDING_AMOUNTS, DEFAULT_TO_ACCOUNTS,
-        DEFAULT_TRANSFER_COUNTS,
+        TestInputs, DEFAULT_FUNDING_ACCOUNT, DEFAULT_INPUT_AMOUNTS, DEFAULT_OUTPUT_AMOUNTS,
+        DEFAULT_TO_ACCOUNTS, DEFAULT_TRANSFER_COUNTS, DEFAULT_VOLUME_FEE_BPS,
     };
     use wormhole_circuit::storage_proof::{leaf::LeafInputs, ProcessedStorageProof, StorageProof};
     use zk_circuits_common::utils::BytesDigest;
@@ -197,7 +207,9 @@ pub mod storage_proof {
                 DEFAULT_TRANSFER_COUNTS[0],
                 funding_account,
                 to_account,
-                DEFAULT_FUNDING_AMOUNTS[0],
+                DEFAULT_INPUT_AMOUNTS[0],
+                DEFAULT_OUTPUT_AMOUNTS[0],
+                DEFAULT_VOLUME_FEE_BPS,
             )
             .unwrap()
         }
@@ -209,7 +221,9 @@ pub mod storage_proof {
                 DEFAULT_TRANSFER_COUNTS[1],
                 funding_account,
                 to_account,
-                DEFAULT_FUNDING_AMOUNTS[1],
+                DEFAULT_INPUT_AMOUNTS[1],
+                DEFAULT_OUTPUT_AMOUNTS[1],
+                DEFAULT_VOLUME_FEE_BPS,
             )
             .unwrap()
         }

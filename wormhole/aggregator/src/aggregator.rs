@@ -69,7 +69,7 @@ impl WormholeProofAggregator {
     }
 
     /// Extract and aggregate leaf public inputs from the filled proof buffer OUTSIDE the circuit.
-    /// Groups by `blocks`, then `exit_account`, sums `funding_amount`, and collects `nullifiers`.
+    /// Groups by `blocks`, then `exit_account`, sums `output_amount`, and collects `nullifiers`.
     /// Used for sanity checks to ensure it matches the public inputs results from the aggregation circuit.
     pub fn parse_aggregated_public_inputs_from_proof_buffer(
         &self,
@@ -120,10 +120,23 @@ impl WormholeProofAggregator {
 fn aggregate_public_inputs(
     leaves: Vec<PublicCircuitInputs>,
 ) -> anyhow::Result<AggregatedPublicCircuitInputs> {
-    let asset_id = leaves
+    let first_leaf = leaves
         .first()
-        .ok_or_else(|| anyhow::anyhow!("no leaves provided"))?
-        .asset_id;
+        .ok_or_else(|| anyhow::anyhow!("no leaves provided"))?;
+    let asset_id = first_leaf.asset_id;
+    let volume_fee_bps = first_leaf.volume_fee_bps;
+
+    // Verify all leaves have the same volume_fee_bps
+    for leaf in &leaves {
+        if leaf.volume_fee_bps != volume_fee_bps {
+            anyhow::bail!(
+                "all leaves must have the same volume_fee_bps, expected {} but got {}",
+                volume_fee_bps,
+                leaf.volume_fee_bps
+            );
+        }
+    }
+
     let mut by_account: BTreeMap<BytesDigest, PublicInputsByAccount> = BTreeMap::new();
     let nullifiers: Vec<BytesDigest> = leaves.iter().map(|leaf| leaf.nullifier).collect();
 
@@ -139,17 +152,17 @@ fn aggregate_public_inputs(
             by_account
                 .entry(leaf.exit_account)
                 .or_insert_with(|| PublicInputsByAccount {
-                    summed_funding_amount: 0u32,
+                    summed_output_amount: 0u32,
                     exit_account: leaf.exit_account,
                 });
 
-        // Sum funding amounts with overflow check (fail fast if unrealistic overflow happens).
-        acct_entry.summed_funding_amount = acct_entry
-            .summed_funding_amount
-            .checked_add(leaf.funding_amount)
+        // Sum output amounts with overflow check (fail fast if unrealistic overflow happens).
+        acct_entry.summed_output_amount = acct_entry
+            .summed_output_amount
+            .checked_add(leaf.output_amount)
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "overflow while summing funding amounts for exit account {:?}",
+                    "overflow while summing output amounts for exit account {:?}",
                     acct_entry.exit_account
                 )
             })?;
@@ -162,6 +175,7 @@ fn aggregate_public_inputs(
 
     Ok(AggregatedPublicCircuitInputs {
         asset_id,
+        volume_fee_bps,
         block_data,
         account_data: accounts,
         nullifiers,

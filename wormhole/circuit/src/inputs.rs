@@ -10,21 +10,22 @@ use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::utils::{BytesDigest, DIGEST_BYTES_LEN};
 
 /// The total size of the public inputs field element vector.
-pub const PUBLIC_INPUTS_FELTS_LEN: usize = 19;
+pub const PUBLIC_INPUTS_FELTS_LEN: usize = 20;
 pub const ASSET_ID_INDEX: usize = 0;
-// Note: funding_amount comes before nullifier because LeafTargets::new() is called
+// Note: output_amount and volume_fee_bps come before nullifier because LeafTargets::new() is called
 // before NullifierTargets::new() to ensure asset_id is the first public input.
-pub const FUNDING_AMOUNT_INDEX: usize = 1;
-pub const NULLIFIER_START_INDEX: usize = 2;
-pub const NULLIFIER_END_INDEX: usize = 6;
-pub const EXIT_ACCOUNT_START_INDEX: usize = 6;
-pub const EXIT_ACCOUNT_END_INDEX: usize = 10;
-pub const BLOCK_HASH_START_INDEX: usize = 10;
-pub const BLOCK_HASH_END_INDEX: usize = 14;
-pub const PARENT_HASH_START_INDEX: usize = 14;
-pub const PARENT_HASH_END_INDEX: usize = 18;
-pub const BLOCK_NUMBER_INDEX: usize = 18;
-pub const BLOCK_NUMBER_END_INDEX: usize = 19;
+pub const OUTPUT_AMOUNT_INDEX: usize = 1;
+pub const VOLUME_FEE_BPS_INDEX: usize = 2;
+pub const NULLIFIER_START_INDEX: usize = 3;
+pub const NULLIFIER_END_INDEX: usize = 7;
+pub const EXIT_ACCOUNT_START_INDEX: usize = 7;
+pub const EXIT_ACCOUNT_END_INDEX: usize = 11;
+pub const BLOCK_HASH_START_INDEX: usize = 11;
+pub const BLOCK_HASH_END_INDEX: usize = 15;
+pub const PARENT_HASH_START_INDEX: usize = 15;
+pub const PARENT_HASH_END_INDEX: usize = 19;
+pub const BLOCK_NUMBER_INDEX: usize = 19;
+pub const BLOCK_NUMBER_END_INDEX: usize = 20;
 
 /// Inputs required to commit to the wormhole circuit.
 #[derive(Debug, Clone)]
@@ -38,10 +39,14 @@ pub struct CircuitInputs {
 pub struct PublicCircuitInputs {
     /// The asset ID (0 for native token).
     pub asset_id: u32,
-    /// Amount to be withdrawn. This value is quantized with 0.01 units of precision.
-    /// **DEV NOTE**: The funding amount unit on chain is still u128 with 12 decimals so we will need to
-    /// scale by 10^10 when constructing the funding amount during on-chain verification.
-    pub funding_amount: u32,
+    /// Amount to be received by the exit account after fee deduction.
+    /// This value is quantized with 0.01 units of precision.
+    /// **DEV NOTE**: The output amount unit on chain is still u128 with 12 decimals so we will need to
+    /// scale by 10^10 when constructing the output amount during on-chain verification.
+    pub output_amount: u32,
+    /// Volume fee rate in basis points (1 basis point = 0.01%).
+    /// This is verified on-chain to match the runtime configuration.
+    pub volume_fee_bps: u32,
     /// The nullifier.
     pub nullifier: BytesDigest,
     /// The address of the account to pay out to.
@@ -54,11 +59,11 @@ pub struct PublicCircuitInputs {
     pub block_number: u32,
 }
 
-/// The exit account and its given sum total funding amount
+/// The exit account and its given sum total output amount
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicInputsByAccount {
-    /// Funding amounts of duplicate exit accounts summed.
-    pub summed_funding_amount: u32,
+    /// Output amounts of duplicate exit accounts summed.
+    pub summed_output_amount: u32,
     /// The address of the account to pay out to.
     pub exit_account: BytesDigest,
 }
@@ -77,11 +82,14 @@ pub struct BlockData {
 pub struct AggregatedPublicCircuitInputs {
     /// The asset ID of the set (0 for native token).
     pub asset_id: u32,
+    /// Volume fee rate in basis points (1 basis point = 0.01%).
+    /// All aggregated proofs must have the same fee rate.
+    pub volume_fee_bps: u32,
     /// The last set block data (block_hash, block_number) in the aggregated proofs.
     /// This the only block data we need to commit to in the aggregated proof.
     /// All prior blocks are enforced to be contigious and their connectivity is verified via parent_hash checks.
     pub block_data: BlockData,
-    /// The set of exit accounts and their summed funding amounts
+    /// The set of exit accounts and their summed output amounts
     pub account_data: Vec<PublicInputsByAccount>,
     /// The nullifiers of each individual transfer proof
     pub nullifiers: Vec<BytesDigest>,
@@ -109,23 +117,27 @@ pub struct PrivateCircuitInputs {
     pub extrinsics_root: BytesDigest,
     /// The digest logs of the block header
     pub digest: [u8; DIGEST_LOGS_SIZE],
+    /// The input amount from storage (before fee deduction). This value is quantized with 0.01 units of precision.
+    /// The circuit verifies that output_amount <= input_amount - (input_amount * volume_fee_bps / 10000).
+    pub input_amount: u32,
 }
 
 impl AggregatedPublicCircuitInputs {
     pub fn try_from_slice(pis: &[GoldilocksField]) -> anyhow::Result<Self> {
         // Layout in the FINAL (deduped) wrapper proof PIs:
-        // [account_count, block_data(5), [funding_sum(4), exit_account(4)]*, nullifiers(4)*]
+        // [account_count, asset_id, volume_fee_bps, block_data(5), [output_sum(1), exit_account(4)]*, nullifiers(4)*]
         let account_count = pis[0].to_canonical_u64() as usize;
         let asset_id = pis[1].to_canonical_u64() as u32;
+        let volume_fee_bps = pis[2].to_canonical_u64() as u32;
 
         // Numbers of leaf proofs we aggregated over into a tree according the length of the public inputs.
         let n_leaf = pis.len() / PUBLIC_INPUTS_FELTS_LEN;
         // Compute expected total PI length from indices and sanity-check.
 
-        let mut expected_felts = 7usize; // for account_count + asset_id + block_data (5 felts)
+        let mut expected_felts = 8usize; // for account_count + asset_id + volume_fee_bps + block_data (5 felts)
 
         let hash_item_felts = 4;
-        expected_felts += account_count; // funding_sum (1 felt each)
+        expected_felts += account_count; // output_sum (1 felt each)
         expected_felts += hash_item_felts * (account_count); // exit_account (4 felts each)
         expected_felts += hash_item_felts * (n_leaf); // nullifiers (4 felts each)
         anyhow::ensure!(
@@ -142,20 +154,20 @@ impl AggregatedPublicCircuitInputs {
         }
 
         let block_data = BlockData {
-            block_hash: read_digest(&pis[2..6]).context("parsing block_hash")?,
-            block_number: pis[6]
+            block_hash: read_digest(&pis[3..7]).context("parsing block_hash")?,
+            block_number: pis[7]
                 .to_canonical_u64()
                 .try_into()
                 .context("parsing block_number")?,
         };
 
-        let mut cursor = 7usize; // start after metadata felts
+        let mut cursor = 8usize; // start after metadata felts
         let mut account_data: Vec<PublicInputsByAccount> = Vec::with_capacity(account_count);
         let mut nullifiers: Vec<BytesDigest> = Vec::with_capacity(n_leaf);
 
         for _ in 0..account_count {
-            // funding_sum (1 felt)
-            let summed_funding_amount = pis[cursor].to_canonical_u64() as u32;
+            // output_sum (1 felt)
+            let summed_output_amount = pis[cursor].to_canonical_u64() as u32;
             cursor += 1;
 
             // exit_account (4 felts)
@@ -163,7 +175,7 @@ impl AggregatedPublicCircuitInputs {
                 read_digest(&pis[cursor..cursor + 4]).context("parsing exit_account")?;
             cursor += 4;
             account_data.push(PublicInputsByAccount {
-                summed_funding_amount,
+                summed_output_amount,
                 exit_account,
             });
         }
@@ -186,6 +198,7 @@ impl AggregatedPublicCircuitInputs {
 
         Ok(AggregatedPublicCircuitInputs {
             asset_id,
+            volume_fee_bps,
             block_data,
             account_data,
             nullifiers,
@@ -197,7 +210,8 @@ impl PublicCircuitInputs {
     pub fn try_from_slice(pis: &[GoldilocksField]) -> anyhow::Result<Self> {
         // Public inputs are ordered as follows:
         // asset_id: 1 felt
-        // StorageProof.funding_amount: 1 felt
+        // output_amount: 1 felt
+        // volume_fee_bps: 1 felt
         // Nullifier.hash: 4 felts
         // ExitAccount.address: 4 felts
         // BlockHeader.block_hash: 4 felts
@@ -214,14 +228,18 @@ impl PublicCircuitInputs {
             .to_canonical_u64()
             .try_into()
             .context("failed to convert asset_id felt to u32")?;
+        let output_amount = pis[OUTPUT_AMOUNT_INDEX]
+            .to_canonical_u64()
+            .try_into()
+            .context("failed to convert output_amount felt to u32")?;
+        let volume_fee_bps = pis[VOLUME_FEE_BPS_INDEX]
+            .to_canonical_u64()
+            .try_into()
+            .context("failed to convert volume_fee_bps felt to u32")?;
         let nullifier = BytesDigest::try_from(&pis[NULLIFIER_START_INDEX..NULLIFIER_END_INDEX])
             .context("failed to deserialize nullifier hash")?;
         let block_hash = BytesDigest::try_from(&pis[BLOCK_HASH_START_INDEX..BLOCK_HASH_END_INDEX])
             .context("failed to deserialize block hash")?;
-        let funding_amount = pis[FUNDING_AMOUNT_INDEX]
-            .to_canonical_u64()
-            .try_into()
-            .context("failed to convert asset_id felt to u32")?;
 
         let exit_account =
             BytesDigest::try_from(&pis[EXIT_ACCOUNT_START_INDEX..EXIT_ACCOUNT_END_INDEX])
@@ -237,7 +255,8 @@ impl PublicCircuitInputs {
 
         Ok(PublicCircuitInputs {
             asset_id,
-            funding_amount,
+            output_amount,
+            volume_fee_bps,
             nullifier,
             block_hash,
             exit_account,

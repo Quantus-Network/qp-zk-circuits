@@ -32,10 +32,12 @@
 //!         state_root: [3u8; 32].try_into().unwrap(),
 //!         extrinsics_root: [4u8; 32].try_into().unwrap(),
 //!         digest: [0u8; 110],
+//!         input_amount: 1000,
 //!     },
 //!     public: PublicCircuitInputs {
-//!         funding_amount: 1000,
 //!         asset_id: 0_u32,
+//!         output_amount: 999,  // After 0.1% fee deduction
+//!         volume_fee_bps: 10,  // 0.1% = 10 basis points
 //!         nullifier: [1u8; 32].try_into().unwrap(),
 //!         block_hash: [0u8; 32].try_into().unwrap(),
 //!         parent_hash: [5u8; 32].try_into().unwrap(),
