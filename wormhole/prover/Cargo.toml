@@ -9,8 +9,8 @@ version.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 qp-plonky2 = { workspace = true }
-wormhole-circuit = { package = "qp-wormhole-circuit", version = "0.1.7", path = "../circuit" }
-zk-circuits-common = { package = "qp-zk-circuits-common", version = "0.1.7", path = "../../common" }
+wormhole-circuit = { package = "qp-wormhole-circuit", version = "1.0.0", path = "../circuit" }
+zk-circuits-common = { package = "qp-zk-circuits-common", version = "1.0.0", path = "../../common" }
 
 [dev-dependencies]
 criterion = { workspace = true }

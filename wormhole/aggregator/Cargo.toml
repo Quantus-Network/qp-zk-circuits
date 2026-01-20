@@ -11,10 +11,10 @@ anyhow = { workspace = true }
 qp-plonky2 = { workspace = true }
 rayon = { version = "1.10.0", optional = true }
 test-helpers = { path = "../tests/test-helpers", default-features = false }
-wormhole-circuit = { package = "qp-wormhole-circuit", version = "0.1.7", path = "../circuit", default-features = false }
-wormhole-prover = { package = "qp-wormhole-prover", version = "0.1.7", path = "../prover", default-features = false }
-wormhole-verifier = { package = "qp-wormhole-verifier", version = "0.1.7", path = "../verifier", default-features = false }
-zk-circuits-common = { package = "qp-zk-circuits-common", version = "0.1.7", path = "../../common" }
+wormhole-circuit = { package = "qp-wormhole-circuit", version = "1.0.0", path = "../circuit", default-features = false }
+wormhole-prover = { package = "qp-wormhole-prover", version = "1.0.0", path = "../prover", default-features = false }
+wormhole-verifier = { package = "qp-wormhole-verifier", version = "1.0.0", path = "../verifier", default-features = false }
+zk-circuits-common = { package = "qp-zk-circuits-common", version = "1.0.0", path = "../../common" }
 
 [dev-dependencies]
 criterion = { workspace = true }
