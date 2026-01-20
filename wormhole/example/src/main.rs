@@ -209,7 +209,7 @@ impl TryFrom<DebugInputs> for CircuitInputs {
 fn generate_zk_proof(inputs: CircuitInputs) -> anyhow::Result<ProofWithPublicInputs<F, C, D>> {
     println!("Generating ZK proof...");
     // Must use zk_config to match the aggregator's dummy proof
-    let config = CircuitConfig::standard_recursion_config();
+    let config = CircuitConfig::standard_recursion_zk_config();
     let prover = WormholeProver::new(config);
     let prover_next = prover.commit(&inputs)?;
     let proof: ProofWithPublicInputs<F, C, D> = prover_next.prove().expect("proof failed; qed");
@@ -255,7 +255,7 @@ fn aggregate_proofs(
     println!("Loading {} proof files...", proof_files.len());
 
     // Build the wormhole verifier and prover circuit data
-    let config = CircuitConfig::standard_recursion_config();
+    let config = CircuitConfig::standard_recursion_zk_config();
     let verifier = WormholeVerifier::new(config.clone(), None);
     let prover = WormholeProver::new(config);
     let common_data = &prover.circuit_data.common;
@@ -303,7 +303,7 @@ fn aggregate_proofs_direct(
     println!("Aggregating {} proofs...", proofs.len());
 
     // Build the wormhole verifier circuit data
-    let config = CircuitConfig::standard_recursion_config();
+    let config = CircuitConfig::standard_recursion_zk_config();
     let verifier = WormholeVerifier::new(config, None);
 
     let mut aggregator =
