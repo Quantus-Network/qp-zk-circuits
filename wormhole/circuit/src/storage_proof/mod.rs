@@ -130,10 +130,27 @@ impl CircuitFragment for StorageProof {
         use zk_circuits_common::gadgets::is_const_less_than;
 
         let leaf_targets_32_bit = leaf_inputs.collect_32_bit_targets();
-        // Range contrain the first 2 and last 4 elements of the leaf inputs (transfer_count and funding_amount) to be 32 bits.
+        // Range constrain the 32-bit targets (transfer_count, input_amount, output_amount, volume_fee_bps)
         for target in leaf_targets_32_bit.iter() {
             builder.range_check(*target, 32);
         }
+
+        // Fee constraint: output_amount * 10000 <= input_amount * (10000 - volume_fee_bps)
+        // This ensures the user receives at most (input_amount - fee) where fee = input_amount * volume_fee_bps / 10000
+        let ten_thousand = builder.constant(F::from_canonical_u32(10000));
+        let lhs = builder.mul(leaf_inputs.output_amount, ten_thousand); // output_amount * 10000
+        let fee_complement = builder.sub(ten_thousand, leaf_inputs.volume_fee_bps); // 10000 - volume_fee_bps
+
+        // Constrain fee_complement to 14 bits, implying volume_fee_bps <= 10000 and fee_complement < 2^14.
+        builder.range_check(fee_complement, 14);
+
+        let rhs = builder.mul(leaf_inputs.input_amount, fee_complement); // input_amount * (10000 - volume_fee_bps)
+
+        // Assert lhs <= rhs by checking that rhs - lhs >= 0 (i.e., rhs - lhs fits in range)
+        // With output_amount and input_amount 32-bit, and both 10000 and fee_complement < 2^14, each side is < 2^(32+14) = 2^46,
+        // so their difference fits in 47 bits.
+        let diff = builder.sub(rhs, lhs);
+        builder.range_check(diff, 47);
 
         // Calculate the leaf inputs hash.
         let leaf_inputs_hash =
@@ -267,8 +284,16 @@ impl CircuitFragment for StorageProof {
         pw.set_hash_target(targets.leaf_inputs.funding_account, funding_account)?;
         pw.set_hash_target(targets.leaf_inputs.to_account, to_account)?;
         pw.set_target(
-            targets.leaf_inputs.funding_amount,
-            self.leaf_inputs.funding_amount,
+            targets.leaf_inputs.input_amount,
+            self.leaf_inputs.input_amount,
+        )?;
+        pw.set_target(
+            targets.leaf_inputs.output_amount,
+            self.leaf_inputs.output_amount,
+        )?;
+        pw.set_target(
+            targets.leaf_inputs.volume_fee_bps,
+            self.leaf_inputs.volume_fee_bps,
         )?;
 
         Ok(())

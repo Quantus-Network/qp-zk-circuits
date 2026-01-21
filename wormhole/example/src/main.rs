@@ -42,6 +42,13 @@ use zk_circuits_common::utils::{digest_felts_to_bytes, BytesDigest, Digest};
 
 const DEBUG_FILE: &str = "proof_debug.json";
 const SCALE_DOWN_FACTOR: u128 = 10_000_000_000u128; // 10^10
+const VOLUME_FEE_BPS: u32 = 10; // 0.1% = 10 basis points
+
+/// Compute output amount after fee deduction
+/// output = input * (10000 - fee_bps) / 10000
+fn compute_output_amount(input_amount: u32, fee_bps: u32) -> u32 {
+    ((input_amount as u64) * (10000 - fee_bps as u64) / 10000) as u32
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 struct DebugInputs {
@@ -53,7 +60,12 @@ struct DebugInputs {
     transfer_count: u64,
     funding_account_hex: String,
     dest_account_hex: String,
-    funding_amount: u32,
+    /// The input amount from storage (before fee deduction), quantized to 2 decimal places
+    input_amount: u32,
+    /// The output amount after fee deduction, quantized to 2 decimal places
+    output_amount: u32,
+    /// Volume fee rate in basis points (10 bps = 0.1%)
+    volume_fee_bps: u32,
     block_hash_hex: String,
     extrinsics_root_hex: String,
     digest_hex: String,
@@ -70,7 +82,7 @@ impl From<CircuitInputs> for DebugInputs {
                 inputs.private.transfer_count,
                 AccountId32::new(*inputs.private.funding_account),
                 AccountId32::new(*inputs.private.unspendable_account),
-                (inputs.public.funding_amount as u128) * SCALE_DOWN_FACTOR,
+                (inputs.private.input_amount as u128) * SCALE_DOWN_FACTOR,
             )
                 .encode(),
         );
@@ -95,7 +107,9 @@ impl From<CircuitInputs> for DebugInputs {
             transfer_count: inputs.private.transfer_count,
             funding_account_hex: hex::encode(inputs.private.funding_account.as_ref()),
             dest_account_hex: hex::encode(inputs.public.exit_account.as_ref()),
-            funding_amount: inputs.public.funding_amount,
+            input_amount: inputs.private.input_amount,
+            output_amount: inputs.public.output_amount,
+            volume_fee_bps: inputs.public.volume_fee_bps,
             block_hash_hex: hex::encode(inputs.public.block_hash.as_ref()),
             extrinsics_root_hex: hex::encode(inputs.private.extrinsics_root.as_ref()),
             digest_hex: hex::encode(inputs.private.digest.as_ref()),
@@ -189,10 +203,12 @@ impl TryFrom<DebugInputs> for CircuitInputs {
                 state_root,
                 extrinsics_root,
                 digest,
+                input_amount: inputs.input_amount,
             },
             public: PublicCircuitInputs {
                 asset_id: 0u32,
-                funding_amount: inputs.funding_amount,
+                output_amount: inputs.output_amount,
+                volume_fee_bps: inputs.volume_fee_bps,
                 nullifier: Nullifier::from_preimage(secret, inputs.transfer_count)
                     .hash
                     .into(),
@@ -543,10 +559,13 @@ async fn perform_batched_transfers(
         let processed_storage_proof =
             prepare_proof_for_circuit(proof_bytes, hex::encode(header.state_root.0), leaf_hash)?;
 
+        let input_amount = (event.amount / SCALE_DOWN_FACTOR) as u32;
+        let output_amount = compute_output_amount(input_amount, VOLUME_FEE_BPS);
         let inputs = CircuitInputs {
             private: PrivateCircuitInputs {
                 secret: *secret,
                 transfer_count: event.transfer_count,
+                input_amount,
                 funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
                 storage_proof: processed_storage_proof,
                 unspendable_account: Digest::from(*unspendable_account).into(),
@@ -556,7 +575,8 @@ async fn perform_batched_transfers(
             },
             public: PublicCircuitInputs {
                 asset_id: 0u32,
-                funding_amount: (event.amount / SCALE_DOWN_FACTOR) as u32,
+                volume_fee_bps: VOLUME_FEE_BPS,
+                output_amount,
                 nullifier: Nullifier::from_preimage(*secret, event.transfer_count)
                     .hash
                     .into(),
@@ -689,7 +709,9 @@ async fn perform_transfer_and_get_inputs(
         prepare_proof_for_circuit(proof_bytes, hex::encode(header.state_root.0), leaf_hash)?;
 
     // We need to quantize the funding amount to use 2 decimal places of precision (divide by 10^10 since original uses 12)
-    let funding_amount = (event.amount / SCALE_DOWN_FACTOR) as u32;
+    let input_amount = (event.amount / SCALE_DOWN_FACTOR) as u32;
+    // Calculate output amount after fee deduction
+    let output_amount = compute_output_amount(input_amount, VOLUME_FEE_BPS);
 
     let inputs = CircuitInputs {
         private: PrivateCircuitInputs {
@@ -701,10 +723,12 @@ async fn perform_transfer_and_get_inputs(
             state_root,
             extrinsics_root,
             digest,
+            input_amount,
         },
         public: PublicCircuitInputs {
             asset_id: 0u32,
-            funding_amount,
+            output_amount,
+            volume_fee_bps: VOLUME_FEE_BPS,
             nullifier: Nullifier::from_preimage(secret, event.transfer_count)
                 .hash
                 .into(),

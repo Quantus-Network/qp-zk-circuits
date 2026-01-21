@@ -83,12 +83,12 @@ fn invalid_exit_address() {
 
 #[test]
 #[should_panic(expected = "set twice with different values")]
-fn invalid_funding_amount() {
+fn invalid_input_amount() {
     let proof = ProcessedStorageProof::test_inputs_0();
     let mut leaf_inputs = LeafInputs::test_inputs_0();
 
-    // Alter the funding amount.
-    leaf_inputs.funding_amount = F::from_canonical_u64(1000);
+    // Alter the input amount (which is used for the leaf hash in storage).
+    leaf_inputs.input_amount = F::from_canonical_u64(1000);
 
     let proof = StorageProof::new(&proof, default_root_hash(), leaf_inputs);
 

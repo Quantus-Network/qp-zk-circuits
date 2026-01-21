@@ -4,7 +4,7 @@ use hex;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use test_helpers::{
     block_header::{DEFAULT_BLOCK_HASHES, DEFAULT_BLOCK_NUMBERS, DEFAULT_PARENT_HASHES},
-    TestInputs,
+    TestInputs, DEFAULT_OUTPUT_AMOUNTS, DEFAULT_VOLUME_FEE_BPS,
 };
 use wormhole_circuit::inputs::{CircuitInputs, PublicCircuitInputs};
 use wormhole_prover::WormholeProver;
@@ -31,7 +31,8 @@ fn proof_can_be_deserialized() {
     // Build the expected values
     let expected = PublicCircuitInputs {
         asset_id: 0u32,
-        funding_amount: 100u32,
+        output_amount: DEFAULT_OUTPUT_AMOUNTS[0],
+        volume_fee_bps: DEFAULT_VOLUME_FEE_BPS,
         nullifier: BytesDigest::try_from([
             102, 213, 23, 119, 137, 1, 172, 231, 97, 86, 27, 28, 210, 26, 24, 162, 195, 135, 231,
             170, 205, 111, 30, 63, 225, 212, 217, 138, 233, 170, 170, 122,
