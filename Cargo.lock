@@ -4153,6 +4153,7 @@ dependencies = [
  "anyhow",
  "criterion",
  "qp-plonky2",
+ "qp-plonky2-field",
  "qp-wormhole-circuit 0.1.8",
  "qp-wormhole-prover 0.1.8",
  "qp-zk-circuits-common 0.1.8",
