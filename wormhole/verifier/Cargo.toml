@@ -14,8 +14,8 @@ zk-circuits-common = { package = "qp-zk-circuits-common", version = "0.1.8", pat
 
 [dev-dependencies]
 criterion = { workspace = true }
-qp-wormhole-prover = { path = "../prover" }
 qp-plonky2-field = { version = "1.1.3", features = ["rand"] }
+qp-wormhole-prover = { path = "../prover" }
 
 [features]
 default = ["std"]
