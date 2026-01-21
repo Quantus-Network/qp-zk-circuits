@@ -140,10 +140,15 @@ impl CircuitFragment for StorageProof {
         let ten_thousand = builder.constant(F::from_canonical_u32(10000));
         let lhs = builder.mul(leaf_inputs.output_amount, ten_thousand); // output_amount * 10000
         let fee_complement = builder.sub(ten_thousand, leaf_inputs.volume_fee_bps); // 10000 - volume_fee_bps
+
+        // Constrain fee_complement to 14 bits, implying volume_fee_bps <= 10000 and fee_complement < 2^14.
+        builder.range_check(fee_complement, 14);
+
         let rhs = builder.mul(leaf_inputs.input_amount, fee_complement); // input_amount * (10000 - volume_fee_bps)
 
         // Assert lhs <= rhs by checking that rhs - lhs >= 0 (i.e., rhs - lhs fits in range)
-        // Since both sides are at most 32-bit * 14-bit = 46-bit, their difference fits in 47 bits
+        // With output_amount and input_amount 32-bit, and both 10000 and fee_complement < 2^14, each side is < 2^(32+14) = 2^46,
+        // so their difference fits in 47 bits.
         let diff = builder.sub(rhs, lhs);
         builder.range_check(diff, 47);
 

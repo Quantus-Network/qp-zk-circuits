@@ -87,7 +87,7 @@ pub struct AggregatedPublicCircuitInputs {
     pub volume_fee_bps: u32,
     /// The last set block data (block_hash, block_number) in the aggregated proofs.
     /// This the only block data we need to commit to in the aggregated proof.
-    /// All prior blocks are enforced to be contigious and their connectivity is verified via parent_hash checks.
+    /// All prior blocks are enforced to be contiguous and their connectivity is verified via parent_hash checks.
     pub block_data: BlockData,
     /// The set of exit accounts and their summed output amounts
     pub account_data: Vec<PublicInputsByAccount>,

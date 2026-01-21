@@ -559,11 +559,13 @@ async fn perform_batched_transfers(
         let processed_storage_proof =
             prepare_proof_for_circuit(proof_bytes, hex::encode(header.state_root.0), leaf_hash)?;
 
+        let input_amount = (event.amount / SCALE_DOWN_FACTOR) as u32;
+        let output_amount = compute_output_amount(input_amount, VOLUME_FEE_BPS);
         let inputs = CircuitInputs {
             private: PrivateCircuitInputs {
                 secret: *secret,
                 transfer_count: event.transfer_count,
-                input_amount: (event.amount / SCALE_DOWN_FACTOR) as u32,
+                input_amount,
                 funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
                 storage_proof: processed_storage_proof,
                 unspendable_account: Digest::from(*unspendable_account).into(),
@@ -573,8 +575,8 @@ async fn perform_batched_transfers(
             },
             public: PublicCircuitInputs {
                 asset_id: 0u32,
-                volume_fee_bps: 10,
-                output_amount: (event.amount * 99 / 100 / SCALE_DOWN_FACTOR) as u32,
+                volume_fee_bps: VOLUME_FEE_BPS,
+                output_amount,
                 nullifier: Nullifier::from_preimage(*secret, event.transfer_count)
                     .hash
                     .into(),
