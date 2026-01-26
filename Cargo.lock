@@ -7397,6 +7397,7 @@ dependencies = [
  "qp-wormhole-verifier",
  "qp-zk-circuits-common 0.1.8",
  "quantus-cli",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "sp-core 38.1.0",
