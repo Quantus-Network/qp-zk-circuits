@@ -7,6 +7,7 @@
 - Assembles the circuit inputs
 - Generates a ZK proof for the wormhole transfer circuit
 - Supports aggregating multiple proofs into a single proof
+- Built in fuzzer mode for testing with random inputs (`funding-account`, `secret`, `funding-amount`)
 
 ### Prerequisites
 
@@ -72,6 +73,10 @@ cargo run --release --bin wormhole-example -- \
 
 - `--live`  
     Force live mode (talks to the node). If omitted, the script will run in offline debug mode if a `DEBUG_FILE` exists; otherwise it behaves like live mode.
+
+- `--fuzz <num_iterations>`  
+    Enable fuzz mode to run multiple iterations of proof generation with random inputs for testing purposes.
+    - `<num_iterations>`: Number of fuzz iterations to run (e.g., `10`). **You don't need to provide other arguments that are fuzzed over like `--funding-account`, `--secret`, `--funding-amount`, etc. in this mode.**
 
 - `--funding-account <alice|bob|charlie>`  
     Select which pre-funded dev account will send the transfer:
