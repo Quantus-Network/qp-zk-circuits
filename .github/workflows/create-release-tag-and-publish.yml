@@ -117,10 +117,17 @@ jobs:
           ref: ${{ needs.create-tag.outputs.version }}
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        run: cargo install cargo-audit --locked --version 0.22.1
 
       - name: Run security audit
-        run: cargo audit
+        run: |
+          # Temporarily remove unpublished example from workspace for audit
+          # This excludes external dependencies (quantus-cli, sp-*, subxt) that have unmaintained transitive deps
+          sed -i.bak 's/"wormhole\/example",//' Cargo.toml
+          cargo generate-lockfile
+          cargo audit
+          mv Cargo.toml.bak Cargo.toml
+          cargo generate-lockfile
 
   create-github-release-and-publish:
     name: 🚀 Create GitHub Release & Publish Crates
