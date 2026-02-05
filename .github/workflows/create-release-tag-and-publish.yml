@@ -204,6 +204,14 @@ jobs:
           echo "Waiting for qp-wormhole-verifier to become available on crates.io"
           sleep 30
 
+          echo "Preparing qp-wormhole-aggregator for publish (strip local paths)"
+          sed -i -E 's/,\s*path\s*=\s*"[^"]+"//g' wormhole/aggregator/Cargo.toml
+          echo "Publishing qp-wormhole-aggregator"
+          (cd wormhole/aggregator && cargo publish --token "$CARGO_REGISTRY_TOKEN" --allow-dirty)
+
+          echo "Waiting for qp-wormhole-aggregator to become available on crates.io"
+          sleep 30
+
           # Skipping voting-circuit: publish = false
 
 
