@@ -20,11 +20,11 @@ rand = { version = "0.9.1", default-features = false, features = [
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = "1.0"
 test-helpers = { path = "./test-helpers" }
-wormhole-aggregator = { package = "qp-wormhole-aggregator", version = "0.2.0", path = "../aggregator", features = ["no_zk"] }
-wormhole-circuit = { package = "qp-wormhole-circuit", version = "0.2.0", path = "../circuit", default-features = true }
-wormhole-prover = { package = "qp-wormhole-prover", version = "0.2.0", path = "../prover", default-features = true }
-wormhole-verifier = { package = "qp-wormhole-verifier", version = "0.2.0", path = "../verifier", default-features = true }
-zk-circuits-common = { package = "qp-zk-circuits-common", version = "0.2.0", path = "../../common" }
+wormhole-aggregator = { package = "qp-wormhole-aggregator", version = "0.2.1", path = "../aggregator", features = ["no_zk"] }
+wormhole-circuit = { package = "qp-wormhole-circuit", version = "0.2.1", path = "../circuit", default-features = true }
+wormhole-prover = { package = "qp-wormhole-prover", version = "0.2.1", path = "../prover", default-features = true }
+wormhole-verifier = { package = "qp-wormhole-verifier", version = "0.2.1", path = "../verifier", default-features = true }
+zk-circuits-common = { package = "qp-zk-circuits-common", version = "0.2.1", path = "../../common" }
 
 [lints]
 workspace = true
