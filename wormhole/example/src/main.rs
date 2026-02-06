@@ -18,6 +18,8 @@ use quantus_cli::cli::common::{submit_transaction, ExecutionMode};
 use quantus_cli::qp_dilithium_crypto::DilithiumPair;
 use quantus_cli::wallet::QuantumKeyPair;
 use quantus_cli::{AccountId32, ChainConfig, QuantusClient};
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use sp_core::{Hasher, H256};
 use std::str::FromStr;
@@ -413,11 +415,11 @@ async fn perform_batched_transfers(
     funding_account: &AccountId32,
     base_secret: [u8; 32],
     exit_account_bytes: [u8; 32],
-    funding_amount: u128,
-    num_transfers: usize,
+    funding_amounts: Vec<u128>,
 ) -> anyhow::Result<Vec<CircuitInputs>> {
     let client = quantus_client.client();
     let exit_account_id = SubxtAccountId(exit_account_bytes);
+    let num_transfers = funding_amounts.len();
 
     // Prepare all transfers
     let mut secrets = Vec::with_capacity(num_transfers);
@@ -426,7 +428,7 @@ async fn perform_batched_transfers(
 
     println!("\n=== Preparing {} batched transfers ===", num_transfers);
 
-    for i in 0..num_transfers {
+    for (i, amount_i) in funding_amounts.iter().enumerate() {
         let secret_bytes = derive_secret(base_secret, i);
         let (secret, unspendable_account_id, unspendable_account) =
             get_unspendable_account(secret_bytes)?;
@@ -440,7 +442,7 @@ async fn perform_batched_transfers(
         // Create transfer call
         let call = RuntimeCall::Wormhole(WormholeCall::transfer_native {
             dest: subxt::ext::subxt_core::utils::MultiAddress::Id(unspendable_account_id.clone()),
-            amount: funding_amount,
+            amount: *amount_i,
         });
 
         secrets.push(secret);
@@ -789,6 +791,10 @@ struct Cli {
     #[arg(long)]
     live: bool,
 
+    /// Fuzz mode: number of randomized rounds to run (runs both single-proof + aggregation per round)
+    #[arg(long)]
+    fuzz: Option<u32>,
+
     /// Funding account (alice, bob, or charlie)
     #[arg(long, value_enum, required_if_eq_any([("live", "true"), ("generate_and_aggregate", "true")]))]
     funding_account: Option<DevAccount>,
@@ -854,9 +860,229 @@ fn parse_funding_amount(s: &str) -> Result<u128, String> {
     Ok(amount)
 }
 
+fn pick_dev_account(rng: &mut StdRng) -> DevAccount {
+    match rng.gen_range(0..3) {
+        0 => DevAccount::Alice,
+        1 => DevAccount::Bob,
+        _ => DevAccount::Charlie,
+    }
+}
+
+fn random_poseidon_secret(rng: &mut StdRng) -> [u8; 32] {
+    let preimage: [u8; 32] = rng.gen();
+    PoseidonHasher::hash(preimage.as_ref()).0
+}
+
+/// Produces a funding amount:
+/// - always >= MIN_FUNDING_AMOUNT
+/// - Most often NOT divisible by SCALE_DOWN_FACTOR to exercise precision loss
+/// - bounded so (amount / SCALE_DOWN_FACTOR) fits in u32
+fn random_funding_amount(rng: &mut StdRng) -> u128 {
+    let min_q: u32 = (MIN_FUNDING_AMOUNT / SCALE_DOWN_FACTOR) as u32;
+
+    let max_q: u32 = 10_000_000; // => up to 100,000 units (with 12 decimals)
+
+    let q = rng.gen_range(min_q..=max_q) as u128;
+
+    // 70% of the time choose a non-zero remainder to test precision loss.
+    let remainder: u128 = if rng.gen_bool(0.70) {
+        rng.gen_range(1..SCALE_DOWN_FACTOR) // misaligned
+    } else {
+        0 // aligned
+    };
+
+    q * SCALE_DOWN_FACTOR + remainder
+}
+
+/// Expected output amount derived from the on-chain amount (u128, 12 decimals)
+fn expected_output_from_amount(amount: u128) -> (u32, u32) {
+    let input_amount = (amount / SCALE_DOWN_FACTOR) as u32;
+    let output_amount = compute_output_amount(input_amount, VOLUME_FEE_BPS);
+    (input_amount, output_amount)
+}
+
+async fn run_fuzz(cli: &Cli) -> anyhow::Result<()> {
+    let rounds = cli.fuzz.expect("caller ensures fuzz is Some");
+    println!("Running fuzz mode for {rounds} rounds");
+
+    let mut rng = StdRng::from_entropy();
+
+    let aggregation_config =
+        TreeAggregationConfig::new(cli.aggregation_branching_factor, cli.aggregation_depth);
+
+    let quantus_client = QuantusClient::new("ws://localhost:9944").await?;
+    println!("Connected to Substrate node.");
+
+    for round in 0..rounds {
+        println!("\n==============================");
+        println!("FUZZ ROUND {}/{}", round + 1, rounds);
+        println!("==============================");
+
+        // Randomize funding dev account
+        let dev_account = pick_dev_account(&mut rng);
+        let seed = dev_account.seed();
+        let funding_pair =
+            DilithiumPair::from_seed(&seed).expect("valid dev account seed for DilithiumPair");
+
+        let quantum_keypair = QuantumKeyPair {
+            public_key: funding_pair.public().0.to_vec(),
+            private_key: funding_pair.secret.to_vec(),
+        };
+
+        let funding_account =
+            AccountId32::new(PoseidonHasher::hash(funding_pair.public().as_ref()).0);
+
+        // Randomize exit account (not requested, but harmless + adds coverage)
+        let exit_account_bytes: [u8; 32] = rng.gen();
+
+        // -------------------------
+        // 1) Single-proof fuzz case
+        // -------------------------
+        let secret_bytes = random_poseidon_secret(&mut rng);
+        let funding_amount = random_funding_amount(&mut rng);
+
+        println!(
+            "[single] dev={:?} funding_amount={} (q={}, rem={})",
+            dev_account,
+            funding_amount,
+            funding_amount / SCALE_DOWN_FACTOR,
+            funding_amount % SCALE_DOWN_FACTOR
+        );
+
+        let inputs = perform_transfer_and_get_inputs(
+            &quantus_client,
+            &quantum_keypair,
+            &funding_account,
+            secret_bytes,
+            exit_account_bytes,
+            funding_amount,
+            0,
+        )
+        .await?;
+
+        // Expected output amount from amount sent (precision loss + fee)
+        let (expected_input, expected_output) = expected_output_from_amount(funding_amount);
+
+        anyhow::ensure!(
+            inputs.private.input_amount == expected_input,
+            "[single] input_amount mismatch: got {}, expected {}",
+            inputs.private.input_amount,
+            expected_input
+        );
+        anyhow::ensure!(
+            inputs.public.output_amount == expected_output,
+            "[single] output_amount mismatch (inputs): got {}, expected {}",
+            inputs.public.output_amount,
+            expected_output
+        );
+
+        let proof = generate_zk_proof(inputs.clone())?;
+        let pi = PublicCircuitInputs::try_from(&proof)?;
+        anyhow::ensure!(
+            pi.output_amount == expected_output,
+            "[single] output_amount mismatch (proof PI): got {}, expected {}",
+            pi.output_amount,
+            expected_output
+        );
+
+        // ----------------------------
+        // 2) Aggregation fuzz case
+        // ----------------------------
+        let max_leaf = aggregation_config.num_leaf_proofs.max(2);
+        let n = std::cmp::min(max_leaf, 2 + rng.gen_range(0..3)); // 2..=4 capped by config
+
+        println!(
+            "[agg] generating {} proofs (branching_factor={}, depth={}, max_leaf={})",
+            n,
+            aggregation_config.tree_branching_factor,
+            aggregation_config.tree_depth,
+            aggregation_config.num_leaf_proofs
+        );
+
+        // per-proof fuzzed secrets + funding amounts
+        let funding_amounts: Vec<u128> = (0..n).map(|_| random_funding_amount(&mut rng)).collect();
+
+        let all_inputs = perform_batched_transfers(
+            &quantus_client,
+            &quantum_keypair,
+            &funding_account,
+            random_poseidon_secret(&mut rng),
+            exit_account_bytes,
+            funding_amounts.clone(),
+        )
+        .await?;
+
+        anyhow::ensure!(
+            all_inputs.len() == n,
+            "[agg] expected {n} inputs, got {}",
+            all_inputs.len()
+        );
+
+        let mut proofs = Vec::with_capacity(n);
+
+        for (i, inp) in all_inputs.iter().enumerate() {
+            // Expected output derived from the amount we intended for that transfer
+            let (expected_input, expected_output) = expected_output_from_amount(funding_amounts[i]);
+
+            anyhow::ensure!(
+                inp.private.input_amount == expected_input,
+                "[agg] input_amount mismatch for idx={}: got {}, expected {}",
+                i,
+                inp.private.input_amount,
+                expected_input
+            );
+            anyhow::ensure!(
+                inp.public.output_amount == expected_output,
+                "[agg] output_amount mismatch (inputs) for idx={}: got {}, expected {}",
+                i,
+                inp.public.output_amount,
+                expected_output
+            );
+
+            let proof = generate_zk_proof(inp.clone())?;
+            let pi = PublicCircuitInputs::try_from(&proof)?;
+            anyhow::ensure!(
+                pi.output_amount == expected_output,
+                "[agg] output_amount mismatch (proof PI) for idx={}: got {}, expected {}",
+                i,
+                pi.output_amount,
+                expected_output
+            );
+
+            proofs.push(proof);
+        }
+
+        // Aggregate and verify (don’t save in fuzz mode)
+        let config = CircuitConfig::standard_recursion_zk_config();
+        let verifier = WormholeVerifier::new(config, None);
+        let mut aggregator =
+            WormholeProofAggregator::new(verifier.circuit_data).with_config(aggregation_config);
+
+        for p in proofs {
+            aggregator.push_proof(p)?;
+        }
+
+        let aggregated = aggregator.aggregate()?;
+        aggregated.circuit_data.verify(aggregated.proof.clone())?;
+
+        println!(
+            "[round {}] ✓ single proof + aggregation verified",
+            round + 1
+        );
+    }
+
+    println!("\nFuzz completed: {rounds} rounds ✓");
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
+    // Fuzz mode
+    if cli.fuzz.is_some() {
+        return run_fuzz(&cli).await;
+    }
 
     // Build aggregation config from CLI args
     let aggregation_config =
@@ -932,6 +1158,9 @@ async fn main() -> anyhow::Result<()> {
         println!("Running in live mode (single proof).");
     }
 
+    // Create a vector of funding amounts (same amount for each proof)
+    let funding_amounts: Vec<u128> = vec![funding_amount; num_proofs];
+
     // Generate all circuit inputs - use batched transfers for multiple proofs (same block)
     let all_inputs = if num_proofs > 1 {
         perform_batched_transfers(
@@ -940,8 +1169,7 @@ async fn main() -> anyhow::Result<()> {
             &funding_account,
             secret_bytes,
             exit_account_bytes,
-            funding_amount,
-            num_proofs,
+            funding_amounts,
         )
         .await?
     } else {
