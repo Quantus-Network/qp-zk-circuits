@@ -2,10 +2,11 @@ use std::collections::BTreeMap;
 
 use anyhow::bail;
 use plonky2::plonk::circuit_data::{CircuitConfig, VerifierCircuitData};
+use plonky2::plonk::proof::ProofWithPublicInputs;
+use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use wormhole_circuit::inputs::{
     AggregatedPublicCircuitInputs, BlockData, PublicCircuitInputs, PublicInputsByAccount,
 };
-use wormhole_verifier::{ProofWithPublicInputs, WormholeVerifier};
 use zk_circuits_common::{
     circuit::{C, D, F},
     utils::BytesDigest,
@@ -44,10 +45,11 @@ impl WormholeProofAggregator {
     }
 
     /// Creates a new [`WormholeProofAggregator`] with a given [`CircuitConfig`]
-    /// by compiling the circuit data from a [`WormholeVerifier`].
+    /// by building the circuit and extracting the verifier data.
     pub fn from_circuit_config(circuit_config: CircuitConfig) -> Self {
-        let verifier = WormholeVerifier::new(circuit_config.clone(), None);
-        Self::new(verifier.circuit_data)
+        let circuit = WormholeCircuit::new(circuit_config);
+        let verifier_data = circuit.build_verifier();
+        Self::new(verifier_data)
     }
 
     pub fn with_config(mut self, config: TreeAggregationConfig) -> Self {

@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use plonky2::plonk::proof::ProofWithPublicInputs;
 use plonky2::{
     field::extension::Extendable,
     hash::hash_types::RichField,
@@ -13,8 +14,8 @@ use plonky2::{
         config::GenericConfig,
     },
 };
+#[cfg(feature = "multithread")]
 use rayon::{iter::ParallelIterator, slice::ParallelSlice};
-use wormhole_verifier::ProofWithPublicInputs;
 use zk_circuits_common::{
     circuit::{C, D, F},
     gadgets::{bytes_digest_eq, count_unique_4x32_keys, limb1_at_offset, limbs4_at_offset},

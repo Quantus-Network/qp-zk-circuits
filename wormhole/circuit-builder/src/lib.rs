@@ -5,9 +5,11 @@ use std::path::Path;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::config::PoseidonGoldilocksConfig;
 use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
+use wormhole_aggregator::WormholeProofAggregator;
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use zk_circuits_common::circuit::D;
 
+/// Generate wormhole circuit binaries (verifier.bin, common.bin, and optionally prover.bin)
 pub fn generate_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
     include_prover: bool,
@@ -61,6 +63,74 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
     } else {
         println!("Skipping prover binary generation");
     }
+
+    Ok(())
+}
+
+/// Generate aggregated circuit binaries (aggregated_verifier.bin, aggregated_common.bin)
+///
+/// The aggregated circuit is built by running the aggregation process on dummy proofs.
+/// This requires creating a full aggregation tree which is computationally expensive.
+pub fn generate_aggregated_circuit_binaries<P: AsRef<Path>>(output_dir: P) -> Result<()> {
+    println!("Building aggregated wormhole circuit...");
+
+    // Create the aggregator with default config
+    let mut aggregator = WormholeProofAggregator::default();
+
+    // We need to run the aggregation to get the circuit data.
+    // The aggregator builds the circuit dynamically during aggregation.
+    // To get the circuit data without real proofs, we use dummy proofs.
+    println!("Running aggregation with dummy proofs to build circuit...");
+    let aggregated_proof = aggregator.aggregate()?;
+    println!("Aggregated circuit built.");
+
+    let gate_serializer = DefaultGateSerializer;
+
+    let output_path = output_dir.as_ref();
+    create_dir_all(output_path)?;
+
+    // Serialize aggregated common data
+    let agg_common_bytes = aggregated_proof
+        .circuit_data
+        .common
+        .to_bytes(&gate_serializer)
+        .map_err(|e| anyhow!("Failed to serialize aggregated common data: {}", e))?;
+    write(output_path.join("aggregated_common.bin"), agg_common_bytes)?;
+    println!(
+        "Aggregated common data saved to {}/aggregated_common.bin",
+        output_path.display()
+    );
+
+    // Serialize aggregated verifier only data
+    let agg_verifier_only_bytes = aggregated_proof
+        .circuit_data
+        .verifier_only
+        .to_bytes()
+        .map_err(|e| anyhow!("Failed to serialize aggregated verifier data: {}", e))?;
+    write(
+        output_path.join("aggregated_verifier.bin"),
+        agg_verifier_only_bytes,
+    )?;
+    println!(
+        "Aggregated verifier data saved to {}/aggregated_verifier.bin",
+        output_path.display()
+    );
+
+    Ok(())
+}
+
+/// Generate all circuit binaries (both regular and aggregated)
+pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
+    output_dir: P,
+    include_prover: bool,
+) -> Result<()> {
+    let output_path = output_dir.as_ref();
+
+    // Generate regular circuit binaries
+    generate_circuit_binaries(output_path, include_prover)?;
+
+    // Generate aggregated circuit binaries
+    generate_aggregated_circuit_binaries(output_path)?;
 
     Ok(())
 }

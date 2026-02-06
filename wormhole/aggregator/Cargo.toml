@@ -12,7 +12,6 @@ qp-plonky2 = { workspace = true }
 rayon = { version = "1.10.0", optional = true }
 wormhole-circuit = { package = "qp-wormhole-circuit", version = "1.0.1", path = "../circuit", default-features = false }
 wormhole-prover = { package = "qp-wormhole-prover", version = "1.0.1", path = "../prover", default-features = false }
-wormhole-verifier = { package = "qp-wormhole-verifier", version = "1.0.1", path = "../verifier", default-features = false }
 zk-circuits-common = { package = "qp-zk-circuits-common", version = "1.0.1", path = "../../common" }
 
 [dev-dependencies]
@@ -27,8 +26,8 @@ no_zk = []
 std = [
 	"anyhow/std",
 	"qp-plonky2/std",
+	"wormhole-circuit/std",
 	"wormhole-prover/std",
-	"wormhole-verifier/std",
 	"zk-circuits-common/std",
 ]
 

@@ -1,0 +1,17 @@
+[package]
+name = "qp-wormhole-inputs"
+description = "Public input types for Wormhole circuit proofs"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow = { workspace = true, default-features = false }
+
+[features]
+default = ["std"]
+std = ["anyhow/std"]
+
+[lints]
+workspace = true

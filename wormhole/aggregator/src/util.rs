@@ -1,6 +1,6 @@
 use anyhow::{bail, Context};
 use plonky2::plonk::circuit_data::CommonCircuitData;
-use wormhole_verifier::ProofWithPublicInputs;
+use plonky2::plonk::proof::ProofWithPublicInputs;
 use zk_circuits_common::circuit::{C, D, F};
 
 #[cfg(not(feature = "no_zk"))]
