@@ -35,7 +35,7 @@ use wormhole_circuit::inputs::{
 };
 use wormhole_circuit::nullifier::Nullifier;
 use wormhole_prover::WormholeProver;
-use wormhole_verifier::WormholeVerifier;
+
 use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::storage_proof::prepare_proof_for_circuit;
 use zk_circuits_common::utils::{digest_felts_to_bytes, BytesDigest, Digest};
@@ -270,14 +270,13 @@ fn aggregate_proofs(
     println!("\n=== Starting Proof Aggregation ===");
     println!("Loading {} proof files...", proof_files.len());
 
-    // Build the wormhole verifier and prover circuit data
+    // Build the wormhole prover and aggregator circuit data
     let config = CircuitConfig::standard_recursion_zk_config();
-    let verifier = WormholeVerifier::new(config.clone(), None);
-    let prover = WormholeProver::new(config);
+    let prover = WormholeProver::new(config.clone());
     let common_data = &prover.circuit_data.common;
 
     let mut aggregator =
-        WormholeProofAggregator::new(verifier.circuit_data).with_config(aggregation_config);
+        WormholeProofAggregator::from_circuit_config(config).with_config(aggregation_config);
 
     println!(
         "Aggregator configured for {} leaf proofs (branching factor: {}, depth: {})",
@@ -318,12 +317,11 @@ fn aggregate_proofs_direct(
     println!("\n=== Starting Proof Aggregation ===");
     println!("Aggregating {} proofs...", proofs.len());
 
-    // Build the wormhole verifier circuit data
+    // Build the aggregator from circuit config
     let config = CircuitConfig::standard_recursion_zk_config();
-    let verifier = WormholeVerifier::new(config, None);
 
     let mut aggregator =
-        WormholeProofAggregator::new(verifier.circuit_data).with_config(aggregation_config);
+        WormholeProofAggregator::from_circuit_config(config).with_config(aggregation_config);
 
     println!(
         "Aggregator configured for {} leaf proofs (branching factor: {}, depth: {})",
