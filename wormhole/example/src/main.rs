@@ -35,7 +35,6 @@ use wormhole_circuit::inputs::{
 };
 use wormhole_circuit::nullifier::Nullifier;
 use wormhole_prover::WormholeProver;
-
 use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::storage_proof::prepare_proof_for_circuit;
 use zk_circuits_common::utils::{digest_felts_to_bytes, BytesDigest, Digest};
@@ -270,7 +269,7 @@ fn aggregate_proofs(
     println!("\n=== Starting Proof Aggregation ===");
     println!("Loading {} proof files...", proof_files.len());
 
-    // Build the wormhole prover and aggregator circuit data
+    // Build the wormhole prover circuit data
     let config = CircuitConfig::standard_recursion_zk_config();
     let prover = WormholeProver::new(config.clone());
     let common_data = &prover.circuit_data.common;
@@ -317,7 +316,7 @@ fn aggregate_proofs_direct(
     println!("\n=== Starting Proof Aggregation ===");
     println!("Aggregating {} proofs...", proofs.len());
 
-    // Build the aggregator from circuit config
+    // Build the wormhole aggregator from circuit config
     let config = CircuitConfig::standard_recursion_zk_config();
 
     let mut aggregator =

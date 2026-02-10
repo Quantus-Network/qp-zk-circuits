@@ -1,21 +1,18 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use plonky2::plonk::circuit_data::CommonCircuitData;
+use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_aggregator::aggregator::WormholeProofAggregator;
 use qp_wormhole_aggregator::circuits::tree::TreeAggregationConfig;
-use wormhole_verifier::ProofWithPublicInputs;
+use qp_wormhole_aggregator::dummy_proof::get_dummy_proof;
 use zk_circuits_common::circuit::{C, D, F};
-
-const DUMMY_PROOF_BYTES: &[u8] = include_bytes!("../data/dummy_proof_zk.bin");
 
 fn deserialize_proofs(
     common_data: &CommonCircuitData<F, D>,
     len: usize,
 ) -> Vec<ProofWithPublicInputs<F, C, D>> {
-    (0..len)
-        .map(|_| {
-            ProofWithPublicInputs::from_bytes(DUMMY_PROOF_BYTES.to_vec(), common_data).unwrap()
-        })
-        .collect()
+    let zk = common_data.config.zero_knowledge;
+    let dummy_proof = get_dummy_proof(zk);
+    (0..len).map(|_| dummy_proof.clone()).collect()
 }
 
 // A macro for creating an aggregation benchmark with a specified number of proofs to

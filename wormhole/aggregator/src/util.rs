@@ -1,12 +1,9 @@
-use anyhow::{bail, Context};
+use anyhow::bail;
 use plonky2::plonk::circuit_data::CommonCircuitData;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use zk_circuits_common::circuit::{C, D, F};
 
-#[cfg(not(feature = "no_zk"))]
-const DUMMY_PROOF_BYTES: &[u8] = include_bytes!("../data/dummy_proof_zk.bin");
-#[cfg(feature = "no_zk")]
-const DUMMY_PROOF_BYTES: &[u8] = include_bytes!("../data/dummy_proof.bin");
+use crate::dummy_proof::get_dummy_proof;
 
 pub fn pad_with_dummy_proofs(
     mut proofs: Vec<ProofWithPublicInputs<F, C, D>>,
@@ -19,8 +16,11 @@ pub fn pad_with_dummy_proofs(
         bail!("proofs to aggregate was more than the maximum allowed")
     }
 
-    let dummy_proof = ProofWithPublicInputs::from_bytes(DUMMY_PROOF_BYTES.to_vec(), common_data)
-        .context("failed to deserialize dummy proof")?;
+    // Get dummy proof based on whether ZK mode is enabled in the circuit config.
+    // The proof is lazily generated on first access and cached for subsequent use.
+    let zk = common_data.config.zero_knowledge;
+    let dummy_proof = get_dummy_proof(zk).clone();
+
     for _ in 0..(proof_len - num_proofs) {
         proofs.push(dummy_proof.clone());
     }
