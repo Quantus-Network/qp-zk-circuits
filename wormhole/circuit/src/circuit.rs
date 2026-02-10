@@ -117,6 +117,10 @@ pub mod circuit_logic {
     }
 
     fn connect_shared_targets(targets: &CircuitTargets, builder: &mut CircuitBuilder<F, D>) {
+        use crate::nullifier::NULLIFIER_SALT;
+        use plonky2::hash::poseidon2::Poseidon2Hash;
+        use zk_circuits_common::utils::injective_string_to_felt;
+
         // Secret.
         builder.connect_hashes(targets.unspendable_account.secret, targets.nullifier.secret);
         // Transfer count.
@@ -135,10 +139,78 @@ pub mod circuit_logic {
             targets.storage_proof.leaf_inputs.to_account,
         );
 
-        // The state_root from the block_header must be the same as the root_hash for the storage_proof
+        // Connect block_hash_sentinel in storage_proof to the actual block_hash from block_header.
+        // This allows the storage proof circuit to detect dummy proofs (block_hash == 0).
         builder.connect_hashes(
-            targets.block_header.header.state_root,
-            targets.storage_proof.root_hash,
+            targets.storage_proof.block_hash_sentinel,
+            targets.block_header.block_hash,
         );
+
+        // Dummy proof detection: block_hash == 0 (all four limbs are zero)
+        // This sentinel allows dummy proofs to skip validation while preserving
+        // the ability to use output_amount == 0 for privacy in real proofs.
+        let zero = builder.zero();
+        let one = builder.one();
+
+        // Check if all four limbs of block_hash are zero
+        let bh = &targets.block_header.block_hash.elements;
+        let bh0_is_zero = builder.is_equal(bh[0], zero);
+        let bh1_is_zero = builder.is_equal(bh[1], zero);
+        let bh2_is_zero = builder.is_equal(bh[2], zero);
+        let bh3_is_zero = builder.is_equal(bh[3], zero);
+
+        // is_dummy = bh0_is_zero AND bh1_is_zero AND bh2_is_zero AND bh3_is_zero
+        let bh01_zero = builder.and(bh0_is_zero, bh1_is_zero);
+        let bh23_zero = builder.and(bh2_is_zero, bh3_is_zero);
+        let is_dummy = builder.and(bh01_zero, bh23_zero);
+        let is_not_dummy = builder.sub(one, is_dummy.target);
+
+        // Nullifier validation: nullifier == H(H(salt + secret + transfer_count))
+        // Skip this validation for dummy proofs (block_hash == 0).
+        // This allows dummy proofs to use random nullifiers for better privacy.
+        let salt_felts = injective_string_to_felt(NULLIFIER_SALT);
+        let mut nullifier_preimage = Vec::new();
+        for &f in salt_felts.iter() {
+            nullifier_preimage.push(builder.constant(f));
+        }
+        nullifier_preimage.extend(targets.nullifier.secret.elements.iter());
+        nullifier_preimage.extend(targets.nullifier.transfer_count.iter());
+
+        let inner_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(nullifier_preimage);
+        let computed_nullifier =
+            builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(inner_hash.elements.to_vec());
+
+        for i in 0..4 {
+            let diff = builder.sub(
+                targets.nullifier.hash.elements[i],
+                computed_nullifier.elements[i],
+            );
+            let result = builder.mul(diff, is_not_dummy);
+            builder.connect(result, zero);
+        }
+
+        // Block hash validation: block_hash == hash(header contents)
+        // Skip this validation for dummy proofs (block_hash == 0).
+        let pre_image = targets.block_header.header.collect_to_vec();
+        let computed_block_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(pre_image);
+        for i in 0..4 {
+            let diff = builder.sub(
+                targets.block_header.block_hash.elements[i],
+                computed_block_hash.elements[i],
+            );
+            let result = builder.mul(diff, is_not_dummy);
+            builder.connect(result, zero);
+        }
+
+        // The state_root from the block_header must be the same as the root_hash for the storage_proof.
+        // Skip this validation for dummy proofs (block_hash == 0).
+        for i in 0..4 {
+            let diff = builder.sub(
+                targets.block_header.header.state_root.elements[i],
+                targets.storage_proof.root_hash.elements[i],
+            );
+            let result = builder.mul(diff, is_not_dummy);
+            builder.connect(result, zero);
+        }
     }
 }

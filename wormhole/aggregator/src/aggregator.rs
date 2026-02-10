@@ -7,6 +7,7 @@ use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use wormhole_circuit::inputs::{
     AggregatedPublicCircuitInputs, BlockData, PublicCircuitInputs, PublicInputsByAccount,
 };
+use wormhole_prover::WormholeProver;
 use zk_circuits_common::{
     circuit::{C, D, F},
     utils::BytesDigest,
@@ -14,7 +15,7 @@ use zk_circuits_common::{
 
 use crate::{
     circuits::tree::{aggregate_to_tree, AggregatedProof, TreeAggregationConfig},
-    util::pad_with_dummy_proofs,
+    dummy_proof::{self, build_dummy_circuit_inputs},
 };
 
 /// A circuit that aggregates proofs from the Wormhole circuit.
@@ -22,18 +23,32 @@ pub struct WormholeProofAggregator {
     pub leaf_circuit_data: VerifierCircuitData<F, C, D>,
     pub config: TreeAggregationConfig,
     pub proofs_buffer: Option<Vec<ProofWithPublicInputs<F, C, D>>>,
+    /// Pre-generated dummy proofs compatible with this aggregator's circuit.
+    /// Each dummy has a unique nullifier to avoid duplicate nullifier errors on-chain.
+    /// Used for padding when fewer proofs are provided than required.
+    dummy_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
 }
 
 impl Default for WormholeProofAggregator {
     fn default() -> Self {
-        let circuit_config = CircuitConfig::standard_recursion_zk_config();
-        Self::from_circuit_config(circuit_config)
+        // Try to use pre-built circuit files for consistency
+        Self::from_prebuilt().unwrap_or_else(|_| {
+            let circuit_config = CircuitConfig::standard_recursion_zk_config();
+            Self::from_circuit_config(circuit_config)
+        })
     }
 }
 
 impl WormholeProofAggregator {
-    /// Creates a new [`WormholeProofAggregator`] with a given [`VerifierCircuitData`].
-    pub fn new(verifier_circuit_data: VerifierCircuitData<F, C, D>) -> Self {
+    /// Creates a new [`WormholeProofAggregator`] with a given [`VerifierCircuitData`]
+    /// and pre-generated dummy proofs.
+    ///
+    /// The dummy proofs must be compatible with the verifier data (generated from the same circuit).
+    /// Each dummy proof should have a unique nullifier to avoid on-chain duplicate errors.
+    pub fn new(
+        verifier_circuit_data: VerifierCircuitData<F, C, D>,
+        dummy_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
+    ) -> Self {
         let aggregation_config = TreeAggregationConfig::default();
         let proofs_buffer = Some(Vec::with_capacity(aggregation_config.num_leaf_proofs));
 
@@ -41,15 +56,171 @@ impl WormholeProofAggregator {
             leaf_circuit_data: verifier_circuit_data,
             config: aggregation_config,
             proofs_buffer,
+            dummy_proofs,
         }
     }
 
+    /// Creates a new [`WormholeProofAggregator`] from pre-built circuit files.
+    ///
+    /// This ensures the aggregator uses the same circuit data as proofs generated
+    /// by `WormholeProver::default()`, avoiding wire assignment mismatches.
+    ///
+    /// Looks for files in `generated-bins/`:
+    /// - `common.bin` - Common circuit data
+    /// - `verifier.bin` - Verifier-only circuit data
+    /// - `prover.bin` - Prover circuit data
+    pub fn from_prebuilt() -> anyhow::Result<Self> {
+        use std::path::Path;
+        Self::from_prebuilt_with_paths(
+            Path::new("generated-bins/prover.bin"),
+            Path::new("generated-bins/common.bin"),
+            Path::new("generated-bins/verifier.bin"),
+        )
+    }
+
+    /// Creates a new [`WormholeProofAggregator`] from pre-built circuit files at custom paths.
+    ///
+    /// This is useful when the pre-built files are not in the default `generated-bins/` directory.
+    pub fn from_prebuilt_with_paths(
+        prover_path: &std::path::Path,
+        common_path: &std::path::Path,
+        verifier_path: &std::path::Path,
+    ) -> anyhow::Result<Self> {
+        let aggregation_config = TreeAggregationConfig::default();
+
+        // Generate dummy proofs - one for each potential padding slot
+        // Each dummy has a unique nullifier to avoid on-chain duplicate errors
+        let mut dummy_proofs = Vec::with_capacity(aggregation_config.num_leaf_proofs);
+        for i in 0..aggregation_config.num_leaf_proofs {
+            // Load fresh prover for each proof (prover is consumed on commit)
+            let prover = WormholeProver::new_from_files(prover_path, common_path).map_err(|e| {
+                anyhow::anyhow!("Failed to load prover from pre-built files: {}", e)
+            })?;
+
+            // Generate dummy inputs with unique nullifier (build_dummy_circuit_inputs generates random nullifier each call)
+            let dummy_inputs = build_dummy_circuit_inputs()?;
+            eprintln!(
+                "DEBUG: dummy_inputs[{}] nullifier = {:?}",
+                i, *dummy_inputs.public.nullifier
+            );
+            let proof = prover.commit(&dummy_inputs)?.prove()?;
+            // Log the nullifier from the proof's public inputs
+            let pi = PublicCircuitInputs::try_from(&proof)?;
+            eprintln!("DEBUG: dummy_proof[{}] nullifier = {:?}", i, *pi.nullifier);
+            dummy_proofs.push(proof);
+        }
+
+        // Build verifier data from the same circuit by loading from files
+        let verifier_data = Self::load_verifier_data_from_paths(common_path, verifier_path)?;
+
+        Ok(Self::new(verifier_data, dummy_proofs))
+    }
+
+    /// Load verifier circuit data from pre-built files at default paths.
+    fn load_verifier_data() -> anyhow::Result<VerifierCircuitData<F, C, D>> {
+        use std::path::Path;
+        Self::load_verifier_data_from_paths(
+            Path::new("generated-bins/common.bin"),
+            Path::new("generated-bins/verifier.bin"),
+        )
+    }
+
+    /// Load verifier circuit data from pre-built files at custom paths.
+    fn load_verifier_data_from_paths(
+        common_path: &std::path::Path,
+        verifier_path: &std::path::Path,
+    ) -> anyhow::Result<VerifierCircuitData<F, C, D>> {
+        use plonky2::plonk::circuit_data::{CommonCircuitData, VerifierOnlyCircuitData};
+        use plonky2::util::serialization::DefaultGateSerializer;
+        use std::fs;
+
+        let gate_serializer = DefaultGateSerializer;
+
+        // Load common data
+        let common_bytes = fs::read(common_path)
+            .map_err(|e| anyhow::anyhow!("Failed to read {:?}: {}", common_path, e))?;
+        let common = CommonCircuitData::from_bytes(common_bytes, &gate_serializer)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize common data: {}", e))?;
+
+        // Load verifier-only data
+        let verifier_only_bytes = fs::read(verifier_path)
+            .map_err(|e| anyhow::anyhow!("Failed to read {:?}: {}", verifier_path, e))?;
+        let verifier_only = VerifierOnlyCircuitData::<C, D>::from_bytes(verifier_only_bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize verifier data: {}", e))?;
+
+        Ok(VerifierCircuitData {
+            verifier_only,
+            common,
+        })
+    }
+
     /// Creates a new [`WormholeProofAggregator`] with a given [`CircuitConfig`]
-    /// by building the circuit and extracting the verifier data.
+    /// by building the circuit, extracting verifier data, and generating compatible dummy proofs.
     pub fn from_circuit_config(circuit_config: CircuitConfig) -> Self {
-        let circuit = WormholeCircuit::new(circuit_config);
-        let verifier_data = circuit.build_verifier();
-        Self::new(verifier_data)
+        use plonky2::iop::witness::PartialWitness;
+        use wormhole_circuit::block_header::BlockHeader;
+        use wormhole_circuit::nullifier::Nullifier;
+        use wormhole_circuit::storage_proof::StorageProof;
+        use wormhole_circuit::substrate_account::SubstrateAccount;
+        use wormhole_circuit::unspendable_account::UnspendableAccount;
+        use zk_circuits_common::circuit::CircuitFragment;
+        use zk_circuits_common::codec::ByteCodec;
+
+        // Build the circuit once to get both prover and verifier data from the SAME build.
+        // This is critical - using separate builds causes wire assignment mismatches.
+        let circuit = WormholeCircuit::new(circuit_config.clone());
+        let targets = circuit.targets();
+        let circuit_data = circuit.build_circuit();
+
+        // Extract verifier data from this circuit
+        let verifier_data = circuit_data.verifier_data();
+
+        let aggregation_config = TreeAggregationConfig::default();
+
+        // Generate multiple dummy proofs - one for each potential padding slot.
+        // Each dummy has a unique nullifier to avoid on-chain duplicate errors.
+        let mut dummy_proofs = Vec::with_capacity(aggregation_config.num_leaf_proofs);
+        for _ in 0..aggregation_config.num_leaf_proofs {
+            // Generate dummy inputs with unique nullifier (build_dummy_circuit_inputs generates random nullifier each call)
+            let dummy_inputs =
+                build_dummy_circuit_inputs().expect("failed to build dummy circuit inputs");
+
+            let mut pw = PartialWitness::new();
+
+            // Fill targets with dummy inputs
+            let nullifier = Nullifier::from(&dummy_inputs);
+            let storage_proof =
+                StorageProof::try_from(&dummy_inputs).expect("failed to create storage proof");
+            let unspendable_account = UnspendableAccount::from(&dummy_inputs);
+            let exit_account =
+                SubstrateAccount::from_bytes(dummy_inputs.public.exit_account.as_slice())
+                    .expect("failed to create exit account");
+            let block_header =
+                BlockHeader::try_from(&dummy_inputs).expect("failed to create block header");
+
+            nullifier
+                .fill_targets(&mut pw, targets.nullifier.clone())
+                .expect("failed to fill nullifier");
+            unspendable_account
+                .fill_targets(&mut pw, targets.unspendable_account.clone())
+                .expect("failed to fill unspendable account");
+            storage_proof
+                .fill_targets(&mut pw, targets.storage_proof.clone())
+                .expect("failed to fill storage proof");
+            exit_account
+                .fill_targets(&mut pw, targets.exit_account.clone())
+                .expect("failed to fill exit account");
+            block_header
+                .fill_targets(&mut pw, targets.block_header.clone())
+                .expect("failed to fill block header");
+
+            let dummy_proof = circuit_data
+                .prove(pw)
+                .expect("failed to generate dummy proof");
+            dummy_proofs.push(dummy_proof);
+        }
+
+        Self::new(verifier_data, dummy_proofs)
     }
 
     pub fn with_config(mut self, config: TreeAggregationConfig) -> Self {
@@ -98,17 +269,27 @@ impl WormholeProofAggregator {
 
     /// Aggregates `N` number of leaf proofs into an [`AggregatedProof`].
     pub fn aggregate(&mut self) -> anyhow::Result<AggregatedProof<F, C, D>> {
-        let Some(proofs) = self.proofs_buffer.take() else {
+        let Some(mut proofs) = self.proofs_buffer.take() else {
             bail!("there are no proofs to aggregate")
         };
 
-        let padded_proofs = pad_with_dummy_proofs(
-            proofs,
-            self.config.num_leaf_proofs,
-            &self.leaf_circuit_data.common,
-        )?;
+        // Pad with dummy proofs if needed
+        let num_dummies_needed = self.config.num_leaf_proofs.saturating_sub(proofs.len());
+        for i in 0..num_dummies_needed {
+            proofs.push(self.dummy_proofs[i].clone());
+        }
+
+        // Debug: log nullifiers from all proofs going into aggregation
+        for (idx, proof) in proofs.iter().enumerate() {
+            let pi = PublicCircuitInputs::try_from(proof)?;
+            eprintln!(
+                "DEBUG aggregate(): proof[{}] nullifier = {:?}",
+                idx, *pi.nullifier
+            );
+        }
+
         let root_proof = aggregate_to_tree(
-            padded_proofs,
+            proofs,
             &self.leaf_circuit_data.common,
             &self.leaf_circuit_data.verifier_only,
             self.config,

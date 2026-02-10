@@ -125,27 +125,22 @@ pub struct PrivateCircuitInputs {
 impl AggregatedPublicCircuitInputs {
     pub fn try_from_slice(pis: &[GoldilocksField]) -> anyhow::Result<Self> {
         // Layout in the FINAL (deduped) wrapper proof PIs:
-        // [account_count, asset_id, volume_fee_bps, block_data(5), [output_sum(1), exit_account(4)]*, nullifiers(4)*]
-        let account_count = pis[0].to_canonical_u64() as usize;
+        // [num_unique_exits, asset_id, volume_fee_bps, block_data(5), [output_sum(1), exit_account(4)] * N, nullifiers(4) * N, padding...]
+        //
+        // IMPORTANT: The output has N "slots" (one per leaf proof position), NOT account_count slots.
+        // The num_unique_exits is informational only - the actual slot count is always N.
+        // Slots with matching exit accounts will have their amounts summed, but all N slots are present.
+        let num_unique_exits = pis[0].to_canonical_u64() as usize;
         let asset_id = pis[1].to_canonical_u64() as u32;
         let volume_fee_bps = pis[2].to_canonical_u64() as u32;
 
-        // Numbers of leaf proofs we aggregated over into a tree according the length of the public inputs.
+        // Number of leaf proofs (N) is derived from the total PI length.
+        // Total layout: 8 (metadata) + N*5 (exit slots) + N*4 (nullifiers) + padding
+        // So: pis.len() >= 8 + 9*N, meaning N = (pis.len() - 8) / 9 (integer division)
+        // But we also know pis.len() is padded to be a multiple related to leaf PI length.
+        // The circuit pads to root_pi_len + 8, where root_pi_len = n_leaf * LEAF_PI_LEN.
+        // So: n_leaf = pis.len() / LEAF_PI_LEN (integer division, rounds down correctly).
         let n_leaf = pis.len() / PUBLIC_INPUTS_FELTS_LEN;
-        // Compute expected total PI length from indices and sanity-check.
-
-        let mut expected_felts = 8usize; // for account_count + asset_id + volume_fee_bps + block_data (5 felts)
-
-        let hash_item_felts = 4;
-        expected_felts += account_count; // output_sum (1 felt each)
-        expected_felts += hash_item_felts * (account_count); // exit_account (4 felts each)
-        expected_felts += hash_item_felts * (n_leaf); // nullifiers (4 felts each)
-        anyhow::ensure!(
-            expected_felts <= pis.len(),
-            "Deduped PI length must be less than or equal to {}, but got {} (computed from indices).",
-            expected_felts,
-            pis.len()
-        );
 
         // Helpers
         #[inline]
@@ -162,10 +157,12 @@ impl AggregatedPublicCircuitInputs {
         };
 
         let mut cursor = 8usize; // start after metadata felts
-        let mut account_data: Vec<PublicInputsByAccount> = Vec::with_capacity(account_count);
-        let mut nullifiers: Vec<BytesDigest> = Vec::with_capacity(n_leaf);
 
-        for _ in 0..account_count {
+        // Read N exit account slots (one per leaf proof position)
+        // Slots with duplicate exit accounts will appear multiple times with summed amounts.
+        // The chain should deduplicate by exit account after parsing.
+        let mut account_data: Vec<PublicInputsByAccount> = Vec::with_capacity(n_leaf);
+        for _ in 0..n_leaf {
             // output_sum (1 felt)
             let summed_output_amount = pis[cursor].to_canonical_u64() as u32;
             cursor += 1;
@@ -180,19 +177,22 @@ impl AggregatedPublicCircuitInputs {
             });
         }
 
+        // Read N nullifiers (one per leaf proof)
+        let mut nullifiers: Vec<BytesDigest> = Vec::with_capacity(n_leaf);
         for _ in 0..n_leaf {
-            // nullifiers: one 4-felt digest per leaf index in this group
             let n = read_digest(&pis[cursor..cursor + 4]).context("parsing nullifier")?;
             cursor += 4;
             nullifiers.push(n);
         }
 
-        // Final safety: we should have consumed exactly all expected felts, the rest of the felts should be zero.
+        // Compute expected felts consumed
+        let expected_felts = 8 + n_leaf * 5 + n_leaf * 4; // 8 metadata + N*5 exit slots + N*4 nullifiers
         if cursor != expected_felts {
             bail!(
-                "Internal parsing error: consumed {} felts, but expected {}.",
+                "Internal parsing error: consumed {} felts, but expected {} (n_leaf={}).",
                 cursor,
-                expected_felts
+                expected_felts,
+                n_leaf
             );
         }
 

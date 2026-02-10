@@ -1,22 +1,40 @@
-//! Runtime generation and caching of dummy proofs for padding aggregation batches.
+//! Universal dummy proof for padding aggregation batches.
 //!
-//! Instead of loading pre-compiled binary files, this module generates valid proofs
-//! on first access and caches them for subsequent use. This ensures the dummy proof
-//! always matches the current circuit configuration, eliminating sync issues when
-//! the circuit changes.
+//! Dummy proofs use `block_hash = 0` as a sentinel value. The leaf circuit
+//! skips all validation (storage proof, block header, nullifier) for proofs
+//! with this sentinel, allowing a single universal dummy proof to be used
+//! for all aggregation batches.
+//!
+//! # Sentinel Values
+//!
+//! - `block_hash = [0u8; 32]`: Triggers bypass of all validation
+//! - `exit_account = [0u8; 32]`: Dummies form their own exit group, contributing 0 to sums
+//!
+//! # Privacy Benefits
+//!
+//! Since nullifier validation is skipped for dummies, each dummy proof can have
+//! a random nullifier. This provides ambiguity about how many real vs dummy proofs
+//! were aggregated, improving privacy.
 //!
 //! # Performance
 //!
-//! The first call to [`get_dummy_proof`] will take several seconds to generate the proof.
-//! Subsequent calls return immediately from the cache.
-
-use std::sync::OnceLock;
+//! Dummy proofs are cached after first generation. Subsequent calls to
+//! `generate_dummy_proof` clone the cached proof and swap in a new random
+//! nullifier, which is very fast compared to generating a new proof.
+//!
+//! # Usage
+//!
+//! ```ignore
+//! // Get a dummy proof with a random nullifier
+//! let proof = generate_dummy_proof(true)?;  // true for ZK config
+//! ```
 
 use anyhow::Result;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
+use rand::Rng;
+use std::sync::OnceLock;
 use wormhole_circuit::inputs::{CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs};
-use wormhole_circuit::nullifier::Nullifier;
 use wormhole_circuit::storage_proof::ProcessedStorageProof;
 use wormhole_circuit::unspendable_account::UnspendableAccount;
 use wormhole_prover::WormholeProver;
@@ -24,9 +42,29 @@ use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::utils::BytesDigest;
 
 // ============================================================================
-// Inlined test constants (from test-helpers)
-// These are the minimal constants needed to construct a valid CircuitInputs
-// for dummy proof generation.
+// Public sentinel constants
+// ============================================================================
+
+/// Sentinel block hash for dummy proofs (all zeros).
+/// The leaf circuit skips all validation when block_hash == 0.
+pub const DUMMY_BLOCK_HASH: [u8; 32] = [0u8; 32];
+
+/// Exit account used by dummy proofs (all zeros).
+/// Dummies form their own exit account group but contribute 0 to the sum.
+pub const DUMMY_EXIT_ACCOUNT: [u8; 32] = [0u8; 32];
+
+// ============================================================================
+// Cached dummy proofs
+// ============================================================================
+
+/// Cached dummy proof for ZK config (lazy initialization)
+static CACHED_DUMMY_PROOF_ZK: OnceLock<ProofWithPublicInputs<F, C, D>> = OnceLock::new();
+
+/// Cached dummy proof for non-ZK config (lazy initialization)
+static CACHED_DUMMY_PROOF_NON_ZK: OnceLock<ProofWithPublicInputs<F, C, D>> = OnceLock::new();
+
+// ============================================================================
+// Internal constants for dummy proof generation
 // ============================================================================
 
 const DEFAULT_SECRET: &str = "4c8587bd422e01d961acdc75e7d66f6761b7af7c9b1864a492f369c9d6724f05";
@@ -36,25 +74,18 @@ const DEFAULT_FUNDING_ACCOUNT: [u8; 32] = [
     154, 106, 17, 41, 228, 118, 179, 82, 141, 225, 76,
 ];
 const DEFAULT_INPUT_AMOUNT: u32 = 100;
-const DEFAULT_OUTPUT_AMOUNT: u32 = 99;
+const DEFAULT_OUTPUT_AMOUNT: u32 = 0;
 const DEFAULT_VOLUME_FEE_BPS: u32 = 10;
-const DEFAULT_EXIT_ACCOUNT: [u8; 32] = [4u8; 32];
+
+// Block data - all zeros for dummy sentinel
+const DEFAULT_PARENT_HASH: [u8; 32] = [0u8; 32];
+const DEFAULT_BLOCK_NUMBER: u32 = 0;
+
+// These values are from the original hardcoded dummy proof.
+// Even though validation is skipped for dummies, the circuit still needs
+// structurally valid data to fill witness targets.
 const DEFAULT_ROOT_HASH: &str = "713c0468ddc5b657ce758a3fb75ec5ae906d95b334f24a4f5661cc775e1cdb43";
-
-const DEFAULT_BLOCK_HASH: [u8; 32] = [
-    160, 247, 232, 22, 150, 117, 245, 140, 3, 70, 175, 175, 22, 247, 90, 37, 231, 80, 170, 11, 27,
-    183, 40, 51, 5, 19, 164, 19, 188, 192, 229, 212,
-];
-
-const DEFAULT_PARENT_HASH: [u8; 32] = [
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-];
-
-const DEFAULT_BLOCK_NUMBER: u32 = 1;
-
-const DEFAULT_EXTRINSICS_ROOT: [u8; 32] = [
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-];
+const DEFAULT_EXTRINSICS_ROOT: [u8; 32] = [0u8; 32];
 
 const DEFAULT_DIGEST: [u8; 110] = [
     8, 6, 112, 111, 119, 95, 128, 233, 182, 183, 107, 158, 1, 115, 19, 219, 126, 253, 86, 30, 208,
@@ -64,6 +95,7 @@ const DEFAULT_DIGEST: [u8; 110] = [
     0, 18, 79, 226,
 ];
 
+// Original storage proof data (structurally valid for witness filling)
 const DEFAULT_STORAGE_PROOF: [&str; 7] = [
     "0000000000000020bfb500000000000020000000000000005d7c4eb0b2a8bb01872f88950f8c736fc72a250c32b4bdad9a50e7b5163a27aa20000000000000008f6440ed6cd23d75bfdd64b70ec7b0c969bd03e53f9fc1df688f8538dad89f402000000000000000545576a55a3f69e109b776d252064d3c9bf2fd3a0cd0447c8d82ec12b0343f3a20000000000000000f3ed746dd90e0e2a0d3f8faf0b8a41d5fafd9edcbc88630e389f2db76dd44b7200000000000000091c3eead5530405e48b8df6453a60be878eb1fa46c2a95638cdec8c8d722b46020000000000000008475575039b5b19da2901935792d5b1d5f9a09e08065e4d27a438329710120002000000000000000e6f538f42cbc6e72d6a302a648da34c475bcfa104e7cb80625fcf3219bd12172200000000000000056c6d22ef15fbb6005782db4c357b38cb53f5d39e5d8abdb3efffaec0537381420000000000000007f7b9a72037f9305f49bb2c25aa2f2c0108753ae606e1f094e887071e2596cfb200000000000000025d8d4ad318c66f23547af850000c9790100abdb72c268b1f4d363dca56dee1c2000000000000000a22c86fb54dbd5c704fc4d849c715109d7cb3167b0eb2ed270ca658bd9dcca2a20000000000000003687179c5ce1cb12b50e50d421bcbdceb82ec583de7585fb7898e167108168b5",
     "000000000000002004100000000000002000000000000000a5267873a1e7e0a5fcc3ff7e87341a4bef02d87b0db8077474a6ecbc064768a22000000000000000b7361080961b2d3b348d96affbf10c7ee2d6416efa14b524289e264863a270b6",
@@ -76,42 +108,44 @@ const DEFAULT_STORAGE_PROOF: [&str; 7] = [
 
 const DEFAULT_STORAGE_PROOF_INDICES: [usize; 7] = [768, 48, 240, 48, 160, 128, 16];
 
-// ============================================================================
-// Lazy proof caches
-// ============================================================================
-
-static DUMMY_PROOF_ZK: OnceLock<ProofWithPublicInputs<F, C, D>> = OnceLock::new();
-static DUMMY_PROOF: OnceLock<ProofWithPublicInputs<F, C, D>> = OnceLock::new();
+/// Index where nullifier starts in the public inputs (4 field elements)
+const NULLIFIER_START_INDEX: usize = 3;
+const NULLIFIER_END_INDEX: usize = 7;
 
 // ============================================================================
 // Public API
 // ============================================================================
 
-/// Returns a reference to a cached dummy proof suitable for padding aggregation batches.
+/// Generates a dummy proof with a random nullifier.
 ///
-/// The proof is lazily generated on first access and cached for reuse.
-/// Generation takes several seconds but only happens once per process lifetime.
+/// The first call generates and caches a base dummy proof. Subsequent calls
+/// clone the cached proof and swap in a new random nullifier, which is very
+/// fast compared to generating a new proof from scratch.
 ///
 /// # Arguments
 ///
-/// * `zk` - If true, returns a proof generated with `standard_recursion_zk_config()`.
-///          If false, returns a proof generated with `standard_recursion_config()`.
-///
-/// # Panics
-///
-/// Panics if the dummy proof cannot be generated. This should not happen with
-/// valid circuit configuration.
-pub fn get_dummy_proof(zk: bool) -> &'static ProofWithPublicInputs<F, C, D> {
-    let cache = if zk { &DUMMY_PROOF_ZK } else { &DUMMY_PROOF };
+/// * `zk` - If true, uses `standard_recursion_zk_config()`.
+///          If false, uses `standard_recursion_config()`.
+pub fn generate_dummy_proof(zk: bool) -> Result<ProofWithPublicInputs<F, C, D>> {
+    let base_proof = if zk {
+        CACHED_DUMMY_PROOF_ZK.get_or_init(|| {
+            generate_base_dummy_proof(true).expect("failed to generate base dummy proof (ZK)")
+        })
+    } else {
+        CACHED_DUMMY_PROOF_NON_ZK.get_or_init(|| {
+            generate_base_dummy_proof(false).expect("failed to generate base dummy proof (non-ZK)")
+        })
+    };
 
-    cache.get_or_init(|| generate_dummy_proof(zk).expect("failed to generate dummy proof"))
+    Ok(clone_with_random_nullifier(base_proof))
 }
 
 // ============================================================================
 // Internal implementation
 // ============================================================================
 
-fn generate_dummy_proof(zk: bool) -> Result<ProofWithPublicInputs<F, C, D>> {
+/// Generate the base dummy proof (called once per config, then cached).
+fn generate_base_dummy_proof(zk: bool) -> Result<ProofWithPublicInputs<F, C, D>> {
     let config = if zk {
         CircuitConfig::standard_recursion_zk_config()
     } else {
@@ -123,18 +157,60 @@ fn generate_dummy_proof(zk: bool) -> Result<ProofWithPublicInputs<F, C, D>> {
     prover.commit(&inputs)?.prove()
 }
 
-fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
+/// Clone a proof and replace the nullifier public inputs with random values.
+///
+/// Clone a proof and assign it a new random nullifier.
+///
+/// Since nullifier validation is skipped for dummy proofs (block_hash == 0),
+/// we can swap out the nullifier without invalidating the proof. This allows
+/// each dummy proof to have a unique nullifier for privacy.
+///
+/// This is used when padding aggregation batches with dummies - each dummy
+/// needs a unique nullifier to avoid duplicate nullifier errors on-chain.
+pub fn clone_with_random_nullifier(
+    base_proof: &ProofWithPublicInputs<F, C, D>,
+) -> ProofWithPublicInputs<F, C, D> {
+    let mut new_proof = base_proof.clone();
+
+    // Generate random nullifier bytes and convert to field elements
+    let nullifier_bytes = generate_random_nullifier();
+    let nullifier_digest = BytesDigest::try_from(nullifier_bytes).unwrap();
+    let nullifier_felts: [F; 4] =
+        zk_circuits_common::utils::digest_bytes_to_felts(nullifier_digest);
+
+    // Replace the nullifier field elements in public inputs
+    for (i, &felt) in nullifier_felts.iter().enumerate() {
+        new_proof.public_inputs[NULLIFIER_START_INDEX + i] = felt;
+    }
+
+    new_proof
+}
+
+/// Generate a random 32-byte nullifier for dummy proofs.
+fn generate_random_nullifier() -> [u8; 32] {
+    let mut rng = rand::thread_rng();
+    let mut nullifier = [0u8; 32];
+    rng.fill(&mut nullifier);
+    nullifier
+}
+
+/// Build circuit inputs for a dummy proof.
+/// Exposed publicly so the aggregator can generate a compatible dummy proof
+/// using its own prover instance.
+pub fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
     let secret_bytes: [u8; 32] = hex::decode(DEFAULT_SECRET)?[..32].try_into().unwrap();
     let secret = BytesDigest::try_from(secret_bytes)?;
 
     let root_hash: [u8; 32] = hex::decode(DEFAULT_ROOT_HASH)?[..32].try_into().unwrap();
 
     let funding_account = BytesDigest::try_from(DEFAULT_FUNDING_ACCOUNT)?;
-    let nullifier = Nullifier::from_preimage(secret, DEFAULT_TRANSFER_COUNT)
-        .hash
-        .into();
+
+    // Use a random nullifier instead of computing from secret.
+    // Since block_hash = 0 (dummy sentinel), nullifier validation is skipped.
+    let nullifier = BytesDigest::try_from(generate_random_nullifier())?;
+
     let unspendable_account = UnspendableAccount::from_secret(secret).account_id.into();
-    let exit_account = BytesDigest::try_from(DEFAULT_EXIT_ACCOUNT)?;
+    let exit_account = BytesDigest::try_from(DUMMY_EXIT_ACCOUNT)?;
 
     let storage_proof = build_storage_proof()?;
 
@@ -145,7 +221,8 @@ fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
             volume_fee_bps: DEFAULT_VOLUME_FEE_BPS,
             nullifier,
             exit_account,
-            block_hash: BytesDigest::try_from(DEFAULT_BLOCK_HASH)?,
+            // Sentinel: block_hash = 0 triggers validation bypass
+            block_hash: BytesDigest::try_from(DUMMY_BLOCK_HASH)?,
             parent_hash: BytesDigest::try_from(DEFAULT_PARENT_HASH)?,
             block_number: DEFAULT_BLOCK_NUMBER,
         },
@@ -155,8 +232,9 @@ fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
             transfer_count: DEFAULT_TRANSFER_COUNT,
             funding_account,
             unspendable_account,
+            // These values are not validated for dummies but needed for witness structure
             state_root: root_hash.try_into()?,
-            extrinsics_root: DEFAULT_EXTRINSICS_ROOT.try_into()?,
+            extrinsics_root: BytesDigest::try_from(DEFAULT_EXTRINSICS_ROOT)?,
             digest: DEFAULT_DIGEST,
             input_amount: DEFAULT_INPUT_AMOUNT,
         },
@@ -183,19 +261,111 @@ mod tests {
         let inputs = build_dummy_circuit_inputs().expect("failed to build dummy circuit inputs");
         assert_eq!(inputs.public.asset_id, 0);
         assert_eq!(inputs.public.output_amount, DEFAULT_OUTPUT_AMOUNT);
+        assert_eq!(*inputs.public.exit_account, DUMMY_EXIT_ACCOUNT);
+        assert_eq!(*inputs.public.block_hash, DUMMY_BLOCK_HASH);
+    }
+
+    #[test]
+    fn dummy_block_hash_is_zero() {
+        assert_eq!(DUMMY_BLOCK_HASH, [0u8; 32]);
+    }
+
+    #[test]
+    fn random_nullifiers_are_different() {
+        let inputs1 = build_dummy_circuit_inputs().expect("failed to build dummy circuit inputs");
+        let inputs2 = build_dummy_circuit_inputs().expect("failed to build dummy circuit inputs");
+        // Random nullifiers should be different (with overwhelming probability)
+        assert_ne!(*inputs1.public.nullifier, *inputs2.public.nullifier);
+    }
+
+    #[test]
+    fn nullifier_indices_are_correct() {
+        // Verify that our hardcoded indices match the actual layout
+        assert_eq!(
+            NULLIFIER_START_INDEX,
+            wormhole_circuit::inputs::NULLIFIER_START_INDEX
+        );
+        assert_eq!(
+            NULLIFIER_END_INDEX,
+            wormhole_circuit::inputs::NULLIFIER_END_INDEX
+        );
     }
 
     #[test]
     #[ignore = "slow - generates actual proof"]
     fn can_generate_dummy_proof() {
-        let proof = get_dummy_proof(false);
+        let proof = generate_dummy_proof(false).expect("failed to generate dummy proof");
         assert!(!proof.public_inputs.is_empty());
     }
 
     #[test]
     #[ignore = "slow - generates actual proof"]
     fn can_generate_dummy_proof_zk() {
-        let proof = get_dummy_proof(true);
+        let proof = generate_dummy_proof(true).expect("failed to generate dummy proof");
         assert!(!proof.public_inputs.is_empty());
+    }
+
+    #[test]
+    #[ignore = "slow - generates actual proof"]
+    fn cached_dummy_proofs_have_different_nullifiers() {
+        // First call generates and caches the base proof
+        let proof1 = generate_dummy_proof(false).expect("failed to generate dummy proof 1");
+        // Second call should reuse cache but have different nullifier
+        let proof2 = generate_dummy_proof(false).expect("failed to generate dummy proof 2");
+
+        // Extract nullifiers from public inputs
+        let nullifier1: Vec<_> =
+            proof1.public_inputs[NULLIFIER_START_INDEX..NULLIFIER_END_INDEX].to_vec();
+        let nullifier2: Vec<_> =
+            proof2.public_inputs[NULLIFIER_START_INDEX..NULLIFIER_END_INDEX].to_vec();
+
+        // Nullifiers should be different
+        assert_ne!(
+            nullifier1, nullifier2,
+            "Cached dummy proofs should have different nullifiers"
+        );
+    }
+
+    #[test]
+    #[ignore = "slow - generates actual proof"]
+    fn swapped_nullifier_proof_still_verifies() {
+        use plonky2::plonk::circuit_data::CircuitConfig;
+        use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
+
+        // Generate the base proof
+        let base_proof =
+            generate_base_dummy_proof(false).expect("failed to generate base dummy proof");
+
+        // Clone and swap nullifier
+        let swapped_proof = clone_with_random_nullifier(&base_proof);
+
+        // Verify the nullifiers are different
+        let base_nullifier: Vec<_> =
+            base_proof.public_inputs[NULLIFIER_START_INDEX..NULLIFIER_END_INDEX].to_vec();
+        let swapped_nullifier: Vec<_> =
+            swapped_proof.public_inputs[NULLIFIER_START_INDEX..NULLIFIER_END_INDEX].to_vec();
+        assert_ne!(
+            base_nullifier, swapped_nullifier,
+            "Nullifiers should be different after swap"
+        );
+
+        // Build verifier from the same circuit config
+        let config = CircuitConfig::standard_recursion_config();
+        let circuit = WormholeCircuit::new(config);
+        let verifier_data = circuit.build_verifier();
+
+        // Verify the base proof
+        println!("Verifying base proof...");
+        verifier_data
+            .verify(base_proof.clone())
+            .expect("base proof should verify");
+        println!("Base proof verified!");
+
+        // Verify the swapped proof - THIS IS THE KEY TEST
+        println!("Verifying swapped proof...");
+        verifier_data
+            .verify(swapped_proof)
+            .expect("swapped proof should verify");
+        println!("Swapped proof verified!");
     }
 }

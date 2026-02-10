@@ -249,26 +249,17 @@ impl PublicCircuitInputs {
 impl AggregatedPublicCircuitInputs {
     /// Parse aggregated public inputs from a slice of u64 values.
     pub fn try_from_u64_slice(pis: &[u64]) -> anyhow::Result<Self> {
-        // Layout: [account_count, asset_id, volume_fee_bps, block_data(5),
-        //          [output_sum(1), exit_account(4)]*, nullifiers(4)*]
-        let account_count = pis[0] as usize;
+        // Layout in the FINAL (deduped) wrapper proof PIs:
+        // [num_unique_exits, asset_id, volume_fee_bps, block_data(5), [output_sum(1), exit_account(4)] * N, nullifiers(4) * N, padding...]
+        //
+        // IMPORTANT: The output has N "slots" (one per leaf proof position), NOT account_count slots.
+        // The num_unique_exits is informational only - the actual slot count is always N.
+        let _num_unique_exits = pis[0] as usize; // Informational only, not used for parsing
         let asset_id = pis[1] as u32;
         let volume_fee_bps = pis[2] as u32;
 
+        // Number of leaf proofs (N) is derived from the total PI length.
         let n_leaf = pis.len() / PUBLIC_INPUTS_FELTS_LEN;
-
-        // Calculate expected length
-        let mut expected_felts = 8usize; // metadata + block_data
-        expected_felts += account_count; // output_sum per account
-        expected_felts += 4 * account_count; // exit_account per account
-        expected_felts += 4 * n_leaf; // nullifiers
-
-        anyhow::ensure!(
-            expected_felts <= pis.len(),
-            "PI length mismatch: expected at least {}, got {}",
-            expected_felts,
-            pis.len()
-        );
 
         let block_data = BlockData {
             block_hash: u64s_to_bytes_digest(&pis[3..7]).context("parsing block_hash")?,
@@ -276,10 +267,10 @@ impl AggregatedPublicCircuitInputs {
         };
 
         let mut cursor = 8usize;
-        let mut account_data = Vec::with_capacity(account_count);
-        let mut nullifiers = Vec::with_capacity(n_leaf);
 
-        for _ in 0..account_count {
+        // Read N exit account slots (one per leaf proof position)
+        let mut account_data = Vec::with_capacity(n_leaf);
+        for _ in 0..n_leaf {
             let summed_output_amount = pis[cursor] as u32;
             cursor += 1;
             let exit_account =
@@ -291,17 +282,22 @@ impl AggregatedPublicCircuitInputs {
             });
         }
 
+        // Read N nullifiers (one per leaf proof)
+        let mut nullifiers = Vec::with_capacity(n_leaf);
         for _ in 0..n_leaf {
             let n = u64s_to_bytes_digest(&pis[cursor..cursor + 4]).context("parsing nullifier")?;
             cursor += 4;
             nullifiers.push(n);
         }
 
+        // Verify we consumed expected number of felts
+        let expected_felts = 8 + n_leaf * 5 + n_leaf * 4;
         if cursor != expected_felts {
             bail!(
-                "Parsing error: consumed {} felts, expected {}",
+                "Parsing error: consumed {} felts, expected {} (n_leaf={})",
                 cursor,
-                expected_felts
+                expected_felts,
+                n_leaf
             );
         }
 

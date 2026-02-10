@@ -1,5 +1,5 @@
 use plonky2::{field::types::Field, plonk::proof::ProofWithPublicInputs};
-use wormhole_circuit::block_header::{BlockHeader, BlockHeaderTargets};
+use wormhole_circuit::block_header::{add_block_hash_validation, BlockHeader, BlockHeaderTargets};
 use zk_circuits_common::circuit::{C, D, F};
 
 use test_helpers::TestInputs;
@@ -11,6 +11,8 @@ fn run_test(header: &BlockHeader) -> anyhow::Result<ProofWithPublicInputs<F, C, 
     let (mut builder, mut pw) = crate::circuit_helpers::setup_test_builder_and_witness(false);
     let targets = BlockHeaderTargets::new(&mut builder);
     BlockHeader::circuit(&targets, &mut builder);
+    // Add block hash validation for isolated testing
+    add_block_hash_validation(&targets, &mut builder);
 
     header.fill_targets(&mut pw, targets).unwrap();
     crate::circuit_helpers::build_and_prove_test(builder, pw)

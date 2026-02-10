@@ -231,31 +231,20 @@ impl NullifierTargets {
 impl CircuitFragment for Nullifier {
     type Targets = NullifierTargets;
 
-    /// Builds a circuit that assert that nullifier was computed with `H(H(nullifier +
-    /// extrinsic_index + secret))`
+    /// Builds nullifier targets but does NOT enforce hash validation here.
+    /// The nullifier hash validation is made conditional on block_hash != 0
+    /// in `connect_shared_targets()` to allow dummy proofs to use random nullifiers.
     fn circuit(
         &Self::Targets {
-            hash,
-            ref secret,
-            ref transfer_count,
+            hash: _,
+            secret: _,
+            transfer_count: _,
         }: &Self::Targets,
-        builder: &mut CircuitBuilder<F, D>,
+        _builder: &mut CircuitBuilder<F, D>,
     ) {
-        let mut preimage = Vec::new();
-        let salt_felts = injective_string_to_felt(NULLIFIER_SALT);
-        for &f in salt_felts.iter() {
-            preimage.push(builder.constant(f));
-        }
-        preimage.extend(secret.elements.iter());
-        preimage.extend(transfer_count);
-
-        // Compute the `generated_account` by double-hashing the preimage (salt + secret).
-        let inner_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(preimage);
-        let computed_hash =
-            builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(inner_hash.elements.to_vec());
-
-        // Assert that hashes are equal.
-        builder.connect_hashes(computed_hash, hash);
+        // NOTE: Nullifier hash validation (nullifier == H(H(salt + secret + transfer_count)))
+        // is enforced conditionally in connect_shared_targets() based on block_hash != 0.
+        // This allows dummy proofs to use random nullifiers for better privacy.
     }
 
     fn fill_targets(
@@ -268,4 +257,26 @@ impl CircuitFragment for Nullifier {
         pw.set_target_arr(&targets.transfer_count, &self.transfer_count)?;
         Ok(())
     }
+}
+
+/// Adds unconditional nullifier hash validation: hash == H(H(salt + secret + transfer_count)).
+/// Use this for isolated testing of Nullifier. The full WormholeCircuit uses
+/// a conditional version in connect_shared_targets() to support dummy proofs.
+pub fn add_nullifier_validation(targets: &NullifierTargets, builder: &mut CircuitBuilder<F, D>) {
+    use plonky2::hash::poseidon2::Poseidon2Hash;
+    use zk_circuits_common::utils::injective_string_to_felt;
+
+    let salt_felts = injective_string_to_felt(NULLIFIER_SALT);
+    let mut nullifier_preimage = Vec::new();
+    for &f in salt_felts.iter() {
+        nullifier_preimage.push(builder.constant(f));
+    }
+    nullifier_preimage.extend(targets.secret.elements.iter());
+    nullifier_preimage.extend(targets.transfer_count.iter());
+
+    let inner_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(nullifier_preimage);
+    let computed_nullifier =
+        builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(inner_hash.elements.to_vec());
+
+    builder.connect_hashes(targets.hash, computed_nullifier);
 }

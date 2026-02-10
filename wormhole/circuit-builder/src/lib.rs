@@ -71,11 +71,22 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
 ///
 /// The aggregated circuit is built by running the aggregation process on dummy proofs.
 /// This requires creating a full aggregation tree which is computationally expensive.
+///
+/// IMPORTANT: This must be called AFTER generate_circuit_binaries() so that the
+/// leaf circuit files (prover.bin, common.bin, verifier.bin) already exist.
+/// The aggregator loads from these files to ensure consistency.
 pub fn generate_aggregated_circuit_binaries<P: AsRef<Path>>(output_dir: P) -> Result<()> {
     println!("Building aggregated wormhole circuit...");
 
-    // Create the aggregator with default config
-    let mut aggregator = WormholeProofAggregator::default();
+    // IMPORTANT: Use from_prebuilt() to load the leaf circuit from the files
+    // we just generated. This ensures the aggregated circuit's leaf verifier data
+    // matches the leaf circuit files exactly.
+    //
+    // If we used from_circuit_config(), it would build a fresh leaf circuit which
+    // might differ from the one in common.bin/verifier.bin, causing verification
+    // failures when the chain tries to verify aggregated proofs.
+    let mut aggregator = WormholeProofAggregator::from_prebuilt()
+        .map_err(|e| anyhow!("Failed to create aggregator from pre-built files. Make sure generate_circuit_binaries() was called first: {}", e))?;
 
     // We need to run the aggregation to get the circuit data.
     // The aggregator builds the circuit dynamically during aggregation.

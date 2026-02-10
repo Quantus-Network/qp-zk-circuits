@@ -3,8 +3,14 @@ use plonky2::plonk::circuit_data::CommonCircuitData;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use zk_circuits_common::circuit::{C, D, F};
 
-use crate::dummy_proof::get_dummy_proof;
+use crate::dummy_proof::generate_dummy_proof;
 
+/// Pads a vector of proofs with dummy proofs to reach the required length.
+///
+/// Each dummy proof has a unique random nullifier, providing privacy by making
+/// it impossible to distinguish dummy proofs from real ones based on nullifier
+/// patterns. Dummy proofs use `block_hash = 0` as a sentinel, so they are
+/// excluded from block validation in the aggregator.
 pub fn pad_with_dummy_proofs(
     mut proofs: Vec<ProofWithPublicInputs<F, C, D>>,
     proof_len: usize,
@@ -16,13 +22,17 @@ pub fn pad_with_dummy_proofs(
         bail!("proofs to aggregate was more than the maximum allowed")
     }
 
-    // Get dummy proof based on whether ZK mode is enabled in the circuit config.
-    // The proof is lazily generated on first access and cached for subsequent use.
     let zk = common_data.config.zero_knowledge;
-    let dummy_proof = get_dummy_proof(zk).clone();
+    let num_dummies_needed = proof_len - num_proofs;
 
-    for _ in 0..(proof_len - num_proofs) {
-        proofs.push(dummy_proof.clone());
+    if num_dummies_needed == 0 {
+        return Ok(proofs);
+    }
+
+    // Generate dummy proofs with random nullifiers for privacy
+    for _ in 0..num_dummies_needed {
+        let dummy_proof = generate_dummy_proof(zk)?;
+        proofs.push(dummy_proof);
     }
 
     Ok(proofs)

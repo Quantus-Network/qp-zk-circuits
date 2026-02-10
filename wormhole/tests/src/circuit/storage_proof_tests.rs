@@ -9,6 +9,7 @@ use zk_circuits_common::{
     utils::u64_to_felts,
 };
 
+use test_helpers::block_header::DEFAULT_BLOCK_HASHES;
 use test_helpers::storage_proof::default_root_hash;
 use test_helpers::TestInputs;
 
@@ -48,6 +49,7 @@ fn tampered_proof_fails() {
         &tampered_proof,
         default_root_hash(),
         LeafInputs::test_inputs_0(),
+        DEFAULT_BLOCK_HASHES[0], // Non-zero block_hash to trigger validation
     );
 
     run_test(&proof).unwrap();
@@ -62,7 +64,12 @@ fn invalid_nonce() {
     // Alter the nonce.
     leaf_inputs.transfer_count = u64_to_felts(5);
 
-    let proof = StorageProof::new(&proof, default_root_hash(), leaf_inputs);
+    let proof = StorageProof::new(
+        &proof,
+        default_root_hash(),
+        leaf_inputs,
+        DEFAULT_BLOCK_HASHES[0], // Non-zero block_hash to trigger validation
+    );
 
     run_test(&proof).unwrap();
 }
@@ -76,7 +83,12 @@ fn invalid_exit_address() {
     // Alter the to account.
     leaf_inputs.to_account = SubstrateAccount::new(&[0; 32]).unwrap();
 
-    let proof = StorageProof::new(&proof, default_root_hash(), leaf_inputs);
+    let proof = StorageProof::new(
+        &proof,
+        default_root_hash(),
+        leaf_inputs,
+        DEFAULT_BLOCK_HASHES[0], // Non-zero block_hash to trigger validation
+    );
 
     run_test(&proof).unwrap();
 }
@@ -90,7 +102,12 @@ fn invalid_input_amount() {
     // Alter the input amount (which is used for the leaf hash in storage).
     leaf_inputs.input_amount = F::from_canonical_u64(1000);
 
-    let proof = StorageProof::new(&proof, default_root_hash(), leaf_inputs);
+    let proof = StorageProof::new(
+        &proof,
+        default_root_hash(),
+        leaf_inputs,
+        DEFAULT_BLOCK_HASHES[0], // Non-zero block_hash to trigger validation
+    );
 
     run_test(&proof).unwrap();
 }
@@ -121,6 +138,7 @@ fn fuzz_tampered_proof() {
             &tampered_proof,
             default_root_hash(),
             LeafInputs::test_inputs_0(),
+            DEFAULT_BLOCK_HASHES[0], // Non-zero block_hash to trigger validation
         );
 
         // Catch panic from run_test

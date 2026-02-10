@@ -1,5 +1,5 @@
 use plonky2::{
-    hash::{hash_types::HashOutTarget, poseidon2::Poseidon2Hash},
+    hash::hash_types::HashOutTarget,
     iop::witness::{PartialWitness, WitnessWrite},
     plonk::circuit_builder::CircuitBuilder,
 };
@@ -56,18 +56,20 @@ impl BlockHeaderTargets {
 impl CircuitFragment for BlockHeader {
     type Targets = BlockHeaderTargets;
 
+    /// Builds the block header validation circuit.
+    ///
+    /// NOTE: This function only does range checking on block_number.
+    /// The block_hash == computed_hash constraint is added by `add_block_hash_validation()`
+    /// or conditionally in `connect_shared_targets` (for dummy proof support).
     fn circuit(
         &Self::Targets {
-            block_hash,
+            block_hash: _,
             ref header,
         }: &Self::Targets,
         builder: &mut CircuitBuilder<F, D>,
     ) {
         // Range constrain the block_number target to be 32 bits to verify injective encoding
         builder.range_check(header.block_number, 32);
-        let pre_image = header.collect_to_vec();
-        let computed_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(pre_image);
-        builder.connect_hashes(block_hash, computed_hash);
     }
 
     fn fill_targets(
@@ -86,4 +88,15 @@ impl CircuitFragment for BlockHeader {
         pw.set_target_arr(&targets.header.digest, &self.header.digest)?;
         Ok(())
     }
+}
+
+/// Adds unconditional block hash validation: block_hash == hash(header contents).
+/// Use this for isolated testing of BlockHeader. The full WormholeCircuit uses
+/// a conditional version in connect_shared_targets() to support dummy proofs.
+pub fn add_block_hash_validation(targets: &BlockHeaderTargets, builder: &mut CircuitBuilder<F, D>) {
+    use plonky2::hash::poseidon2::Poseidon2Hash;
+
+    let pre_image = targets.header.collect_to_vec();
+    let computed_block_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(pre_image);
+    builder.connect_hashes(targets.block_hash, computed_block_hash);
 }
