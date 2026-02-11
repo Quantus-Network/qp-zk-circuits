@@ -8,11 +8,10 @@ version.workspace = true
 
 [dependencies]
 anyhow = { workspace = true, default-features = false }
-log = { version = "0.4", default-features = false }
 
 [features]
 default = ["std"]
-std = ["anyhow/std", "log/std"]
+std = ["anyhow/std"]
 
 [lints]
 workspace = true

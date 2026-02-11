@@ -279,15 +279,6 @@ impl WormholeProofAggregator {
             proofs.push(self.dummy_proofs[i].clone());
         }
 
-        // Debug: log nullifiers from all proofs going into aggregation
-        for (idx, proof) in proofs.iter().enumerate() {
-            let pi = PublicCircuitInputs::try_from(proof)?;
-            eprintln!(
-                "DEBUG aggregate(): proof[{}] nullifier = {:?}",
-                idx, *pi.nullifier
-            );
-        }
-
         let root_proof = aggregate_to_tree(
             proofs,
             &self.leaf_circuit_data.common,

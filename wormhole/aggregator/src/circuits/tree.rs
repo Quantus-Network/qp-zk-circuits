@@ -315,6 +315,16 @@ fn aggregate_dedupe_public_inputs(
     for slot in 0..n_leaf {
         let exit_slot = limbs4_at_offset::<LEAF_PI_LEN, EXIT_START>(child_pi_targets, slot);
 
+        // Check if this exit account already appeared in an earlier slot (deduplication)
+        // If so, we'll output zero for this slot to avoid double-minting
+        let mut is_duplicate = builder._false();
+        for earlier in 0..slot {
+            let exit_earlier =
+                limbs4_at_offset::<LEAF_PI_LEN, EXIT_START>(child_pi_targets, earlier);
+            let matches_earlier = bytes_digest_eq(&mut builder, exit_earlier, exit_slot);
+            is_duplicate = builder.or(is_duplicate, matches_earlier);
+        }
+
         // Sum amounts from all proofs that match this slot's exit account
         let mut acc = zero;
         for j in 0..n_leaf {
@@ -330,11 +340,15 @@ fn aggregate_dedupe_public_inputs(
             acc = builder.add(acc, conditional_amount);
         }
 
+        // If this is a duplicate slot, zero out the sum to prevent double-minting
+        // The chain will skip slots with zero amount
+        let final_sum = builder.select(is_duplicate, zero, acc);
+
         // Range check the sum
-        builder.range_check(acc, 32);
+        builder.range_check(final_sum, 32);
 
         // Output: [sum, exit_account(4)]
-        output_pis.push(acc);
+        output_pis.push(final_sum);
         output_pis.extend_from_slice(&exit_slot);
     }
 

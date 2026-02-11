@@ -256,12 +256,6 @@ impl AggregatedPublicCircuitInputs {
         // IMPORTANT: The output has N "slots" (one per leaf proof position), NOT account_count slots.
         // The num_unique_exits is informational only - the actual slot count is always N.
 
-        log::info!(
-            "Parsing aggregated PIs: total_len={}, first_10={:?}",
-            pis.len(),
-            &pis[..core::cmp::min(10, pis.len())]
-        );
-
         if pis.len() < 8 {
             bail!(
                 "AggregatedPI: too few elements, need at least 8 for header, got {}",
@@ -269,25 +263,11 @@ impl AggregatedPublicCircuitInputs {
             );
         }
 
-        let num_unique_exits = pis[0] as usize;
         let asset_id = pis[1] as u32;
         let volume_fee_bps = pis[2] as u32;
 
-        log::info!(
-            "AggregatedPI header: num_unique_exits={}, asset_id={}, volume_fee_bps={}",
-            num_unique_exits,
-            asset_id,
-            volume_fee_bps
-        );
-
         // Number of leaf proofs (N) is derived from the total PI length.
         let n_leaf = pis.len() / PUBLIC_INPUTS_FELTS_LEN;
-        log::info!(
-            "AggregatedPI: n_leaf={} (from {} / {})",
-            n_leaf,
-            pis.len(),
-            PUBLIC_INPUTS_FELTS_LEN
-        );
 
         if n_leaf == 0 {
             bail!(
@@ -302,12 +282,6 @@ impl AggregatedPublicCircuitInputs {
         let block_number: u32 = pis[7]
             .try_into()
             .context("AggregatedPI: parsing block_number from index 7")?;
-
-        log::info!(
-            "AggregatedPI: block_number={}, block_hash={:?}",
-            block_number,
-            block_hash
-        );
 
         let block_data = BlockData {
             block_hash,
@@ -347,24 +321,11 @@ impl AggregatedPublicCircuitInputs {
                 })?;
             cursor += 4;
 
-            log::debug!(
-                "AggregatedPI: account[{}] amount={}, exit={:?}",
-                i,
-                summed_output_amount,
-                exit_account
-            );
-
             account_data.push(PublicInputsByAccount {
                 summed_output_amount,
                 exit_account,
             });
         }
-
-        log::info!(
-            "AggregatedPI: parsed {} accounts, cursor now at {}",
-            account_data.len(),
-            cursor
-        );
 
         // Read N nullifiers (one per leaf proof)
         let mut nullifiers = Vec::with_capacity(n_leaf);
@@ -385,16 +346,8 @@ impl AggregatedPublicCircuitInputs {
             })?;
             cursor += 4;
 
-            log::debug!("AggregatedPI: nullifier[{}]={:?}", i, n);
-
             nullifiers.push(n);
         }
-
-        log::info!(
-            "AggregatedPI: parsed {} nullifiers, cursor now at {}",
-            nullifiers.len(),
-            cursor
-        );
 
         // Verify we consumed expected number of felts
         let expected_felts = 8 + n_leaf * 5 + n_leaf * 4;
@@ -408,13 +361,6 @@ impl AggregatedPublicCircuitInputs {
                 n_leaf
             );
         }
-
-        log::info!(
-            "AggregatedPI: successfully parsed {} accounts, {} nullifiers from block #{}",
-            account_data.len(),
-            nullifiers.len(),
-            block_number
-        );
 
         Ok(AggregatedPublicCircuitInputs {
             asset_id,
