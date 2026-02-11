@@ -175,66 +175,6 @@ fn aggregate_proofs_from_separate_prover_instances_serialized() {
     println!("=== Test passed! ===");
 }
 
-/// This test reproduces the bug where the aggregator's dummy proof comes from
-/// a different circuit build than its verifier_data.
-///
-/// The old buggy code in `from_circuit_config` did:
-/// 1. Create prover A, generate dummy proof from A
-/// 2. Create circuit B (separate build), get verifier_data from B
-/// 3. Use verifier_data from B with dummy proof from A -> MISMATCH!
-#[test]
-#[ignore = "test setup needs updating - only provides 1 dummy proof but aggregator expects 8"]
-fn reproduce_wire_set_twice_bug() {
-    println!("=== Reproducing the wire-set-twice bug ===");
-
-    // Simulate the OLD buggy from_circuit_config behavior:
-    // 1. Create prover instance A and generate dummy proof
-    println!("Creating prover A for dummy proof...");
-    let prover_a = WormholeProver::new(circuit_config());
-    let dummy_inputs = CircuitInputs::test_inputs_0(); // Use as dummy
-    let dummy_proof = prover_a.commit(&dummy_inputs).unwrap().prove().unwrap();
-
-    // 2. Create a SEPARATE circuit instance B for verifier_data (THIS IS THE BUG!)
-    println!("Creating separate circuit B for verifier_data (BUG!)...");
-    use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
-    let circuit_b = WormholeCircuit::new(circuit_config());
-    let verifier_data = circuit_b.build_verifier();
-
-    // 3. Create aggregator with mismatched verifier_data and dummy_proof
-    println!("Creating aggregator with mismatched circuit builds...");
-    let mut aggregator = WormholeProofAggregator::new(verifier_data, vec![dummy_proof]);
-
-    // 4. Generate a real proof with yet another prover instance
-    println!("Creating prover C for real proof...");
-    let prover_c = WormholeProver::new(circuit_config());
-    let real_inputs = CircuitInputs::test_inputs_1();
-    let real_proof = prover_c.commit(&real_inputs).unwrap().prove().unwrap();
-
-    // 5. Push the real proof
-    aggregator.push_proof(real_proof).unwrap();
-
-    // 6. Attempt aggregation - this should fail with "wire set twice"
-    println!("Running aggregation (expecting failure)...");
-    let result = aggregator.aggregate();
-
-    // This SHOULD fail with the bug, but let's see what happens
-    match result {
-        Ok(_) => {
-            println!("WARNING: Aggregation succeeded - bug may not be reproduced");
-            // If it succeeds, the test still passes but we note it
-        }
-        Err(e) => {
-            let error_msg = e.to_string();
-            println!("Aggregation failed as expected: {}", error_msg);
-            assert!(
-                error_msg.contains("set twice") || error_msg.contains("wire"),
-                "Expected 'wire set twice' error, got: {}",
-                error_msg
-            );
-            println!("=== Bug successfully reproduced! ===");
-        }
-    }
-}
 
 /// Test that verifies the aggregated proof can be verified using the pre-built
 /// verifier binaries (simulating on-chain verification).
