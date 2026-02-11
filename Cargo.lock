@@ -6552,9 +6552,8 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.3.46"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9da98b7d9b7dad93488a84b8248efc35352b0b2657397d4167e7ad67e5d535e5"
+version = "0.3.47"
+source = "git+https://github.com/time-rs/time?tag=v0.3.47#d5144cd2874862d46466c900910cd8577d066019"
 dependencies = [
  "deranged",
  "itoa",
@@ -6568,14 +6567,12 @@ dependencies = [
 [[package]]
 name = "time-core"
 version = "0.1.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7694e1cfe791f8d31026952abf09c69ca6f6fa4e1a1229e18988f06a04a12dca"
+source = "git+https://github.com/time-rs/time?tag=v0.3.47#d5144cd2874862d46466c900910cd8577d066019"
 
 [[package]]
 name = "time-macros"
-version = "0.2.26"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78cc610bac2dcee56805c99642447d4c5dbde4d01f752ffea0199aee1f601dc4"
+version = "0.2.27"
+source = "git+https://github.com/time-rs/time?tag=v0.3.47#d5144cd2874862d46466c900910cd8577d066019"
 dependencies = [
  "num-conv",
  "time-core",

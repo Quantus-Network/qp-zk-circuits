@@ -34,3 +34,7 @@ version = "1.0.1"
 
 [workspace.lints.clippy]
 uninlined_format_args = "allow"
+
+# Force updated versions for security advisories
+[patch.crates-io]
+time = { git = "https://github.com/time-rs/time", tag = "v0.3.47" }
