@@ -1,9 +1,9 @@
 [package]
-name = "qp-wormhole-inputs"
-description = "Public input types for Wormhole circuit proofs"
 authors.workspace = true
+description = "Public input types for Wormhole circuit proofs"
 edition.workspace = true
 license.workspace = true
+name = "qp-wormhole-inputs"
 version.workspace = true
 
 [dependencies]

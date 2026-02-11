@@ -34,5 +34,3 @@ version = "1.0.1"
 
 [workspace.lints.clippy]
 uninlined_format_args = "allow"
-
-
