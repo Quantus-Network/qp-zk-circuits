@@ -214,7 +214,7 @@ impl WormholeProofAggregator {
                 .fill_targets(&mut pw, targets.storage_proof.clone())
                 .expect("failed to fill storage proof");
             exit_accounts
-                .fill_targets(&mut pw, targets.exit_accounts.clone())
+                .fill_targets(&mut pw, targets.exit_accounts)
                 .expect("failed to fill exit accounts");
             block_header
                 .fill_targets(&mut pw, targets.block_header.clone())

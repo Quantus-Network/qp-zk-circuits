@@ -62,9 +62,9 @@ impl CircuitFragment for BlockHeader {
     /// The block_hash == computed_hash constraint is added by `add_block_hash_validation()`
     /// or conditionally in `connect_shared_targets` (for dummy proof support).
     fn circuit(
-        &Self::Targets {
+        Self::Targets {
             block_hash: _,
-            ref header,
+            header,
         }: &Self::Targets,
         builder: &mut CircuitBuilder<F, D>,
     ) {

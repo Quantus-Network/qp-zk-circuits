@@ -3,7 +3,7 @@ use plonky2::plonk::circuit_data::CommonCircuitData;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_aggregator::aggregator::WormholeProofAggregator;
 use qp_wormhole_aggregator::circuits::tree::TreeAggregationConfig;
-use qp_wormhole_aggregator::dummy_proof::get_dummy_proof;
+use qp_wormhole_aggregator::dummy_proof::generate_dummy_proof;
 use zk_circuits_common::circuit::{C, D, F};
 
 fn deserialize_proofs(
@@ -11,7 +11,7 @@ fn deserialize_proofs(
     len: usize,
 ) -> Vec<ProofWithPublicInputs<F, C, D>> {
     let zk = common_data.config.zero_knowledge;
-    let dummy_proof = get_dummy_proof(zk);
+    let dummy_proof = generate_dummy_proof(zk).expect("failed to generate dummy proof");
     (0..len).map(|_| dummy_proof.clone()).collect()
 }
 

@@ -127,7 +127,7 @@ const NULLIFIER_END_INDEX: usize = 8;
 /// # Arguments
 ///
 /// * `zk` - If true, uses `standard_recursion_zk_config()`.
-///          If false, uses `standard_recursion_config()`.
+///   If false, uses `standard_recursion_config()`.
 pub fn generate_dummy_proof(zk: bool) -> Result<ProofWithPublicInputs<F, C, D>> {
     let base_proof = if zk {
         CACHED_DUMMY_PROOF_ZK.get_or_init(|| {
@@ -248,7 +248,7 @@ pub fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
 fn build_storage_proof() -> Result<ProcessedStorageProof> {
     let proof: Vec<Vec<u8>> = DEFAULT_STORAGE_PROOF
         .iter()
-        .map(|node| hex::decode(node))
+        .map(hex::decode)
         .collect::<std::result::Result<_, _>>()?;
 
     let indices = DEFAULT_STORAGE_PROOF_INDICES.to_vec();

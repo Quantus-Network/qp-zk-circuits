@@ -100,6 +100,7 @@ pub struct LeafInputs {
 }
 
 impl LeafInputs {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         asset_id: u32,
         transfer_count: u64,

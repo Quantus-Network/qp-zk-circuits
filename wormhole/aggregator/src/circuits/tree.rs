@@ -1072,13 +1072,13 @@ mod tests {
         let dummy_parent_hash = [F::ZERO; 4];
         let dummy_output_amount = F::ZERO;
 
-        for i in num_real_proofs..8 {
+        for nullifier in nullifiers_felts.iter().skip(num_real_proofs) {
             pis_list.push(make_pi_from_felts(
                 asset_id,
                 dummy_output_amount,
                 dummy_output_amount, // Both outputs zero
                 volume_fee_bps,
-                nullifiers_felts[i],
+                *nullifier,
                 dummy_exit,
                 dummy_exit, // Both exits zero
                 dummy_block_hash,
