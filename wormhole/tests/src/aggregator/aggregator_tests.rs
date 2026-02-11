@@ -175,7 +175,6 @@ fn aggregate_proofs_from_separate_prover_instances_serialized() {
     println!("=== Test passed! ===");
 }
 
-
 /// Test that verifies the aggregated proof can be verified using the pre-built
 /// verifier binaries (simulating on-chain verification).
 ///
