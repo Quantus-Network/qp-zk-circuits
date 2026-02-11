@@ -36,12 +36,14 @@
 //!     },
 //!     public: PublicCircuitInputs {
 //!         asset_id: 0_u32,
-//!         output_amount: 999,  // After 0.1% fee deduction
-//!         volume_fee_bps: 10,  // 0.1% = 10 basis points
+//!         output_amount_1: 900,  // Spend amount after fee
+//!         output_amount_2: 99,   // Change amount (1000 - 900 - fee)
+//!         volume_fee_bps: 10,    // 0.1% = 10 basis points
 //!         nullifier: [1u8; 32].try_into().unwrap(),
 //!         block_hash: [0u8; 32].try_into().unwrap(),
 //!         parent_hash: [5u8; 32].try_into().unwrap(),
-//!         exit_account: [2u8; 32].try_into().unwrap(),
+//!         exit_account_1: [2u8; 32].try_into().unwrap(),  // Spend destination
+//!         exit_account_2: [3u8; 32].try_into().unwrap(),  // Change destination
 //!         block_number: 1,
 //!     },
 //! };
@@ -77,7 +79,10 @@ use wormhole_circuit::{
     block_header::BlockHeader,
     circuit::circuit_logic::{CircuitTargets, WormholeCircuit},
 };
-use wormhole_circuit::{inputs::CircuitInputs, substrate_account::SubstrateAccount};
+use wormhole_circuit::{
+    inputs::CircuitInputs,
+    substrate_account::{DualExitAccount, SubstrateAccount},
+};
 use wormhole_circuit::{storage_proof::StorageProof, unspendable_account::UnspendableAccount};
 use zk_circuits_common::circuit::{CircuitFragment, C, D, F};
 
@@ -225,14 +230,20 @@ impl WormholeProver {
         let nullifier = Nullifier::from(circuit_inputs);
         let storage_proof = StorageProof::try_from(circuit_inputs)?;
         let unspendable_account = UnspendableAccount::from(circuit_inputs);
-        let exit_account =
-            SubstrateAccount::from_bytes(circuit_inputs.public.exit_account.as_slice())?;
+        let exit_accounts = DualExitAccount {
+            exit_account_1: SubstrateAccount::from_bytes(
+                circuit_inputs.public.exit_account_1.as_slice(),
+            )?,
+            exit_account_2: SubstrateAccount::from_bytes(
+                circuit_inputs.public.exit_account_2.as_slice(),
+            )?,
+        };
         let block_header = BlockHeader::try_from(circuit_inputs)?;
 
         nullifier.fill_targets(&mut self.partial_witness, targets.nullifier)?;
         unspendable_account.fill_targets(&mut self.partial_witness, targets.unspendable_account)?;
         storage_proof.fill_targets(&mut self.partial_witness, targets.storage_proof)?;
-        exit_account.fill_targets(&mut self.partial_witness, targets.exit_account)?;
+        exit_accounts.fill_targets(&mut self.partial_witness, targets.exit_accounts)?;
         block_header.fill_targets(&mut self.partial_witness, targets.block_header)?;
         Ok(self)
     }

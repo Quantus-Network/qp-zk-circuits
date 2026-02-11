@@ -10,22 +10,33 @@ use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::utils::{BytesDigest, DIGEST_BYTES_LEN};
 
 /// The total size of the public inputs field element vector.
-pub const PUBLIC_INPUTS_FELTS_LEN: usize = 20;
+/// Layout: asset_id(1) + output_amount_1(1) + output_amount_2(1) + volume_fee_bps(1) +
+///         nullifier(4) + exit_account_1(4) + exit_account_2(4) + block_hash(4) + parent_hash(4) + block_number(1)
+/// = 1 + 1 + 1 + 1 + 4 + 4 + 4 + 4 + 4 + 1 = 25
+pub const PUBLIC_INPUTS_FELTS_LEN: usize = 25;
 pub const ASSET_ID_INDEX: usize = 0;
-// Note: output_amount and volume_fee_bps come before nullifier because LeafTargets::new() is called
+// Note: output_amounts and volume_fee_bps come before nullifier because LeafTargets::new() is called
 // before NullifierTargets::new() to ensure asset_id is the first public input.
-pub const OUTPUT_AMOUNT_INDEX: usize = 1;
-pub const VOLUME_FEE_BPS_INDEX: usize = 2;
-pub const NULLIFIER_START_INDEX: usize = 3;
-pub const NULLIFIER_END_INDEX: usize = 7;
-pub const EXIT_ACCOUNT_START_INDEX: usize = 7;
-pub const EXIT_ACCOUNT_END_INDEX: usize = 11;
-pub const BLOCK_HASH_START_INDEX: usize = 11;
-pub const BLOCK_HASH_END_INDEX: usize = 15;
-pub const PARENT_HASH_START_INDEX: usize = 15;
-pub const PARENT_HASH_END_INDEX: usize = 19;
-pub const BLOCK_NUMBER_INDEX: usize = 19;
-pub const BLOCK_NUMBER_END_INDEX: usize = 20;
+pub const OUTPUT_AMOUNT_1_INDEX: usize = 1;
+pub const OUTPUT_AMOUNT_2_INDEX: usize = 2;
+pub const VOLUME_FEE_BPS_INDEX: usize = 3;
+pub const NULLIFIER_START_INDEX: usize = 4;
+pub const NULLIFIER_END_INDEX: usize = 8;
+pub const EXIT_ACCOUNT_1_START_INDEX: usize = 8;
+pub const EXIT_ACCOUNT_1_END_INDEX: usize = 12;
+pub const EXIT_ACCOUNT_2_START_INDEX: usize = 12;
+pub const EXIT_ACCOUNT_2_END_INDEX: usize = 16;
+pub const BLOCK_HASH_START_INDEX: usize = 16;
+pub const BLOCK_HASH_END_INDEX: usize = 20;
+pub const PARENT_HASH_START_INDEX: usize = 20;
+pub const PARENT_HASH_END_INDEX: usize = 24;
+pub const BLOCK_NUMBER_INDEX: usize = 24;
+pub const BLOCK_NUMBER_END_INDEX: usize = 25;
+
+// Legacy aliases for backward compatibility (pointing to first output)
+pub const OUTPUT_AMOUNT_INDEX: usize = OUTPUT_AMOUNT_1_INDEX;
+pub const EXIT_ACCOUNT_START_INDEX: usize = EXIT_ACCOUNT_1_START_INDEX;
+pub const EXIT_ACCOUNT_END_INDEX: usize = EXIT_ACCOUNT_1_END_INDEX;
 
 /// Inputs required to commit to the wormhole circuit.
 #[derive(Debug, Clone)]
@@ -35,28 +46,47 @@ pub struct CircuitInputs {
 }
 
 /// All of the public inputs required for the circuit.
+/// Supports two outputs (spend + change) from a single input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicCircuitInputs {
     /// The asset ID (0 for native token).
     pub asset_id: u32,
-    /// Amount to be received by the exit account after fee deduction.
+    /// Amount to be received by the first exit account (spend).
     /// This value is quantized with 0.01 units of precision.
     /// **DEV NOTE**: The output amount unit on chain is still u128 with 12 decimals so we will need to
     /// scale by 10^10 when constructing the output amount during on-chain verification.
-    pub output_amount: u32,
+    pub output_amount_1: u32,
+    /// Amount to be received by the second exit account (change).
+    /// Set to 0 if only one output is needed.
+    pub output_amount_2: u32,
     /// Volume fee rate in basis points (1 basis point = 0.01%).
     /// This is verified on-chain to match the runtime configuration.
     pub volume_fee_bps: u32,
     /// The nullifier.
     pub nullifier: BytesDigest,
-    /// The address of the account to pay out to.
-    pub exit_account: BytesDigest,
+    /// The address of the first exit account (spend destination).
+    pub exit_account_1: BytesDigest,
+    /// The address of the second exit account (change destination).
+    /// Set to all zeros if only one output is needed.
+    pub exit_account_2: BytesDigest,
     /// The hash of the block header.
     pub block_hash: BytesDigest,
     /// The parent hash of the block, parsed from the block header
     pub parent_hash: BytesDigest,
     /// The block number, parsed from the block header
     pub block_number: u32,
+}
+
+impl PublicCircuitInputs {
+    /// Legacy accessor for backward compatibility - returns first output amount
+    pub fn output_amount(&self) -> u32 {
+        self.output_amount_1
+    }
+
+    /// Legacy accessor for backward compatibility - returns first exit account
+    pub fn exit_account(&self) -> BytesDigest {
+        self.exit_account_1
+    }
 }
 
 /// The exit account and its given sum total output amount
@@ -125,19 +155,18 @@ pub struct PrivateCircuitInputs {
 impl AggregatedPublicCircuitInputs {
     pub fn try_from_slice(pis: &[GoldilocksField]) -> anyhow::Result<Self> {
         // Layout in the FINAL (deduped) wrapper proof PIs:
-        // [num_unique_exits, asset_id, volume_fee_bps, block_data(5), [output_sum(1), exit_account(4)] * N, nullifiers(4) * N, padding...]
+        // [num_unique_exits, asset_id, volume_fee_bps, block_data(5),
+        //  [output_sum(1), exit_account(4)] * 2*N,  <-- 2 outputs per leaf
+        //  nullifiers(4) * N, padding...]
         //
-        // IMPORTANT: The output has N "slots" (one per leaf proof position), NOT account_count slots.
-        // The num_unique_exits is informational only - the actual slot count is always N.
-        // Slots with matching exit accounts will have their amounts summed, but all N slots are present.
-        let num_unique_exits = pis[0].to_canonical_u64() as usize;
+        // IMPORTANT: With 2 outputs per leaf, we have 2*N exit slots.
+        // The num_unique_exits is informational only.
+        // Slots with matching exit accounts will have their amounts summed.
+        let _num_unique_exits = pis[0].to_canonical_u64() as usize;
         let asset_id = pis[1].to_canonical_u64() as u32;
         let volume_fee_bps = pis[2].to_canonical_u64() as u32;
 
         // Number of leaf proofs (N) is derived from the total PI length.
-        // Total layout: 8 (metadata) + N*5 (exit slots) + N*4 (nullifiers) + padding
-        // So: pis.len() >= 8 + 9*N, meaning N = (pis.len() - 8) / 9 (integer division)
-        // But we also know pis.len() is padded to be a multiple related to leaf PI length.
         // The circuit pads to root_pi_len + 8, where root_pi_len = n_leaf * LEAF_PI_LEN.
         // So: n_leaf = pis.len() / LEAF_PI_LEN (integer division, rounds down correctly).
         let n_leaf = pis.len() / PUBLIC_INPUTS_FELTS_LEN;
@@ -158,11 +187,12 @@ impl AggregatedPublicCircuitInputs {
 
         let mut cursor = 8usize; // start after metadata felts
 
-        // Read N exit account slots (one per leaf proof position)
+        // Read 2*N exit account slots (two outputs per leaf proof)
         // Slots with duplicate exit accounts will appear multiple times with summed amounts.
         // The chain should deduplicate by exit account after parsing.
-        let mut account_data: Vec<PublicInputsByAccount> = Vec::with_capacity(n_leaf);
-        for _ in 0..n_leaf {
+        let num_exit_slots = n_leaf * 2;
+        let mut account_data: Vec<PublicInputsByAccount> = Vec::with_capacity(num_exit_slots);
+        for _ in 0..num_exit_slots {
             // output_sum (1 felt)
             let summed_output_amount = pis[cursor].to_canonical_u64() as u32;
             cursor += 1;
@@ -186,13 +216,15 @@ impl AggregatedPublicCircuitInputs {
         }
 
         // Compute expected felts consumed
-        let expected_felts = 8 + n_leaf * 5 + n_leaf * 4; // 8 metadata + N*5 exit slots + N*4 nullifiers
+        // 8 metadata + 2*N*5 exit slots (2 outputs per leaf) + N*4 nullifiers
+        let expected_felts = 8 + num_exit_slots * 5 + n_leaf * 4;
         if cursor != expected_felts {
             bail!(
-                "Internal parsing error: consumed {} felts, but expected {} (n_leaf={}).",
+                "Internal parsing error: consumed {} felts, but expected {} (n_leaf={}, num_exit_slots={}).",
                 cursor,
                 expected_felts,
-                n_leaf
+                n_leaf,
+                num_exit_slots
             );
         }
 
@@ -210,10 +242,12 @@ impl PublicCircuitInputs {
     pub fn try_from_slice(pis: &[GoldilocksField]) -> anyhow::Result<Self> {
         // Public inputs are ordered as follows:
         // asset_id: 1 felt
-        // output_amount: 1 felt
+        // output_amount_1: 1 felt (spend)
+        // output_amount_2: 1 felt (change)
         // volume_fee_bps: 1 felt
         // Nullifier.hash: 4 felts
-        // ExitAccount.address: 4 felts
+        // ExitAccount1.address: 4 felts (spend destination)
+        // ExitAccount2.address: 4 felts (change destination)
         // BlockHeader.block_hash: 4 felts
         // BlockHeader.parent_hash: 4 felts
         // BlockHeader.block_number: 1 felt
@@ -228,10 +262,14 @@ impl PublicCircuitInputs {
             .to_canonical_u64()
             .try_into()
             .context("failed to convert asset_id felt to u32")?;
-        let output_amount = pis[OUTPUT_AMOUNT_INDEX]
+        let output_amount_1 = pis[OUTPUT_AMOUNT_1_INDEX]
             .to_canonical_u64()
             .try_into()
-            .context("failed to convert output_amount felt to u32")?;
+            .context("failed to convert output_amount_1 felt to u32")?;
+        let output_amount_2 = pis[OUTPUT_AMOUNT_2_INDEX]
+            .to_canonical_u64()
+            .try_into()
+            .context("failed to convert output_amount_2 felt to u32")?;
         let volume_fee_bps = pis[VOLUME_FEE_BPS_INDEX]
             .to_canonical_u64()
             .try_into()
@@ -241,9 +279,12 @@ impl PublicCircuitInputs {
         let block_hash = BytesDigest::try_from(&pis[BLOCK_HASH_START_INDEX..BLOCK_HASH_END_INDEX])
             .context("failed to deserialize block hash")?;
 
-        let exit_account =
-            BytesDigest::try_from(&pis[EXIT_ACCOUNT_START_INDEX..EXIT_ACCOUNT_END_INDEX])
-                .context("failed to deserialize exit account")?;
+        let exit_account_1 =
+            BytesDigest::try_from(&pis[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX])
+                .context("failed to deserialize exit_account_1")?;
+        let exit_account_2 =
+            BytesDigest::try_from(&pis[EXIT_ACCOUNT_2_START_INDEX..EXIT_ACCOUNT_2_END_INDEX])
+                .context("failed to deserialize exit_account_2")?;
         let parent_hash =
             BytesDigest::try_from(&pis[PARENT_HASH_START_INDEX..PARENT_HASH_END_INDEX])
                 .context("failed to deserialize parent hash")?;
@@ -255,11 +296,13 @@ impl PublicCircuitInputs {
 
         Ok(PublicCircuitInputs {
             asset_id,
-            output_amount,
+            output_amount_1,
+            output_amount_2,
             volume_fee_bps,
             nullifier,
             block_hash,
-            exit_account,
+            exit_account_1,
+            exit_account_2,
             parent_hash,
             block_number,
         })

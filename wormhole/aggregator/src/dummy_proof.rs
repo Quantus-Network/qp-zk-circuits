@@ -109,8 +109,10 @@ const DEFAULT_STORAGE_PROOF: [&str; 7] = [
 const DEFAULT_STORAGE_PROOF_INDICES: [usize; 7] = [768, 48, 240, 48, 160, 128, 16];
 
 /// Index where nullifier starts in the public inputs (4 field elements)
-const NULLIFIER_START_INDEX: usize = 3;
-const NULLIFIER_END_INDEX: usize = 7;
+/// Updated for Bitcoin-style 2-output layout: asset_id(1) + output_1(1) + output_2(1) + volume_fee_bps(1) = 4
+const NULLIFIER_START_INDEX: usize = 4;
+#[cfg(test)]
+const NULLIFIER_END_INDEX: usize = 8;
 
 // ============================================================================
 // Public API
@@ -217,10 +219,12 @@ pub fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
     Ok(CircuitInputs {
         public: PublicCircuitInputs {
             asset_id: 0u32,
-            output_amount: DEFAULT_OUTPUT_AMOUNT,
+            output_amount_1: DEFAULT_OUTPUT_AMOUNT, // Dummy proofs output 0
+            output_amount_2: 0u32,                  // No second output for dummies
             volume_fee_bps: DEFAULT_VOLUME_FEE_BPS,
             nullifier,
-            exit_account,
+            exit_account_1: exit_account,
+            exit_account_2: BytesDigest::default(), // No second exit account
             // Sentinel: block_hash = 0 triggers validation bypass
             block_hash: BytesDigest::try_from(DUMMY_BLOCK_HASH)?,
             parent_hash: BytesDigest::try_from(DEFAULT_PARENT_HASH)?,
@@ -260,8 +264,10 @@ mod tests {
     fn can_build_dummy_circuit_inputs() {
         let inputs = build_dummy_circuit_inputs().expect("failed to build dummy circuit inputs");
         assert_eq!(inputs.public.asset_id, 0);
-        assert_eq!(inputs.public.output_amount, DEFAULT_OUTPUT_AMOUNT);
-        assert_eq!(*inputs.public.exit_account, DUMMY_EXIT_ACCOUNT);
+        assert_eq!(inputs.public.output_amount_1, DEFAULT_OUTPUT_AMOUNT);
+        assert_eq!(inputs.public.output_amount_2, 0);
+        assert_eq!(*inputs.public.exit_account_1, DUMMY_EXIT_ACCOUNT);
+        assert_eq!(*inputs.public.exit_account_2, [0u8; 32]);
         assert_eq!(*inputs.public.block_hash, DUMMY_BLOCK_HASH);
     }
 

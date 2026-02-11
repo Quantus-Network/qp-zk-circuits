@@ -15,7 +15,7 @@ use zk_circuits_common::{
 
 use crate::{
     circuits::tree::{aggregate_to_tree, AggregatedProof, TreeAggregationConfig},
-    dummy_proof::{self, build_dummy_circuit_inputs},
+    dummy_proof::build_dummy_circuit_inputs,
 };
 
 /// A circuit that aggregates proofs from the Wormhole circuit.
@@ -99,14 +99,12 @@ impl WormholeProofAggregator {
 
             // Generate dummy inputs with unique nullifier (build_dummy_circuit_inputs generates random nullifier each call)
             let dummy_inputs = build_dummy_circuit_inputs()?;
-            eprintln!(
-                "DEBUG: dummy_inputs[{}] nullifier = {:?}",
-                i, *dummy_inputs.public.nullifier
-            );
             let proof = prover.commit(&dummy_inputs)?.prove()?;
-            // Log the nullifier from the proof's public inputs
+            // Verify the nullifier is not all zeros (would be a bug)
             let pi = PublicCircuitInputs::try_from(&proof)?;
-            eprintln!("DEBUG: dummy_proof[{}] nullifier = {:?}", i, *pi.nullifier);
+            if pi.nullifier.iter().all(|&b| b == 0) {
+                eprintln!("ERROR: dummy_proof[{}] has all-zero nullifier!", i);
+            }
             dummy_proofs.push(proof);
         }
 
@@ -117,6 +115,7 @@ impl WormholeProofAggregator {
     }
 
     /// Load verifier circuit data from pre-built files at default paths.
+    #[allow(dead_code)]
     fn load_verifier_data() -> anyhow::Result<VerifierCircuitData<F, C, D>> {
         use std::path::Path;
         Self::load_verifier_data_from_paths(
@@ -161,7 +160,7 @@ impl WormholeProofAggregator {
         use wormhole_circuit::block_header::BlockHeader;
         use wormhole_circuit::nullifier::Nullifier;
         use wormhole_circuit::storage_proof::StorageProof;
-        use wormhole_circuit::substrate_account::SubstrateAccount;
+        use wormhole_circuit::substrate_account::{DualExitAccount, SubstrateAccount};
         use wormhole_circuit::unspendable_account::UnspendableAccount;
         use zk_circuits_common::circuit::CircuitFragment;
         use zk_circuits_common::codec::ByteCodec;
@@ -192,9 +191,16 @@ impl WormholeProofAggregator {
             let storage_proof =
                 StorageProof::try_from(&dummy_inputs).expect("failed to create storage proof");
             let unspendable_account = UnspendableAccount::from(&dummy_inputs);
-            let exit_account =
-                SubstrateAccount::from_bytes(dummy_inputs.public.exit_account.as_slice())
-                    .expect("failed to create exit account");
+            let exit_accounts = DualExitAccount {
+                exit_account_1: SubstrateAccount::from_bytes(
+                    dummy_inputs.public.exit_account_1.as_slice(),
+                )
+                .expect("failed to create exit account 1"),
+                exit_account_2: SubstrateAccount::from_bytes(
+                    dummy_inputs.public.exit_account_2.as_slice(),
+                )
+                .expect("failed to create exit account 2"),
+            };
             let block_header =
                 BlockHeader::try_from(&dummy_inputs).expect("failed to create block header");
 
@@ -207,9 +213,9 @@ impl WormholeProofAggregator {
             storage_proof
                 .fill_targets(&mut pw, targets.storage_proof.clone())
                 .expect("failed to fill storage proof");
-            exit_account
-                .fill_targets(&mut pw, targets.exit_account.clone())
-                .expect("failed to fill exit account");
+            exit_accounts
+                .fill_targets(&mut pw, targets.exit_accounts.clone())
+                .expect("failed to fill exit accounts");
             block_header
                 .fill_targets(&mut pw, targets.block_header.clone())
                 .expect("failed to fill block header");
@@ -322,24 +328,47 @@ fn aggregate_public_inputs(
             block_data.block_number = leaf.block_number;
             block_data.block_hash = leaf.block_hash;
         }
-        let acct_entry =
+
+        // Process first output (exit_account_1, output_amount_1)
+        let acct_entry_1 =
             by_account
-                .entry(leaf.exit_account)
+                .entry(leaf.exit_account_1)
                 .or_insert_with(|| PublicInputsByAccount {
                     summed_output_amount: 0u32,
-                    exit_account: leaf.exit_account,
+                    exit_account: leaf.exit_account_1,
                 });
 
-        // Sum output amounts with overflow check (fail fast if unrealistic overflow happens).
-        acct_entry.summed_output_amount = acct_entry
+        acct_entry_1.summed_output_amount = acct_entry_1
             .summed_output_amount
-            .checked_add(leaf.output_amount)
+            .checked_add(leaf.output_amount_1)
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "overflow while summing output amounts for exit account {:?}",
-                    acct_entry.exit_account
+                    acct_entry_1.exit_account
                 )
             })?;
+
+        // Process second output (exit_account_2, output_amount_2)
+        // Only if the exit account is non-zero (skip unused second outputs)
+        if leaf.exit_account_2 != BytesDigest::default() || leaf.output_amount_2 > 0 {
+            let acct_entry_2 =
+                by_account
+                    .entry(leaf.exit_account_2)
+                    .or_insert_with(|| PublicInputsByAccount {
+                        summed_output_amount: 0u32,
+                        exit_account: leaf.exit_account_2,
+                    });
+
+            acct_entry_2.summed_output_amount = acct_entry_2
+                .summed_output_amount
+                .checked_add(leaf.output_amount_2)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "overflow while summing output amounts for exit account {:?}",
+                        acct_entry_2.exit_account
+                    )
+                })?;
+        }
     }
 
     let mut accounts: Vec<PublicInputsByAccount> = by_account.into_values().collect();

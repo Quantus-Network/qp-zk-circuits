@@ -105,9 +105,9 @@ impl From<CircuitInputs> for DebugInputs {
             leaf_hash_hex: hex::encode(hash),
             transfer_count: inputs.private.transfer_count,
             funding_account_hex: hex::encode(inputs.private.funding_account.as_ref()),
-            dest_account_hex: hex::encode(inputs.public.exit_account.as_ref()),
+            dest_account_hex: hex::encode(inputs.public.exit_account_1.as_ref()),
             input_amount: inputs.private.input_amount,
-            output_amount: inputs.public.output_amount,
+            output_amount: inputs.public.output_amount_1,
             volume_fee_bps: inputs.public.volume_fee_bps,
             block_hash_hex: hex::encode(inputs.public.block_hash.as_ref()),
             extrinsics_root_hex: hex::encode(inputs.private.extrinsics_root.as_ref()),
@@ -206,12 +206,14 @@ impl TryFrom<DebugInputs> for CircuitInputs {
             },
             public: PublicCircuitInputs {
                 asset_id: 0u32,
-                output_amount: inputs.output_amount,
+                output_amount_1: inputs.output_amount,
+                output_amount_2: 0u32, // No second output in example
                 volume_fee_bps: inputs.volume_fee_bps,
                 nullifier: Nullifier::from_preimage(secret, inputs.transfer_count)
                     .hash
                     .into(),
-                exit_account: BytesDigest::try_from(dest_account_id.as_ref() as &[u8])?,
+                exit_account_1: BytesDigest::try_from(dest_account_id.as_ref() as &[u8])?,
+                exit_account_2: BytesDigest::default(), // No second exit account
                 block_hash: BytesDigest::try_from(block_hash.as_ref())?,
                 parent_hash,
                 block_number: inputs.block_number,
@@ -573,11 +575,13 @@ async fn perform_batched_transfers(
             public: PublicCircuitInputs {
                 asset_id: 0u32,
                 volume_fee_bps: VOLUME_FEE_BPS,
-                output_amount,
+                output_amount_1: output_amount,
+                output_amount_2: 0u32, // No second output in example
                 nullifier: Nullifier::from_preimage(*secret, event.transfer_count)
                     .hash
                     .into(),
-                exit_account: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
+                exit_account_1: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
+                exit_account_2: BytesDigest::default(), // No second exit account
                 block_hash: BytesDigest::try_from(block_hash.as_ref())?,
                 parent_hash,
                 block_number,
@@ -724,12 +728,14 @@ async fn perform_transfer_and_get_inputs(
         },
         public: PublicCircuitInputs {
             asset_id: 0u32,
-            output_amount,
+            output_amount_1: output_amount,
+            output_amount_2: 0u32, // No second output in example
             volume_fee_bps: VOLUME_FEE_BPS,
             nullifier: Nullifier::from_preimage(secret, event.transfer_count)
                 .hash
                 .into(),
-            exit_account: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
+            exit_account_1: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
+            exit_account_2: BytesDigest::default(), // No second exit account
             block_hash: BytesDigest::try_from(block_hash.as_ref())?,
             parent_hash,
             block_number,

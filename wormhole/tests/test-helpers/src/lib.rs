@@ -75,10 +75,12 @@ impl TestInputs for CircuitInputs {
         Self {
             public: PublicCircuitInputs {
                 asset_id: 0u32,
-                output_amount: DEFAULT_OUTPUT_AMOUNTS[0],
+                output_amount_1: DEFAULT_OUTPUT_AMOUNTS[0],
+                output_amount_2: 0u32, // No second output for tests
                 volume_fee_bps: DEFAULT_VOLUME_FEE_BPS,
                 nullifier,
-                exit_account,
+                exit_account_1: exit_account,
+                exit_account_2: BytesDigest::default(), // No second exit account
                 block_hash: BytesDigest::try_from(DEFAULT_BLOCK_HASHES[0]).unwrap(),
                 parent_hash: BytesDigest::try_from(DEFAULT_PARENT_HASHES[0]).unwrap(),
                 block_number: DEFAULT_BLOCK_NUMBERS[0],
@@ -117,10 +119,12 @@ impl TestInputs for CircuitInputs {
         Self {
             public: PublicCircuitInputs {
                 asset_id: 0u32,
-                output_amount: DEFAULT_OUTPUT_AMOUNTS[1],
+                output_amount_1: DEFAULT_OUTPUT_AMOUNTS[1],
+                output_amount_2: 0u32, // No second output for tests
                 volume_fee_bps: DEFAULT_VOLUME_FEE_BPS,
                 nullifier,
-                exit_account,
+                exit_account_1: exit_account,
+                exit_account_2: BytesDigest::default(), // No second exit account
                 block_hash: BytesDigest::try_from(DEFAULT_BLOCK_HASHES[1]).unwrap(),
                 parent_hash: BytesDigest::try_from(DEFAULT_PARENT_HASHES[1]).unwrap(),
                 block_number: DEFAULT_BLOCK_NUMBERS[1],
@@ -209,6 +213,7 @@ pub mod storage_proof {
                 to_account,
                 DEFAULT_INPUT_AMOUNTS[0],
                 DEFAULT_OUTPUT_AMOUNTS[0],
+                0u32, // No second output for tests
                 DEFAULT_VOLUME_FEE_BPS,
             )
             .unwrap()
@@ -223,6 +228,7 @@ pub mod storage_proof {
                 to_account,
                 DEFAULT_INPUT_AMOUNTS[1],
                 DEFAULT_OUTPUT_AMOUNTS[1],
+                0u32, // No second output for tests
                 DEFAULT_VOLUME_FEE_BPS,
             )
             .unwrap()

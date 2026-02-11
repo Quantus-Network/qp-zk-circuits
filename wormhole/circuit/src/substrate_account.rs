@@ -67,6 +67,7 @@ impl From<BytesDigest> for SubstrateAccount {
     }
 }
 
+/// Targets for a single exit account (used internally)
 #[derive(Debug, Clone, Copy)]
 pub struct ExitAccountTargets {
     pub address: HashOutTarget,
@@ -77,6 +78,49 @@ impl ExitAccountTargets {
         Self {
             address: builder.add_virtual_hash_public_input(),
         }
+    }
+}
+
+/// Targets for two exit accounts (spend + change) in Bitcoin-style outputs
+#[derive(Debug, Clone, Copy)]
+pub struct DualExitAccountTargets {
+    /// First exit account (spend destination)
+    pub exit_account_1: ExitAccountTargets,
+    /// Second exit account (change destination)
+    pub exit_account_2: ExitAccountTargets,
+}
+
+impl DualExitAccountTargets {
+    pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
+        Self {
+            exit_account_1: ExitAccountTargets::new(builder),
+            exit_account_2: ExitAccountTargets::new(builder),
+        }
+    }
+}
+
+/// Exit account data for two outputs (spend + change)
+#[derive(Debug, Clone)]
+pub struct DualExitAccount {
+    pub exit_account_1: SubstrateAccount,
+    pub exit_account_2: SubstrateAccount,
+}
+
+impl CircuitFragment for DualExitAccount {
+    type Targets = DualExitAccountTargets;
+
+    /// Builds a dummy circuit to include both exit accounts as public inputs.
+    fn circuit(_targets: &Self::Targets, _builder: &mut CircuitBuilder<F, D>) {
+        // No constraints needed - exit accounts are just public inputs
+    }
+
+    fn fill_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        targets: Self::Targets,
+    ) -> anyhow::Result<()> {
+        pw.set_hash_target(targets.exit_account_1.address, self.exit_account_1.0.into())?;
+        pw.set_hash_target(targets.exit_account_2.address, self.exit_account_2.0.into())
     }
 }
 

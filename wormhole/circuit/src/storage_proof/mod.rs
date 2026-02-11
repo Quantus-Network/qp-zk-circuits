@@ -147,10 +147,12 @@ impl CircuitFragment for StorageProof {
             builder.range_check(*target, 32);
         }
 
-        // Fee constraint: output_amount * 10000 <= input_amount * (10000 - volume_fee_bps)
+        // Fee constraint: (output_amount_1 + output_amount_2) * 10000 <= input_amount * (10000 - volume_fee_bps)
         // This ensures the user receives at most (input_amount - fee) where fee = input_amount * volume_fee_bps / 10000
+        // With 2 outputs, we support Bitcoin-style spend + change in a single proof.
         let ten_thousand = builder.constant(F::from_canonical_u32(10000));
-        let lhs = builder.mul(leaf_inputs.output_amount, ten_thousand); // output_amount * 10000
+        let total_output = builder.add(leaf_inputs.output_amount_1, leaf_inputs.output_amount_2);
+        let lhs = builder.mul(total_output, ten_thousand); // (output_amount_1 + output_amount_2) * 10000
         let fee_complement = builder.sub(ten_thousand, leaf_inputs.volume_fee_bps); // 10000 - volume_fee_bps
 
         // Constrain fee_complement to 14 bits, implying volume_fee_bps <= 10000 and fee_complement < 2^14.
@@ -159,10 +161,11 @@ impl CircuitFragment for StorageProof {
         let rhs = builder.mul(leaf_inputs.input_amount, fee_complement); // input_amount * (10000 - volume_fee_bps)
 
         // Assert lhs <= rhs by checking that rhs - lhs >= 0 (i.e., rhs - lhs fits in range)
-        // With output_amount and input_amount 32-bit, and both 10000 and fee_complement < 2^14, each side is < 2^(32+14) = 2^46,
-        // so their difference fits in 47 bits.
+        // With output_amount_1, output_amount_2, and input_amount 32-bit, total_output < 2^33.
+        // Both 10000 and fee_complement < 2^14, so each side is < 2^(33+14) = 2^47,
+        // so their difference fits in 48 bits.
         let diff = builder.sub(rhs, lhs);
-        builder.range_check(diff, 47);
+        builder.range_check(diff, 48);
 
         // Calculate the leaf inputs hash.
         let leaf_inputs_hash =
@@ -326,8 +329,12 @@ impl CircuitFragment for StorageProof {
             self.leaf_inputs.input_amount,
         )?;
         pw.set_target(
-            targets.leaf_inputs.output_amount,
-            self.leaf_inputs.output_amount,
+            targets.leaf_inputs.output_amount_1,
+            self.leaf_inputs.output_amount_1,
+        )?;
+        pw.set_target(
+            targets.leaf_inputs.output_amount_2,
+            self.leaf_inputs.output_amount_2,
         )?;
         pw.set_target(
             targets.leaf_inputs.volume_fee_bps,

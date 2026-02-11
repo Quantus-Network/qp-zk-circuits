@@ -34,7 +34,7 @@ pub mod circuit_logic {
     use crate::block_header::BlockHeaderTargets;
     use crate::nullifier::{Nullifier, NullifierTargets};
     use crate::storage_proof::{StorageProof, StorageProofTargets};
-    use crate::substrate_account::{ExitAccountTargets, SubstrateAccount};
+    use crate::substrate_account::{DualExitAccount, DualExitAccountTargets};
     use crate::unspendable_account::{UnspendableAccount, UnspendableAccountTargets};
     use plonky2::{
         plonk::circuit_data::{CircuitData, ProverCircuitData, VerifierCircuitData},
@@ -47,7 +47,7 @@ pub mod circuit_logic {
         pub nullifier: NullifierTargets,
         pub unspendable_account: UnspendableAccountTargets,
         pub storage_proof: StorageProofTargets,
-        pub exit_account: ExitAccountTargets,
+        pub exit_accounts: DualExitAccountTargets,
         pub block_header: BlockHeaderTargets,
     }
 
@@ -60,7 +60,7 @@ pub mod circuit_logic {
                 nullifier: NullifierTargets::new(builder),
                 unspendable_account: UnspendableAccountTargets::new(builder),
                 storage_proof,
-                exit_account: ExitAccountTargets::new(builder),
+                exit_accounts: DualExitAccountTargets::new(builder),
                 block_header: BlockHeaderTargets::new(builder),
             }
         }
@@ -90,7 +90,7 @@ pub mod circuit_logic {
             Nullifier::circuit(&targets.nullifier, &mut builder);
             UnspendableAccount::circuit(&targets.unspendable_account, &mut builder);
             StorageProof::circuit(&targets.storage_proof, &mut builder);
-            SubstrateAccount::circuit(&targets.exit_account, &mut builder);
+            DualExitAccount::circuit(&targets.exit_accounts, &mut builder);
             BlockHeader::circuit(&targets.block_header, &mut builder);
 
             // Ensure that shared inputs to each fragment are the same.

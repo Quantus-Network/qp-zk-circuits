@@ -22,8 +22,10 @@ pub struct LeafTargets {
     pub to_account: HashOutTarget,
     /// The input amount from storage (private). This is what's stored in the merkle trie.
     pub input_amount: Target,
-    /// The output amount after fee deduction (public). This is what the user receives.
-    pub output_amount: Target,
+    /// The first output amount after fee deduction (public). Spend destination.
+    pub output_amount_1: Target,
+    /// The second output amount after fee deduction (public). Change destination.
+    pub output_amount_2: Target,
     /// Volume fee rate in basis points (public). Verified on-chain to match runtime config.
     pub volume_fee_bps: Target,
 }
@@ -32,8 +34,9 @@ impl LeafTargets {
     pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
         // Register asset_id as a public input (should be first if this is called before other targets)
         let asset_id = builder.add_virtual_public_input();
-        // output_amount and volume_fee_bps are public inputs
-        let output_amount = builder.add_virtual_public_input();
+        // output_amount_1, output_amount_2, and volume_fee_bps are public inputs
+        let output_amount_1 = builder.add_virtual_public_input();
+        let output_amount_2 = builder.add_virtual_public_input();
         let volume_fee_bps = builder.add_virtual_public_input();
         // Private inputs
         let transfer_count = array::from_fn(|_| builder.add_virtual_target());
@@ -47,9 +50,15 @@ impl LeafTargets {
             funding_account,
             to_account,
             input_amount,
-            output_amount,
+            output_amount_1,
+            output_amount_2,
             volume_fee_bps,
         }
+    }
+
+    /// Legacy accessor for backward compatibility
+    pub fn output_amount(&self) -> Target {
+        self.output_amount_1
     }
 
     /// Collect targets for the leaf hash (uses input_amount, which is what's stored in the trie)
@@ -67,7 +76,8 @@ impl LeafTargets {
         core::iter::once(self.asset_id)
             .chain(self.transfer_count.iter().copied())
             .chain(core::iter::once(self.input_amount))
-            .chain(core::iter::once(self.output_amount))
+            .chain(core::iter::once(self.output_amount_1))
+            .chain(core::iter::once(self.output_amount_2))
             .chain(core::iter::once(self.volume_fee_bps))
             .collect()
     }
@@ -81,8 +91,10 @@ pub struct LeafInputs {
     pub to_account: SubstrateAccount,
     /// The input amount from storage (private)
     pub input_amount: F,
-    /// The output amount after fee deduction (public)
-    pub output_amount: F,
+    /// The first output amount after fee deduction (public). Spend destination.
+    pub output_amount_1: F,
+    /// The second output amount after fee deduction (public). Change destination.
+    pub output_amount_2: F,
     /// Volume fee rate in basis points (public)
     pub volume_fee_bps: F,
 }
@@ -94,13 +106,15 @@ impl LeafInputs {
         funding_account: BytesDigest,
         to_account: BytesDigest,
         input_amount: u32,
-        output_amount: u32,
+        output_amount_1: u32,
+        output_amount_2: u32,
         volume_fee_bps: u32,
     ) -> anyhow::Result<Self> {
         let asset_id = F::from_canonical_u32(asset_id);
         let transfer_count = u64_to_felts(transfer_count);
         let input_amount = F::from_canonical_u32(input_amount);
-        let output_amount = F::from_canonical_u32(output_amount);
+        let output_amount_1 = F::from_canonical_u32(output_amount_1);
+        let output_amount_2 = F::from_canonical_u32(output_amount_2);
         let volume_fee_bps = F::from_canonical_u32(volume_fee_bps);
         let funding_account = SubstrateAccount::from_bytes(funding_account.as_slice())?;
         let to_account = SubstrateAccount::from_bytes(to_account.as_slice())?;
@@ -110,7 +124,8 @@ impl LeafInputs {
             funding_account,
             to_account,
             input_amount,
-            output_amount,
+            output_amount_1,
+            output_amount_2,
             volume_fee_bps,
         })
     }
@@ -138,7 +153,8 @@ impl TryFrom<&CircuitInputs> for LeafInputs {
             inputs.private.funding_account,
             inputs.private.unspendable_account,
             inputs.private.input_amount,
-            inputs.public.output_amount,
+            inputs.public.output_amount_1,
+            inputs.public.output_amount_2,
             inputs.public.volume_fee_bps,
         )
     }
