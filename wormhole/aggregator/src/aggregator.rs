@@ -1,13 +1,14 @@
 use std::collections::BTreeMap;
 
 use anyhow::bail;
+use plonky2::field::types::PrimeField64;
 use plonky2::plonk::circuit_data::{CircuitConfig, VerifierCircuitData};
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use wormhole_circuit::inputs::{
     AggregatedPublicCircuitInputs, BlockData, PublicCircuitInputs, PublicInputsByAccount,
 };
-use wormhole_prover::WormholeProver;
+use wormhole_prover::{fill_witness, WormholeProver};
 use zk_circuits_common::{
     circuit::{C, D, F},
     utils::BytesDigest,
@@ -15,7 +16,7 @@ use zk_circuits_common::{
 
 use crate::{
     circuits::tree::{aggregate_to_tree, AggregatedProof, TreeAggregationConfig},
-    dummy_proof::build_dummy_circuit_inputs,
+    dummy_proof::{build_dummy_circuit_inputs, clone_with_asset_id},
 };
 
 /// A circuit that aggregates proofs from the Wormhole circuit.
@@ -157,13 +158,6 @@ impl WormholeProofAggregator {
     /// by building the circuit, extracting verifier data, and generating compatible dummy proofs.
     pub fn from_circuit_config(circuit_config: CircuitConfig) -> Self {
         use plonky2::iop::witness::PartialWitness;
-        use wormhole_circuit::block_header::BlockHeader;
-        use wormhole_circuit::nullifier::Nullifier;
-        use wormhole_circuit::storage_proof::StorageProof;
-        use wormhole_circuit::substrate_account::{DualExitAccount, SubstrateAccount};
-        use wormhole_circuit::unspendable_account::UnspendableAccount;
-        use zk_circuits_common::circuit::CircuitFragment;
-        use zk_circuits_common::codec::ByteCodec;
 
         // Build the circuit once to get both prover and verifier data from the SAME build.
         // This is critical - using separate builds causes wire assignment mismatches.
@@ -186,39 +180,8 @@ impl WormholeProofAggregator {
 
             let mut pw = PartialWitness::new();
 
-            // Fill targets with dummy inputs
-            let nullifier = Nullifier::from(&dummy_inputs);
-            let storage_proof =
-                StorageProof::try_from(&dummy_inputs).expect("failed to create storage proof");
-            let unspendable_account = UnspendableAccount::from(&dummy_inputs);
-            let exit_accounts = DualExitAccount {
-                exit_account_1: SubstrateAccount::from_bytes(
-                    dummy_inputs.public.exit_account_1.as_slice(),
-                )
-                .expect("failed to create exit account 1"),
-                exit_account_2: SubstrateAccount::from_bytes(
-                    dummy_inputs.public.exit_account_2.as_slice(),
-                )
-                .expect("failed to create exit account 2"),
-            };
-            let block_header =
-                BlockHeader::try_from(&dummy_inputs).expect("failed to create block header");
-
-            nullifier
-                .fill_targets(&mut pw, targets.nullifier.clone())
-                .expect("failed to fill nullifier");
-            unspendable_account
-                .fill_targets(&mut pw, targets.unspendable_account.clone())
-                .expect("failed to fill unspendable account");
-            storage_proof
-                .fill_targets(&mut pw, targets.storage_proof.clone())
-                .expect("failed to fill storage proof");
-            exit_accounts
-                .fill_targets(&mut pw, targets.exit_accounts)
-                .expect("failed to fill exit accounts");
-            block_header
-                .fill_targets(&mut pw, targets.block_header.clone())
-                .expect("failed to fill block header");
+            // Use shared fill_witness helper to avoid duplicating the witness filling logic
+            fill_witness(&mut pw, &dummy_inputs, &targets).expect("failed to fill witness");
 
             let dummy_proof = circuit_data
                 .prove(pw)
@@ -279,10 +242,20 @@ impl WormholeProofAggregator {
             bail!("there are no proofs to aggregate")
         };
 
-        // Pad with dummy proofs if needed
+        // Pad with dummy proofs if needed, matching the asset_id of real proofs
         let num_dummies_needed = self.config.num_leaf_proofs.saturating_sub(proofs.len());
-        for i in 0..num_dummies_needed {
-            proofs.push(self.dummy_proofs[i].clone());
+        if num_dummies_needed > 0 {
+            // Get asset_id from the first real proof (all real proofs must have the same asset_id)
+            let first_proof = proofs.first().ok_or_else(|| {
+                anyhow::anyhow!("cannot pad with dummies when there are no real proofs")
+            })?;
+            let real_asset_id = first_proof.public_inputs[0].to_canonical_u64() as u32;
+
+            for i in 0..num_dummies_needed {
+                // Clone dummy with matching asset_id
+                let dummy = clone_with_asset_id(&self.dummy_proofs[i], real_asset_id);
+                proofs.push(dummy);
+            }
         }
 
         let root_proof = aggregate_to_tree(

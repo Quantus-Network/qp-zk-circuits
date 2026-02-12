@@ -1,13 +1,15 @@
 //! Universal dummy proof for padding aggregation batches.
 //!
-//! Dummy proofs use `block_hash = 0` as a sentinel value. The leaf circuit
-//! skips all validation (storage proof, block header, nullifier) for proofs
-//! with this sentinel, allowing a single universal dummy proof to be used
-//! for all aggregation batches.
+//! Dummy proofs use `block_hash = 0` AND `output_amounts = 0` as sentinel values.
+//! The leaf circuit skips all validation (storage proof, block header, nullifier)
+//! for proofs with these sentinels, allowing a single universal dummy proof to be
+//! used for all aggregation batches.
 //!
 //! # Sentinel Values
 //!
-//! - `block_hash = [0u8; 32]`: Triggers bypass of all validation
+//! - `block_hash = [0u8; 32]` AND `output_amount_1 = 0` AND `output_amount_2 = 0`:
+//!   Triggers bypass of all validation. Both conditions must be met to prevent
+//!   an attacker from slipping funds through with a zero block hash.
 //! - `exit_account = [0u8; 32]`: Dummies form their own exit group, contributing 0 to sums
 //!
 //! # Privacy Benefits
@@ -30,11 +32,14 @@
 //! ```
 
 use anyhow::Result;
+use plonky2::field::types::Field;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use rand::Rng;
 use std::sync::OnceLock;
-use wormhole_circuit::inputs::{CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs};
+use wormhole_circuit::inputs::{
+    CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs, ASSET_ID_INDEX,
+};
 use wormhole_circuit::storage_proof::ProcessedStorageProof;
 use wormhole_circuit::unspendable_account::UnspendableAccount;
 use wormhole_prover::WormholeProver;
@@ -185,6 +190,19 @@ pub fn clone_with_random_nullifier(
         new_proof.public_inputs[NULLIFIER_START_INDEX + i] = felt;
     }
 
+    new_proof
+}
+
+/// Clone a dummy proof with a specific asset_id.
+///
+/// This ensures dummy proofs match the asset_id of real proofs in an aggregation batch,
+/// which is required because the aggregation circuit enforces all proofs have the same asset_id.
+pub fn clone_with_asset_id(
+    base_proof: &ProofWithPublicInputs<F, C, D>,
+    asset_id: u32,
+) -> ProofWithPublicInputs<F, C, D> {
+    let mut new_proof = base_proof.clone();
+    new_proof.public_inputs[ASSET_ID_INDEX] = F::from_canonical_u32(asset_id);
     new_proof
 }
 
@@ -373,5 +391,76 @@ mod tests {
             .verify(swapped_proof)
             .expect("swapped proof should verify");
         println!("Swapped proof verified!");
+    }
+
+    /// Test that a malicious "dummy" with block_hash=0 but non-zero output amounts
+    /// fails to prove. This ensures an attacker cannot slip funds through the sentinel.
+    #[test]
+    #[ignore = "slow - attempts proof generation"]
+    fn malicious_dummy_with_nonzero_output_fails_to_prove() {
+        use plonky2::plonk::circuit_data::CircuitConfig;
+        use std::panic;
+
+        // Build a "malicious" dummy input with block_hash=0 but positive output
+        let mut inputs = build_dummy_circuit_inputs().expect("failed to build dummy inputs");
+        inputs.public.output_amount_1 = 100; // Non-zero output amount - this should fail
+
+        // Attempt to prove - this MUST fail because the circuit requires
+        // block_hash=0 AND output_amounts=0 to skip validation.
+        // The failure can occur either as:
+        // - A panic during witness assignment (constraint violation)
+        // - An error during prove()
+        let config = CircuitConfig::standard_recursion_zk_config();
+
+        let result = panic::catch_unwind(|| {
+            let prover = WormholeProver::new(config);
+            let committed = prover.commit(&inputs).expect("commit should succeed");
+            committed.prove()
+        });
+
+        // Either a panic or an error is acceptable - both indicate rejection
+        let rejected = match result {
+            Err(_) => true,     // Panicked - constraint violation during witness
+            Ok(Err(_)) => true, // Returned error during prove
+            Ok(Ok(_)) => false, // Should NOT succeed
+        };
+
+        assert!(
+            rejected,
+            "Proving should fail for malicious dummy with block_hash=0 but output_amount>0"
+        );
+        println!("Correctly rejected malicious dummy with output_amount_1>0");
+    }
+
+    /// Test that a malicious dummy with only one output being non-zero also fails.
+    #[test]
+    #[ignore = "slow - attempts proof generation"]
+    fn malicious_dummy_with_only_second_output_nonzero_fails() {
+        use plonky2::plonk::circuit_data::CircuitConfig;
+        use std::panic;
+
+        let mut inputs = build_dummy_circuit_inputs().expect("failed to build dummy inputs");
+        inputs.public.output_amount_1 = 0;
+        inputs.public.output_amount_2 = 50; // Only second output non-zero
+
+        let config = CircuitConfig::standard_recursion_zk_config();
+
+        let result = panic::catch_unwind(|| {
+            let prover = WormholeProver::new(config);
+            let committed = prover.commit(&inputs).expect("commit should succeed");
+            committed.prove()
+        });
+
+        let rejected = match result {
+            Err(_) => true,
+            Ok(Err(_)) => true,
+            Ok(Ok(_)) => false,
+        };
+
+        assert!(
+            rejected,
+            "Proving should fail when output_amount_2>0 with block_hash=0"
+        );
+        println!("Correctly rejected malicious dummy with output_amount_2>0");
     }
 }

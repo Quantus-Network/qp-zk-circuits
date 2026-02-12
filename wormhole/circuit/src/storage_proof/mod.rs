@@ -174,9 +174,9 @@ impl CircuitFragment for StorageProof {
         // constant 2^32 for (lo + hi * 2^32) reconstruction
         let two_pow_32 = builder.constant(F::from_canonical_u64(1u64 << 32));
 
-        // Sentinel check: if block_hash == 0 (all four limbs are zero), this is a dummy proof
-        // and we skip storage proof validation. Using block_hash as sentinel (instead of output_amount)
-        // allows users to set output_amount = 0 for privacy in real proofs.
+        // Sentinel check: dummy proofs must have BOTH block_hash == 0 AND output_amounts == 0.
+        // This prevents an attacker from slipping funds through with a zero block hash
+        // but positive output amounts.
         let zero = builder.zero();
         let one = builder.one();
 
@@ -187,10 +187,17 @@ impl CircuitFragment for StorageProof {
         let bh2_is_zero = builder.is_equal(bh[2], zero);
         let bh3_is_zero = builder.is_equal(bh[3], zero);
 
-        // is_dummy = bh0_is_zero AND bh1_is_zero AND bh2_is_zero AND bh3_is_zero
         let bh01_zero = builder.and(bh0_is_zero, bh1_is_zero);
         let bh23_zero = builder.and(bh2_is_zero, bh3_is_zero);
-        let is_dummy = builder.and(bh01_zero, bh23_zero);
+        let block_hash_is_zero = builder.and(bh01_zero, bh23_zero);
+
+        // Check if both output amounts are individually zero
+        let output_1_is_zero = builder.is_equal(leaf_inputs.output_amount_1, zero);
+        let output_2_is_zero = builder.is_equal(leaf_inputs.output_amount_2, zero);
+        let both_outputs_zero = builder.and(output_1_is_zero, output_2_is_zero);
+
+        // is_dummy = block_hash_is_zero AND both_outputs_zero
+        let is_dummy = builder.and(block_hash_is_zero, both_outputs_zero);
         let is_not_dummy = builder.sub(one, is_dummy.target);
 
         // The first node should be the root node so we initialize `prev_hash` to the provided `root_hash`.

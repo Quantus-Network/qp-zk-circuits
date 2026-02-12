@@ -146,9 +146,9 @@ pub mod circuit_logic {
             targets.block_header.block_hash,
         );
 
-        // Dummy proof detection: block_hash == 0 (all four limbs are zero)
-        // This sentinel allows dummy proofs to skip validation while preserving
-        // the ability to use output_amount == 0 for privacy in real proofs.
+        // Dummy proof detection: requires BOTH block_hash == 0 AND output_amounts == 0.
+        // This prevents an attacker from slipping funds through with a zero block hash
+        // but positive output amounts.
         let zero = builder.zero();
         let one = builder.one();
 
@@ -159,14 +159,22 @@ pub mod circuit_logic {
         let bh2_is_zero = builder.is_equal(bh[2], zero);
         let bh3_is_zero = builder.is_equal(bh[3], zero);
 
-        // is_dummy = bh0_is_zero AND bh1_is_zero AND bh2_is_zero AND bh3_is_zero
         let bh01_zero = builder.and(bh0_is_zero, bh1_is_zero);
         let bh23_zero = builder.and(bh2_is_zero, bh3_is_zero);
-        let is_dummy = builder.and(bh01_zero, bh23_zero);
+        let block_hash_is_zero = builder.and(bh01_zero, bh23_zero);
+
+        // Check if both output amounts are individually zero
+        let leaf = &targets.storage_proof.leaf_inputs;
+        let output_1_is_zero = builder.is_equal(leaf.output_amount_1, zero);
+        let output_2_is_zero = builder.is_equal(leaf.output_amount_2, zero);
+        let both_outputs_zero = builder.and(output_1_is_zero, output_2_is_zero);
+
+        // is_dummy = block_hash_is_zero AND both_outputs_zero
+        let is_dummy = builder.and(block_hash_is_zero, both_outputs_zero);
         let is_not_dummy = builder.sub(one, is_dummy.target);
 
         // Nullifier validation: nullifier == H(H(salt + secret + transfer_count))
-        // Skip this validation for dummy proofs (block_hash == 0).
+        // Skip this validation for dummy proofs (block_hash == 0 AND outputs == 0).
         // This allows dummy proofs to use random nullifiers for better privacy.
         let salt_felts = injective_string_to_felt(NULLIFIER_SALT);
         let mut nullifier_preimage = Vec::new();
@@ -190,7 +198,7 @@ pub mod circuit_logic {
         }
 
         // Block hash validation: block_hash == hash(header contents)
-        // Skip this validation for dummy proofs (block_hash == 0).
+        // Skip this validation for dummy proofs (block_hash == 0 AND outputs == 0).
         let pre_image = targets.block_header.header.collect_to_vec();
         let computed_block_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(pre_image);
         for i in 0..4 {
@@ -203,7 +211,7 @@ pub mod circuit_logic {
         }
 
         // The state_root from the block_header must be the same as the root_hash for the storage_proof.
-        // Skip this validation for dummy proofs (block_hash == 0).
+        // Skip this validation for dummy proofs (block_hash == 0 AND outputs == 0).
         for i in 0..4 {
             let diff = builder.sub(
                 targets.block_header.header.state_root.elements[i],
