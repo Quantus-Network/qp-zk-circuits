@@ -14,6 +14,7 @@ bench = []
 anyhow = { workspace = true }
 hex = { workspace = true }
 qp-plonky2 = { workspace = true, default-features = true }
+qp-wormhole-inputs = { path = "../inputs" }
 rand = { version = "0.9.1", default-features = false, features = [
 	"thread_rng",
 ] }

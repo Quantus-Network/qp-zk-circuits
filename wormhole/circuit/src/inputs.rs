@@ -7,36 +7,16 @@ use plonky2::field::goldilocks_field::GoldilocksField;
 use plonky2::field::types::PrimeField64;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use zk_circuits_common::circuit::{C, D, F};
-use zk_circuits_common::utils::{BytesDigest, DIGEST_BYTES_LEN};
+use zk_circuits_common::utils::{try_felts_slice_to_bytes_digest, BytesDigest, DIGEST_BYTES_LEN};
 
-/// The total size of the public inputs field element vector.
-/// Layout: asset_id(1) + output_amount_1(1) + output_amount_2(1) + volume_fee_bps(1) +
-///         nullifier(4) + exit_account_1(4) + exit_account_2(4) + block_hash(4) + parent_hash(4) + block_number(1)
-/// = 1 + 1 + 1 + 1 + 4 + 4 + 4 + 4 + 4 + 1 = 25
-pub const PUBLIC_INPUTS_FELTS_LEN: usize = 25;
-pub const ASSET_ID_INDEX: usize = 0;
-// Note: output_amounts and volume_fee_bps come before nullifier because LeafTargets::new() is called
-// before NullifierTargets::new() to ensure asset_id is the first public input.
-pub const OUTPUT_AMOUNT_1_INDEX: usize = 1;
-pub const OUTPUT_AMOUNT_2_INDEX: usize = 2;
-pub const VOLUME_FEE_BPS_INDEX: usize = 3;
-pub const NULLIFIER_START_INDEX: usize = 4;
-pub const NULLIFIER_END_INDEX: usize = 8;
-pub const EXIT_ACCOUNT_1_START_INDEX: usize = 8;
-pub const EXIT_ACCOUNT_1_END_INDEX: usize = 12;
-pub const EXIT_ACCOUNT_2_START_INDEX: usize = 12;
-pub const EXIT_ACCOUNT_2_END_INDEX: usize = 16;
-pub const BLOCK_HASH_START_INDEX: usize = 16;
-pub const BLOCK_HASH_END_INDEX: usize = 20;
-pub const PARENT_HASH_START_INDEX: usize = 20;
-pub const PARENT_HASH_END_INDEX: usize = 24;
-pub const BLOCK_NUMBER_INDEX: usize = 24;
-pub const BLOCK_NUMBER_END_INDEX: usize = 25;
-
-// Legacy aliases for backward compatibility (pointing to first output)
-pub const OUTPUT_AMOUNT_INDEX: usize = OUTPUT_AMOUNT_1_INDEX;
-pub const EXIT_ACCOUNT_START_INDEX: usize = EXIT_ACCOUNT_1_START_INDEX;
-pub const EXIT_ACCOUNT_END_INDEX: usize = EXIT_ACCOUNT_1_END_INDEX;
+// Import index constants from wormhole_inputs (single source of truth)
+use qp_wormhole_inputs::{
+    ASSET_ID_INDEX, BLOCK_HASH_END_INDEX, BLOCK_HASH_START_INDEX, BLOCK_NUMBER_INDEX,
+    EXIT_ACCOUNT_1_END_INDEX, EXIT_ACCOUNT_1_START_INDEX, EXIT_ACCOUNT_2_END_INDEX,
+    EXIT_ACCOUNT_2_START_INDEX, NULLIFIER_END_INDEX, NULLIFIER_START_INDEX, OUTPUT_AMOUNT_1_INDEX,
+    OUTPUT_AMOUNT_2_INDEX, PARENT_HASH_END_INDEX, PARENT_HASH_START_INDEX, PUBLIC_INPUTS_FELTS_LEN,
+    VOLUME_FEE_BPS_INDEX,
+};
 
 /// Inputs required to commit to the wormhole circuit.
 #[derive(Debug, Clone)]
@@ -174,7 +154,7 @@ impl AggregatedPublicCircuitInputs {
         // Helpers
         #[inline]
         fn read_digest(slice: &[F]) -> anyhow::Result<BytesDigest> {
-            BytesDigest::try_from(slice).context("failed to deserialize BytesDigest")
+            try_felts_slice_to_bytes_digest(slice).context("failed to deserialize BytesDigest")
         }
 
         let block_data = BlockData {
@@ -274,19 +254,23 @@ impl PublicCircuitInputs {
             .to_canonical_u64()
             .try_into()
             .context("failed to convert volume_fee_bps felt to u32")?;
-        let nullifier = BytesDigest::try_from(&pis[NULLIFIER_START_INDEX..NULLIFIER_END_INDEX])
-            .context("failed to deserialize nullifier hash")?;
-        let block_hash = BytesDigest::try_from(&pis[BLOCK_HASH_START_INDEX..BLOCK_HASH_END_INDEX])
-            .context("failed to deserialize block hash")?;
+        let nullifier =
+            try_felts_slice_to_bytes_digest(&pis[NULLIFIER_START_INDEX..NULLIFIER_END_INDEX])
+                .context("failed to deserialize nullifier hash")?;
+        let block_hash =
+            try_felts_slice_to_bytes_digest(&pis[BLOCK_HASH_START_INDEX..BLOCK_HASH_END_INDEX])
+                .context("failed to deserialize block hash")?;
 
-        let exit_account_1 =
-            BytesDigest::try_from(&pis[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX])
-                .context("failed to deserialize exit_account_1")?;
-        let exit_account_2 =
-            BytesDigest::try_from(&pis[EXIT_ACCOUNT_2_START_INDEX..EXIT_ACCOUNT_2_END_INDEX])
-                .context("failed to deserialize exit_account_2")?;
+        let exit_account_1 = try_felts_slice_to_bytes_digest(
+            &pis[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX],
+        )
+        .context("failed to deserialize exit_account_1")?;
+        let exit_account_2 = try_felts_slice_to_bytes_digest(
+            &pis[EXIT_ACCOUNT_2_START_INDEX..EXIT_ACCOUNT_2_END_INDEX],
+        )
+        .context("failed to deserialize exit_account_2")?;
         let parent_hash =
-            BytesDigest::try_from(&pis[PARENT_HASH_START_INDEX..PARENT_HASH_END_INDEX])
+            try_felts_slice_to_bytes_digest(&pis[PARENT_HASH_START_INDEX..PARENT_HASH_END_INDEX])
                 .context("failed to deserialize parent hash")?;
         let block_number_felt = pis[BLOCK_NUMBER_INDEX];
         let block_number = block_number_felt

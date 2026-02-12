@@ -71,6 +71,8 @@ pub enum DigestError {
     ChunkOutOfFieldRange { chunk_index: usize, value: u64 },
     /// The input has an invalid length
     InvalidLength { expected: usize, got: usize },
+    /// Other error (used for conversion from anyhow::Error)
+    Other,
 }
 
 impl fmt::Display for DigestError {
@@ -86,6 +88,7 @@ impl fmt::Display for DigestError {
             DigestError::InvalidLength { expected, got } => {
                 write!(f, "Invalid length: expected {}, got {}", expected, got)
             }
+            DigestError::Other => write!(f, "Other error"),
         }
     }
 }

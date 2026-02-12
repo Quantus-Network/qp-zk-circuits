@@ -31,7 +31,7 @@ use rand::Rng;
 use wormhole_circuit::inputs::{CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs};
 use wormhole_circuit::storage_proof::ProcessedStorageProof;
 use wormhole_circuit::unspendable_account::UnspendableAccount;
-use zk_circuits_common::utils::BytesDigest;
+use zk_circuits_common::utils::{digest_felts_to_bytes, BytesDigest};
 
 // ============================================================================
 // Public sentinel constants
@@ -115,7 +115,8 @@ pub fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
     // Since block_hash = 0 (dummy sentinel), nullifier validation is skipped.
     let nullifier = BytesDigest::try_from(generate_random_nullifier())?;
 
-    let unspendable_account = UnspendableAccount::from_secret(secret).account_id.into();
+    let unspendable_account =
+        digest_felts_to_bytes(UnspendableAccount::from_secret(secret).account_id);
     let exit_account = BytesDigest::try_from(DUMMY_EXIT_ACCOUNT)?;
 
     let storage_proof = build_storage_proof()?;

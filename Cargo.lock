@@ -4223,6 +4223,7 @@ dependencies = [
  "anyhow",
  "hex",
  "qp-plonky2",
+ "qp-wormhole-inputs",
  "qp-zk-circuits-common 1.0.1",
 ]
 
@@ -4310,6 +4311,7 @@ dependencies = [
  "hex",
  "qp-plonky2",
  "qp-poseidon-core",
+ "qp-wormhole-inputs",
  "serde",
 ]
 
@@ -6492,6 +6494,7 @@ dependencies = [
  "qp-plonky2",
  "qp-wormhole-aggregator 1.0.1",
  "qp-wormhole-circuit 1.0.1",
+ "qp-wormhole-inputs",
  "qp-wormhole-prover 1.0.1",
  "qp-wormhole-verifier 1.0.1",
  "qp-zk-circuits-common 1.0.1",

@@ -198,7 +198,7 @@ impl TryFrom<DebugInputs> for CircuitInputs {
                 transfer_count: inputs.transfer_count,
                 funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
                 storage_proof: processed_storage_proof,
-                unspendable_account: Digest::from(unspendable_account).into(),
+                unspendable_account: digest_felts_to_bytes(Digest::from(unspendable_account)),
                 state_root,
                 extrinsics_root,
                 digest,
@@ -209,9 +209,9 @@ impl TryFrom<DebugInputs> for CircuitInputs {
                 output_amount_1: inputs.output_amount,
                 output_amount_2: 0u32, // No second output in example
                 volume_fee_bps: inputs.volume_fee_bps,
-                nullifier: Nullifier::from_preimage(secret, inputs.transfer_count)
-                    .hash
-                    .into(),
+                nullifier: digest_felts_to_bytes(
+                    Nullifier::from_preimage(secret, inputs.transfer_count).hash,
+                ),
                 exit_account_1: BytesDigest::try_from(dest_account_id.as_ref() as &[u8])?,
                 exit_account_2: BytesDigest::default(), // No second exit account
                 block_hash: BytesDigest::try_from(block_hash.as_ref())?,
@@ -567,7 +567,7 @@ async fn perform_batched_transfers(
                 input_amount,
                 funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
                 storage_proof: processed_storage_proof,
-                unspendable_account: Digest::from(*unspendable_account).into(),
+                unspendable_account: digest_felts_to_bytes(Digest::from(*unspendable_account)),
                 state_root,
                 extrinsics_root,
                 digest,
@@ -577,9 +577,9 @@ async fn perform_batched_transfers(
                 volume_fee_bps: VOLUME_FEE_BPS,
                 output_amount_1: output_amount,
                 output_amount_2: 0u32, // No second output in example
-                nullifier: Nullifier::from_preimage(*secret, event.transfer_count)
-                    .hash
-                    .into(),
+                nullifier: digest_felts_to_bytes(
+                    Nullifier::from_preimage(*secret, event.transfer_count).hash,
+                ),
                 exit_account_1: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
                 exit_account_2: BytesDigest::default(), // No second exit account
                 block_hash: BytesDigest::try_from(block_hash.as_ref())?,
@@ -720,7 +720,7 @@ async fn perform_transfer_and_get_inputs(
             transfer_count: event.transfer_count,
             funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
             storage_proof: processed_storage_proof,
-            unspendable_account: Digest::from(unspendable_account).into(),
+            unspendable_account: digest_felts_to_bytes(Digest::from(unspendable_account)),
             state_root,
             extrinsics_root,
             digest,
@@ -731,9 +731,9 @@ async fn perform_transfer_and_get_inputs(
             output_amount_1: output_amount,
             output_amount_2: 0u32, // No second output in example
             volume_fee_bps: VOLUME_FEE_BPS,
-            nullifier: Nullifier::from_preimage(secret, event.transfer_count)
-                .hash
-                .into(),
+            nullifier: digest_felts_to_bytes(
+                Nullifier::from_preimage(secret, event.transfer_count).hash,
+            ),
             exit_account_1: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
             exit_account_2: BytesDigest::default(), // No second exit account
             block_hash: BytesDigest::try_from(block_hash.as_ref())?,

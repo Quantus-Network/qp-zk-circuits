@@ -1,8 +1,9 @@
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
+use qp_wormhole_inputs::{EXIT_ACCOUNT_END_INDEX, EXIT_ACCOUNT_START_INDEX};
 use test_helpers::TestInputs;
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
-use wormhole_circuit::inputs::{CircuitInputs, EXIT_ACCOUNT_END_INDEX, EXIT_ACCOUNT_START_INDEX};
+use wormhole_circuit::inputs::CircuitInputs;
 use wormhole_circuit::substrate_account::SubstrateAccount;
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::codec::FieldElementCodec;
