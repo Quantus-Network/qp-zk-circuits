@@ -4198,6 +4198,7 @@ dependencies = [
  "hex",
  "qp-plonky2",
  "qp-wormhole-circuit 1.0.1",
+ "qp-wormhole-inputs",
  "qp-wormhole-prover 1.0.1",
  "qp-zk-circuits-common 1.0.1",
  "rand 0.8.5",
@@ -6482,6 +6483,7 @@ dependencies = [
  "hex",
  "qp-plonky2",
  "qp-wormhole-circuit 1.0.1",
+ "qp-wormhole-inputs",
  "qp-zk-circuits-common 1.0.1",
 ]
 
@@ -7702,6 +7704,7 @@ dependencies = [
  "qp-poseidon-core",
  "qp-wormhole-aggregator 1.0.1",
  "qp-wormhole-circuit 1.0.1",
+ "qp-wormhole-inputs",
  "qp-wormhole-prover 1.0.1",
  "qp-wormhole-verifier 1.0.1",
  "qp-zk-circuits-common 1.0.1",

@@ -27,8 +27,9 @@
 //! commitment to the public inputs, and modifying them invalidates the proof.
 
 use anyhow::Result;
+use qp_wormhole_inputs::PublicCircuitInputs;
 use rand::Rng;
-use wormhole_circuit::inputs::{CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs};
+use wormhole_circuit::inputs::{CircuitInputs, PrivateCircuitInputs};
 use wormhole_circuit::storage_proof::ProcessedStorageProof;
 use wormhole_circuit::unspendable_account::UnspendableAccount;
 use zk_circuits_common::utils::{digest_felts_to_bytes, BytesDigest};

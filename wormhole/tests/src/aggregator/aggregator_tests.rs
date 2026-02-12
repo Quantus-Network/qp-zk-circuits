@@ -1,8 +1,9 @@
 #![cfg(test)]
 
 use plonky2::plonk::proof::ProofWithPublicInputs;
+use qp_wormhole_inputs::PublicCircuitInputs;
 use wormhole_aggregator::aggregator::WormholeProofAggregator;
-use wormhole_circuit::inputs::{CircuitInputs, PublicCircuitInputs};
+use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::circuit::{C, D, F};
 
@@ -67,7 +68,7 @@ fn aggregate_proofs_into_tree() {
     for idx in 0..2 {
         let prover = WormholeProver::new(circuit_config());
         let proof = prover.commit(&inputs).unwrap().prove().unwrap();
-        let public_inputs = PublicCircuitInputs::try_from(&proof).unwrap();
+        let public_inputs = PublicCircuitInputs::try_from_proof(&proof).unwrap();
         println!(
             "public inputs of original proof number {:?} = {:?}",
             idx, public_inputs

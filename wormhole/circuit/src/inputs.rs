@@ -9,8 +9,9 @@ use plonky2::plonk::proof::ProofWithPublicInputs;
 use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::utils::{try_felts_slice_to_bytes_digest, BytesDigest, DIGEST_BYTES_LEN};
 
-// Import index constants from wormhole_inputs (single source of truth)
+// Import public input types and constants from wormhole_inputs (single source of truth)
 use qp_wormhole_inputs::{
+    AggregatedPublicCircuitInputs, BlockData, PublicCircuitInputs, PublicInputsByAccount,
     ASSET_ID_INDEX, BLOCK_HASH_END_INDEX, BLOCK_HASH_START_INDEX, BLOCK_NUMBER_INDEX,
     EXIT_ACCOUNT_1_END_INDEX, EXIT_ACCOUNT_1_START_INDEX, EXIT_ACCOUNT_2_END_INDEX,
     EXIT_ACCOUNT_2_START_INDEX, NULLIFIER_END_INDEX, NULLIFIER_START_INDEX, OUTPUT_AMOUNT_1_INDEX,
@@ -25,85 +26,6 @@ pub struct CircuitInputs {
     pub private: PrivateCircuitInputs,
 }
 
-/// All of the public inputs required for the circuit.
-/// Supports two outputs (spend + change) from a single input.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PublicCircuitInputs {
-    /// The asset ID (0 for native token).
-    pub asset_id: u32,
-    /// Amount to be received by the first exit account (spend).
-    /// This value is quantized with 0.01 units of precision.
-    /// **DEV NOTE**: The output amount unit on chain is still u128 with 12 decimals so we will need to
-    /// scale by 10^10 when constructing the output amount during on-chain verification.
-    pub output_amount_1: u32,
-    /// Amount to be received by the second exit account (change).
-    /// Set to 0 if only one output is needed.
-    pub output_amount_2: u32,
-    /// Volume fee rate in basis points (1 basis point = 0.01%).
-    /// This is verified on-chain to match the runtime configuration.
-    pub volume_fee_bps: u32,
-    /// The nullifier.
-    pub nullifier: BytesDigest,
-    /// The address of the first exit account (spend destination).
-    pub exit_account_1: BytesDigest,
-    /// The address of the second exit account (change destination).
-    /// Set to all zeros if only one output is needed.
-    pub exit_account_2: BytesDigest,
-    /// The hash of the block header.
-    pub block_hash: BytesDigest,
-    /// The parent hash of the block, parsed from the block header
-    pub parent_hash: BytesDigest,
-    /// The block number, parsed from the block header
-    pub block_number: u32,
-}
-
-impl PublicCircuitInputs {
-    /// Legacy accessor for backward compatibility - returns first output amount
-    pub fn output_amount(&self) -> u32 {
-        self.output_amount_1
-    }
-
-    /// Legacy accessor for backward compatibility - returns first exit account
-    pub fn exit_account(&self) -> BytesDigest {
-        self.exit_account_1
-    }
-}
-
-/// The exit account and its given sum total output amount
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PublicInputsByAccount {
-    /// Output amounts of duplicate exit accounts summed.
-    pub summed_output_amount: u32,
-    /// The address of the account to pay out to.
-    pub exit_account: BytesDigest,
-}
-
-/// The block data (block_hash, parent_hash, block_number) in the aggregated proofs
-#[derive(Debug, Default, Clone, PartialEq, Eq, Ord, PartialOrd)]
-pub struct BlockData {
-    /// The hash of the block header.
-    pub block_hash: BytesDigest,
-    /// The block number, parsed from the block header
-    pub block_number: u32,
-}
-
-/// Aggregated public inputs
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AggregatedPublicCircuitInputs {
-    /// The asset ID of the set (0 for native token).
-    pub asset_id: u32,
-    /// Volume fee rate in basis points (1 basis point = 0.01%).
-    /// All aggregated proofs must have the same fee rate.
-    pub volume_fee_bps: u32,
-    /// The last set block data (block_hash, block_number) in the aggregated proofs.
-    /// This the only block data we need to commit to in the aggregated proof.
-    /// All prior blocks are enforced to be contiguous and their connectivity is verified via parent_hash checks.
-    pub block_data: BlockData,
-    /// The set of exit accounts and their summed output amounts
-    pub account_data: Vec<PublicInputsByAccount>,
-    /// The nullifiers of each individual transfer proof
-    pub nullifiers: Vec<BytesDigest>,
-}
 pub const BLOCK_HEADER_PADDING_FELTS: usize = 53;
 pub const BLOCK_HEADER_SIZE: usize = (DIGEST_BYTES_LEN * 3) + 4 + DIGEST_LOGS_SIZE; // 32 bytes each for parent hash, state root, extrinsics root + 4 bytes for block number + digest logs
 
@@ -132,8 +54,111 @@ pub struct PrivateCircuitInputs {
     pub input_amount: u32,
 }
 
-impl AggregatedPublicCircuitInputs {
-    pub fn try_from_slice(pis: &[GoldilocksField]) -> anyhow::Result<Self> {
+// ============================================================================
+// Traits for parsing from GoldilocksField slices (plonky2-specific)
+// ============================================================================
+
+/// Trait for parsing `PublicCircuitInputs` from field element slices.
+pub trait ParsePublicInputs {
+    /// Parse public inputs from a slice of GoldilocksField elements.
+    fn try_from_felts(pis: &[GoldilocksField]) -> anyhow::Result<PublicCircuitInputs>;
+
+    /// Parse public inputs from a ProofWithPublicInputs.
+    fn try_from_proof(
+        proof: &ProofWithPublicInputs<F, C, D>,
+    ) -> anyhow::Result<PublicCircuitInputs>;
+}
+
+impl ParsePublicInputs for PublicCircuitInputs {
+    fn try_from_felts(pis: &[GoldilocksField]) -> anyhow::Result<PublicCircuitInputs> {
+        // Public inputs are ordered as follows:
+        // asset_id: 1 felt
+        // output_amount_1: 1 felt (spend)
+        // output_amount_2: 1 felt (change)
+        // volume_fee_bps: 1 felt
+        // Nullifier.hash: 4 felts
+        // ExitAccount1.address: 4 felts (spend destination)
+        // ExitAccount2.address: 4 felts (change destination)
+        // BlockHeader.block_hash: 4 felts
+        // BlockHeader.parent_hash: 4 felts
+        // BlockHeader.block_number: 1 felt
+        if pis.len() != PUBLIC_INPUTS_FELTS_LEN {
+            bail!(
+                "public inputs should contain: {} field elements, got: {}",
+                PUBLIC_INPUTS_FELTS_LEN,
+                pis.len()
+            )
+        }
+        let asset_id = pis[ASSET_ID_INDEX]
+            .to_canonical_u64()
+            .try_into()
+            .context("failed to convert asset_id felt to u32")?;
+        let output_amount_1 = pis[OUTPUT_AMOUNT_1_INDEX]
+            .to_canonical_u64()
+            .try_into()
+            .context("failed to convert output_amount_1 felt to u32")?;
+        let output_amount_2 = pis[OUTPUT_AMOUNT_2_INDEX]
+            .to_canonical_u64()
+            .try_into()
+            .context("failed to convert output_amount_2 felt to u32")?;
+        let volume_fee_bps = pis[VOLUME_FEE_BPS_INDEX]
+            .to_canonical_u64()
+            .try_into()
+            .context("failed to convert volume_fee_bps felt to u32")?;
+        let nullifier =
+            try_felts_slice_to_bytes_digest(&pis[NULLIFIER_START_INDEX..NULLIFIER_END_INDEX])
+                .context("failed to deserialize nullifier hash")?;
+        let block_hash =
+            try_felts_slice_to_bytes_digest(&pis[BLOCK_HASH_START_INDEX..BLOCK_HASH_END_INDEX])
+                .context("failed to deserialize block hash")?;
+
+        let exit_account_1 = try_felts_slice_to_bytes_digest(
+            &pis[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX],
+        )
+        .context("failed to deserialize exit_account_1")?;
+        let exit_account_2 = try_felts_slice_to_bytes_digest(
+            &pis[EXIT_ACCOUNT_2_START_INDEX..EXIT_ACCOUNT_2_END_INDEX],
+        )
+        .context("failed to deserialize exit_account_2")?;
+        let parent_hash =
+            try_felts_slice_to_bytes_digest(&pis[PARENT_HASH_START_INDEX..PARENT_HASH_END_INDEX])
+                .context("failed to deserialize parent hash")?;
+        let block_number_felt = pis[BLOCK_NUMBER_INDEX];
+        let block_number = block_number_felt
+            .to_canonical_u64()
+            .try_into()
+            .context("failed to convert block number felt to u32")?;
+
+        Ok(PublicCircuitInputs {
+            asset_id,
+            output_amount_1,
+            output_amount_2,
+            volume_fee_bps,
+            nullifier,
+            block_hash,
+            exit_account_1,
+            exit_account_2,
+            parent_hash,
+            block_number,
+        })
+    }
+
+    fn try_from_proof(
+        proof: &ProofWithPublicInputs<F, C, D>,
+    ) -> anyhow::Result<PublicCircuitInputs> {
+        Self::try_from_felts(&proof.public_inputs)
+            .context("failed to deserialize public inputs from proof")
+    }
+}
+
+/// Trait for parsing `AggregatedPublicCircuitInputs` from field element slices.
+pub trait ParseAggregatedPublicInputs {
+    /// Parse aggregated public inputs from a slice of GoldilocksField elements.
+    fn try_from_felts(pis: &[GoldilocksField]) -> anyhow::Result<AggregatedPublicCircuitInputs>;
+}
+
+impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
+    fn try_from_felts(pis: &[GoldilocksField]) -> anyhow::Result<AggregatedPublicCircuitInputs> {
         // Layout in the FINAL (deduped) wrapper proof PIs:
         // [num_unique_exits, asset_id, volume_fee_bps, block_data(5),
         //  [output_sum(1), exit_account(4)] * 2*N,  <-- 2 outputs per leaf
@@ -215,89 +240,5 @@ impl AggregatedPublicCircuitInputs {
             account_data,
             nullifiers,
         })
-    }
-}
-
-impl PublicCircuitInputs {
-    pub fn try_from_slice(pis: &[GoldilocksField]) -> anyhow::Result<Self> {
-        // Public inputs are ordered as follows:
-        // asset_id: 1 felt
-        // output_amount_1: 1 felt (spend)
-        // output_amount_2: 1 felt (change)
-        // volume_fee_bps: 1 felt
-        // Nullifier.hash: 4 felts
-        // ExitAccount1.address: 4 felts (spend destination)
-        // ExitAccount2.address: 4 felts (change destination)
-        // BlockHeader.block_hash: 4 felts
-        // BlockHeader.parent_hash: 4 felts
-        // BlockHeader.block_number: 1 felt
-        if pis.len() != PUBLIC_INPUTS_FELTS_LEN {
-            bail!(
-                "public inputs should contain: {} field elements, got: {}",
-                PUBLIC_INPUTS_FELTS_LEN,
-                pis.len()
-            )
-        }
-        let asset_id = pis[ASSET_ID_INDEX]
-            .to_canonical_u64()
-            .try_into()
-            .context("failed to convert asset_id felt to u32")?;
-        let output_amount_1 = pis[OUTPUT_AMOUNT_1_INDEX]
-            .to_canonical_u64()
-            .try_into()
-            .context("failed to convert output_amount_1 felt to u32")?;
-        let output_amount_2 = pis[OUTPUT_AMOUNT_2_INDEX]
-            .to_canonical_u64()
-            .try_into()
-            .context("failed to convert output_amount_2 felt to u32")?;
-        let volume_fee_bps = pis[VOLUME_FEE_BPS_INDEX]
-            .to_canonical_u64()
-            .try_into()
-            .context("failed to convert volume_fee_bps felt to u32")?;
-        let nullifier =
-            try_felts_slice_to_bytes_digest(&pis[NULLIFIER_START_INDEX..NULLIFIER_END_INDEX])
-                .context("failed to deserialize nullifier hash")?;
-        let block_hash =
-            try_felts_slice_to_bytes_digest(&pis[BLOCK_HASH_START_INDEX..BLOCK_HASH_END_INDEX])
-                .context("failed to deserialize block hash")?;
-
-        let exit_account_1 = try_felts_slice_to_bytes_digest(
-            &pis[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX],
-        )
-        .context("failed to deserialize exit_account_1")?;
-        let exit_account_2 = try_felts_slice_to_bytes_digest(
-            &pis[EXIT_ACCOUNT_2_START_INDEX..EXIT_ACCOUNT_2_END_INDEX],
-        )
-        .context("failed to deserialize exit_account_2")?;
-        let parent_hash =
-            try_felts_slice_to_bytes_digest(&pis[PARENT_HASH_START_INDEX..PARENT_HASH_END_INDEX])
-                .context("failed to deserialize parent hash")?;
-        let block_number_felt = pis[BLOCK_NUMBER_INDEX];
-        let block_number = block_number_felt
-            .to_canonical_u64()
-            .try_into()
-            .context("failed to convert block number felt to u32")?;
-
-        Ok(PublicCircuitInputs {
-            asset_id,
-            output_amount_1,
-            output_amount_2,
-            volume_fee_bps,
-            nullifier,
-            block_hash,
-            exit_account_1,
-            exit_account_2,
-            parent_hash,
-            block_number,
-        })
-    }
-}
-
-impl TryFrom<&ProofWithPublicInputs<F, C, D>> for PublicCircuitInputs {
-    type Error = anyhow::Error;
-
-    fn try_from(proof: &ProofWithPublicInputs<F, C, D>) -> Result<Self, Self::Error> {
-        Self::try_from_slice(&proof.public_inputs)
-            .context("failed to deserialize public inputs from proof")
     }
 }

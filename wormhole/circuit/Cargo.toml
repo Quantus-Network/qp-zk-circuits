@@ -15,7 +15,12 @@ zk-circuits-common = { package = "qp-zk-circuits-common", version = "1.0.1", pat
 
 [features]
 default = ["std"]
-std = ["anyhow/std", "qp-plonky2/std", "qp-wormhole-inputs/std", "zk-circuits-common/std"]
+std = [
+	"anyhow/std",
+	"qp-plonky2/std",
+	"qp-wormhole-inputs/std",
+	"zk-circuits-common/std",
+]
 
 [lints]
 workspace = true

@@ -5,8 +5,9 @@ use crate::{
     },
     storage_proof::DEFAULT_ROOT_HASHES,
 };
+use qp_wormhole_inputs::PublicCircuitInputs;
 use wormhole_circuit::{
-    inputs::{CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs},
+    inputs::{CircuitInputs, PrivateCircuitInputs},
     nullifier::Nullifier,
     storage_proof::ProcessedStorageProof,
     unspendable_account::UnspendableAccount,

@@ -10,6 +10,7 @@ use clap::Parser;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_poseidon::PoseidonHasher;
+use qp_wormhole_inputs::{AggregatedPublicCircuitInputs, PublicCircuitInputs};
 use quantus_cli::chain::quantus_subxt::api as quantus_node;
 use quantus_cli::chain::quantus_subxt::api::runtime_types::pallet_wormhole::pallet::Call as WormholeCall;
 use quantus_cli::chain::quantus_subxt::api::runtime_types::quantus_runtime::RuntimeCall;
@@ -31,7 +32,7 @@ use subxt::OnlineClient;
 use wormhole_aggregator::aggregator::WormholeProofAggregator;
 use wormhole_aggregator::circuits::tree::TreeAggregationConfig;
 use wormhole_circuit::inputs::{
-    AggregatedPublicCircuitInputs, CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs,
+    CircuitInputs, ParseAggregatedPublicInputs, ParsePublicInputs, PrivateCircuitInputs,
 };
 use wormhole_circuit::nullifier::Nullifier;
 use wormhole_prover::WormholeProver;
@@ -231,7 +232,7 @@ fn generate_zk_proof(inputs: CircuitInputs) -> anyhow::Result<ProofWithPublicInp
     let prover_next = prover.commit(&inputs)?;
     let proof: ProofWithPublicInputs<F, C, D> = prover_next.prove().expect("proof failed; qed");
 
-    let public_inputs = PublicCircuitInputs::try_from(&proof)?;
+    let public_inputs = PublicCircuitInputs::try_from_proof(&proof)?;
     println!(
         "\nSuccessfully generated and verified proof!\nPublic Inputs: {:?}\n",
         public_inputs
@@ -356,7 +357,7 @@ fn aggregate_and_save(
     let aggregated_proof = aggregator.aggregate()?;
 
     // Parse and display aggregated public inputs
-    let aggregated_public_inputs = AggregatedPublicCircuitInputs::try_from_slice(
+    let aggregated_public_inputs = AggregatedPublicCircuitInputs::try_from_felts(
         aggregated_proof.proof.public_inputs.as_slice(),
     )?;
     println!("\n=== Aggregated Public Inputs ===");

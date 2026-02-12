@@ -4,10 +4,11 @@ use anyhow::bail;
 use plonky2::field::types::PrimeField64;
 use plonky2::plonk::circuit_data::{CircuitConfig, VerifierCircuitData};
 use plonky2::plonk::proof::ProofWithPublicInputs;
-use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
-use wormhole_circuit::inputs::{
+use qp_wormhole_inputs::{
     AggregatedPublicCircuitInputs, BlockData, PublicCircuitInputs, PublicInputsByAccount,
 };
+use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
+use wormhole_circuit::inputs::ParsePublicInputs;
 use wormhole_prover::{fill_witness, WormholeProver};
 use zk_circuits_common::{
     circuit::{C, D, F},
@@ -102,7 +103,7 @@ impl WormholeProofAggregator {
             let dummy_inputs = build_dummy_circuit_inputs()?;
             let proof = prover.commit(&dummy_inputs)?.prove()?;
             // Verify the nullifier is not all zeros (would be a bug)
-            let pi = PublicCircuitInputs::try_from(&proof)?;
+            let pi = PublicCircuitInputs::try_from_proof(&proof)?;
             if pi.nullifier.iter().all(|&b| b == 0) {
                 eprintln!("ERROR: dummy_proof[{}] has all-zero nullifier!", i);
             }
@@ -230,7 +231,7 @@ impl WormholeProofAggregator {
         };
         let mut leaves: Vec<PublicCircuitInputs> = Vec::new();
         for proof in proofs {
-            let pi = PublicCircuitInputs::try_from(proof)?;
+            let pi = PublicCircuitInputs::try_from_proof(proof)?;
             leaves.push(pi);
         }
         aggregate_public_inputs(leaves)

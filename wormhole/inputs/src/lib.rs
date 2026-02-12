@@ -153,11 +153,15 @@ pub struct PublicCircuitInputs {
     pub asset_id: u32,
     /// Amount to be received by the first exit account (spend).
     /// This value is quantized with 0.01 units of precision.
+    ///
+    /// **DEV NOTE**: The output amount unit on chain is still u128 with 12 decimals so we will need to
+    /// scale by 10^10 when constructing the output amount during on-chain verification.
     pub output_amount_1: u32,
     /// Amount to be received by the second exit account (change).
     /// Set to 0 if only one output is needed.
     pub output_amount_2: u32,
     /// Volume fee rate in basis points (1 basis point = 0.01%).
+    /// This is verified on-chain to match the runtime configuration.
     pub volume_fee_bps: u32,
     /// The nullifier (prevents double-spending).
     pub nullifier: BytesDigest,
@@ -168,9 +172,9 @@ pub struct PublicCircuitInputs {
     pub exit_account_2: BytesDigest,
     /// The hash of the block header.
     pub block_hash: BytesDigest,
-    /// The parent hash of the block.
+    /// The parent hash of the block, parsed from the block header.
     pub parent_hash: BytesDigest,
-    /// The block number.
+    /// The block number, parsed from the block header.
     pub block_number: u32,
 }
 
@@ -195,27 +199,30 @@ pub struct PublicInputsByAccount {
     pub exit_account: BytesDigest,
 }
 
-/// Block data in aggregated proofs.
+/// Block data (block_hash, block_number) in aggregated proofs.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Ord, PartialOrd)]
 pub struct BlockData {
     /// The hash of the block header.
     pub block_hash: BytesDigest,
-    /// The block number.
+    /// The block number, parsed from the block header.
     pub block_number: u32,
 }
 
 /// Aggregated public inputs from multiple wormhole proofs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AggregatedPublicCircuitInputs {
-    /// The asset ID (0 for native token).
+    /// The asset ID of the set (0 for native token).
     pub asset_id: u32,
-    /// Volume fee rate in basis points.
+    /// Volume fee rate in basis points (1 basis point = 0.01%).
+    /// All aggregated proofs must have the same fee rate.
     pub volume_fee_bps: u32,
-    /// The block data for the last block in the aggregation.
+    /// The last block data (block_hash, block_number) in the aggregated proofs.
+    /// This is the only block data we need to commit to in the aggregated proof.
+    /// All prior blocks are enforced to be contiguous and their connectivity is verified via parent_hash checks.
     pub block_data: BlockData,
-    /// Exit accounts and their summed output amounts.
+    /// The set of exit accounts and their summed output amounts.
     pub account_data: Vec<PublicInputsByAccount>,
-    /// Nullifiers from all aggregated proofs.
+    /// The nullifiers of each individual transfer proof.
     pub nullifiers: Vec<BytesDigest>,
 }
 

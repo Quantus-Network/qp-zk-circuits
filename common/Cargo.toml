@@ -19,4 +19,10 @@ serde = { workspace = true }
 
 [features]
 default = ["std"]
-std = ["anyhow/std", "qp-plonky2/std", "qp-poseidon-core/std", "qp-wormhole-inputs/std", "serde/std"]
+std = [
+	"anyhow/std",
+	"qp-plonky2/std",
+	"qp-poseidon-core/std",
+	"qp-wormhole-inputs/std",
+	"serde/std",
+]

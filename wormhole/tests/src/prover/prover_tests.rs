@@ -2,11 +2,12 @@ use std::fs;
 
 use hex;
 use plonky2::plonk::circuit_data::CircuitConfig;
+use qp_wormhole_inputs::PublicCircuitInputs;
 use test_helpers::{
     block_header::{DEFAULT_BLOCK_HASHES, DEFAULT_BLOCK_NUMBERS, DEFAULT_PARENT_HASHES},
     TestInputs, DEFAULT_OUTPUT_AMOUNTS, DEFAULT_VOLUME_FEE_BPS,
 };
-use wormhole_circuit::inputs::{CircuitInputs, PublicCircuitInputs};
+use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::utils::BytesDigest;
 
@@ -26,7 +27,7 @@ fn proof_can_be_deserialized() {
     let inputs = CircuitInputs::test_inputs_0();
     let proof = prover.commit(&inputs).unwrap().prove().unwrap();
 
-    let public_inputs = PublicCircuitInputs::try_from(&proof).unwrap();
+    let public_inputs = PublicCircuitInputs::try_from_proof(&proof).unwrap();
 
     // Build the expected values
     let expected = PublicCircuitInputs {
