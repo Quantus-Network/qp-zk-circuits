@@ -1,18 +1,33 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use plonky2::plonk::circuit_data::CommonCircuitData;
+use plonky2::plonk::circuit_data::{CircuitConfig, CommonCircuitData};
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_aggregator::aggregator::WormholeProofAggregator;
 use qp_wormhole_aggregator::circuits::tree::TreeAggregationConfig;
-use qp_wormhole_aggregator::dummy_proof::generate_dummy_proof;
+use qp_wormhole_aggregator::dummy_proof::build_dummy_circuit_inputs;
+use wormhole_prover::WormholeProver;
 use zk_circuits_common::circuit::{C, D, F};
 
-fn deserialize_proofs(
+fn generate_dummy_proofs(
     common_data: &CommonCircuitData<F, D>,
     len: usize,
 ) -> Vec<ProofWithPublicInputs<F, C, D>> {
-    let zk = common_data.config.zero_knowledge;
-    let dummy_proof = generate_dummy_proof(zk).expect("failed to generate dummy proof");
-    (0..len).map(|_| dummy_proof.clone()).collect()
+    let config = if common_data.config.zero_knowledge {
+        CircuitConfig::standard_recursion_zk_config()
+    } else {
+        CircuitConfig::standard_recursion_config()
+    };
+
+    (0..len)
+        .map(|_| {
+            let prover = WormholeProver::new(config.clone());
+            let inputs = build_dummy_circuit_inputs().expect("failed to build dummy inputs");
+            prover
+                .commit(&inputs)
+                .expect("failed to commit")
+                .prove()
+                .expect("failed to prove")
+        })
+        .collect()
 }
 
 // A macro for creating an aggregation benchmark with a specified number of proofs to
@@ -25,7 +40,7 @@ macro_rules! aggregate_proofs_benchmark {
             // Setup proofs.
             let proofs = {
                 let temp_aggregator = WormholeProofAggregator::default().with_config(config);
-                deserialize_proofs(
+                generate_dummy_proofs(
                     &temp_aggregator.leaf_circuit_data.common,
                     config.num_leaf_proofs,
                 )
@@ -65,7 +80,7 @@ macro_rules! verify_aggregate_proof_benchmark {
             // Setup proofs.
             let proofs = {
                 let temp_aggregator = WormholeProofAggregator::default().with_config(config);
-                deserialize_proofs(
+                generate_dummy_proofs(
                     &temp_aggregator.leaf_circuit_data.common,
                     config.num_leaf_proofs,
                 )

@@ -16,7 +16,7 @@ use zk_circuits_common::{
 
 use crate::{
     circuits::tree::{aggregate_to_tree, AggregatedProof, TreeAggregationConfig},
-    dummy_proof::{build_dummy_circuit_inputs, clone_with_asset_id},
+    dummy_proof::build_dummy_circuit_inputs,
 };
 
 /// A circuit that aggregates proofs from the Wormhole circuit.
@@ -237,24 +237,34 @@ impl WormholeProofAggregator {
     }
 
     /// Aggregates `N` number of leaf proofs into an [`AggregatedProof`].
+    ///
+    /// # Note
+    /// Pre-generated dummy proofs use `asset_id = 0` (native token). All real proofs
+    /// must also use `asset_id = 0` for the aggregation to succeed, since the circuit
+    /// enforces all proofs have the same asset_id.
     pub fn aggregate(&mut self) -> anyhow::Result<AggregatedProof<F, C, D>> {
         let Some(mut proofs) = self.proofs_buffer.take() else {
             bail!("there are no proofs to aggregate")
         };
 
-        // Pad with dummy proofs if needed, matching the asset_id of real proofs
+        // Pad with dummy proofs if needed
         let num_dummies_needed = self.config.num_leaf_proofs.saturating_sub(proofs.len());
         if num_dummies_needed > 0 {
-            // Get asset_id from the first real proof (all real proofs must have the same asset_id)
-            let first_proof = proofs.first().ok_or_else(|| {
-                anyhow::anyhow!("cannot pad with dummies when there are no real proofs")
-            })?;
-            let real_asset_id = first_proof.public_inputs[0].to_canonical_u64() as u32;
+            // Verify asset_id matches dummy proofs (asset_id = 0)
+            // We cannot modify public inputs post-proof as that invalidates the proof.
+            if let Some(first_proof) = proofs.first() {
+                let real_asset_id = first_proof.public_inputs[0].to_canonical_u64() as u32;
+                if real_asset_id != 0 {
+                    bail!(
+                        "Real proofs have asset_id={}, but dummy proofs use asset_id=0. \
+                         All proofs must have the same asset_id for aggregation.",
+                        real_asset_id
+                    );
+                }
+            }
 
             for i in 0..num_dummies_needed {
-                // Clone dummy with matching asset_id
-                let dummy = clone_with_asset_id(&self.dummy_proofs[i], real_asset_id);
-                proofs.push(dummy);
+                proofs.push(self.dummy_proofs[i].clone());
             }
         }
 
