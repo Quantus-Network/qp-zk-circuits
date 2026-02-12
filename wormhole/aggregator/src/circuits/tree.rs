@@ -454,6 +454,11 @@ mod tests {
     const TEST_ASSET_ID_U64: u64 = 0;
     const TEST_VOLUME_FEE_BPS: u64 = 10; // 0.1% = 10 basis points
 
+    /// Test config: branching_factor=8, depth=1 (8 leaf proofs)
+    fn test_aggregation_config() -> TreeAggregationConfig {
+        TreeAggregationConfig::new(8, 1)
+    }
+
     // ---------------- Circuit ----------------
 
     /// Dummy wormhole leaf for the Bitcoin-style 2-output layout:
@@ -758,7 +763,7 @@ mod tests {
         let verifier_data = &leaves[0].circuit_data.verifier_only.clone();
         let to_aggregate = leaves.into_iter().map(|p| p.proof).collect();
 
-        let config = TreeAggregationConfig::default();
+        let config = test_aggregation_config();
         let root_proof =
             aggregate_to_tree(to_aggregate, common_data, verifier_data, config).unwrap();
 
@@ -952,7 +957,7 @@ mod tests {
         let verifier_data = &leaves[0].circuit_data.verifier_only.clone();
         let to_aggregate = leaves.into_iter().map(|p| p.proof).collect();
 
-        let config = TreeAggregationConfig::default();
+        let config = test_aggregation_config();
         let res = aggregate_to_tree(to_aggregate, common_data, verifier_data, config);
 
         assert!(
@@ -1006,7 +1011,7 @@ mod tests {
         let verifier_data = &leaves[0].circuit_data.verifier_only.clone();
         let to_aggregate = leaves.into_iter().map(|p| p.proof).collect();
 
-        let config = TreeAggregationConfig::default();
+        let config = test_aggregation_config();
         let res = aggregate_to_tree(to_aggregate, common_data, verifier_data, config);
 
         assert!(res.is_err(), "expected failure due to mismatched asset IDs");
@@ -1090,7 +1095,7 @@ mod tests {
         let verifier_data = &leaves[0].circuit_data.verifier_only.clone();
         let to_aggregate = leaves.into_iter().map(|p| p.proof).collect();
 
-        let config = TreeAggregationConfig::default();
+        let config = test_aggregation_config();
         let root_proof =
             aggregate_to_tree(to_aggregate, common_data, verifier_data, config).unwrap();
 
