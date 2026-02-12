@@ -311,8 +311,12 @@ impl AggregatedPublicCircuitInputs {
             );
         }
 
-        let asset_id = pis[1] as u32;
-        let volume_fee_bps = pis[2] as u32;
+        let asset_id: u32 = pis[1]
+            .try_into()
+            .context("AggregatedPI: asset_id at index 1 exceeds u32 range")?;
+        let volume_fee_bps: u32 = pis[2]
+            .try_into()
+            .context("AggregatedPI: volume_fee_bps at index 2 exceeds u32 range")?;
 
         // Number of leaf proofs (N) is derived from the total PI length.
         let n_leaf = pis.len() / PUBLIC_INPUTS_FELTS_LEN;
@@ -350,7 +354,12 @@ impl AggregatedPublicCircuitInputs {
                     i
                 );
             }
-            let summed_output_amount = pis[cursor] as u32;
+            let summed_output_amount: u32 = pis[cursor].try_into().with_context(|| {
+                format!(
+                    "AggregatedPI: summed_output_amount at cursor {} exceeds u32 range",
+                    cursor
+                )
+            })?;
             cursor += 1;
 
             if cursor + 4 > pis.len() {

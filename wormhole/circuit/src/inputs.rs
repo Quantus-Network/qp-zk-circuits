@@ -168,8 +168,14 @@ impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
         // The num_unique_exits is informational only.
         // Slots with matching exit accounts will have their amounts summed.
         let _num_unique_exits = pis[0].to_canonical_u64() as usize;
-        let asset_id = pis[1].to_canonical_u64() as u32;
-        let volume_fee_bps = pis[2].to_canonical_u64() as u32;
+        let asset_id: u32 = pis[1]
+            .to_canonical_u64()
+            .try_into()
+            .context("AggregatedPI: asset_id at index 1 exceeds u32 range")?;
+        let volume_fee_bps: u32 = pis[2]
+            .to_canonical_u64()
+            .try_into()
+            .context("AggregatedPI: volume_fee_bps at index 2 exceeds u32 range")?;
 
         // Number of leaf proofs (N) is derived from the total PI length.
         // The circuit pads to root_pi_len + 8, where root_pi_len = n_leaf * LEAF_PI_LEN.
@@ -197,9 +203,15 @@ impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
         // The chain should deduplicate by exit account after parsing.
         let num_exit_slots = n_leaf * 2;
         let mut account_data: Vec<PublicInputsByAccount> = Vec::with_capacity(num_exit_slots);
-        for _ in 0..num_exit_slots {
+        for i in 0..num_exit_slots {
             // output_sum (1 felt)
-            let summed_output_amount = pis[cursor].to_canonical_u64() as u32;
+            let summed_output_amount: u32 =
+                pis[cursor].to_canonical_u64().try_into().with_context(|| {
+                    format!(
+                        "AggregatedPI: summed_output_amount[{}] at cursor {} exceeds u32 range",
+                        i, cursor
+                    )
+                })?;
             cursor += 1;
 
             // exit_account (4 felts)

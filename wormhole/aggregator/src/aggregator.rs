@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use anyhow::bail;
+use anyhow::{bail, Context};
 use plonky2::field::types::PrimeField64;
 use plonky2::plonk::circuit_data::{CircuitConfig, VerifierCircuitData};
 use plonky2::plonk::proof::ProofWithPublicInputs;
@@ -124,10 +124,13 @@ impl WormholeProofAggregator {
             // Generate dummy inputs with unique nullifier (build_dummy_circuit_inputs generates random nullifier each call)
             let dummy_inputs = build_dummy_circuit_inputs()?;
             let proof = prover.commit(&dummy_inputs)?.prove()?;
-            // Verify the nullifier is not all zeros (would be a bug)
+            // Verify the nullifier is not all zeros (would cause duplicate-nullifier rejection on-chain)
             let pi = PublicCircuitInputs::try_from_proof(&proof)?;
             if pi.nullifier.iter().all(|&b| b == 0) {
-                eprintln!("ERROR: dummy_proof[{}] has all-zero nullifier!", i);
+                bail!(
+                    "dummy_proof[{}] has all-zero nullifier - this is a bug in dummy proof generation",
+                    i
+                );
             }
             dummy_proofs.push(proof);
         }
@@ -274,7 +277,10 @@ impl WormholeProofAggregator {
             // Verify asset_id matches dummy proofs (asset_id = 0)
             // We cannot modify public inputs post-proof as that invalidates the proof.
             if let Some(first_proof) = proofs.first() {
-                let real_asset_id = first_proof.public_inputs[0].to_canonical_u64() as u32;
+                let real_asset_id: u32 = first_proof.public_inputs[0]
+                    .to_canonical_u64()
+                    .try_into()
+                    .context("asset_id in first proof exceeds u32 range")?;
                 if real_asset_id != 0 {
                     bail!(
                         "Real proofs have asset_id={}, but dummy proofs use asset_id=0. \
