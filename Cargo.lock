@@ -4203,6 +4203,8 @@ dependencies = [
  "qp-zk-circuits-common 1.0.1",
  "rand 0.8.5",
  "rayon",
+ "serde",
+ "serde_json",
  "test-helpers 1.0.1",
 ]
 
@@ -4233,10 +4235,13 @@ name = "qp-wormhole-circuit-builder"
 version = "1.0.1"
 dependencies = [
  "anyhow",
+ "clap",
  "qp-plonky2",
  "qp-wormhole-aggregator 1.0.1",
  "qp-wormhole-circuit 1.0.1",
  "qp-zk-circuits-common 1.0.1",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

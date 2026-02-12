@@ -2,13 +2,20 @@
 
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_inputs::PublicCircuitInputs;
-use wormhole_aggregator::aggregator::WormholeProofAggregator;
+use wormhole_aggregator::{
+    aggregator::WormholeProofAggregator, circuits::tree::TreeAggregationConfig,
+};
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::circuit::{C, D, F};
 
 use crate::aggregator::circuit_config;
 use test_helpers::TestInputs;
+
+/// Test aggregation config: branching_factor=2, depth=1 (2 leaf proofs)
+fn test_aggregation_config() -> TreeAggregationConfig {
+    TreeAggregationConfig::new(2, 1)
+}
 
 #[test]
 fn push_proof_to_buffer() {
@@ -17,7 +24,8 @@ fn push_proof_to_buffer() {
     let inputs = CircuitInputs::test_inputs_0();
     let proof = prover.commit(&inputs).unwrap().prove().unwrap();
 
-    let mut aggregator = WormholeProofAggregator::from_circuit_config(circuit_config());
+    let mut aggregator =
+        WormholeProofAggregator::from_circuit_config(circuit_config(), test_aggregation_config());
     aggregator.push_proof(proof).unwrap();
 
     let proofs_buffer = aggregator.proofs_buffer.unwrap();
@@ -31,7 +39,9 @@ fn push_proof_to_full_buffer() {
     let inputs = CircuitInputs::test_inputs_0();
     let proof = prover.commit(&inputs).unwrap().prove().unwrap();
 
-    let mut aggregator = WormholeProofAggregator::from_circuit_config(circuit_config());
+    let aggregation_config = test_aggregation_config();
+    let mut aggregator =
+        WormholeProofAggregator::from_circuit_config(circuit_config(), aggregation_config);
 
     // Fill up the proof buffer.
     for _ in 0..aggregator.config.num_leaf_proofs {
@@ -52,7 +62,8 @@ fn aggregate_single_proof() {
     let inputs = CircuitInputs::test_inputs_0();
     let proof = prover.commit(&inputs).unwrap().prove().unwrap();
 
-    let mut aggregator = WormholeProofAggregator::from_circuit_config(circuit_config());
+    let mut aggregator =
+        WormholeProofAggregator::from_circuit_config(circuit_config(), test_aggregation_config());
     aggregator.push_proof(proof).unwrap();
 
     aggregator.aggregate().unwrap();
@@ -76,7 +87,9 @@ fn aggregate_proofs_into_tree() {
         proofs.push(proof);
     }
 
-    let mut aggregator = WormholeProofAggregator::from_circuit_config(circuit_config());
+    let aggregation_config = test_aggregation_config();
+    let mut aggregator =
+        WormholeProofAggregator::from_circuit_config(circuit_config(), aggregation_config);
 
     // Fill up the proof buffer (all proofs from same block)
     for i in 0..aggregator.config.num_leaf_proofs {
@@ -99,7 +112,9 @@ fn aggregate_half_full_proof_array_into_tree() {
     let inputs = CircuitInputs::test_inputs_0();
     let proof = prover.commit(&inputs).unwrap().prove().unwrap();
 
-    let mut aggregator = WormholeProofAggregator::from_circuit_config(circuit_config());
+    let aggregation_config = test_aggregation_config();
+    let mut aggregator =
+        WormholeProofAggregator::from_circuit_config(circuit_config(), aggregation_config);
 
     // Fill up the proof buffer.
     for _ in 0..aggregator.config.num_leaf_proofs {
@@ -144,7 +159,8 @@ fn aggregate_proofs_from_separate_prover_instances_serialized() {
 
     // Step 3: Create aggregator (this creates yet another prover instance internally for dummy proofs)
     println!("Creating aggregator (creates internal prover for dummy proofs)...");
-    let mut aggregator = WormholeProofAggregator::from_circuit_config(circuit_config());
+    let mut aggregator =
+        WormholeProofAggregator::from_circuit_config(circuit_config(), test_aggregation_config());
     let common_data = aggregator.leaf_circuit_data.common.clone();
 
     // Step 4: Deserialize proofs using aggregator's common_data (like CLI does)
@@ -222,10 +238,14 @@ fn verify_aggregated_proof_with_prebuilt_verifier() {
     // Step 3: Create aggregator from pre-built files (matches circuit-builder)
     // The bins are at repo root, tests run from wormhole/tests
     println!("Creating aggregator from pre-built files...");
+    let num_real_proofs = 2; // We're providing 2 real proofs
     let mut aggregator = WormholeProofAggregator::from_prebuilt_with_paths(
         Path::new("../../generated-bins/prover.bin"),
         Path::new("../../generated-bins/common.bin"),
         Path::new("../../generated-bins/verifier.bin"),
+        test_aggregation_config(),
+        num_real_proofs,
+        None::<fn(usize, usize)>,
     )
     .expect("Failed to create aggregator from pre-built files");
 
@@ -308,7 +328,8 @@ fn aggregate_proofs_from_separate_prover_instances_hex_serialized() {
 
     // Step 3: Create aggregator (this creates yet another prover instance internally for dummy proofs)
     println!("Creating aggregator (creates internal prover for dummy proofs)...");
-    let mut aggregator = WormholeProofAggregator::from_circuit_config(circuit_config());
+    let mut aggregator =
+        WormholeProofAggregator::from_circuit_config(circuit_config(), test_aggregation_config());
     let common_data = aggregator.leaf_circuit_data.common.clone();
 
     // Step 4: Decode hex and deserialize proofs using aggregator's common_data (like CLI does)

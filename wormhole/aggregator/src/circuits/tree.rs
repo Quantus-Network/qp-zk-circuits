@@ -20,13 +20,6 @@ use zk_circuits_common::{
     gadgets::{bytes_digest_eq, limb1_at_offset, limbs4_at_offset},
 };
 
-/// The default branching factor of the proof tree. A higher value means more proofs get aggregated
-/// into a single proof at each level.
-pub const DEFAULT_TREE_BRANCHING_FACTOR: usize = 2;
-/// The default depth of the tree of the aggregated proof, counted as the longest path of edges between the
-/// leaf nodes and the root node.
-pub const DEFAULT_TREE_DEPTH: u32 = 3;
-
 /// Public inputs per leaf proof (Bitcoin-style 2-output layout)
 /// Layout: asset_id(1) + output_amount_1(1) + output_amount_2(1) + volume_fee_bps(1) +
 ///         nullifier(4) + exit_account_1(4) + exit_account_2(4) + block_hash(4) + parent_hash(4) + block_number(1)
@@ -73,12 +66,6 @@ impl TreeAggregationConfig {
             tree_branching_factor,
             tree_depth,
         }
-    }
-}
-
-impl Default for TreeAggregationConfig {
-    fn default() -> Self {
-        Self::new(DEFAULT_TREE_BRANCHING_FACTOR, DEFAULT_TREE_DEPTH)
     }
 }
 

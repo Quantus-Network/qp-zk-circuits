@@ -35,27 +35,34 @@ fn generate_dummy_proofs(
 macro_rules! aggregate_proofs_benchmark {
     ($fn_name:ident, $tree_branching_factor:expr, $tree_depth:expr) => {
         pub fn $fn_name(c: &mut Criterion) {
-            let config = TreeAggregationConfig::new($tree_branching_factor, $tree_depth);
+            let aggregation_config =
+                TreeAggregationConfig::new($tree_branching_factor, $tree_depth);
+            let circuit_config = CircuitConfig::standard_recursion_zk_config();
 
             // Setup proofs.
             let proofs = {
-                let temp_aggregator = WormholeProofAggregator::default().with_config(config);
+                let temp_aggregator = WormholeProofAggregator::from_circuit_config(
+                    circuit_config.clone(),
+                    aggregation_config,
+                );
                 generate_dummy_proofs(
                     &temp_aggregator.leaf_circuit_data.common,
-                    config.num_leaf_proofs,
+                    aggregation_config.num_leaf_proofs,
                 )
             };
 
             c.bench_function(
                 &format!(
                     "aggregate_proofs_{}_{}",
-                    config.tree_branching_factor, config.tree_depth
+                    aggregation_config.tree_branching_factor, aggregation_config.tree_depth
                 ),
                 |b| {
                     b.iter_batched(
                         || {
-                            let mut aggregator =
-                                WormholeProofAggregator::default().with_config(config);
+                            let mut aggregator = WormholeProofAggregator::from_circuit_config(
+                                circuit_config.clone(),
+                                aggregation_config,
+                            );
                             for proof in proofs.clone() {
                                 aggregator.push_proof(proof).unwrap();
                             }
@@ -75,27 +82,34 @@ macro_rules! aggregate_proofs_benchmark {
 macro_rules! verify_aggregate_proof_benchmark {
     ($fn_name:ident, $tree_branching_factor:expr, $tree_depth:expr) => {
         pub fn $fn_name(c: &mut Criterion) {
-            let config = TreeAggregationConfig::new($tree_branching_factor, $tree_depth);
+            let aggregation_config =
+                TreeAggregationConfig::new($tree_branching_factor, $tree_depth);
+            let circuit_config = CircuitConfig::standard_recursion_zk_config();
 
             // Setup proofs.
             let proofs = {
-                let temp_aggregator = WormholeProofAggregator::default().with_config(config);
+                let temp_aggregator = WormholeProofAggregator::from_circuit_config(
+                    circuit_config.clone(),
+                    aggregation_config,
+                );
                 generate_dummy_proofs(
                     &temp_aggregator.leaf_circuit_data.common,
-                    config.num_leaf_proofs,
+                    aggregation_config.num_leaf_proofs,
                 )
             };
 
             c.bench_function(
                 &format!(
                     "verify_aggregate_proof_{}_{}",
-                    config.tree_branching_factor, config.tree_depth
+                    aggregation_config.tree_branching_factor, aggregation_config.tree_depth
                 ),
                 |b| {
                     b.iter_batched(
                         || {
-                            let mut aggregator =
-                                WormholeProofAggregator::default().with_config(config);
+                            let mut aggregator = WormholeProofAggregator::from_circuit_config(
+                                circuit_config.clone(),
+                                aggregation_config,
+                            );
                             for proof in proofs.clone() {
                                 aggregator.push_proof(proof).unwrap();
                             }

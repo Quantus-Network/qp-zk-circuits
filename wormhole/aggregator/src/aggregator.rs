@@ -31,69 +31,102 @@ pub struct WormholeProofAggregator {
     dummy_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
 }
 
-impl Default for WormholeProofAggregator {
-    fn default() -> Self {
-        // Try to use pre-built circuit files for consistency
-        Self::from_prebuilt().unwrap_or_else(|_| {
-            let circuit_config = CircuitConfig::standard_recursion_zk_config();
-            Self::from_circuit_config(circuit_config)
-        })
-    }
-}
-
 impl WormholeProofAggregator {
-    /// Creates a new [`WormholeProofAggregator`] with a given [`VerifierCircuitData`]
-    /// and pre-generated dummy proofs.
+    /// Creates a new [`WormholeProofAggregator`] with a given [`VerifierCircuitData`],
+    /// pre-generated dummy proofs, and explicit aggregation config.
     ///
     /// The dummy proofs must be compatible with the verifier data (generated from the same circuit).
     /// Each dummy proof should have a unique nullifier to avoid on-chain duplicate errors.
     pub fn new(
         verifier_circuit_data: VerifierCircuitData<F, C, D>,
         dummy_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
+        config: TreeAggregationConfig,
     ) -> Self {
-        let aggregation_config = TreeAggregationConfig::default();
-        let proofs_buffer = Some(Vec::with_capacity(aggregation_config.num_leaf_proofs));
+        let proofs_buffer = Some(Vec::with_capacity(config.num_leaf_proofs));
 
         Self {
             leaf_circuit_data: verifier_circuit_data,
-            config: aggregation_config,
+            config,
             proofs_buffer,
             dummy_proofs,
         }
     }
 
-    /// Creates a new [`WormholeProofAggregator`] from pre-built circuit files.
+    /// Creates a new [`WormholeProofAggregator`] from a directory containing pre-built circuit files.
     ///
-    /// This ensures the aggregator uses the same circuit data as proofs generated
-    /// by `WormholeProver::default()`, avoiding wire assignment mismatches.
+    /// Reads the aggregation config from `config.json` in the directory.
+    /// Expects the directory to contain: prover.bin, common.bin, verifier.bin, config.json
     ///
-    /// Looks for files in `generated-bins/`:
-    /// - `common.bin` - Common circuit data
-    /// - `verifier.bin` - Verifier-only circuit data
-    /// - `prover.bin` - Prover circuit data
-    pub fn from_prebuilt() -> anyhow::Result<Self> {
-        use std::path::Path;
+    /// # Arguments
+    /// * `bins_dir` - Directory containing the circuit files
+    /// * `num_real_proofs` - Number of real proofs that will be provided (used to generate only needed dummy proofs)
+    /// * `progress_callback` - Optional callback called for each dummy proof generated: (current, total)
+    pub fn from_prebuilt_dir<F: FnMut(usize, usize)>(
+        bins_dir: &std::path::Path,
+        num_real_proofs: usize,
+        progress_callback: Option<F>,
+    ) -> anyhow::Result<Self> {
+        // Load config from config.json
+        let config_path = bins_dir.join("config.json");
+        let config_str = std::fs::read_to_string(&config_path)
+            .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", config_path.display(), e))?;
+
+        #[derive(serde::Deserialize)]
+        struct ConfigFile {
+            branching_factor: usize,
+            depth: u32,
+        }
+        let config_file: ConfigFile = serde_json::from_str(&config_str)
+            .map_err(|e| anyhow::anyhow!("Failed to parse {}: {}", config_path.display(), e))?;
+
+        let aggregation_config =
+            TreeAggregationConfig::new(config_file.branching_factor, config_file.depth);
+
         Self::from_prebuilt_with_paths(
-            Path::new("generated-bins/prover.bin"),
-            Path::new("generated-bins/common.bin"),
-            Path::new("generated-bins/verifier.bin"),
+            &bins_dir.join("prover.bin"),
+            &bins_dir.join("common.bin"),
+            &bins_dir.join("verifier.bin"),
+            aggregation_config,
+            num_real_proofs,
+            progress_callback,
         )
     }
 
     /// Creates a new [`WormholeProofAggregator`] from pre-built circuit files at custom paths.
     ///
-    /// This is useful when the pre-built files are not in the default `generated-bins/` directory.
-    pub fn from_prebuilt_with_paths(
+    /// Requires explicit aggregation config (branching_factor, depth).
+    ///
+    /// # Arguments
+    /// * `prover_path` - Path to prover.bin
+    /// * `common_path` - Path to common.bin
+    /// * `verifier_path` - Path to verifier.bin
+    /// * `config` - Aggregation tree configuration
+    /// * `num_real_proofs` - Number of real proofs that will be provided (used to generate only needed dummy proofs)
+    /// * `progress_callback` - Optional callback called for each dummy proof generated: (current, total)
+    pub fn from_prebuilt_with_paths<F: FnMut(usize, usize)>(
         prover_path: &std::path::Path,
         common_path: &std::path::Path,
         verifier_path: &std::path::Path,
+        config: TreeAggregationConfig,
+        num_real_proofs: usize,
+        mut progress_callback: Option<F>,
     ) -> anyhow::Result<Self> {
-        let aggregation_config = TreeAggregationConfig::default();
+        let aggregation_config = config;
 
-        // Generate dummy proofs - one for each potential padding slot
+        // Calculate how many dummy proofs we need for padding
+        let num_dummy_proofs = aggregation_config
+            .num_leaf_proofs
+            .saturating_sub(num_real_proofs);
+
+        // Generate only the needed dummy proofs for padding
         // Each dummy has a unique nullifier to avoid on-chain duplicate errors
-        let mut dummy_proofs = Vec::with_capacity(aggregation_config.num_leaf_proofs);
-        for i in 0..aggregation_config.num_leaf_proofs {
+        let mut dummy_proofs = Vec::with_capacity(num_dummy_proofs);
+        for i in 0..num_dummy_proofs {
+            // Report progress if callback provided
+            if let Some(ref mut cb) = progress_callback {
+                cb(i + 1, num_dummy_proofs);
+            }
+
             // Load fresh prover for each proof (prover is consumed on commit)
             let prover = WormholeProver::new_from_files(prover_path, common_path).map_err(|e| {
                 anyhow::anyhow!("Failed to load prover from pre-built files: {}", e)
@@ -113,7 +146,7 @@ impl WormholeProofAggregator {
         // Build verifier data from the same circuit by loading from files
         let verifier_data = Self::load_verifier_data_from_paths(common_path, verifier_path)?;
 
-        Ok(Self::new(verifier_data, dummy_proofs))
+        Ok(Self::new(verifier_data, dummy_proofs, aggregation_config))
     }
 
     /// Load verifier circuit data from pre-built files at default paths.
@@ -157,7 +190,12 @@ impl WormholeProofAggregator {
 
     /// Creates a new [`WormholeProofAggregator`] with a given [`CircuitConfig`]
     /// by building the circuit, extracting verifier data, and generating compatible dummy proofs.
-    pub fn from_circuit_config(circuit_config: CircuitConfig) -> Self {
+    ///
+    /// Requires explicit aggregation config (branching_factor, depth).
+    pub fn from_circuit_config(
+        circuit_config: CircuitConfig,
+        aggregation_config: TreeAggregationConfig,
+    ) -> Self {
         use plonky2::iop::witness::PartialWitness;
 
         // Build the circuit once to get both prover and verifier data from the SAME build.
@@ -168,8 +206,6 @@ impl WormholeProofAggregator {
 
         // Extract verifier data from this circuit
         let verifier_data = circuit_data.verifier_data();
-
-        let aggregation_config = TreeAggregationConfig::default();
 
         // Generate multiple dummy proofs - one for each potential padding slot.
         // Each dummy has a unique nullifier to avoid on-chain duplicate errors.
@@ -190,12 +226,7 @@ impl WormholeProofAggregator {
             dummy_proofs.push(dummy_proof);
         }
 
-        Self::new(verifier_data, dummy_proofs)
-    }
-
-    pub fn with_config(mut self, config: TreeAggregationConfig) -> Self {
-        self.config = config;
-        self
+        Self::new(verifier_data, dummy_proofs, aggregation_config)
     }
 
     pub fn push_proof(&mut self, proof: ProofWithPublicInputs<F, C, D>) -> anyhow::Result<()> {

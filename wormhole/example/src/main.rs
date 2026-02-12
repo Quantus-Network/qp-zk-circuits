@@ -278,7 +278,7 @@ fn aggregate_proofs(
     let common_data = &prover.circuit_data.common;
 
     let mut aggregator =
-        WormholeProofAggregator::from_circuit_config(config).with_config(aggregation_config);
+        WormholeProofAggregator::from_circuit_config(config, aggregation_config);
 
     println!(
         "Aggregator configured for {} leaf proofs (branching factor: {}, depth: {})",
@@ -323,7 +323,7 @@ fn aggregate_proofs_direct(
     let config = CircuitConfig::standard_recursion_zk_config();
 
     let mut aggregator =
-        WormholeProofAggregator::from_circuit_config(config).with_config(aggregation_config);
+        WormholeProofAggregator::from_circuit_config(config, aggregation_config);
 
     println!(
         "Aggregator configured for {} leaf proofs (branching factor: {}, depth: {})",
@@ -825,13 +825,13 @@ struct Cli {
     #[arg(long)]
     generate_and_aggregate: bool,
 
-    /// Tree depth for aggregation (default: 3, use 1 for minimal 2-proof aggregation)
-    #[arg(long, default_value = "3")]
-    aggregation_depth: u32,
+    /// Tree depth for aggregation (required for aggregation modes)
+    #[arg(long)]
+    aggregation_depth: Option<u32>,
 
-    /// Branching factor for aggregation tree (default: 2)
-    #[arg(long, default_value = "2")]
-    aggregation_branching_factor: usize,
+    /// Branching factor for aggregation tree (required for aggregation modes)
+    #[arg(long)]
+    aggregation_branching_factor: Option<usize>,
 
     /// Number of proofs to generate (for --generate-and-aggregate mode)
     /// Defaults to num_leaf_proofs from aggregation config (branching_factor^depth)
@@ -862,15 +862,23 @@ fn parse_funding_amount(s: &str) -> Result<u128, String> {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Build aggregation config from CLI args
-    let aggregation_config =
-        TreeAggregationConfig::new(cli.aggregation_branching_factor, cli.aggregation_depth);
+    // Helper to get aggregation config (required for aggregation modes)
+    let get_aggregation_config = || -> anyhow::Result<TreeAggregationConfig> {
+        let branching_factor = cli
+            .aggregation_branching_factor
+            .context("--aggregation-branching-factor is required for aggregation modes")?;
+        let depth = cli
+            .aggregation_depth
+            .context("--aggregation-depth is required for aggregation modes")?;
+        Ok(TreeAggregationConfig::new(branching_factor, depth))
+    };
 
     // Aggregation-only mode (from files)
     if cli.aggregate && !cli.generate_and_aggregate {
         let proof_files = cli
             .proof_files
             .context("Missing proof files for aggregation")?;
+        let aggregation_config = get_aggregation_config()?;
         return aggregate_proofs(
             proof_files,
             &cli.aggregated_proof_output,
@@ -919,18 +927,25 @@ async fn main() -> anyhow::Result<()> {
         dev_account, &funding_account
     );
 
+    // Get aggregation config if needed (for generate_and_aggregate mode)
+    let aggregation_config = if cli.generate_and_aggregate {
+        Some(get_aggregation_config()?)
+    } else {
+        None
+    };
+
     // Determine number of proofs to generate
     let num_proofs = if cli.generate_and_aggregate {
-        cli.num_proofs.unwrap_or(aggregation_config.num_leaf_proofs)
+        cli.num_proofs.unwrap_or(aggregation_config.as_ref().unwrap().num_leaf_proofs)
     } else {
         1 // Single proof for --live mode
     };
 
-    if cli.generate_and_aggregate {
+    if let Some(ref config) = aggregation_config {
         println!("Running in generate-and-aggregate mode.");
         println!(
             "Will generate {} proofs (aggregation config: branching_factor={}, depth={})",
-            num_proofs, aggregation_config.tree_branching_factor, aggregation_config.tree_depth
+            num_proofs, config.tree_branching_factor, config.tree_depth
         );
     } else {
         println!("Running in live mode (single proof).");
@@ -984,15 +999,15 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // If generate-and-aggregate mode, aggregate all proofs
-    if cli.generate_and_aggregate {
+    if let Some(config) = aggregation_config {
         println!("\n=== Aggregating {} Proofs ===", proofs.len());
         println!(
             "Using aggregation config: branching_factor={}, depth={}, num_leaf_proofs={}",
-            aggregation_config.tree_branching_factor,
-            aggregation_config.tree_depth,
-            aggregation_config.num_leaf_proofs
+            config.tree_branching_factor,
+            config.tree_depth,
+            config.num_leaf_proofs
         );
-        aggregate_proofs_direct(proofs, &cli.aggregated_proof_output, aggregation_config)?;
+        aggregate_proofs_direct(proofs, &cli.aggregated_proof_output, config)?;
     }
 
     Ok(())

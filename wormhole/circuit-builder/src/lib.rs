@@ -1,13 +1,58 @@
 use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
 use std::fs::{create_dir_all, write};
 use std::path::Path;
 
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::config::PoseidonGoldilocksConfig;
 use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
+use wormhole_aggregator::circuits::tree::TreeAggregationConfig;
 use wormhole_aggregator::WormholeProofAggregator;
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use zk_circuits_common::circuit::D;
+
+/// Configuration stored alongside circuit binaries
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CircuitBinsConfig {
+    pub branching_factor: usize,
+    pub depth: u32,
+    pub num_leaf_proofs: usize,
+}
+
+impl CircuitBinsConfig {
+    pub fn new(branching_factor: usize, depth: u32) -> Self {
+        Self {
+            branching_factor,
+            depth,
+            num_leaf_proofs: branching_factor.pow(depth),
+        }
+    }
+
+    /// Load config from a directory containing circuit binaries
+    pub fn load<P: AsRef<Path>>(bins_dir: P) -> Result<Self> {
+        let config_path = bins_dir.as_ref().join("config.json");
+        let config_str = std::fs::read_to_string(&config_path)
+            .map_err(|e| anyhow!("Failed to read {}: {}", config_path.display(), e))?;
+        serde_json::from_str(&config_str)
+            .map_err(|e| anyhow!("Failed to parse {}: {}", config_path.display(), e))
+    }
+
+    /// Save config to a directory
+    pub fn save<P: AsRef<Path>>(&self, bins_dir: P) -> Result<()> {
+        let config_path = bins_dir.as_ref().join("config.json");
+        let config_str = serde_json::to_string_pretty(self)
+            .map_err(|e| anyhow!("Failed to serialize config: {}", e))?;
+        write(&config_path, config_str)
+            .map_err(|e| anyhow!("Failed to write {}: {}", config_path.display(), e))?;
+        println!("Config saved to {}", config_path.display());
+        Ok(())
+    }
+
+    /// Convert to TreeAggregationConfig
+    pub fn to_aggregation_config(&self) -> TreeAggregationConfig {
+        TreeAggregationConfig::new(self.branching_factor, self.depth)
+    }
+}
 
 /// Generate wormhole circuit binaries (verifier.bin, common.bin, and optionally prover.bin)
 pub fn generate_circuit_binaries<P: AsRef<Path>>(
@@ -75,18 +120,44 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
 /// IMPORTANT: This must be called AFTER generate_circuit_binaries() so that the
 /// leaf circuit files (prover.bin, common.bin, verifier.bin) already exist.
 /// The aggregator loads from these files to ensure consistency.
-pub fn generate_aggregated_circuit_binaries<P: AsRef<Path>>(output_dir: P) -> Result<()> {
-    println!("Building aggregated wormhole circuit...");
+///
+/// # Arguments
+/// * `output_dir` - Directory to write the binaries to
+/// * `branching_factor` - Number of proofs aggregated at each tree level
+/// * `depth` - Depth of the aggregation tree (num_leaf_proofs = branching_factor^depth)
+pub fn generate_aggregated_circuit_binaries<P: AsRef<Path>>(
+    output_dir: P,
+    branching_factor: usize,
+    depth: u32,
+) -> Result<()> {
+    let config = TreeAggregationConfig::new(branching_factor, depth);
+    println!(
+        "Building aggregated wormhole circuit (branching_factor={}, depth={}, num_leaf_proofs={})...",
+        branching_factor, depth, config.num_leaf_proofs
+    );
 
-    // IMPORTANT: Use from_prebuilt() to load the leaf circuit from the files
+    let output_path = output_dir.as_ref();
+
+    // IMPORTANT: Use from_prebuilt_with_paths() to load the leaf circuit from the files
     // we just generated. This ensures the aggregated circuit's leaf verifier data
     // matches the leaf circuit files exactly.
     //
     // If we used from_circuit_config(), it would build a fresh leaf circuit which
     // might differ from the one in common.bin/verifier.bin, causing verification
     // failures when the chain tries to verify aggregated proofs.
-    let mut aggregator = WormholeProofAggregator::from_prebuilt()
-        .map_err(|e| anyhow!("Failed to create aggregator from pre-built files. Make sure generate_circuit_binaries() was called first: {}", e))?;
+    //
+    // We pass 0 real proofs since we're using all dummy proofs to build the circuit.
+    let mut aggregator = WormholeProofAggregator::from_prebuilt_with_paths(
+        &output_path.join("prover.bin"),
+        &output_path.join("common.bin"),
+        &output_path.join("verifier.bin"),
+        config,
+        0, // No real proofs - use all dummies to build the aggregation circuit
+        Some(|current: usize, total: usize| {
+            println!("  Generating dummy proof {}/{}...", current, total);
+        }),
+    )
+    .map_err(|e| anyhow!("Failed to create aggregator from pre-built files. Make sure generate_circuit_binaries() was called first: {}", e))?;
 
     // We need to run the aggregation to get the circuit data.
     // The aggregator builds the circuit dynamically during aggregation.
@@ -97,7 +168,6 @@ pub fn generate_aggregated_circuit_binaries<P: AsRef<Path>>(output_dir: P) -> Re
 
     let gate_serializer = DefaultGateSerializer;
 
-    let output_path = output_dir.as_ref();
     create_dir_all(output_path)?;
 
     // Serialize aggregated common data
@@ -131,9 +201,17 @@ pub fn generate_aggregated_circuit_binaries<P: AsRef<Path>>(output_dir: P) -> Re
 }
 
 /// Generate all circuit binaries (both regular and aggregated)
+///
+/// # Arguments
+/// * `output_dir` - Directory to write the binaries to
+/// * `include_prover` - Whether to include the prover binary
+/// * `branching_factor` - Number of proofs aggregated at each tree level
+/// * `depth` - Depth of the aggregation tree (num_leaf_proofs = branching_factor^depth)
 pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
     include_prover: bool,
+    branching_factor: usize,
+    depth: u32,
 ) -> Result<()> {
     let output_path = output_dir.as_ref();
 
@@ -141,11 +219,11 @@ pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
     generate_circuit_binaries(output_path, include_prover)?;
 
     // Generate aggregated circuit binaries
-    generate_aggregated_circuit_binaries(output_path)?;
+    generate_aggregated_circuit_binaries(output_path, branching_factor, depth)?;
+
+    // Save config file alongside binaries
+    let config = CircuitBinsConfig::new(branching_factor, depth);
+    config.save(output_path)?;
 
     Ok(())
-}
-
-pub fn main() -> Result<()> {
-    generate_circuit_binaries("generated-bins", true)
 }
