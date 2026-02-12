@@ -174,7 +174,9 @@ fn aggregate_chunk(
 ///
 /// The circuit:
 ///  - verifies the root proof
-///  - enforces all real proofs (non-zero block_hash) reference the same block
+///  - enforces all real proofs (non-zero block_hash) reference the same block for their storage proofs
+///    (Note: the underlying transfers can occur in different blocks; this constraint only applies to
+///    the block used when generating the storage proof, i.e., when the proof is created)
 ///  - enforces asset ID and volume_fee_bps consistency across all proofs
 ///  - for each of 2*N "slots" (2 outputs per proof), computes the sum of amounts for proofs matching that slot's exit account
 ///  - forwards all nullifiers
@@ -256,7 +258,11 @@ fn aggregate_dedupe_public_inputs(
     // =========================================================================
     // BLOCK VALIDATION (Fixed Structure)
     // =========================================================================
-    // All real proofs (block_hash != 0) must reference the same block.
+    // All real proofs (block_hash != 0) must reference the same block for their storage proofs.
+    // This means all proofs must be generated against the same chain state snapshot.
+    // Note: The underlying transfers can occur in different blocks; this constraint only
+    // applies to the block used when generating the storage proof (when the proof is created).
+    //
     // We use the first real proof's block as the reference.
     // Dummies (block_hash == 0) are skipped via conditional constraints.
     //

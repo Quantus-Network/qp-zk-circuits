@@ -277,8 +277,7 @@ fn aggregate_proofs(
     let prover = WormholeProver::new(config.clone());
     let common_data = &prover.circuit_data.common;
 
-    let mut aggregator =
-        WormholeProofAggregator::from_circuit_config(config, aggregation_config);
+    let mut aggregator = WormholeProofAggregator::from_circuit_config(config, aggregation_config);
 
     println!(
         "Aggregator configured for {} leaf proofs (branching factor: {}, depth: {})",
@@ -322,8 +321,7 @@ fn aggregate_proofs_direct(
     // Build the wormhole aggregator from circuit config
     let config = CircuitConfig::standard_recursion_zk_config();
 
-    let mut aggregator =
-        WormholeProofAggregator::from_circuit_config(config, aggregation_config);
+    let mut aggregator = WormholeProofAggregator::from_circuit_config(config, aggregation_config);
 
     println!(
         "Aggregator configured for {} leaf proofs (branching factor: {}, depth: {})",
@@ -936,7 +934,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Determine number of proofs to generate
     let num_proofs = if cli.generate_and_aggregate {
-        cli.num_proofs.unwrap_or(aggregation_config.as_ref().unwrap().num_leaf_proofs)
+        cli.num_proofs
+            .unwrap_or(aggregation_config.as_ref().unwrap().num_leaf_proofs)
     } else {
         1 // Single proof for --live mode
     };
@@ -1003,9 +1002,7 @@ async fn main() -> anyhow::Result<()> {
         println!("\n=== Aggregating {} Proofs ===", proofs.len());
         println!(
             "Using aggregation config: branching_factor={}, depth={}, num_leaf_proofs={}",
-            config.tree_branching_factor,
-            config.tree_depth,
-            config.num_leaf_proofs
+            config.tree_branching_factor, config.tree_depth, config.num_leaf_proofs
         );
         aggregate_proofs_direct(proofs, &cli.aggregated_proof_output, config)?;
     }

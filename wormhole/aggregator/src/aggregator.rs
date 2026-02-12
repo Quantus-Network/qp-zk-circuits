@@ -66,21 +66,10 @@ impl WormholeProofAggregator {
         num_real_proofs: usize,
         progress_callback: Option<F>,
     ) -> anyhow::Result<Self> {
-        // Load config from config.json
-        let config_path = bins_dir.join("config.json");
-        let config_str = std::fs::read_to_string(&config_path)
-            .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", config_path.display(), e))?;
+        use crate::config::CircuitBinsConfig;
 
-        #[derive(serde::Deserialize)]
-        struct ConfigFile {
-            branching_factor: usize,
-            depth: u32,
-        }
-        let config_file: ConfigFile = serde_json::from_str(&config_str)
-            .map_err(|e| anyhow::anyhow!("Failed to parse {}: {}", config_path.display(), e))?;
-
-        let aggregation_config =
-            TreeAggregationConfig::new(config_file.branching_factor, config_file.depth);
+        let config = CircuitBinsConfig::load(bins_dir)?;
+        let aggregation_config = config.to_aggregation_config();
 
         Self::from_prebuilt_with_paths(
             &bins_dir.join("prover.bin"),

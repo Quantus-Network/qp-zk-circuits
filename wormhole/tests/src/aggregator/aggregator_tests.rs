@@ -230,7 +230,8 @@ fn verify_aggregated_proof_with_prebuilt_verifier() {
         Path::new("../../generated-bins/common.bin"),
     )
     .expect("Failed to load prover from pre-built files");
-    // Use test_inputs_0 again but with different nullifier/exit to simulate same-block proofs
+    // Use test_inputs_0 again - proofs must reference the same block for their storage proofs
+    // (the underlying transfers can be in different blocks, but proofs must be generated against the same chain state)
     // For this test, we just use the same inputs twice - the aggregator will pad with dummies
     let inputs_2 = CircuitInputs::test_inputs_0();
     let proof_2 = prover.commit(&inputs_2).unwrap().prove().unwrap();

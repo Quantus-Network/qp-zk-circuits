@@ -4240,8 +4240,6 @@ dependencies = [
  "qp-wormhole-aggregator 1.0.1",
  "qp-wormhole-circuit 1.0.1",
  "qp-zk-circuits-common 1.0.1",
- "serde",
- "serde_json",
 ]
 
 [[package]]

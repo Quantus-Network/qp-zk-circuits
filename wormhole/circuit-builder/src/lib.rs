@@ -1,58 +1,16 @@
 use anyhow::{anyhow, Result};
-use serde::{Deserialize, Serialize};
 use std::fs::{create_dir_all, write};
 use std::path::Path;
 
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::config::PoseidonGoldilocksConfig;
 use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
-use wormhole_aggregator::circuits::tree::TreeAggregationConfig;
-use wormhole_aggregator::WormholeProofAggregator;
+use wormhole_aggregator::{TreeAggregationConfig, WormholeProofAggregator};
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use zk_circuits_common::circuit::D;
 
-/// Configuration stored alongside circuit binaries
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CircuitBinsConfig {
-    pub branching_factor: usize,
-    pub depth: u32,
-    pub num_leaf_proofs: usize,
-}
-
-impl CircuitBinsConfig {
-    pub fn new(branching_factor: usize, depth: u32) -> Self {
-        Self {
-            branching_factor,
-            depth,
-            num_leaf_proofs: branching_factor.pow(depth),
-        }
-    }
-
-    /// Load config from a directory containing circuit binaries
-    pub fn load<P: AsRef<Path>>(bins_dir: P) -> Result<Self> {
-        let config_path = bins_dir.as_ref().join("config.json");
-        let config_str = std::fs::read_to_string(&config_path)
-            .map_err(|e| anyhow!("Failed to read {}: {}", config_path.display(), e))?;
-        serde_json::from_str(&config_str)
-            .map_err(|e| anyhow!("Failed to parse {}: {}", config_path.display(), e))
-    }
-
-    /// Save config to a directory
-    pub fn save<P: AsRef<Path>>(&self, bins_dir: P) -> Result<()> {
-        let config_path = bins_dir.as_ref().join("config.json");
-        let config_str = serde_json::to_string_pretty(self)
-            .map_err(|e| anyhow!("Failed to serialize config: {}", e))?;
-        write(&config_path, config_str)
-            .map_err(|e| anyhow!("Failed to write {}: {}", config_path.display(), e))?;
-        println!("Config saved to {}", config_path.display());
-        Ok(())
-    }
-
-    /// Convert to TreeAggregationConfig
-    pub fn to_aggregation_config(&self) -> TreeAggregationConfig {
-        TreeAggregationConfig::new(self.branching_factor, self.depth)
-    }
-}
+// Re-export CircuitBinsConfig from aggregator so users of circuit-builder can access it
+pub use wormhole_aggregator::CircuitBinsConfig;
 
 /// Generate wormhole circuit binaries (verifier.bin, common.bin, and optionally prover.bin)
 pub fn generate_circuit_binaries<P: AsRef<Path>>(

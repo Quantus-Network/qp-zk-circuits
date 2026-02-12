@@ -71,8 +71,6 @@ pub enum DigestError {
     ChunkOutOfFieldRange { chunk_index: usize, value: u64 },
     /// The input has an invalid length
     InvalidLength { expected: usize, got: usize },
-    /// Other error (used for conversion from anyhow::Error)
-    Other,
 }
 
 impl fmt::Display for DigestError {
@@ -88,7 +86,6 @@ impl fmt::Display for DigestError {
             DigestError::InvalidLength { expected, got } => {
                 write!(f, "Invalid length: expected {}, got {}", expected, got)
             }
-            DigestError::Other => write!(f, "Other error"),
         }
     }
 }
@@ -216,9 +213,10 @@ pub struct AggregatedPublicCircuitInputs {
     /// Volume fee rate in basis points (1 basis point = 0.01%).
     /// All aggregated proofs must have the same fee rate.
     pub volume_fee_bps: u32,
-    /// The last block data (block_hash, block_number) in the aggregated proofs.
-    /// This is the only block data we need to commit to in the aggregated proof.
-    /// All prior blocks are enforced to be contiguous and their connectivity is verified via parent_hash checks.
+    /// The block data (block_hash, block_number) for all aggregated proofs.
+    /// All proofs in the aggregation must reference the same block for their storage proofs.
+    /// Note: The underlying transfers can occur in different blocks; this constraint only
+    /// applies to the block used to generate the storage proof (i.e., when the proof is created).
     pub block_data: BlockData,
     /// The set of exit accounts and their summed output amounts.
     pub account_data: Vec<PublicInputsByAccount>,
