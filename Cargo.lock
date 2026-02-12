@@ -4265,6 +4265,7 @@ dependencies = [
  "criterion",
  "qp-plonky2",
  "qp-wormhole-circuit 1.0.1",
+ "qp-wormhole-inputs",
  "qp-zk-circuits-common 1.0.1",
  "test-helpers 1.0.1",
 ]

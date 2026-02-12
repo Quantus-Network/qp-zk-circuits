@@ -12,7 +12,8 @@
 //! # Example
 //!
 //! ```no_run
-//! use wormhole_circuit::inputs::{CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs};
+//! use qp_wormhole_inputs::PublicCircuitInputs;
+//! use wormhole_circuit::inputs::{CircuitInputs, PrivateCircuitInputs};
 //! use wormhole_circuit::nullifier::Nullifier;
 //! use wormhole_circuit::storage_proof::ProcessedStorageProof;
 //! use wormhole_circuit::substrate_account::SubstrateAccount;
