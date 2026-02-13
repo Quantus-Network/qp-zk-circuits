@@ -1,12 +1,13 @@
 use std::collections::BTreeMap;
 
 use anyhow::{bail, Context};
-use plonky2::field::types::PrimeField64;
+use plonky2::field::types::{Field, PrimeField64};
 use plonky2::plonk::circuit_data::{CircuitConfig, VerifierCircuitData};
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_inputs::{
     AggregatedPublicCircuitInputs, BlockData, PublicCircuitInputs, PublicInputsByAccount,
 };
+use rand::seq::SliceRandom;
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use wormhole_circuit::inputs::ParsePublicInputs;
 use wormhole_prover::{fill_witness, WormholeProver};
@@ -19,6 +20,10 @@ use crate::{
     circuits::tree::{aggregate_to_tree, AggregatedProof, TreeAggregationConfig},
     dummy_proof::build_dummy_circuit_inputs,
 };
+
+// Block hash offset in leaf proof public inputs (4 felts starting at index 16)
+const BLOCK_HASH_PI_START: usize = 16;
+const BLOCK_HASH_PI_END: usize = 20;
 
 /// A circuit that aggregates proofs from the Wormhole circuit.
 pub struct WormholeProofAggregator {
@@ -295,6 +300,10 @@ impl WormholeProofAggregator {
             }
         }
 
+        // Shuffle proofs to hide dummy positions while keeping a real proof in slot 0.
+        // This makes dummy proofs indistinguishable from duplicate exit accounts in the output.
+        shuffle_proofs_preserving_first_real(&mut proofs);
+
         let root_proof = aggregate_to_tree(
             proofs,
             &self.leaf_circuit_data.common,
@@ -404,4 +413,39 @@ fn digest_key_le_u64x4(d: &BytesDigest) -> [u64; 4] {
         u64::from_le_bytes(bytes[16..24].try_into().unwrap()),
         u64::from_le_bytes(bytes[24..32].try_into().unwrap()),
     ]
+}
+
+/// Shuffle proofs while ensuring a real proof remains in slot 0 for valid reference values.
+///
+/// The aggregation circuit uses slot 0's block_hash, asset_id, and volume_fee_bps as reference
+/// values that all other proofs are validated against. A dummy proof in slot 0 would cause
+/// the reference block_hash to be [0,0,0,0], breaking validation for real proofs.
+///
+/// This function:
+/// 1. Finds the first real proof (block_hash != 0) and swaps it to slot 0
+/// 2. Shuffles all remaining proofs (slots 1..N) with external randomness
+///
+/// This hides dummy proof positions while maintaining valid circuit semantics.
+/// Combined with zeroing duplicate exit slots, dummies become indistinguishable from duplicates.
+fn shuffle_proofs_preserving_first_real(proofs: &mut [ProofWithPublicInputs<F, C, D>]) {
+    // Find first real proof (block_hash != 0)
+    let first_real_idx = proofs.iter().position(|p| {
+        // block_hash is 4 felts at BLOCK_HASH_PI_START
+        let block_hash_is_zero = p.public_inputs[BLOCK_HASH_PI_START..BLOCK_HASH_PI_END]
+            .iter()
+            .all(|f| f.is_zero());
+        !block_hash_is_zero
+    });
+
+    if let Some(idx) = first_real_idx {
+        // Swap first real proof to position 0
+        proofs.swap(0, idx);
+    }
+    // If no real proof found (all dummies), leave as-is - circuit handles this case
+
+    // Shuffle remaining proofs (positions 1..N) with external randomness
+    if proofs.len() > 1 {
+        let mut rng = rand::thread_rng();
+        proofs[1..].shuffle(&mut rng);
+    }
 }

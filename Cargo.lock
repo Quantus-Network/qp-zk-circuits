@@ -4205,6 +4205,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "test-helpers 1.0.1",
 ]
 

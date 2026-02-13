@@ -179,9 +179,30 @@ pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
     // Generate aggregated circuit binaries
     generate_aggregated_circuit_binaries(output_path, branching_factor, depth)?;
 
-    // Save config file alongside binaries
-    let config = CircuitBinsConfig::new(branching_factor, depth);
+    // Save config file alongside binaries (with hashes for integrity verification)
+    let config =
+        CircuitBinsConfig::new(branching_factor, depth).with_hashes_from_directory(output_path)?;
     config.save(output_path)?;
+
+    // Print hashes for reference
+    if let Some(ref hashes) = config.hashes {
+        println!("Binary hashes:");
+        if let Some(ref h) = hashes.common {
+            println!("  common.bin: {}", h);
+        }
+        if let Some(ref h) = hashes.verifier {
+            println!("  verifier.bin: {}", h);
+        }
+        if let Some(ref h) = hashes.prover {
+            println!("  prover.bin: {}", h);
+        }
+        if let Some(ref h) = hashes.aggregated_common {
+            println!("  aggregated_common.bin: {}", h);
+        }
+        if let Some(ref h) = hashes.aggregated_verifier {
+            println!("  aggregated_verifier.bin: {}", h);
+        }
+    }
 
     Ok(())
 }

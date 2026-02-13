@@ -373,9 +373,18 @@ fn aggregate_dedupe_public_inputs(
             acc = builder.add(acc, conditional_amount);
         }
 
-        // If this is a duplicate slot, zero out the sum to prevent double-minting
-        // The chain will skip slots with zero amount
+        // If this is a duplicate slot, zero out both the sum AND the exit account.
+        // This makes duplicate slots indistinguishable from dummy proofs in the output,
+        // hiding which slots were real duplicates vs padding dummies.
         let final_sum = builder.select(is_duplicate, zero, acc);
+
+        // Zero out exit_slot for duplicates to match dummy output format
+        let final_exit = [
+            builder.select(is_duplicate, zero, exit_slot[0]),
+            builder.select(is_duplicate, zero, exit_slot[1]),
+            builder.select(is_duplicate, zero, exit_slot[2]),
+            builder.select(is_duplicate, zero, exit_slot[3]),
+        ];
 
         // Range check the sum (with 2 outputs per proof, max sum could be larger)
         // 32-bit outputs * 2*N proofs, need 32 + log2(2*N) bits
@@ -383,7 +392,7 @@ fn aggregate_dedupe_public_inputs(
 
         // Output: [sum, exit_account(4)]
         output_pis.push(final_sum);
-        output_pis.extend_from_slice(&exit_slot);
+        output_pis.extend_from_slice(&final_exit);
     }
 
     // =========================================================================
