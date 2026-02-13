@@ -139,13 +139,6 @@ pub mod circuit_logic {
             targets.storage_proof.leaf_inputs.to_account,
         );
 
-        // Connect block_hash_sentinel in storage_proof to the actual block_hash from block_header.
-        // This allows the storage proof circuit to detect dummy proofs (block_hash == 0).
-        builder.connect_hashes(
-            targets.storage_proof.block_hash_sentinel,
-            targets.block_header.block_hash,
-        );
-
         // Dummy proof detection: requires BOTH block_hash == 0 AND output_amounts == 0.
         // This prevents an attacker from slipping funds through with a zero block hash
         // but positive output amounts.
@@ -172,6 +165,10 @@ pub mod circuit_logic {
         // is_dummy = block_hash_is_zero AND both_outputs_zero
         let is_dummy = builder.and(block_hash_is_zero, both_outputs_zero);
         let is_not_dummy = builder.sub(one, is_dummy.target);
+
+        // Connect is_not_dummy in storage_proof.
+        // This allows the storage proof circuit to detect dummy proofs (block_hash == 0).
+        builder.connect(targets.storage_proof.is_not_dummy.target, is_not_dummy);
 
         // Nullifier validation: nullifier == H(H(salt + secret + transfer_count))
         // Skip this validation for dummy proofs (block_hash == 0 AND outputs == 0).

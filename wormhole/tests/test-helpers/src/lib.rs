@@ -244,7 +244,7 @@ pub mod storage_proof {
                 &ProcessedStorageProof::test_inputs_0(),
                 default_root_hash(),
                 LeafInputs::test_inputs_0(),
-                crate::block_header::DEFAULT_BLOCK_HASHES[0],
+                true,
             )
         }
         fn test_inputs_1() -> Self {
@@ -255,7 +255,7 @@ pub mod storage_proof {
                     .try_into()
                     .unwrap(),
                 LeafInputs::test_inputs_1(),
-                crate::block_header::DEFAULT_BLOCK_HASHES[1],
+                true,
             )
         }
     }

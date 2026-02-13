@@ -3,7 +3,7 @@ use anyhow::bail;
 use plonky2::{
     field::types::Field,
     hash::hash_types::{HashOut, HashOutTarget},
-    iop::target::Target,
+    iop::target::{BoolTarget, Target},
     plonk::circuit_builder::CircuitBuilder,
 };
 
@@ -33,9 +33,8 @@ pub struct StorageProofTargets {
     pub proof_data: Vec<Vec<Target>>,
     pub indices: Vec<Target>,
     pub leaf_inputs: LeafTargets,
-    /// Block hash used for dummy proof detection (block_hash == 0 means dummy).
-    /// This target is connected to the block_header's block_hash in connect_shared_targets.
-    pub block_hash_sentinel: HashOutTarget,
+    /// This target is connected to the dummy proof detection logic in connect_shared_targets.
+    pub is_not_dummy: BoolTarget,
 }
 
 impl StorageProofTargets {
@@ -59,8 +58,7 @@ impl StorageProofTargets {
             proof_data,
             indices,
             leaf_inputs,
-            // Virtual hash target for block_hash sentinel - will be connected to actual block_hash
-            block_hash_sentinel: builder.add_virtual_hash(),
+            is_not_dummy: builder.add_virtual_bool_target_safe(),
         }
     }
 }
@@ -72,9 +70,7 @@ pub struct StorageProof {
     pub indices: Vec<F>,
     pub root_hash: [u8; 32],
     pub leaf_inputs: LeafInputs,
-    /// Block hash used for dummy proof detection.
-    /// When block_hash == [0; 32], validation is skipped (dummy proof).
-    pub block_hash: [u8; 32],
+    pub is_not_dummy: bool,
 }
 
 impl StorageProof {
@@ -82,7 +78,7 @@ impl StorageProof {
         processed_proof: &ProcessedStorageProof,
         root_hash: [u8; 32],
         leaf_inputs: LeafInputs,
-        block_hash: [u8; 32],
+        is_not_dummy: bool,
     ) -> Self {
         let proof: Vec<Vec<F>> = processed_proof
             .proof
@@ -105,7 +101,7 @@ impl StorageProof {
             indices,
             root_hash,
             leaf_inputs,
-            block_hash,
+            is_not_dummy,
         }
     }
 }
@@ -114,11 +110,15 @@ impl TryFrom<&CircuitInputs> for StorageProof {
     type Error = anyhow::Error;
 
     fn try_from(inputs: &CircuitInputs) -> Result<Self, Self::Error> {
+        // If the block hash is zero and output amounts are zero, we treat this as a dummy proof and set is_not_dummy to false.
+        let is_not_dummy = !(inputs.public.block_hash.as_ref() == [0u8; 32]
+            && inputs.public.output_amount_1 == 0
+            && inputs.public.output_amount_2 == 0);
         Ok(Self::new(
             &inputs.private.storage_proof,
             *inputs.private.state_root,
             LeafInputs::try_from(inputs)?,
-            *inputs.public.block_hash,
+            is_not_dummy,
         ))
     }
 }
@@ -134,7 +134,7 @@ impl CircuitFragment for StorageProof {
             ref proof_data,
             ref indices,
             ref leaf_inputs,
-            block_hash_sentinel,
+            is_not_dummy,
         }: &Self::Targets,
         builder: &mut CircuitBuilder<F, D>,
     ) {
@@ -174,31 +174,7 @@ impl CircuitFragment for StorageProof {
         // constant 2^32 for (lo + hi * 2^32) reconstruction
         let two_pow_32 = builder.constant(F::from_canonical_u64(1u64 << 32));
 
-        // Sentinel check: dummy proofs must have BOTH block_hash == 0 AND output_amounts == 0.
-        // This prevents an attacker from slipping funds through with a zero block hash
-        // but positive output amounts.
         let zero = builder.zero();
-        let one = builder.one();
-
-        // Check if all four limbs of block_hash are zero
-        let bh = &block_hash_sentinel.elements;
-        let bh0_is_zero = builder.is_equal(bh[0], zero);
-        let bh1_is_zero = builder.is_equal(bh[1], zero);
-        let bh2_is_zero = builder.is_equal(bh[2], zero);
-        let bh3_is_zero = builder.is_equal(bh[3], zero);
-
-        let bh01_zero = builder.and(bh0_is_zero, bh1_is_zero);
-        let bh23_zero = builder.and(bh2_is_zero, bh3_is_zero);
-        let block_hash_is_zero = builder.and(bh01_zero, bh23_zero);
-
-        // Check if both output amounts are individually zero
-        let output_1_is_zero = builder.is_equal(leaf_inputs.output_amount_1, zero);
-        let output_2_is_zero = builder.is_equal(leaf_inputs.output_amount_2, zero);
-        let both_outputs_zero = builder.and(output_1_is_zero, output_2_is_zero);
-
-        // is_dummy = block_hash_is_zero AND both_outputs_zero
-        let is_dummy = builder.and(block_hash_is_zero, both_outputs_zero);
-        let is_not_dummy = builder.sub(one, is_dummy.target);
 
         // The first node should be the root node so we initialize `prev_hash` to the provided `root_hash`.
         let mut prev_hash = root_hash;
@@ -215,7 +191,7 @@ impl CircuitFragment for StorageProof {
 
             // Compute the hash of this node and compare it against the previous hash.
             // Only enforce validation for non-dummy proofs (output_amount > 0).
-            let should_validate_node = builder.mul(is_proof_node.target, is_not_dummy);
+            let should_validate_node = builder.mul(is_proof_node.target, is_not_dummy.target);
             let computed_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(node.clone());
             for y in 0..4 {
                 let diff = builder.sub(computed_hash.elements[y], prev_hash.elements[y]);
@@ -259,7 +235,7 @@ impl CircuitFragment for StorageProof {
             // For the leaf node, the value is the hash of the leaf inputs. We don't check the full hash
             // here, only the last 3 felts b/c zk trie's length prefix overwrites the 8 bytes of the hash.
             // Only enforce for non-dummy proofs.
-            let should_validate_leaf = builder.mul(is_leaf_node.target, is_not_dummy);
+            let should_validate_leaf = builder.mul(is_leaf_node.target, is_not_dummy.target);
             for y in 1..4 {
                 let diff = builder.sub(leaf_inputs_hash.elements[y], prev_hash.elements[y]);
                 let result = builder.mul(diff, should_validate_leaf);
@@ -281,11 +257,8 @@ impl CircuitFragment for StorageProof {
         const EMPTY_PROOF_NODE: [F; PROOF_NODE_MAX_SIZE_F] = [F::ZERO; PROOF_NODE_MAX_SIZE_F];
 
         pw.set_hash_target(targets.root_hash, bytes_32_to_hashout(self.root_hash))?;
-        // Set block_hash_sentinel for dummy proof detection (block_hash == 0 means dummy)
-        pw.set_hash_target(
-            targets.block_hash_sentinel,
-            bytes_32_to_hashout(self.block_hash),
-        )?;
+        // Set is_not_dummy for dummy proof detection logic
+        pw.set_bool_target(targets.is_not_dummy, self.is_not_dummy)?;
         // bail if proof is too long
         if self.proof.len() > MAX_PROOF_LEN {
             bail!(

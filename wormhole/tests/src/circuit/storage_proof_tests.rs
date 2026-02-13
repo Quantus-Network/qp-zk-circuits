@@ -9,7 +9,6 @@ use zk_circuits_common::{
     utils::u64_to_felts,
 };
 
-use test_helpers::block_header::DEFAULT_BLOCK_HASHES;
 use test_helpers::storage_proof::default_root_hash;
 use test_helpers::TestInputs;
 
@@ -49,7 +48,7 @@ fn tampered_proof_fails() {
         &tampered_proof,
         default_root_hash(),
         LeafInputs::test_inputs_0(),
-        DEFAULT_BLOCK_HASHES[0], // Non-zero block_hash to trigger validation
+        true, // Non-zero block_hash to trigger validation
     );
 
     run_test(&proof).unwrap();
@@ -68,7 +67,7 @@ fn invalid_nonce() {
         &proof,
         default_root_hash(),
         leaf_inputs,
-        DEFAULT_BLOCK_HASHES[0], // Non-zero block_hash to trigger validation
+        true, // Non-zero block_hash to trigger validation
     );
 
     run_test(&proof).unwrap();
@@ -87,7 +86,7 @@ fn invalid_exit_address() {
         &proof,
         default_root_hash(),
         leaf_inputs,
-        DEFAULT_BLOCK_HASHES[0], // Non-zero block_hash to trigger validation
+        true, // Non-zero block_hash to trigger validation
     );
 
     run_test(&proof).unwrap();
@@ -106,7 +105,7 @@ fn invalid_input_amount() {
         &proof,
         default_root_hash(),
         leaf_inputs,
-        DEFAULT_BLOCK_HASHES[0], // Non-zero block_hash to trigger validation
+        true, // Non-zero block_hash to trigger validation
     );
 
     run_test(&proof).unwrap();
@@ -138,7 +137,7 @@ fn fuzz_tampered_proof() {
             &tampered_proof,
             default_root_hash(),
             LeafInputs::test_inputs_0(),
-            DEFAULT_BLOCK_HASHES[0], // Non-zero block_hash to trigger validation
+            true, // Non-zero block_hash to trigger validation
         );
 
         // Catch panic from run_test
