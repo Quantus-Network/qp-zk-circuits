@@ -22,16 +22,16 @@
 //! let proof = prover.commit(&inputs)?.prove()?;
 //! ```
 //!
-//! Note: Each dummy proof requires a fresh proof generation. There is no way to
-//! "clone" a proof and modify its public inputs - the plonky2 proof is a cryptographic
-//! commitment to the public inputs, and modifying them invalidates the proof.
 
 use anyhow::Result;
+use plonky2::plonk::circuit_data::CommonCircuitData;
+use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_inputs::PublicCircuitInputs;
 use rand::Rng;
 use wormhole_circuit::inputs::{CircuitInputs, PrivateCircuitInputs};
 use wormhole_circuit::storage_proof::ProcessedStorageProof;
 use wormhole_circuit::unspendable_account::UnspendableAccount;
+use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::utils::{digest_felts_to_bytes, BytesDigest};
 
 // ============================================================================
@@ -64,6 +64,9 @@ const DEFAULT_VOLUME_FEE_BPS: u32 = 10;
 const DEFAULT_PARENT_HASH: [u8; 32] = [0u8; 32];
 const DEFAULT_BLOCK_NUMBER: u32 = 0;
 
+// Nullifier is all zeroes as well. During aggregation, we replace the dummy nullifier targets with random nullifiers to prevent deduplication of dummy proofs.
+const DEFAULT_NULLIFIER: [u8; 32] = [0u8; 32];
+
 // These values are from the original hardcoded dummy proof.
 // Even though validation is skipped for dummies, the circuit still needs
 // structurally valid data to fill witness targets.
@@ -95,6 +98,23 @@ const DEFAULT_STORAGE_PROOF_INDICES: [usize; 7] = [768, 48, 240, 48, 160, 128, 1
 // Public API
 // ============================================================================
 
+pub const EMBEDDED_DUMMY_PROOF_BYTES: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/data/dummy_proof_zk.bin"
+));
+
+/// Load the embedded universal dummy proof.
+pub fn load_dummy_proof(
+    common_data: &CommonCircuitData<F, D>,
+) -> anyhow::Result<ProofWithPublicInputs<F, C, D>> {
+    // Most Plonky2 forks provide this API; if yours differs, adapt the call-site accordingly.
+    let proof = ProofWithPublicInputs::<F, C, D>::from_bytes(
+        EMBEDDED_DUMMY_PROOF_BYTES.to_vec(),
+        common_data,
+    )?;
+    Ok(proof)
+}
+
 /// Build circuit inputs for a dummy proof.
 ///
 /// Use these inputs with your prover to generate a dummy proof:
@@ -103,7 +123,6 @@ const DEFAULT_STORAGE_PROOF_INDICES: [usize; 7] = [768, 48, 240, 48, 160, 128, 1
 /// let proof = prover.commit(&inputs)?.prove()?;
 /// ```
 ///
-/// Each call generates a fresh random nullifier, so each proof will be unique.
 pub fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
     let secret_bytes: [u8; 32] = hex::decode(DEFAULT_SECRET)?[..32].try_into().unwrap();
     let secret = BytesDigest::try_from(secret_bytes)?;
@@ -112,9 +131,7 @@ pub fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
 
     let funding_account = BytesDigest::try_from(DEFAULT_FUNDING_ACCOUNT)?;
 
-    // Use a random nullifier instead of computing from secret.
-    // Since block_hash = 0 (dummy sentinel), nullifier validation is skipped.
-    let nullifier = BytesDigest::try_from(generate_random_nullifier())?;
+    let nullifier = BytesDigest::try_from(DEFAULT_NULLIFIER)?;
 
     let unspendable_account =
         digest_felts_to_bytes(UnspendableAccount::from_secret(secret).account_id);
@@ -156,11 +173,12 @@ pub fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
 // ============================================================================
 
 /// Generate a random 32-byte nullifier for dummy proofs.
-fn generate_random_nullifier() -> [u8; 32] {
+pub fn generate_random_nullifier() -> BytesDigest {
     let mut rng = rand::thread_rng();
     let mut nullifier = [0u8; 32];
     rng.fill(&mut nullifier);
-    nullifier
+    // If the bytes digest conversion fails (extremely unlikely), just regenerate until we get a valid one.
+    BytesDigest::try_from(nullifier).unwrap_or_else(|_| generate_random_nullifier())
 }
 
 fn build_storage_proof() -> Result<ProcessedStorageProof> {
@@ -172,4 +190,20 @@ fn build_storage_proof() -> Result<ProcessedStorageProof> {
     let indices = DEFAULT_STORAGE_PROOF_INDICES.to_vec();
 
     ProcessedStorageProof::new(proof, indices)
+}
+
+#[test]
+#[ignore = "debug"]
+fn export_dummy_proof_zk() {
+    use plonky2::plonk::circuit_data::CircuitConfig;
+    use wormhole_prover::WormholeProver;
+    const FILE_PATH: &str = "data/dummy_proof_zk.bin";
+
+    let circuit_config = CircuitConfig::standard_recursion_zk_config();
+
+    let prover = WormholeProver::new(circuit_config);
+    let inputs = build_dummy_circuit_inputs().unwrap();
+    let proof = prover.commit(&inputs).unwrap().prove().unwrap();
+    let proof_bytes = proof.to_bytes();
+    let _ = std::fs::write(FILE_PATH, proof_bytes);
 }

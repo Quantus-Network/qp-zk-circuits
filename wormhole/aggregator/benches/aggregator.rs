@@ -3,31 +3,16 @@ use plonky2::plonk::circuit_data::{CircuitConfig, CommonCircuitData};
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_aggregator::aggregator::WormholeProofAggregator;
 use qp_wormhole_aggregator::circuits::tree::TreeAggregationConfig;
-use qp_wormhole_aggregator::dummy_proof::build_dummy_circuit_inputs;
-use wormhole_prover::WormholeProver;
+use qp_wormhole_aggregator::dummy_proof::load_dummy_proof;
 use zk_circuits_common::circuit::{C, D, F};
 
-fn generate_dummy_proofs(
+fn load_dummy_proofs(
     common_data: &CommonCircuitData<F, D>,
     len: usize,
 ) -> Vec<ProofWithPublicInputs<F, C, D>> {
-    let config = if common_data.config.zero_knowledge {
-        CircuitConfig::standard_recursion_zk_config()
-    } else {
-        CircuitConfig::standard_recursion_config()
-    };
-
-    (0..len)
-        .map(|_| {
-            let prover = WormholeProver::new(config.clone());
-            let inputs = build_dummy_circuit_inputs().expect("failed to build dummy inputs");
-            prover
-                .commit(&inputs)
-                .expect("failed to commit")
-                .prove()
-                .expect("failed to prove")
-        })
-        .collect()
+    // Load in the dummy proof
+    let dummy_proof = load_dummy_proof(common_data).expect("failed to load dummy proof");
+    (0..len).map(|_| dummy_proof.clone()).collect()
 }
 
 // A macro for creating an aggregation benchmark with a specified number of proofs to
@@ -45,7 +30,7 @@ macro_rules! aggregate_proofs_benchmark {
                     circuit_config.clone(),
                     aggregation_config,
                 );
-                generate_dummy_proofs(
+                load_dummy_proofs(
                     &temp_aggregator.leaf_circuit_data.common,
                     aggregation_config.num_leaf_proofs,
                 )
@@ -92,7 +77,7 @@ macro_rules! verify_aggregate_proof_benchmark {
                     circuit_config.clone(),
                     aggregation_config,
                 );
-                generate_dummy_proofs(
+                load_dummy_proofs(
                     &temp_aggregator.leaf_circuit_data.common,
                     aggregation_config.num_leaf_proofs,
                 )

@@ -1,4 +1,5 @@
 use plonky2::field::types::Field;
+use plonky2::iop::target::BoolTarget;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use plonky2::{
     field::extension::Extendable,
@@ -15,10 +16,13 @@ use plonky2::{
 };
 #[cfg(feature = "multithread")]
 use rayon::{iter::ParallelIterator, slice::ParallelSlice};
+use zk_circuits_common::utils::digest_bytes_to_felts;
 use zk_circuits_common::{
     circuit::{C, D, F},
     gadgets::{bytes_digest_eq, limb1_at_offset, limbs4_at_offset},
 };
+
+use crate::dummy_proof::generate_random_nullifier;
 
 /// Public inputs per leaf proof (Bitcoin-style 2-output layout)
 /// Layout: asset_id(1) + output_amount_1(1) + output_amount_2(1) + volume_fee_bps(1) +
@@ -91,8 +95,12 @@ pub fn aggregate_to_tree(
         proofs = aggregated_proofs;
     }
 
+    let dummy_nullifiers: Vec<[F; 4]> = (0..n_leaf)
+        .map(|_| digest_bytes_to_felts(generate_random_nullifier()))
+        .collect();
+
     // Build the final wrapper circuit with fixed structure
-    let root_proof = aggregate_dedupe_public_inputs(proofs, n_leaf)?;
+    let root_proof = aggregate_dedupe_public_inputs(proofs, n_leaf, &dummy_nullifiers)?;
 
     Ok(root_proof)
 }
@@ -179,6 +187,7 @@ fn aggregate_chunk(
 ///    the block used when generating the storage proof, i.e., when the proof is created)
 ///  - enforces asset ID and volume_fee_bps consistency across all proofs
 ///  - for each of 2*N "slots" (2 outputs per proof), computes the sum of amounts for proofs matching that slot's exit account
+///  - overrides nullifiers from dummy proofs with provided dummy nullifiers.
 ///  - forwards all nullifiers
 ///
 /// Public inputs layout:
@@ -197,7 +206,12 @@ fn aggregate_chunk(
 fn aggregate_dedupe_public_inputs(
     proofs: Vec<AggregatedProof<F, C, D>>,
     n_leaf: usize,
+    dummy_nullifiers: &[[F; 4]],
 ) -> anyhow::Result<AggregatedProof<F, C, D>> {
+    anyhow::ensure!(
+        dummy_nullifiers.len() == n_leaf,
+        "dummy_nullifiers must have length n_leaf"
+    );
     anyhow::ensure!(
         proofs.len() == 1,
         "aggregate_dedupe_public_inputs expects a single root proof"
@@ -275,6 +289,9 @@ fn aggregate_dedupe_public_inputs(
     // Build the dummy sentinel [0,0,0,0] for comparison
     let dummy_sentinel = [zero, zero, zero, zero];
 
+    // Used later to generate unique nullifiers for dummy proofs
+    let mut is_dummy_flags: Vec<BoolTarget> = Vec::with_capacity(n_leaf);
+
     // For each proof, check: if it's not a dummy, it must match block_ref
     // Constraint: is_dummy OR (block_hash == block_ref)
     // Equivalently: NOT(is_real AND block_hash != block_ref)
@@ -283,6 +300,7 @@ fn aggregate_dedupe_public_inputs(
 
         // is_dummy_i = (block_i == [0,0,0,0])
         let is_dummy_i = bytes_digest_eq(&mut builder, block_i, dummy_sentinel);
+        is_dummy_flags.push(is_dummy_i);
 
         // matches_ref = (block_i == block_ref)
         let matches_ref = bytes_digest_eq(&mut builder, block_i, block_ref);
@@ -398,12 +416,32 @@ fn aggregate_dedupe_public_inputs(
     // =========================================================================
     // NULLIFIERS
     // =========================================================================
-    // Forward all N nullifiers
+
+    // Allocate dummy nullifier targets
+    let mut dummy_nullifier_targets: Vec<[Target; 4]> = Vec::with_capacity(n_leaf);
+    for _ in 0..n_leaf {
+        dummy_nullifier_targets.push([
+            builder.add_virtual_target(),
+            builder.add_virtual_target(),
+            builder.add_virtual_target(),
+            builder.add_virtual_target(),
+        ]);
+    }
+
+    // Override dummy nullifiers `Forward all N nullifiers
     for i in 0..n_leaf {
-        output_pis.extend_from_slice(&limbs4_at_offset::<LEAF_PI_LEN, NULLIFIER_START>(
-            child_pi_targets,
-            i,
-        ));
+        let real_null_i = limbs4_at_offset::<LEAF_PI_LEN, NULLIFIER_START>(child_pi_targets, i);
+
+        let dn = dummy_nullifier_targets[i];
+        let is_dummy_i = is_dummy_flags[i];
+
+        // limbwise select: output = is_dummy ? dn : real
+        output_pis.extend_from_slice(&[
+            builder.select(is_dummy_i, dn[0], real_null_i[0]),
+            builder.select(is_dummy_i, dn[1], real_null_i[1]),
+            builder.select(is_dummy_i, dn[2], real_null_i[2]),
+            builder.select(is_dummy_i, dn[3], real_null_i[3]),
+        ]);
     }
 
     // Pad to expected length
@@ -423,6 +461,15 @@ fn aggregate_dedupe_public_inputs(
     let mut pw = PartialWitness::new();
     pw.set_verifier_data_target(&vd_t, child_verifier_only)?;
     pw.set_proof_with_pis_target(&child_pt, &root.proof)?;
+    // Fill dummy nullifier targets with provided dummy nullifiers
+    for i in 0..n_leaf {
+        let dn = dummy_nullifiers[i];
+        let t = dummy_nullifier_targets[i];
+        pw.set_target(t[0], dn[0])?;
+        pw.set_target(t[1], dn[1])?;
+        pw.set_target(t[2], dn[2])?;
+        pw.set_target(t[3], dn[3])?;
+    }
 
     let proof = circuit_data.prove(pw)?;
     Ok(AggregatedProof {
