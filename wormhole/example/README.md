@@ -107,7 +107,7 @@ cargo run --release --bin wormhole-example -- \
 
 - `--proof-files <file1,file2,...>`
     Comma-separated list of proof file paths to aggregate. Required when `--aggregate` is set.
-    - Maximum number of proofs: 8 (default tree configuration: branching factor=2, depth=3)
+    - Maximum number of proofs: branching_factor^depth (configured via `--aggregation-branching-factor` and `--aggregation-depth`)
     - Example:
     ```
     --proof-files proof1.hex,proof2.hex,proof3.hex,proof4.hex
@@ -129,10 +129,10 @@ cargo run --release --bin wormhole-example -- \
     Number of proofs to generate. Defaults to the number of leaf proofs required by the aggregation tree configuration.
 
 - `--aggregation-depth <n>`
-    Tree depth for aggregation. Default: 3. Use 1 for minimal 2-proof aggregation.
+    Tree depth for aggregation (required). Use 1 for minimal aggregation.
 
 - `--aggregation-branching-factor <n>`
-    Branching factor for the aggregation tree. Default: 2.
+    Branching factor for the aggregation tree (required). Number of proofs aggregated at each level.
 
 ## Proof Aggregation
 
@@ -144,8 +144,9 @@ The example now supports proof aggregation using a tree-based recursive aggregat
 
 ### How it works
 
-The aggregator uses a binary tree structure (configurable branching factor and depth) to recursively aggregate proofs:
-- Default configuration: branching factor=2, depth=3 (supports up to 8 leaf proofs)
+The aggregator uses a tree structure (configurable branching factor and depth) to recursively aggregate proofs:
+- Configuration must be specified via `--aggregation-branching-factor` and `--aggregation-depth`
+- Number of leaf proofs = branching_factor^depth
 - Aggregates public inputs by grouping by block and exit account
 - Sums funding amounts for the same exit account across multiple proofs
 - Collects all nullifiers to prevent double-spending

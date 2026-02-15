@@ -12,7 +12,8 @@
 //! # Example
 //!
 //! ```no_run
-//! use wormhole_circuit::inputs::{CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs};
+//! use qp_wormhole_inputs::PublicCircuitInputs;
+//! use wormhole_circuit::inputs::{CircuitInputs, PrivateCircuitInputs};
 //! use wormhole_circuit::nullifier::Nullifier;
 //! use wormhole_circuit::storage_proof::ProcessedStorageProof;
 //! use wormhole_circuit::substrate_account::SubstrateAccount;
@@ -36,12 +37,14 @@
 //!     },
 //!     public: PublicCircuitInputs {
 //!         asset_id: 0_u32,
-//!         output_amount: 999,  // After 0.1% fee deduction
-//!         volume_fee_bps: 10,  // 0.1% = 10 basis points
+//!         output_amount_1: 900,  // Spend amount after fee
+//!         output_amount_2: 99,   // Change amount (1000 - 900 - fee)
+//!         volume_fee_bps: 10,    // 0.1% = 10 basis points
 //!         nullifier: [1u8; 32].try_into().unwrap(),
 //!         block_hash: [0u8; 32].try_into().unwrap(),
 //!         parent_hash: [5u8; 32].try_into().unwrap(),
-//!         exit_account: [2u8; 32].try_into().unwrap(),
+//!         exit_account_1: [2u8; 32].try_into().unwrap(),  // Spend destination
+//!         exit_account_2: [3u8; 32].try_into().unwrap(),  // Change destination
 //!         block_number: 1,
 //!     },
 //! };
@@ -77,7 +80,10 @@ use wormhole_circuit::{
     block_header::BlockHeader,
     circuit::circuit_logic::{CircuitTargets, WormholeCircuit},
 };
-use wormhole_circuit::{inputs::CircuitInputs, substrate_account::SubstrateAccount};
+use wormhole_circuit::{
+    inputs::CircuitInputs,
+    substrate_account::{DualExitAccount, SubstrateAccount},
+};
 use wormhole_circuit::{storage_proof::StorageProof, unspendable_account::UnspendableAccount};
 use zk_circuits_common::circuit::{CircuitFragment, C, D, F};
 
@@ -222,18 +228,7 @@ impl WormholeProver {
             bail!("prover has already commited to inputs");
         };
 
-        let nullifier = Nullifier::from(circuit_inputs);
-        let storage_proof = StorageProof::try_from(circuit_inputs)?;
-        let unspendable_account = UnspendableAccount::from(circuit_inputs);
-        let exit_account =
-            SubstrateAccount::from_bytes(circuit_inputs.public.exit_account.as_slice())?;
-        let block_header = BlockHeader::try_from(circuit_inputs)?;
-
-        nullifier.fill_targets(&mut self.partial_witness, targets.nullifier)?;
-        unspendable_account.fill_targets(&mut self.partial_witness, targets.unspendable_account)?;
-        storage_proof.fill_targets(&mut self.partial_witness, targets.storage_proof)?;
-        exit_account.fill_targets(&mut self.partial_witness, targets.exit_account)?;
-        block_header.fill_targets(&mut self.partial_witness, targets.block_header)?;
+        fill_witness(&mut self.partial_witness, circuit_inputs, &targets)?;
         Ok(self)
     }
 
@@ -248,4 +243,40 @@ impl WormholeProver {
             .prove(self.partial_witness)
             .map_err(|e| anyhow!("Failed to prove: {}", e))
     }
+}
+
+/// Fill a partial witness with circuit inputs.
+///
+/// This is the single source of truth for witness filling logic, used by both
+/// `WormholeProver::commit` and the aggregator's dummy proof generation.
+///
+/// # Arguments
+/// * `pw` - The partial witness to fill
+/// * `circuit_inputs` - The circuit inputs containing both public and private data
+/// * `targets` - The circuit targets to fill
+pub fn fill_witness(
+    pw: &mut PartialWitness<F>,
+    circuit_inputs: &CircuitInputs,
+    targets: &CircuitTargets,
+) -> anyhow::Result<()> {
+    let nullifier = Nullifier::from(circuit_inputs);
+    let storage_proof = StorageProof::try_from(circuit_inputs)?;
+    let unspendable_account = UnspendableAccount::from(circuit_inputs);
+    let exit_accounts = DualExitAccount {
+        exit_account_1: SubstrateAccount::from_bytes(
+            circuit_inputs.public.exit_account_1.as_slice(),
+        )?,
+        exit_account_2: SubstrateAccount::from_bytes(
+            circuit_inputs.public.exit_account_2.as_slice(),
+        )?,
+    };
+    let block_header = BlockHeader::try_from(circuit_inputs)?;
+
+    nullifier.fill_targets(pw, targets.nullifier.clone())?;
+    unspendable_account.fill_targets(pw, targets.unspendable_account.clone())?;
+    storage_proof.fill_targets(pw, targets.storage_proof.clone())?;
+    exit_accounts.fill_targets(pw, targets.exit_accounts)?;
+    block_header.fill_targets(pw, targets.block_header.clone())?;
+
+    Ok(())
 }

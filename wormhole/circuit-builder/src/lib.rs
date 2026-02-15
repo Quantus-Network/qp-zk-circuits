@@ -5,9 +5,14 @@ use std::path::Path;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::config::PoseidonGoldilocksConfig;
 use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
+use wormhole_aggregator::{TreeAggregationConfig, WormholeProofAggregator};
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use zk_circuits_common::circuit::D;
 
+// Re-export CircuitBinsConfig from aggregator so users of circuit-builder can access it
+pub use wormhole_aggregator::CircuitBinsConfig;
+
+/// Generate wormhole circuit binaries (verifier.bin, common.bin, and optionally prover.bin)
 pub fn generate_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
     include_prover: bool,
@@ -65,6 +70,135 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
     Ok(())
 }
 
-pub fn main() -> Result<()> {
-    generate_circuit_binaries("generated-bins", true)
+/// Generate aggregated circuit binaries (aggregated_verifier.bin, aggregated_common.bin)
+///
+/// The aggregated circuit is built by running the aggregation process on dummy proofs.
+/// This requires creating a full aggregation tree which is computationally expensive.
+///
+/// IMPORTANT: This must be called AFTER generate_circuit_binaries() so that the
+/// leaf circuit files (prover.bin, common.bin, verifier.bin) already exist.
+/// The aggregator loads from these files to ensure consistency.
+///
+/// # Arguments
+/// * `output_dir` - Directory to write the binaries to
+/// * `branching_factor` - Number of proofs aggregated at each tree level
+/// * `depth` - Depth of the aggregation tree (num_leaf_proofs = branching_factor^depth)
+pub fn generate_aggregated_circuit_binaries<P: AsRef<Path>>(
+    output_dir: P,
+    branching_factor: usize,
+    depth: u32,
+) -> Result<()> {
+    let config = TreeAggregationConfig::new(branching_factor, depth);
+    println!(
+        "Building aggregated wormhole circuit (branching_factor={}, depth={}, num_leaf_proofs={})...",
+        branching_factor, depth, config.num_leaf_proofs
+    );
+
+    let output_path = output_dir.as_ref();
+
+    // IMPORTANT: Use from_prebuilt_with_paths() to load the leaf circuit from the files
+    // we just generated. This ensures the aggregated circuit's leaf verifier data
+    // matches the leaf circuit files exactly.
+    //
+    // If we used from_circuit_config(), it would build a fresh leaf circuit which
+    // might differ from the one in common.bin/verifier.bin, causing verification
+    // failures when the chain tries to verify aggregated proofs.
+    //
+    // We pass 0 real proofs since we're using all dummy proofs to build the circuit.
+    let mut aggregator = WormholeProofAggregator::from_prebuilt_with_paths(
+        &output_path.join("common.bin"),
+        &output_path.join("verifier.bin"),
+        config,
+        0, // No real proofs - use all dummies to build the aggregation circuit
+    )
+    .map_err(|e| anyhow!("Failed to create aggregator from pre-built files. Make sure generate_circuit_binaries() was called first: {}", e))?;
+
+    // We need to run the aggregation to get the circuit data.
+    // The aggregator builds the circuit dynamically during aggregation.
+    // To get the circuit data without real proofs, we use dummy proofs.
+    println!("Running aggregation with dummy proofs to build circuit...");
+    let aggregated_proof = aggregator.aggregate()?;
+    println!("Aggregated circuit built.");
+
+    let gate_serializer = DefaultGateSerializer;
+
+    create_dir_all(output_path)?;
+
+    // Serialize aggregated common data
+    let agg_common_bytes = aggregated_proof
+        .circuit_data
+        .common
+        .to_bytes(&gate_serializer)
+        .map_err(|e| anyhow!("Failed to serialize aggregated common data: {}", e))?;
+    write(output_path.join("aggregated_common.bin"), agg_common_bytes)?;
+    println!(
+        "Aggregated common data saved to {}/aggregated_common.bin",
+        output_path.display()
+    );
+
+    // Serialize aggregated verifier only data
+    let agg_verifier_only_bytes = aggregated_proof
+        .circuit_data
+        .verifier_only
+        .to_bytes()
+        .map_err(|e| anyhow!("Failed to serialize aggregated verifier data: {}", e))?;
+    write(
+        output_path.join("aggregated_verifier.bin"),
+        agg_verifier_only_bytes,
+    )?;
+    println!(
+        "Aggregated verifier data saved to {}/aggregated_verifier.bin",
+        output_path.display()
+    );
+
+    Ok(())
+}
+
+/// Generate all circuit binaries (both regular and aggregated)
+///
+/// # Arguments
+/// * `output_dir` - Directory to write the binaries to
+/// * `include_prover` - Whether to include the prover binary
+/// * `branching_factor` - Number of proofs aggregated at each tree level
+/// * `depth` - Depth of the aggregation tree (num_leaf_proofs = branching_factor^depth)
+pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
+    output_dir: P,
+    include_prover: bool,
+    branching_factor: usize,
+    depth: u32,
+) -> Result<()> {
+    let output_path = output_dir.as_ref();
+
+    // Generate regular circuit binaries
+    generate_circuit_binaries(output_path, include_prover)?;
+
+    // Generate aggregated circuit binaries
+    generate_aggregated_circuit_binaries(output_path, branching_factor, depth)?;
+
+    // Save config file alongside binaries (with hashes for integrity verification)
+    let config =
+        CircuitBinsConfig::new(branching_factor, depth).with_hashes_from_directory(output_path)?;
+    config.save(output_path)?;
+
+    // Print hashes for reference
+    if let Some(ref hashes) = config.hashes {
+        println!("Binary hashes:");
+        if let Some(ref h) = hashes.common {
+            println!("  common.bin: {}", h);
+        }
+        if let Some(ref h) = hashes.verifier {
+            println!("  verifier.bin: {}", h);
+        }
+        if let Some(ref h) = hashes.prover {
+            println!("  prover.bin: {}", h);
+        }
+        if let Some(ref h) = hashes.aggregated_common {
+            println!("  aggregated_common.bin: {}", h);
+        }
+        if let Some(ref h) = hashes.aggregated_verifier {
+            println!("  aggregated_verifier.bin: {}", h);
+        }
+    }
+
+    Ok(())
 }

@@ -9,7 +9,11 @@ version.workspace = true
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
+clap = { version = "4", features = ["derive"] }
 qp-plonky2 = { workspace = true, features = ["default"] }
+wormhole-aggregator = { package = "qp-wormhole-aggregator", version = "1.0.1", path = "../aggregator", default-features = false, features = [
+	"std",
+] }
 wormhole-circuit = { package = "qp-wormhole-circuit", version = "1.0.1", path = "../circuit", default-features = false, features = [
 	"std",
 ] }

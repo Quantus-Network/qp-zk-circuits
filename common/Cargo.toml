@@ -9,14 +9,20 @@ version.workspace = true
 [dependencies]
 anyhow = { workspace = true, default-features = false }
 hex = { workspace = true }
-qp-plonky2 = { workspace = true, default-features = false, features = ["no_random"] }
+qp-plonky2 = { workspace = true, default-features = false }
 qp-poseidon-core = { workspace = true, default-features = false, features = [
 	"p2",
 	"p3",
 ] }
+qp-wormhole-inputs = { path = "../wormhole/inputs", default-features = false }
 serde = { workspace = true }
 
 [features]
 default = ["std"]
-no_random = ["qp-plonky2/no_random"]
-std = ["anyhow/std", "qp-plonky2/std", "qp-poseidon-core/std", "serde/std"]
+std = [
+	"anyhow/std",
+	"qp-plonky2/std",
+	"qp-poseidon-core/std",
+	"qp-wormhole-inputs/std",
+	"serde/std",
+]

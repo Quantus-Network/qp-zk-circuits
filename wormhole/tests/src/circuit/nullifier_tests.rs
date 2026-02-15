@@ -1,6 +1,6 @@
 use plonky2::{field::types::Field, plonk::proof::ProofWithPublicInputs};
 use test_helpers::{DEFAULT_SECRETS, DEFAULT_TRANSFER_COUNTS};
-use wormhole_circuit::nullifier::{Nullifier, NullifierTargets};
+use wormhole_circuit::nullifier::{add_nullifier_validation, Nullifier, NullifierTargets};
 use zk_circuits_common::{
     circuit::{CircuitFragment, C, D, F},
     utils::digest_bytes_to_felts,
@@ -12,6 +12,8 @@ fn run_test(nullifier: &Nullifier) -> anyhow::Result<ProofWithPublicInputs<F, C,
     let (mut builder, mut pw) = crate::circuit_helpers::setup_test_builder_and_witness(false);
     let targets = NullifierTargets::new(&mut builder);
     Nullifier::circuit(&targets, &mut builder);
+    // Add nullifier hash validation for isolated testing
+    add_nullifier_validation(&targets, &mut builder);
 
     nullifier.fill_targets(&mut pw, targets)?;
     crate::circuit_helpers::build_and_prove_test(builder, pw)

@@ -1,21 +1,18 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use plonky2::plonk::circuit_data::CommonCircuitData;
+use plonky2::plonk::circuit_data::{CircuitConfig, CommonCircuitData};
+use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_aggregator::aggregator::WormholeProofAggregator;
 use qp_wormhole_aggregator::circuits::tree::TreeAggregationConfig;
-use wormhole_verifier::ProofWithPublicInputs;
+use qp_wormhole_aggregator::dummy_proof::load_dummy_proof;
 use zk_circuits_common::circuit::{C, D, F};
 
-const DUMMY_PROOF_BYTES: &[u8] = include_bytes!("../data/dummy_proof_zk.bin");
-
-fn deserialize_proofs(
+fn load_dummy_proofs(
     common_data: &CommonCircuitData<F, D>,
     len: usize,
 ) -> Vec<ProofWithPublicInputs<F, C, D>> {
-    (0..len)
-        .map(|_| {
-            ProofWithPublicInputs::from_bytes(DUMMY_PROOF_BYTES.to_vec(), common_data).unwrap()
-        })
-        .collect()
+    // Load in the dummy proof
+    let dummy_proof = load_dummy_proof(common_data).expect("failed to load dummy proof");
+    (0..len).map(|_| dummy_proof.clone()).collect()
 }
 
 // A macro for creating an aggregation benchmark with a specified number of proofs to
@@ -23,27 +20,34 @@ fn deserialize_proofs(
 macro_rules! aggregate_proofs_benchmark {
     ($fn_name:ident, $tree_branching_factor:expr, $tree_depth:expr) => {
         pub fn $fn_name(c: &mut Criterion) {
-            let config = TreeAggregationConfig::new($tree_branching_factor, $tree_depth);
+            let aggregation_config =
+                TreeAggregationConfig::new($tree_branching_factor, $tree_depth);
+            let circuit_config = CircuitConfig::standard_recursion_zk_config();
 
             // Setup proofs.
             let proofs = {
-                let temp_aggregator = WormholeProofAggregator::default().with_config(config);
-                deserialize_proofs(
+                let temp_aggregator = WormholeProofAggregator::from_circuit_config(
+                    circuit_config.clone(),
+                    aggregation_config,
+                );
+                load_dummy_proofs(
                     &temp_aggregator.leaf_circuit_data.common,
-                    config.num_leaf_proofs,
+                    aggregation_config.num_leaf_proofs,
                 )
             };
 
             c.bench_function(
                 &format!(
                     "aggregate_proofs_{}_{}",
-                    config.tree_branching_factor, config.tree_depth
+                    aggregation_config.tree_branching_factor, aggregation_config.tree_depth
                 ),
                 |b| {
                     b.iter_batched(
                         || {
-                            let mut aggregator =
-                                WormholeProofAggregator::default().with_config(config);
+                            let mut aggregator = WormholeProofAggregator::from_circuit_config(
+                                circuit_config.clone(),
+                                aggregation_config,
+                            );
                             for proof in proofs.clone() {
                                 aggregator.push_proof(proof).unwrap();
                             }
@@ -63,27 +67,34 @@ macro_rules! aggregate_proofs_benchmark {
 macro_rules! verify_aggregate_proof_benchmark {
     ($fn_name:ident, $tree_branching_factor:expr, $tree_depth:expr) => {
         pub fn $fn_name(c: &mut Criterion) {
-            let config = TreeAggregationConfig::new($tree_branching_factor, $tree_depth);
+            let aggregation_config =
+                TreeAggregationConfig::new($tree_branching_factor, $tree_depth);
+            let circuit_config = CircuitConfig::standard_recursion_zk_config();
 
             // Setup proofs.
             let proofs = {
-                let temp_aggregator = WormholeProofAggregator::default().with_config(config);
-                deserialize_proofs(
+                let temp_aggregator = WormholeProofAggregator::from_circuit_config(
+                    circuit_config.clone(),
+                    aggregation_config,
+                );
+                load_dummy_proofs(
                     &temp_aggregator.leaf_circuit_data.common,
-                    config.num_leaf_proofs,
+                    aggregation_config.num_leaf_proofs,
                 )
             };
 
             c.bench_function(
                 &format!(
                     "verify_aggregate_proof_{}_{}",
-                    config.tree_branching_factor, config.tree_depth
+                    aggregation_config.tree_branching_factor, aggregation_config.tree_depth
                 ),
                 |b| {
                     b.iter_batched(
                         || {
-                            let mut aggregator =
-                                WormholeProofAggregator::default().with_config(config);
+                            let mut aggregator = WormholeProofAggregator::from_circuit_config(
+                                circuit_config.clone(),
+                                aggregation_config,
+                            );
                             for proof in proofs.clone() {
                                 aggregator.push_proof(proof).unwrap();
                             }

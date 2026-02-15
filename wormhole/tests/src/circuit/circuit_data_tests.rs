@@ -84,10 +84,20 @@ fn test_prover_and_verifier_from_file_e2e() -> Result<()> {
     // Create inputs
     let inputs = CircuitInputs::test_inputs_0();
 
-    // Generate and verify a proof
+    // Generate a proof using the prover
     let prover_next = prover.commit(&inputs)?;
     let proof = prover_next.prove()?;
-    verifier.verify(proof)?;
+
+    // Convert the proof from plonky2 types to verifier types via serialization
+    // This is necessary because the verifier uses qp-plonky2-verifier which has
+    // separate type definitions from the full qp-plonky2 used by the prover.
+    let proof_bytes = proof.to_bytes();
+    let verifier_proof = wormhole_verifier::ProofWithPublicInputs::from_bytes(
+        proof_bytes,
+        &verifier.circuit_data.common,
+    )?;
+
+    verifier.verify(verifier_proof)?;
 
     // Clean up the temporary directory
     fs::remove_dir_all(temp_dir)?;

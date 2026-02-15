@@ -9,6 +9,7 @@ version.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 qp-plonky2 = { workspace = true }
+qp-wormhole-inputs = { version = "1.0.1", path = "../inputs" }
 wormhole-circuit = { package = "qp-wormhole-circuit", version = "1.0.1", path = "../circuit" }
 zk-circuits-common = { package = "qp-zk-circuits-common", version = "1.0.1", path = "../../common" }
 
@@ -18,7 +19,6 @@ test-helpers = { path = "../tests/test-helpers" }
 
 [features]
 default = ["std"]
-no_random = ["qp-plonky2/no_random"]
 std = [
 	"anyhow/std",
 	"qp-plonky2/std",

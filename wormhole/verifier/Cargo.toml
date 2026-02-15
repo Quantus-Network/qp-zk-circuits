@@ -8,9 +8,8 @@ version.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-qp-plonky2 = { workspace = true }
-wormhole-circuit = { package = "qp-wormhole-circuit", version = "1.0.1", path = "../circuit" }
-zk-circuits-common = { package = "qp-zk-circuits-common", version = "1.0.1", path = "../../common" }
+qp-plonky2-verifier = { version = "1.1.5", default-features = false }
+qp-wormhole-inputs = { path = "../inputs", default-features = false }
 
 [dev-dependencies]
 criterion = { workspace = true }
@@ -19,12 +18,10 @@ qp-wormhole-prover = { path = "../prover" }
 
 [features]
 default = ["std"]
-no_random = ["qp-plonky2/no_random"]
 std = [
 	"anyhow/std",
-	"qp-plonky2/std",
-	"wormhole-circuit/std",
-	"zk-circuits-common/std",
+	"qp-plonky2-verifier/std",
+	"qp-wormhole-inputs/std",
 ]
 
 [lints]

@@ -34,7 +34,7 @@ pub mod circuit_logic {
     use crate::block_header::BlockHeaderTargets;
     use crate::nullifier::{Nullifier, NullifierTargets};
     use crate::storage_proof::{StorageProof, StorageProofTargets};
-    use crate::substrate_account::{ExitAccountTargets, SubstrateAccount};
+    use crate::substrate_account::{DualExitAccount, DualExitAccountTargets};
     use crate::unspendable_account::{UnspendableAccount, UnspendableAccountTargets};
     use plonky2::{
         plonk::circuit_data::{CircuitData, ProverCircuitData, VerifierCircuitData},
@@ -47,7 +47,7 @@ pub mod circuit_logic {
         pub nullifier: NullifierTargets,
         pub unspendable_account: UnspendableAccountTargets,
         pub storage_proof: StorageProofTargets,
-        pub exit_account: ExitAccountTargets,
+        pub exit_accounts: DualExitAccountTargets,
         pub block_header: BlockHeaderTargets,
     }
 
@@ -60,7 +60,7 @@ pub mod circuit_logic {
                 nullifier: NullifierTargets::new(builder),
                 unspendable_account: UnspendableAccountTargets::new(builder),
                 storage_proof,
-                exit_account: ExitAccountTargets::new(builder),
+                exit_accounts: DualExitAccountTargets::new(builder),
                 block_header: BlockHeaderTargets::new(builder),
             }
         }
@@ -90,7 +90,7 @@ pub mod circuit_logic {
             Nullifier::circuit(&targets.nullifier, &mut builder);
             UnspendableAccount::circuit(&targets.unspendable_account, &mut builder);
             StorageProof::circuit(&targets.storage_proof, &mut builder);
-            SubstrateAccount::circuit(&targets.exit_account, &mut builder);
+            DualExitAccount::circuit(&targets.exit_accounts, &mut builder);
             BlockHeader::circuit(&targets.block_header, &mut builder);
 
             // Ensure that shared inputs to each fragment are the same.
@@ -117,6 +117,10 @@ pub mod circuit_logic {
     }
 
     fn connect_shared_targets(targets: &CircuitTargets, builder: &mut CircuitBuilder<F, D>) {
+        use crate::nullifier::NULLIFIER_SALT;
+        use plonky2::hash::poseidon2::Poseidon2Hash;
+        use zk_circuits_common::utils::injective_string_to_felt;
+
         // Secret.
         builder.connect_hashes(targets.unspendable_account.secret, targets.nullifier.secret);
         // Transfer count.
@@ -135,10 +139,83 @@ pub mod circuit_logic {
             targets.storage_proof.leaf_inputs.to_account,
         );
 
-        // The state_root from the block_header must be the same as the root_hash for the storage_proof
-        builder.connect_hashes(
-            targets.block_header.header.state_root,
-            targets.storage_proof.root_hash,
-        );
+        // Dummy proof detection: requires BOTH block_hash == 0 AND output_amounts == 0.
+        // This prevents an attacker from slipping funds through with a zero block hash
+        // but positive output amounts.
+        let zero = builder.zero();
+        let one = builder.one();
+
+        // Check if all four limbs of block_hash are zero
+        let bh = &targets.block_header.block_hash.elements;
+        let bh0_is_zero = builder.is_equal(bh[0], zero);
+        let bh1_is_zero = builder.is_equal(bh[1], zero);
+        let bh2_is_zero = builder.is_equal(bh[2], zero);
+        let bh3_is_zero = builder.is_equal(bh[3], zero);
+
+        let bh01_zero = builder.and(bh0_is_zero, bh1_is_zero);
+        let bh23_zero = builder.and(bh2_is_zero, bh3_is_zero);
+        let block_hash_is_zero = builder.and(bh01_zero, bh23_zero);
+
+        // Check if both output amounts are individually zero
+        let leaf = &targets.storage_proof.leaf_inputs;
+        let output_1_is_zero = builder.is_equal(leaf.output_amount_1, zero);
+        let output_2_is_zero = builder.is_equal(leaf.output_amount_2, zero);
+        let both_outputs_zero = builder.and(output_1_is_zero, output_2_is_zero);
+
+        // is_dummy = block_hash_is_zero AND both_outputs_zero
+        let is_dummy = builder.and(block_hash_is_zero, both_outputs_zero);
+        let is_not_dummy = builder.sub(one, is_dummy.target);
+
+        // Connect is_not_dummy in storage_proof.
+        // This allows the storage proof circuit to detect dummy proofs (block_hash == 0).
+        builder.connect(targets.storage_proof.is_not_dummy.target, is_not_dummy);
+
+        // Nullifier validation: nullifier == H(H(salt + secret + transfer_count))
+        // Skip this validation for dummy proofs (block_hash == 0 AND outputs == 0).
+        // This allows dummy proofs to use random nullifiers for better privacy.
+        let salt_felts = injective_string_to_felt(NULLIFIER_SALT);
+        let mut nullifier_preimage = Vec::new();
+        for &f in salt_felts.iter() {
+            nullifier_preimage.push(builder.constant(f));
+        }
+        nullifier_preimage.extend(targets.nullifier.secret.elements.iter());
+        nullifier_preimage.extend(targets.nullifier.transfer_count.iter());
+
+        let inner_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(nullifier_preimage);
+        let computed_nullifier =
+            builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(inner_hash.elements.to_vec());
+
+        for i in 0..4 {
+            let diff = builder.sub(
+                targets.nullifier.hash.elements[i],
+                computed_nullifier.elements[i],
+            );
+            let result = builder.mul(diff, is_not_dummy);
+            builder.connect(result, zero);
+        }
+
+        // Block hash validation: block_hash == hash(header contents)
+        // Skip this validation for dummy proofs (block_hash == 0 AND outputs == 0).
+        let pre_image = targets.block_header.header.collect_to_vec();
+        let computed_block_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(pre_image);
+        for i in 0..4 {
+            let diff = builder.sub(
+                targets.block_header.block_hash.elements[i],
+                computed_block_hash.elements[i],
+            );
+            let result = builder.mul(diff, is_not_dummy);
+            builder.connect(result, zero);
+        }
+
+        // The state_root from the block_header must be the same as the root_hash for the storage_proof.
+        // Skip this validation for dummy proofs (block_hash == 0 AND outputs == 0).
+        for i in 0..4 {
+            let diff = builder.sub(
+                targets.block_header.header.state_root.elements[i],
+                targets.storage_proof.root_hash.elements[i],
+            );
+            let result = builder.mul(diff, is_not_dummy);
+            builder.connect(result, zero);
+        }
     }
 }

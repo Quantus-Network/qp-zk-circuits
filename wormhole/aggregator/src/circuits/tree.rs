@@ -1,5 +1,6 @@
-use std::collections::BTreeMap;
-
+use plonky2::field::types::Field;
+use plonky2::iop::target::BoolTarget;
+use plonky2::plonk::proof::ProofWithPublicInputs;
 use plonky2::{
     field::extension::Extendable,
     hash::hash_types::RichField,
@@ -13,67 +14,44 @@ use plonky2::{
         config::GenericConfig,
     },
 };
+#[cfg(feature = "multithread")]
 use rayon::{iter::ParallelIterator, slice::ParallelSlice};
-use wormhole_verifier::ProofWithPublicInputs;
+use zk_circuits_common::utils::digest_bytes_to_felts;
 use zk_circuits_common::{
     circuit::{C, D, F},
-    gadgets::{bytes_digest_eq, count_unique_4x32_keys, limb1_at_offset, limbs4_at_offset},
+    gadgets::{bytes_digest_eq, limb1_at_offset, limbs4_at_offset},
 };
 
-/// The default branching factor of the proof tree. A higher value means more proofs get aggregated
-/// into a single proof at each level.
-pub const DEFAULT_TREE_BRANCHING_FACTOR: usize = 2;
-/// The default depth of the tree of the aggregated proof, counted as the longest path of edges between the
-/// leaf nodes and the root node.
-pub const DEFAULT_TREE_DEPTH: u32 = 3;
+use crate::dummy_proof::generate_random_nullifier;
 
-const LEAF_PI_LEN: usize = 20;
+/// Public inputs per leaf proof (Bitcoin-style 2-output layout)
+/// Layout: asset_id(1) + output_amount_1(1) + output_amount_2(1) + volume_fee_bps(1) +
+///         nullifier(4) + exit_account_1(4) + exit_account_2(4) + block_hash(4) + parent_hash(4) + block_number(1)
+/// = 1 + 1 + 1 + 1 + 4 + 4 + 4 + 4 + 4 + 1 = 25
+const LEAF_PI_LEN: usize = 25;
 const ASSET_ID_START: usize = 0; // 1 felt
-const OUTPUT_AMOUNT_START: usize = 1; // 1 felt (output amount after fee deduction)
-const VOLUME_FEE_BPS_START: usize = 2; // 1 felt (volume fee in basis points)
-const NULLIFIER_START: usize = 3; // 4 felts
-const EXIT_START: usize = 7; // 4 felts
-const BLOCK_HASH_START: usize = 11; // 4 felts
-const PARENT_HASH_START: usize = 15; // 4 felts
-const BLOCK_NUMBER_START: usize = 19; // 1 felt
+const OUTPUT_AMOUNT_1_START: usize = 1; // 1 felt (spend amount)
+const OUTPUT_AMOUNT_2_START: usize = 2; // 1 felt (change amount)
+const VOLUME_FEE_BPS_START: usize = 3; // 1 felt (volume fee in basis points)
+const NULLIFIER_START: usize = 4; // 4 felts
+const EXIT_1_START: usize = 8; // 4 felts (spend destination)
+const EXIT_2_START: usize = 12; // 4 felts (change destination)
+const BLOCK_HASH_START: usize = 16; // 4 felts
+#[allow(dead_code)] // Used in tests
+const PARENT_HASH_START: usize = 20; // 4 felts
+const BLOCK_NUMBER_START: usize = 24; // 1 felt
+
+// Legacy alias for tests (points to first output)
+#[allow(dead_code)]
+const OUTPUT_AMOUNT_START: usize = OUTPUT_AMOUNT_1_START;
+#[allow(dead_code)]
+const EXIT_START: usize = EXIT_1_START;
 /// A proof containing both the proof data and the circuit data needed to verify it.
 #[derive(Debug)]
 pub struct AggregatedProof<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
 {
     pub proof: ProofWithPublicInputs<F, C, D>,
     pub circuit_data: CircuitData<F, C, D>,
-}
-/// The groupings of public input indices for the aggregated proof.
-#[derive(Debug)]
-pub struct Groupings {
-    pub blocks: Vec<Vec<usize>>,
-    pub exit_accounts: Vec<Vec<usize>>,
-    pub size: usize,
-}
-
-impl Groupings {
-    pub fn new(blocks: Vec<Vec<usize>>, exit_accounts: Vec<Vec<usize>>) -> Self {
-        let len_blocks = blocks.iter().map(|v| v.len()).sum::<usize>();
-        let len_exit_accounts = exit_accounts.iter().map(|v| v.len()).sum::<usize>();
-        // assert that both lengths are equal
-        assert_eq!(
-            len_blocks, len_exit_accounts,
-            "length of blocks ({}) must be equal to length of exit_accounts ({}).",
-            len_blocks, len_exit_accounts
-        );
-        Self {
-            blocks,
-            exit_accounts,
-            size: len_blocks,
-        }
-    }
-    pub fn len(&self) -> usize {
-        self.size
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 }
 
 /// The tree configuration to use when aggregating proofs into a tree.
@@ -95,18 +73,14 @@ impl TreeAggregationConfig {
     }
 }
 
-impl Default for TreeAggregationConfig {
-    fn default() -> Self {
-        Self::new(DEFAULT_TREE_BRANCHING_FACTOR, DEFAULT_TREE_DEPTH)
-    }
-}
-
 pub fn aggregate_to_tree(
     leaf_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
     common_data: &CommonCircuitData<F, D>,
     verifier_data: &VerifierOnlyCircuitData<C, D>,
     config: TreeAggregationConfig,
 ) -> anyhow::Result<AggregatedProof<F, C, D>> {
+    let n_leaf = leaf_proofs.len();
+
     // Aggregate the first level.
     let mut proofs = aggregate_level(leaf_proofs, common_data, verifier_data, config)?;
 
@@ -120,10 +94,13 @@ pub fn aggregate_to_tree(
 
         proofs = aggregated_proofs;
     }
-    let leaves_public_inputs = &proofs[0].proof.public_inputs;
-    let indices = find_group_indices(leaves_public_inputs)?;
-    println!("group indices = {:?}", indices);
-    let root_proof = aggregate_dedupe_public_inputs(proofs, indices)?;
+
+    let dummy_nullifiers: Vec<[F; 4]> = (0..n_leaf)
+        .map(|_| digest_bytes_to_felts(generate_random_nullifier()))
+        .collect();
+
+    // Build the final wrapper circuit with fixed structure
+    let root_proof = aggregate_dedupe_public_inputs(proofs, n_leaf, &dummy_nullifiers)?;
 
     Ok(root_proof)
 }
@@ -154,7 +131,11 @@ fn aggregate_level(
         .collect()
 }
 
-/// Circuit gadget that takes in a pair of proofs, a and b, aggregates it and return the new proof.
+/// Circuit gadget that takes in a chunk of proofs, verifies each one, and aggregates their public inputs.
+///
+/// All proofs must be valid proofs from the same circuit (same CommonCircuitData).
+/// For padding with dummy proofs, use proofs generated from the same WormholeProver
+/// with block_hash = 0 as a sentinel.
 fn aggregate_chunk(
     chunk: &[ProofWithPublicInputs<F, C, D>],
     common_data: &CommonCircuitData<F, D>,
@@ -166,11 +147,11 @@ fn aggregate_chunk(
 
     let mut proof_targets = Vec::with_capacity(chunk.len());
     for _ in 0..chunk.len() {
-        // Verify the proof.
+        // Verify the proof
         let proof_t = builder.add_virtual_proof_with_pis(common_data);
         builder.verify_proof::<C>(&proof_t, &verifier_data_t, common_data);
 
-        // Aggregate public inputs of proof.
+        // Aggregate public inputs of proof
         builder.register_public_inputs(&proof_t.public_inputs);
 
         proof_targets.push(proof_t);
@@ -194,71 +175,48 @@ fn aggregate_chunk(
     Ok(aggregated_proof)
 }
 
-fn find_group_indices(leaves_public_inputs: &[F]) -> anyhow::Result<Groupings> {
-    anyhow::ensure!(
-        leaves_public_inputs.len().is_multiple_of(LEAF_PI_LEN),
-        "leaves_public_inputs length ({}) is not a multiple of {}",
-        leaves_public_inputs.len(),
-        LEAF_PI_LEN
-    );
-    let n_leaves = leaves_public_inputs.len() / LEAF_PI_LEN;
-
-    let mut block_groups = BTreeMap::<F, Vec<usize>>::new();
-    let mut exit_account_groups = BTreeMap::<[F; 4], Vec<usize>>::new();
-
-    // chunk leaves into groups of `LEAF_PI_LEN`
-    for (i, chunk) in leaves_public_inputs.chunks(LEAF_PI_LEN).enumerate() {
-        let block_number = chunk[BLOCK_NUMBER_START];
-        let exit_account = chunk[EXIT_START..EXIT_START + 4].try_into().unwrap();
-        block_groups.entry(block_number).or_default().push(i);
-        exit_account_groups.entry(exit_account).or_default().push(i);
-    }
-
-    // Produce stable Vec<Vec<usize>> in sorted order.
-    let out_blocks = block_groups.into_values().collect();
-
-    // Produce stable Vec<Vec<usize>> in sorted order.
-    let out_exit = exit_account_groups.into_values().collect();
-
-    let groupings = Groupings::new(out_blocks, out_exit);
-    // assert that the length equals the n_leaves
-    anyhow::ensure!(
-        groupings.len() == n_leaves,
-        "groupings length ({}) must equal number of leaf proofs ({}).",
-        groupings.len(),
-        n_leaves
-    );
-    Ok(groupings)
-}
-
-/// Build a wrapper circuit around the root aggregated proof that:
-///  - verifies that proof,
-///  - enforces groups have identical root/exit among members,
-///  - enforces asset ID consistency
-///  - enforces that adjacent blocks are connected via parent_hash
-///  - sums funding across members with add_u128_base2_32 (big-endian),
-///  - forwards all nullifiers,
-///  - and PREPENDS number of exit accounts, the asset ID, deduped root_hashes, funding account and summed funding amounts and the nullifiers:
+/// Build a wrapper circuit around the root aggregated proof with FIXED STRUCTURE.
+///
+/// This circuit has a deterministic structure regardless of input data, which is required
+/// for on-chain verification where the verifier binaries are pre-built.
+///
+/// The circuit:
+///  - verifies the root proof
+///  - enforces all real proofs (non-zero block_hash) reference the same block for their storage proofs
+///    (Note: the underlying transfers can occur in different blocks; this constraint only applies to
+///    the block used when generating the storage proof, i.e., when the proof is created)
+///  - enforces asset ID and volume_fee_bps consistency across all proofs
+///  - for each of 2*N "slots" (2 outputs per proof), computes the sum of amounts for proofs matching that slot's exit account
+///  - overrides nullifiers from dummy proofs with provided dummy nullifiers.
+///  - forwards all nullifiers
+///
+/// Public inputs layout:
 ///    [num_exit_accounts(1),
-///    asset_id(1),
-///    root_hashes(4)*,
-///    root_hash(4)*,
-///    [funding_sum(1), exit(4)]*,
-///    nullifiers(4)*,
-///    padding... ]
+///     asset_id(1),
+///     volume_fee_bps(1),
+///     block_hash(4),
+///     block_number(1),
+///     [funding_sum(1), exit(4)] * 2*N,   // 2*N slots (2 outputs per proof)
+///     nullifiers(4) * N,
+///     padding...]
+///
+/// Note: The exit account slots are always 2*N (two per proof slot for Bitcoin-style spend+change).
+/// The chain can deduplicate by exit account after verification. Slots with exit_account=[0;32]
+/// and amount=0 represent unused second outputs.
 fn aggregate_dedupe_public_inputs(
     proofs: Vec<AggregatedProof<F, C, D>>,
-    indices: Groupings,
+    n_leaf: usize,
+    dummy_nullifiers: &[[F; 4]],
 ) -> anyhow::Result<AggregatedProof<F, C, D>> {
+    anyhow::ensure!(
+        dummy_nullifiers.len() == n_leaf,
+        "dummy_nullifiers must have length n_leaf"
+    );
     anyhow::ensure!(
         proofs.len() == 1,
         "aggregate_dedupe_public_inputs expects a single root proof"
     );
     let root = &proofs[0];
-
-    // Off-circuit sanity and sizing checks
-    let n_leaf = indices.len();
-    anyhow::ensure!(n_leaf > 0, "indices must not be empty");
 
     let root_pi_len = root.proof.public_inputs.len();
     anyhow::ensure!(
@@ -267,9 +225,13 @@ fn aggregate_dedupe_public_inputs(
         root_pi_len,
         LEAF_PI_LEN
     );
-    anyhow::ensure!(root_pi_len / LEAF_PI_LEN == n_leaf,
-        "Flattened indices length {} must equal number of leaf proofs {} (derived from root PI len {})",
-        n_leaf, root_pi_len / LEAF_PI_LEN, root_pi_len);
+    anyhow::ensure!(
+        root_pi_len / LEAF_PI_LEN == n_leaf,
+        "n_leaf {} must match number of proofs in root PI {} (root_pi_len={})",
+        n_leaf,
+        root_pi_len / LEAF_PI_LEN,
+        root_pi_len
+    );
 
     // Build wrapper circuit
     let child_common = &root.circuit_data.common;
@@ -284,110 +246,230 @@ fn aggregate_dedupe_public_inputs(
 
     let child_pi_targets = &child_pt.public_inputs;
 
-    let num_exits_t = count_unique_4x32_keys::<_, _, LEAF_PI_LEN, EXIT_START>(
-        &mut builder,
-        child_pi_targets,
-        n_leaf,
-    );
+    // Note: With 2 outputs per proof, counting unique exits in-circuit is complex.
+    // We output 2*N exit slots and let the chain deduplicate after parsing.
+    // The num_exits field is set to 2*n_leaf as an upper bound.
+    let num_exit_slots_t = builder.constant(F::from_canonical_u64((n_leaf * 2) as u64));
 
-    // Retrive the asset ID from the first leaf proof
+    // Reference values from first proof
     let asset_ref = limb1_at_offset::<LEAF_PI_LEN, ASSET_ID_START>(child_pi_targets, 0);
-
-    // Retrieve the volume_fee_bps from the first leaf proof
     let volume_fee_bps_ref =
         limb1_at_offset::<LEAF_PI_LEN, VOLUME_FEE_BPS_START>(child_pi_targets, 0);
 
-    // Build deduped output
-    let mut deduped_pis: Vec<Target> = Vec::new();
+    let one = builder.one();
+    let zero = builder.zero();
 
-    // 1) PREPEND the number of exit accounts (needed for the aggregated circuit public input parser)
-    deduped_pis.push(num_exits_t);
-    // 2) PREPEND the asset ID
-    deduped_pis.push(asset_ref);
-    // 3) PREPEND the volume_fee_bps
-    deduped_pis.push(volume_fee_bps_ref);
+    // Build output public inputs
+    let mut output_pis: Vec<Target> = Vec::new();
 
-    let one: Target = builder.one();
+    // 1) Number of exit slots (2*N for Bitcoin-style 2 outputs per proof)
+    output_pis.push(num_exit_slots_t);
+    // 2) Asset ID
+    output_pis.push(asset_ref);
+    // 3) Volume fee bps
+    output_pis.push(volume_fee_bps_ref);
 
-    let mut parent_hash =
-        limbs4_at_offset::<LEAF_PI_LEN, PARENT_HASH_START>(child_pi_targets, indices.blocks[0][0]);
+    // =========================================================================
+    // BLOCK VALIDATION (Fixed Structure)
+    // =========================================================================
+    // All real proofs (block_hash != 0) must reference the same block for their storage proofs.
+    // This means all proofs must be generated against the same chain state snapshot.
+    // Note: The underlying transfers can occur in different blocks; this constraint only
+    // applies to the block used when generating the storage proof (when the proof is created).
+    //
+    // We use the first real proof's block as the reference.
+    // Dummies (block_hash == 0) are skipped via conditional constraints.
+    //
+    // For fixed circuit structure, we always iterate over all N proofs.
 
-    for per_block in indices.blocks.iter() {
-        let rep = per_block[0];
-        let block_ref = limbs4_at_offset::<LEAF_PI_LEN, BLOCK_HASH_START>(child_pi_targets, rep);
-        for &idx in per_block.iter() {
-            let block_i = limbs4_at_offset::<LEAF_PI_LEN, BLOCK_HASH_START>(child_pi_targets, idx);
-            let ee = bytes_digest_eq(&mut builder, block_i, block_ref);
-            builder.connect(ee.target, one);
-            // Enforce parent hash linkage
-            let ee_parent = bytes_digest_eq(
-                &mut builder,
-                parent_hash,
-                limbs4_at_offset::<LEAF_PI_LEN, PARENT_HASH_START>(child_pi_targets, idx),
-            );
-            builder.connect(ee_parent.target, one);
-        }
-        // Update parent_hash for next iteration
-        parent_hash = block_ref;
-    }
-    // Append the last block's hash (which is not a parent of any other block)
-    deduped_pis.extend_from_slice(&parent_hash);
-    // Append the last block's number
-    deduped_pis.push(limb1_at_offset::<LEAF_PI_LEN, BLOCK_NUMBER_START>(
-        child_pi_targets,
-        indices.blocks.last().unwrap()[0],
-    ));
+    // Get block_hash from proof 0 as reference (might be dummy or real)
+    let block_ref = limbs4_at_offset::<LEAF_PI_LEN, BLOCK_HASH_START>(child_pi_targets, 0);
+    let block_number_ref = limb1_at_offset::<LEAF_PI_LEN, BLOCK_NUMBER_START>(child_pi_targets, 0);
 
-    for per_exit in indices.exit_accounts.iter() {
-        let rep = per_exit[0];
-        let exit_ref = limbs4_at_offset::<LEAF_PI_LEN, EXIT_START>(child_pi_targets, rep);
+    // Build the dummy sentinel [0,0,0,0] for comparison
+    let dummy_sentinel = [zero, zero, zero, zero];
 
-        // Sum funding across the group
-        let mut acc = builder.zero();
+    // Used later to generate unique nullifiers for dummy proofs
+    let mut is_dummy_flags: Vec<BoolTarget> = Vec::with_capacity(n_leaf);
 
-        for &idx in per_exit.iter() {
-            // Enforce all members share same exit
-            let exit_i = limbs4_at_offset::<LEAF_PI_LEN, EXIT_START>(child_pi_targets, idx);
-            let ee = bytes_digest_eq(&mut builder, exit_i, exit_ref);
-            builder.connect(ee.target, one);
-            // Sum output amounts
-            let fund_i = limb1_at_offset::<LEAF_PI_LEN, OUTPUT_AMOUNT_START>(child_pi_targets, idx);
-            let sum = builder.add(acc, fund_i);
-            acc = sum;
-        }
-        // Range check on accumulated sum to ensure it fits in the expected 32 bit range
-        builder.range_check(acc, 32);
-        // Emit one compressed PI couplet: [funding_sum(1), exit(4)]
-        deduped_pis.push(acc);
-        deduped_pis.extend_from_slice(&exit_ref);
-    }
-    // Forward ALL nullifiers and enforce single-asset tree with same volume_fee_bps
+    // For each proof, check: if it's not a dummy, it must match block_ref
+    // Constraint: is_dummy OR (block_hash == block_ref)
+    // Equivalently: NOT(is_real AND block_hash != block_ref)
     for i in 0..n_leaf {
-        deduped_pis.extend_from_slice(&limbs4_at_offset::<LEAF_PI_LEN, NULLIFIER_START>(
-            child_pi_targets,
-            i,
-        ));
+        let block_i = limbs4_at_offset::<LEAF_PI_LEN, BLOCK_HASH_START>(child_pi_targets, i);
+
+        // is_dummy_i = (block_i == [0,0,0,0])
+        let is_dummy_i = bytes_digest_eq(&mut builder, block_i, dummy_sentinel);
+        is_dummy_flags.push(is_dummy_i);
+
+        // matches_ref = (block_i == block_ref)
+        let matches_ref = bytes_digest_eq(&mut builder, block_i, block_ref);
+
+        // Constraint: is_dummy OR matches_ref must be true
+        // i.e., is_dummy + matches_ref - is_dummy*matches_ref >= 1
+        // Since both are bool, OR = is_dummy + matches_ref - is_dummy*matches_ref
+        let or_result = builder.or(is_dummy_i, matches_ref);
+        builder.connect(or_result.target, one);
+
+        // Also enforce asset_id and volume_fee_bps consistency
         let asset_i = limb1_at_offset::<LEAF_PI_LEN, ASSET_ID_START>(child_pi_targets, i);
         builder.connect(asset_i, asset_ref);
-        // Enforce all leaves have the same volume_fee_bps
         let volume_fee_bps_i =
             limb1_at_offset::<LEAF_PI_LEN, VOLUME_FEE_BPS_START>(child_pi_targets, i);
         builder.connect(volume_fee_bps_i, volume_fee_bps_ref);
     }
 
-    // Pad the rest of the deduped_pis until it is equal to root_pi_len + 3 (for the exit account count, asset ID, and volume_fee_bps metadata)
-    while deduped_pis.len() < root_pi_len + 3 {
-        deduped_pis.push(builder.zero());
+    // Output the reference block hash and number
+    // (If all proofs are dummies, this will be [0,0,0,0] and 0, which is fine)
+    output_pis.extend_from_slice(&block_ref);
+    output_pis.push(block_number_ref);
+
+    // =========================================================================
+    // EXIT ACCOUNT GROUPING (Fixed Structure - 2 outputs per proof)
+    // =========================================================================
+    // With Bitcoin-style 2-output proofs, each leaf proof has 2 exit accounts:
+    //   - exit_account_1 (spend destination) with output_amount_1
+    //   - exit_account_2 (change destination) with output_amount_2
+    //
+    // We output 2*N "slots" (2 outputs per proof).
+    // For each slot, we compute the sum of all matching amounts across all 2*N outputs.
+    //
+    // Slot mapping:
+    //   - slot 2*i   -> proof[i]'s exit_account_1, sums all matching output_amount_1 and output_amount_2
+    //   - slot 2*i+1 -> proof[i]'s exit_account_2, sums all matching output_amount_1 and output_amount_2
+    //
+    // The chain can deduplicate slots with matching exit accounts after verification.
+    // Unused second outputs have exit_account_2 = [0;32] and output_amount_2 = 0.
+
+    let num_exit_slots = n_leaf * 2;
+
+    // Helper: get exit account and amount for a given (proof_idx, output_idx) pair
+    // output_idx: 0 = first output, 1 = second output
+    let get_exit_and_amount = |proof_idx: usize, output_idx: usize| -> ([Target; 4], Target) {
+        let exit = if output_idx == 0 {
+            limbs4_at_offset::<LEAF_PI_LEN, EXIT_1_START>(child_pi_targets, proof_idx)
+        } else {
+            limbs4_at_offset::<LEAF_PI_LEN, EXIT_2_START>(child_pi_targets, proof_idx)
+        };
+        let amount = if output_idx == 0 {
+            limb1_at_offset::<LEAF_PI_LEN, OUTPUT_AMOUNT_1_START>(child_pi_targets, proof_idx)
+        } else {
+            limb1_at_offset::<LEAF_PI_LEN, OUTPUT_AMOUNT_2_START>(child_pi_targets, proof_idx)
+        };
+        (exit, amount)
+    };
+
+    for slot in 0..num_exit_slots {
+        let proof_idx = slot / 2;
+        let output_idx = slot % 2;
+        let (exit_slot, _) = get_exit_and_amount(proof_idx, output_idx);
+
+        // Check if this exit account already appeared in an earlier slot (deduplication)
+        // If so, we'll output zero for this slot to avoid double-minting
+        let mut is_duplicate = builder._false();
+        for earlier in 0..slot {
+            let earlier_proof_idx = earlier / 2;
+            let earlier_output_idx = earlier % 2;
+            let (exit_earlier, _) = get_exit_and_amount(earlier_proof_idx, earlier_output_idx);
+            let matches_earlier = bytes_digest_eq(&mut builder, exit_earlier, exit_slot);
+            is_duplicate = builder.or(is_duplicate, matches_earlier);
+        }
+
+        // Sum amounts from all 2*N outputs that match this slot's exit account
+        let mut acc = zero;
+        for j in 0..num_exit_slots {
+            let j_proof_idx = j / 2;
+            let j_output_idx = j % 2;
+            let (exit_j, amount_j) = get_exit_and_amount(j_proof_idx, j_output_idx);
+
+            // matches = (exit_j == exit_slot)
+            let matches = bytes_digest_eq(&mut builder, exit_j, exit_slot);
+
+            // conditional_amount = matches ? amount_j : 0
+            let conditional_amount = builder.select(matches, amount_j, zero);
+
+            acc = builder.add(acc, conditional_amount);
+        }
+
+        // If this is a duplicate slot, zero out both the sum AND the exit account.
+        // This makes duplicate slots indistinguishable from dummy proofs in the output,
+        // hiding which slots were real duplicates vs padding dummies.
+        let final_sum = builder.select(is_duplicate, zero, acc);
+
+        // Zero out exit_slot for duplicates to match dummy output format
+        let final_exit = [
+            builder.select(is_duplicate, zero, exit_slot[0]),
+            builder.select(is_duplicate, zero, exit_slot[1]),
+            builder.select(is_duplicate, zero, exit_slot[2]),
+            builder.select(is_duplicate, zero, exit_slot[3]),
+        ];
+
+        // Range check the sum (with 2 outputs per proof, max sum could be larger)
+        // 32-bit outputs * 2*N proofs, need 32 + log2(2*N) bits
+        builder.range_check(final_sum, 40);
+
+        // Output: [sum, exit_account(4)]
+        output_pis.push(final_sum);
+        output_pis.extend_from_slice(&final_exit);
     }
 
-    // Register compressed PIs
-    builder.register_public_inputs(&deduped_pis);
+    // =========================================================================
+    // NULLIFIERS
+    // =========================================================================
 
-    // Prove wrapper
+    // Allocate dummy nullifier targets
+    let mut dummy_nullifier_targets: Vec<[Target; 4]> = Vec::with_capacity(n_leaf);
+    for _ in 0..n_leaf {
+        dummy_nullifier_targets.push([
+            builder.add_virtual_target(),
+            builder.add_virtual_target(),
+            builder.add_virtual_target(),
+            builder.add_virtual_target(),
+        ]);
+    }
+
+    // Override dummy nullifiers `Forward all N nullifiers
+    for i in 0..n_leaf {
+        let real_null_i = limbs4_at_offset::<LEAF_PI_LEN, NULLIFIER_START>(child_pi_targets, i);
+
+        let dn = dummy_nullifier_targets[i];
+        let is_dummy_i = is_dummy_flags[i];
+
+        // limbwise select: output = is_dummy ? dn : real
+        output_pis.extend_from_slice(&[
+            builder.select(is_dummy_i, dn[0], real_null_i[0]),
+            builder.select(is_dummy_i, dn[1], real_null_i[1]),
+            builder.select(is_dummy_i, dn[2], real_null_i[2]),
+            builder.select(is_dummy_i, dn[3], real_null_i[3]),
+        ]);
+    }
+
+    // Pad to expected length
+    // Layout: metadata(8) + 2*N exit slots(5 each) + N nullifiers(4 each)
+    //       = 8 + 2*N*5 + N*4 = 8 + 14*N
+    // Root PI len = N * LEAF_PI_LEN = N * 25
+    // We pad to root_pi_len + 8 for consistent sizing
+    while output_pis.len() < root_pi_len + 8 {
+        output_pis.push(zero);
+    }
+
+    // Register public inputs
+    builder.register_public_inputs(&output_pis);
+
+    // Build and prove
     let circuit_data = builder.build();
     let mut pw = PartialWitness::new();
     pw.set_verifier_data_target(&vd_t, child_verifier_only)?;
     pw.set_proof_with_pis_target(&child_pt, &root.proof)?;
+    // Fill dummy nullifier targets with provided dummy nullifiers
+    for i in 0..n_leaf {
+        let dn = dummy_nullifiers[i];
+        let t = dummy_nullifier_targets[i];
+        pw.set_target(t[0], dn[0])?;
+        pw.set_target(t[1], dn[1])?;
+        pw.set_target(t[2], dn[2])?;
+        pw.set_target(t[3], dn[3])?;
+    }
 
     let proof = circuit_data.prove(pw)?;
     Ok(AggregatedProof {
@@ -398,7 +480,8 @@ fn aggregate_dedupe_public_inputs(
 
 #[cfg(test)]
 mod tests {
-    use crate::circuits::tree::BTreeMap;
+    use std::collections::BTreeMap;
+
     use plonky2::field::types::PrimeField64;
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
@@ -419,23 +502,31 @@ mod tests {
 
     use super::{
         aggregate_to_tree, AggregatedProof, TreeAggregationConfig, ASSET_ID_START,
-        BLOCK_HASH_START, BLOCK_NUMBER_START, EXIT_START, LEAF_PI_LEN, NULLIFIER_START,
-        OUTPUT_AMOUNT_START, PARENT_HASH_START, VOLUME_FEE_BPS_START,
+        BLOCK_HASH_START, BLOCK_NUMBER_START, EXIT_1_START, EXIT_2_START, LEAF_PI_LEN,
+        NULLIFIER_START, OUTPUT_AMOUNT_1_START, OUTPUT_AMOUNT_2_START, PARENT_HASH_START,
+        VOLUME_FEE_BPS_START,
     };
 
     const TEST_ASSET_ID_U64: u64 = 0;
     const TEST_VOLUME_FEE_BPS: u64 = 10; // 0.1% = 10 basis points
 
+    /// Test config: branching_factor=8, depth=1 (8 leaf proofs)
+    fn test_aggregation_config() -> TreeAggregationConfig {
+        TreeAggregationConfig::new(8, 1)
+    }
+
     // ---------------- Circuit ----------------
 
-    /// Dummy wormhole leaf for the *new* aggregator layout:
+    /// Dummy wormhole leaf for the Bitcoin-style 2-output layout:
     ///
-    /// PIs per leaf (length = LEAF_PI_LEN = 20):
+    /// PIs per leaf (length = LEAF_PI_LEN = 25):
     ///   [ asset_id(1×felt),
-    ///     output_amount(1×felt),
+    ///     output_amount_1(1×felt),     // spend amount
+    ///     output_amount_2(1×felt),     // change amount
     ///     volume_fee_bps(1×felt),
     ///     nullifier(4×felt),
-    ///     exit(4×felt),
+    ///     exit_account_1(4×felt),      // spend destination
+    ///     exit_account_2(4×felt),      // change destination
     ///     block_hash(4×felt),
     ///     parent_hash(4×felt),
     ///     block_number(1×felt) ]
@@ -450,7 +541,8 @@ mod tests {
             .try_into()
             .expect("exactly LEAF_PI_LEN targets");
 
-        builder.range_check(pis[OUTPUT_AMOUNT_START], 32);
+        builder.range_check(pis[OUTPUT_AMOUNT_1_START], 32);
+        builder.range_check(pis[OUTPUT_AMOUNT_2_START], 32);
         builder.range_check(pis[VOLUME_FEE_BPS_START], 32);
 
         builder.register_public_inputs(&pis_vec);
@@ -485,25 +577,29 @@ mod tests {
         ]
     }
 
-    /// Build one leaf PI in the new layout (funding is 1 felt).
+    /// Build one leaf PI in the Bitcoin-style 2-output layout.
     #[inline]
     #[allow(clippy::too_many_arguments)]
     fn make_pi_from_felts(
         asset_id: F,
-        output_amount: F,
+        output_amount_1: F,
+        output_amount_2: F,
         volume_fee_bps: F,
         nullifier: [F; 4],
-        exit: [F; 4],
+        exit_1: [F; 4],
+        exit_2: [F; 4],
         block_hash: [F; 4],
         parent_hash: [F; 4],
         block_number: F,
     ) -> [F; LEAF_PI_LEN] {
         let mut out = [F::ZERO; LEAF_PI_LEN];
         out[ASSET_ID_START] = asset_id;
-        out[OUTPUT_AMOUNT_START] = output_amount;
+        out[OUTPUT_AMOUNT_1_START] = output_amount_1;
+        out[OUTPUT_AMOUNT_2_START] = output_amount_2;
         out[VOLUME_FEE_BPS_START] = volume_fee_bps;
         out[NULLIFIER_START..NULLIFIER_START + 4].copy_from_slice(&nullifier);
-        out[EXIT_START..EXIT_START + 4].copy_from_slice(&exit);
+        out[EXIT_1_START..EXIT_1_START + 4].copy_from_slice(&exit_1);
+        out[EXIT_2_START..EXIT_2_START + 4].copy_from_slice(&exit_2);
         out[BLOCK_HASH_START..BLOCK_HASH_START + 4].copy_from_slice(&block_hash);
         out[PARENT_HASH_START..PARENT_HASH_START + 4].copy_from_slice(&parent_hash);
         out[BLOCK_NUMBER_START] = block_number;
@@ -669,48 +765,47 @@ mod tests {
     fn recursive_aggregation_tree() {
         let mut rng = StdRng::from_seed([41u8; 32]);
 
-        // Choose number of unique exits in [1..=8].
-        let k_exits: usize = rng.gen_range(1..=8);
-        let exit_idxs: Vec<usize> = (0..k_exits).collect();
+        // Generate random funding values (output amounts)
+        // Use bit shift to ensure sums fit in 32 bits
+        let output1_vals_u32: [u32; 8] = core::array::from_fn(|_| rng.gen::<u32>() >> 4);
+        let output2_vals_u32: [u32; 8] = core::array::from_fn(|_| rng.gen::<u32>() >> 4);
 
-        // Funding values as *one felt each*
-        // We bit shift by 3 to ensure accumulated sums fit in 32 bits.
-        let funding_vals_u32: [u32; 8] = core::array::from_fn(|_| rng.gen::<u32>() >> 3);
-
-        let funding_felts: [F; 8] =
-            core::array::from_fn(|i| F::from_canonical_u64(funding_vals_u32[i] as u64));
+        let output1_felts: [F; 8] =
+            core::array::from_fn(|i| F::from_canonical_u64(output1_vals_u32[i] as u64));
+        let output2_felts: [F; 8] =
+            core::array::from_fn(|i| F::from_canonical_u64(output2_vals_u32[i] as u64));
 
         let exits_felts: [[F; 4]; 8] = EXIT_ACCOUNTS.map(limbs_u64_to_felts_be);
         let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs_u64_to_felts_be);
         let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs_u64_to_felts_be);
 
-        // Parent chain.
-        let mut parent_hashes_felts: [[F; 4]; 8] = [[F::ZERO; 4]; 8];
-        parent_hashes_felts[1..8].copy_from_slice(&block_hashes_felts[..7]);
+        // All proofs must be from the SAME block
+        let common_block_hash = block_hashes_felts[0];
+        let common_parent_hash = [F::ZERO; 4];
+        let common_block_number = F::from_canonical_u64(42);
 
-        let block_numbers: [F; 8] = core::array::from_fn(|i| F::from_canonical_u64(i as u64));
         let asset_id = F::from_canonical_u64(TEST_ASSET_ID_U64);
         let volume_fee_bps = F::from_canonical_u64(TEST_VOLUME_FEE_BPS);
 
-        // Build leaves.
+        // Build leaves - each proof has 2 outputs
+        // For simplicity: exit_1 = exits_felts[i], exit_2 = exits_felts[(i+1)%8]
         let mut pis_list: Vec<[F; LEAF_PI_LEN]> = Vec::with_capacity(8);
         for i in 0..8 {
             let nfel = nullifiers_felts[i];
-            let efel = exits_felts[exit_idxs[(7 - i) % k_exits]];
-            let ffel = funding_felts[i];
-            let bhash = block_hashes_felts[i];
-            let phash = parent_hashes_felts[i];
-            let bnum = block_numbers[i];
+            let exit_1 = exits_felts[i];
+            let exit_2 = exits_felts[(i + 1) % 8]; // Change goes to next account
 
             pis_list.push(make_pi_from_felts(
                 asset_id,
-                ffel,
+                output1_felts[i],
+                output2_felts[i],
                 volume_fee_bps,
                 nfel,
-                efel,
-                bhash,
-                phash,
-                bnum,
+                exit_1,
+                exit_2,
+                common_block_hash,
+                common_parent_hash,
+                common_block_number,
             ));
         }
 
@@ -724,49 +819,49 @@ mod tests {
         let verifier_data = &leaves[0].circuit_data.verifier_only.clone();
         let to_aggregate = leaves.into_iter().map(|p| p.proof).collect();
 
-        let config = TreeAggregationConfig::default();
+        let config = test_aggregation_config();
         let root_proof =
             aggregate_to_tree(to_aggregate, common_data, verifier_data, config).unwrap();
 
         // ---------------------------
-        // Reference aggregation OFF-CIRCUIT (field sums)
+        // Reference aggregation OFF-CIRCUIT
         // ---------------------------
         let n_leaf = pis_list.len();
         assert_eq!(n_leaf, 8);
 
+        // Compute expected sums per exit account (across both outputs)
         let mut exit_sums: BTreeMap<[F; 4], F> = BTreeMap::new();
         for (i, pis) in pis_list.iter().enumerate() {
-            let exit_f: [F; 4] = [
-                pis[EXIT_START],
-                pis[EXIT_START + 1],
-                pis[EXIT_START + 2],
-                pis[EXIT_START + 3],
+            // First output
+            let exit_1: [F; 4] = [
+                pis[EXIT_1_START],
+                pis[EXIT_1_START + 1],
+                pis[EXIT_1_START + 2],
+                pis[EXIT_1_START + 3],
             ];
-            let funding_f = funding_felts[i];
+            let amount_1 = output1_felts[i];
             exit_sums
-                .entry(exit_f)
-                .and_modify(|s| *s += funding_f)
-                .or_insert(funding_f);
-        }
-        let num_exits_ref = exit_sums.len();
+                .entry(exit_1)
+                .and_modify(|s| *s += amount_1)
+                .or_insert(amount_1);
 
-        // Determine last block (by max block_number).
-        let mut last_block_idx = 0usize;
-        let mut last_block_num_u64: u64 = 0;
-        for (i, pis) in pis_list.iter().enumerate() {
-            let bnum = pis[BLOCK_NUMBER_START].to_canonical_u64();
-            if bnum >= last_block_num_u64 {
-                last_block_num_u64 = bnum;
-                last_block_idx = i;
-            }
+            // Second output
+            let exit_2: [F; 4] = [
+                pis[EXIT_2_START],
+                pis[EXIT_2_START + 1],
+                pis[EXIT_2_START + 2],
+                pis[EXIT_2_START + 3],
+            ];
+            let amount_2 = output2_felts[i];
+            exit_sums
+                .entry(exit_2)
+                .and_modify(|s| *s += amount_2)
+                .or_insert(amount_2);
         }
-        let last_block_hash_ref: [F; 4] = [
-            pis_list[last_block_idx][BLOCK_HASH_START],
-            pis_list[last_block_idx][BLOCK_HASH_START + 1],
-            pis_list[last_block_idx][BLOCK_HASH_START + 2],
-            pis_list[last_block_idx][BLOCK_HASH_START + 3],
-        ];
-        let last_block_num_ref = pis_list[last_block_idx][BLOCK_NUMBER_START];
+
+        // Block reference
+        let block_hash_ref = common_block_hash;
+        let block_num_ref = common_block_number;
 
         let mut nullifiers_ref: Vec<[F; 4]> = Vec::with_capacity(n_leaf);
         for pis in pis_list.iter() {
@@ -779,17 +874,19 @@ mod tests {
         }
 
         // ---------------------------
-        // Parse aggregated PIs
+        // Parse aggregated PIs (Bitcoin-style 2-output layout)
         // ---------------------------
+        // Layout:
+        // [ num_exit_slots(1), asset_id(1), volume_fee_bps(1), block_hash(4), block_number(1),
+        //   [funding_sum(1), exit(4)] * 2*N,  (2*N slots, 2 outputs per proof)
+        //   nullifiers(4) * N,
+        //   padding... ]
         let pis = &root_proof.proof.public_inputs;
         let root_pi_len = n_leaf * LEAF_PI_LEN;
-        assert_eq!(pis.len(), root_pi_len + 3);
+        assert_eq!(pis.len(), root_pi_len + 8); // +8 for header
 
-        // Layout:
-        // [ num_exits(1), asset_id(1), volume_fee_bps(1), last_block_hash(4), last_block_number(1),
-        //   [funding_sum(1), exit(4)]*, nullifiers(4)*, padding... ]
-        let num_exits_circuit = pis[0].to_canonical_u64() as usize;
-        assert_eq!(num_exits_circuit, num_exits_ref);
+        let num_exit_slots_circuit = pis[0].to_canonical_u64() as usize;
+        assert_eq!(num_exit_slots_circuit, n_leaf * 2); // 2 outputs per proof
 
         let asset_id_circuit = pis[1];
         assert_eq!(asset_id_circuit, asset_id);
@@ -797,34 +894,44 @@ mod tests {
         let volume_fee_bps_circuit = pis[2];
         assert_eq!(volume_fee_bps_circuit, volume_fee_bps);
 
-        let last_block_hash_circuit: [F; 4] = [pis[3], pis[4], pis[5], pis[6]];
-        let last_block_num_circuit = pis[7];
-        assert_eq!(last_block_hash_circuit, last_block_hash_ref);
-        assert_eq!(last_block_num_circuit, last_block_num_ref);
+        let block_hash_circuit: [F; 4] = [pis[3], pis[4], pis[5], pis[6]];
+        let block_num_circuit = pis[7];
+        assert_eq!(block_hash_circuit, block_hash_ref);
+        assert_eq!(block_num_circuit, block_num_ref);
 
         let mut idx = 8usize;
 
-        // Exit sums region: [funding_sum(1), exit(4)]*
+        // Exit slots region: 2*N slots, each with [funding_sum(1), exit(4)]
+        // Duplicate exit accounts have sum=0 (deduplication in circuit)
+        // Collect all sums by exit account from circuit output
         let mut exit_sums_from_circuit: BTreeMap<[F; 4], F> = BTreeMap::new();
-        for (exit_key, sum_ref) in exit_sums.iter() {
+        for _ in 0..(n_leaf * 2) {
             let sum_circuit = pis[idx];
             idx += 1;
 
-            let e0 = pis[idx];
-            let e1 = pis[idx + 1];
-            let e2 = pis[idx + 2];
-            let e3 = pis[idx + 3];
+            let exit_key_circuit = [pis[idx], pis[idx + 1], pis[idx + 2], pis[idx + 3]];
             idx += 4;
 
-            let exit_key_circuit = [e0, e1, e2, e3];
-            exit_sums_from_circuit.insert(exit_key_circuit, sum_circuit);
-
-            assert_eq!(exit_key_circuit, *exit_key);
-            assert_eq!(sum_circuit, *sum_ref);
+            // Only record non-zero sums (zero means duplicate slot)
+            if sum_circuit != F::ZERO {
+                exit_sums_from_circuit
+                    .entry(exit_key_circuit)
+                    .and_modify(|_| {}) // Don't double-count
+                    .or_insert(sum_circuit);
+            }
         }
-        assert_eq!(exit_sums_from_circuit, exit_sums);
 
-        // Nullifiers: 4 each.
+        // Verify sums match expected
+        for (exit_key, sum_ref) in exit_sums.iter() {
+            let sum_from_circuit = exit_sums_from_circuit.get(exit_key).unwrap();
+            assert_eq!(
+                *sum_from_circuit, *sum_ref,
+                "sum mismatch for exit {:?}",
+                exit_key
+            );
+        }
+
+        // Nullifiers: 4 felts each
         for (leaf_idx, nullifier_expected) in nullifiers_ref.iter().enumerate() {
             let n0 = pis[idx];
             let n1 = pis[idx + 1];
@@ -852,26 +959,23 @@ mod tests {
             .unwrap();
     }
 
-    // ---------- Negative test: broken parent chain --------------------------
+    // ---------- Negative test: different blocks should fail --------------------------
 
     #[test]
-    fn recursive_aggregation_tree_broken_parent_chain_fails() {
+    fn recursive_aggregation_tree_different_blocks_fails() {
         let mut rng = StdRng::from_seed([42u8; 32]);
 
-        let k_exits: usize = rng.gen_range(1..=8);
-        let exit_idxs: Vec<usize> = (0..k_exits).collect();
-
-        let funding_vals_u32: [u32; 8] = core::array::from_fn(|_| rng.gen::<u32>() >> 3);
-        let funding_felts: [F; 8] =
-            core::array::from_fn(|i| F::from_canonical_u64(funding_vals_u32[i] as u64));
+        let output1_vals_u32: [u32; 8] = core::array::from_fn(|_| rng.gen::<u32>() >> 4);
+        let output1_felts: [F; 8] =
+            core::array::from_fn(|i| F::from_canonical_u64(output1_vals_u32[i] as u64));
 
         let exits_felts: [[F; 4]; 8] = EXIT_ACCOUNTS.map(limbs_u64_to_felts_be);
         let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs_u64_to_felts_be);
         let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs_u64_to_felts_be);
 
-        // Wrong parent hashes: all zeros.
         let parent_hashes_felts: [[F; 4]; 8] = [[F::ZERO; 4]; 8];
 
+        // Different block numbers (this is the old behavior that should now fail)
         let block_numbers: [F; 8] = core::array::from_fn(|i| F::from_canonical_u64(i as u64));
         let asset_id = F::from_canonical_u64(TEST_ASSET_ID_U64);
         let volume_fee_bps = F::from_canonical_u64(TEST_VOLUME_FEE_BPS);
@@ -879,18 +983,21 @@ mod tests {
         let mut pis_list: Vec<[F; LEAF_PI_LEN]> = Vec::with_capacity(8);
         for i in 0..8 {
             let nfel = nullifiers_felts[i];
-            let efel = exits_felts[exit_idxs[(7 - i) % k_exits]];
-            let ffel = funding_felts[i];
+            let exit_1 = exits_felts[i];
+            let exit_2 = [F::ZERO; 4]; // No change output
+                                       // Each proof uses a DIFFERENT block hash - this should fail
             let bhash = block_hashes_felts[i];
             let phash = parent_hashes_felts[i];
             let bnum = block_numbers[i];
 
             pis_list.push(make_pi_from_felts(
                 asset_id,
-                ffel,
+                output1_felts[i],
+                F::ZERO, // No second output
                 volume_fee_bps,
                 nfel,
-                efel,
+                exit_1,
+                exit_2,
                 bhash,
                 phash,
                 bnum,
@@ -906,12 +1013,12 @@ mod tests {
         let verifier_data = &leaves[0].circuit_data.verifier_only.clone();
         let to_aggregate = leaves.into_iter().map(|p| p.proof).collect();
 
-        let config = TreeAggregationConfig::default();
+        let config = test_aggregation_config();
         let res = aggregate_to_tree(to_aggregate, common_data, verifier_data, config);
 
         assert!(
             res.is_err(),
-            "expected failure due to broken parent hash chain"
+            "expected failure because proofs are from different blocks"
         );
     }
 
@@ -922,7 +1029,7 @@ mod tests {
         let asset_a = F::from_canonical_u64(7);
         let asset_b = F::from_canonical_u64(9);
 
-        let funding_felts: [F; 8] = core::array::from_fn(|_| F::from_canonical_u64(1));
+        let output_felts: [F; 8] = core::array::from_fn(|_| F::from_canonical_u64(1));
 
         let exits_felts: [[F; 4]; 8] = EXIT_ACCOUNTS.map(limbs_u64_to_felts_be);
         let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs_u64_to_felts_be);
@@ -939,10 +1046,12 @@ mod tests {
             let asset_id = if i == 3 { asset_b } else { asset_a };
             pis_list.push(make_pi_from_felts(
                 asset_id,
-                funding_felts[i],
+                output_felts[i],
+                F::ZERO, // No second output
                 volume_fee_bps,
                 nullifiers_felts[i],
                 exits_felts[i],
+                [F::ZERO; 4], // No second exit
                 block_hashes_felts[i],
                 parent_hashes_felts[i],
                 block_numbers[i],
@@ -958,9 +1067,121 @@ mod tests {
         let verifier_data = &leaves[0].circuit_data.verifier_only.clone();
         let to_aggregate = leaves.into_iter().map(|p| p.proof).collect();
 
-        let config = TreeAggregationConfig::default();
+        let config = test_aggregation_config();
         let res = aggregate_to_tree(to_aggregate, common_data, verifier_data, config);
 
         assert!(res.is_err(), "expected failure due to mismatched asset IDs");
+    }
+
+    // ---------- Test: mixed real proofs + dummy proofs with block_hash=0 sentinel ------
+
+    #[test]
+    fn recursive_aggregation_tree_with_dummy_proofs() {
+        // Test that we can aggregate 2 real proofs + 6 dummy proofs (block_hash = 0)
+        // The dummies should be excluded from block validation but included in exit grouping.
+
+        let mut rng = StdRng::from_seed([99u8; 32]);
+
+        let output_vals_u32: [u32; 8] = core::array::from_fn(|_| rng.gen::<u32>() >> 4);
+        let output_felts: [F; 8] =
+            core::array::from_fn(|i| F::from_canonical_u64(output_vals_u32[i] as u64));
+
+        let exits_felts: [[F; 4]; 8] = EXIT_ACCOUNTS.map(limbs_u64_to_felts_be);
+        let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs_u64_to_felts_be);
+        let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs_u64_to_felts_be);
+
+        // First two proofs are real (all from SAME block)
+        // Remaining 6 are dummies (block_hash = 0)
+        let num_real_proofs = 2;
+
+        // All real proofs must be from the same block
+        let common_block_hash = block_hashes_felts[0];
+        let common_parent_hash = [F::ZERO; 4];
+        let common_block_number = F::from_canonical_u64(42);
+
+        let asset_id = F::from_canonical_u64(TEST_ASSET_ID_U64);
+        let volume_fee_bps = F::from_canonical_u64(TEST_VOLUME_FEE_BPS);
+
+        let mut pis_list: Vec<[F; LEAF_PI_LEN]> = Vec::with_capacity(8);
+
+        // Real proofs (indices 0 and 1) - all from same block
+        for i in 0..num_real_proofs {
+            pis_list.push(make_pi_from_felts(
+                asset_id,
+                output_felts[i],
+                F::ZERO, // No second output for simplicity
+                volume_fee_bps,
+                nullifiers_felts[i],
+                exits_felts[i],
+                [F::ZERO; 4], // No second exit
+                common_block_hash,
+                common_parent_hash,
+                common_block_number,
+            ));
+        }
+
+        // Dummy proofs (indices 2-7): block_hash = 0, exit_account = 0, output_amount = 0
+        let dummy_exit = [F::ZERO; 4];
+        let dummy_block_hash = [F::ZERO; 4];
+        let dummy_parent_hash = [F::ZERO; 4];
+        let dummy_output_amount = F::ZERO;
+
+        for nullifier in nullifiers_felts.iter().skip(num_real_proofs) {
+            pis_list.push(make_pi_from_felts(
+                asset_id,
+                dummy_output_amount,
+                dummy_output_amount, // Both outputs zero
+                volume_fee_bps,
+                *nullifier,
+                dummy_exit,
+                dummy_exit, // Both exits zero
+                dummy_block_hash,
+                dummy_parent_hash,
+                F::ZERO,
+            ));
+        }
+
+        let leaves = pis_list
+            .clone()
+            .into_iter()
+            .map(prove_dummy_wormhole)
+            .collect::<Vec<_>>();
+
+        let common_data = &leaves[0].circuit_data.common.clone();
+        let verifier_data = &leaves[0].circuit_data.verifier_only.clone();
+        let to_aggregate = leaves.into_iter().map(|p| p.proof).collect();
+
+        let config = test_aggregation_config();
+        let root_proof =
+            aggregate_to_tree(to_aggregate, common_data, verifier_data, config).unwrap();
+
+        // Verify the final root proof.
+        root_proof
+            .circuit_data
+            .verify(root_proof.proof.clone())
+            .unwrap();
+
+        // Check public inputs structure
+        let pis = &root_proof.proof.public_inputs;
+
+        // The block hash should be from the first real proof (proof[0] is the reference)
+        let block_hash_circuit: [F; 4] = [pis[3], pis[4], pis[5], pis[6]];
+        assert_eq!(
+            block_hash_circuit, common_block_hash,
+            "block hash should match common block"
+        );
+
+        // The block number should match common block number
+        let block_num_circuit = pis[7];
+        assert_eq!(
+            block_num_circuit, common_block_number,
+            "block number should match common block"
+        );
+
+        println!(
+            "Successfully aggregated {} real proofs + {} dummy proofs!",
+            num_real_proofs,
+            8 - num_real_proofs
+        );
     }
 }

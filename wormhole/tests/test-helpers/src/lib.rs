@@ -5,13 +5,14 @@ use crate::{
     },
     storage_proof::DEFAULT_ROOT_HASHES,
 };
+use qp_wormhole_inputs::PublicCircuitInputs;
 use wormhole_circuit::{
-    inputs::{CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs},
+    inputs::{CircuitInputs, PrivateCircuitInputs},
     nullifier::Nullifier,
     storage_proof::ProcessedStorageProof,
     unspendable_account::UnspendableAccount,
 };
-use zk_circuits_common::utils::BytesDigest;
+use zk_circuits_common::utils::{digest_felts_to_bytes, BytesDigest};
 
 pub const DEFAULT_SECRETS: [&str; 2] = [
     "4c8587bd422e01d961acdc75e7d66f6761b7af7c9b1864a492f369c9d6724f05",
@@ -65,20 +66,23 @@ impl TestInputs for CircuitInputs {
             .unwrap();
 
         let funding_account = BytesDigest::try_from(DEFAULT_FUNDING_ACCOUNT).unwrap();
-        let nullifier = Nullifier::from_preimage(secret, DEFAULT_TRANSFER_COUNTS[0])
-            .hash
-            .into();
-        let unspendable_account = UnspendableAccount::from_secret(secret).account_id.into();
+        let nullifier = digest_felts_to_bytes(
+            Nullifier::from_preimage(secret, DEFAULT_TRANSFER_COUNTS[0]).hash,
+        );
+        let unspendable_account =
+            digest_felts_to_bytes(UnspendableAccount::from_secret(secret).account_id);
         let exit_account = BytesDigest::try_from(DEFAULT_EXIT_ACCOUNT).unwrap();
 
         let storage_proof = ProcessedStorageProof::test_inputs_0();
         Self {
             public: PublicCircuitInputs {
                 asset_id: 0u32,
-                output_amount: DEFAULT_OUTPUT_AMOUNTS[0],
+                output_amount_1: DEFAULT_OUTPUT_AMOUNTS[0],
+                output_amount_2: 0u32, // No second output for tests
                 volume_fee_bps: DEFAULT_VOLUME_FEE_BPS,
                 nullifier,
-                exit_account,
+                exit_account_1: exit_account,
+                exit_account_2: BytesDigest::default(), // No second exit account
                 block_hash: BytesDigest::try_from(DEFAULT_BLOCK_HASHES[0]).unwrap(),
                 parent_hash: BytesDigest::try_from(DEFAULT_PARENT_HASHES[0]).unwrap(),
                 block_number: DEFAULT_BLOCK_NUMBERS[0],
@@ -107,20 +111,23 @@ impl TestInputs for CircuitInputs {
             .unwrap();
 
         let funding_account = BytesDigest::try_from(DEFAULT_FUNDING_ACCOUNT).unwrap();
-        let nullifier = Nullifier::from_preimage(secret, DEFAULT_TRANSFER_COUNTS[1])
-            .hash
-            .into();
-        let unspendable_account = UnspendableAccount::from_secret(secret).account_id.into();
+        let nullifier = digest_felts_to_bytes(
+            Nullifier::from_preimage(secret, DEFAULT_TRANSFER_COUNTS[1]).hash,
+        );
+        let unspendable_account =
+            digest_felts_to_bytes(UnspendableAccount::from_secret(secret).account_id);
         let exit_account = BytesDigest::try_from(DEFAULT_EXIT_ACCOUNT).unwrap();
 
         let storage_proof = ProcessedStorageProof::test_inputs_1();
         Self {
             public: PublicCircuitInputs {
                 asset_id: 0u32,
-                output_amount: DEFAULT_OUTPUT_AMOUNTS[1],
+                output_amount_1: DEFAULT_OUTPUT_AMOUNTS[1],
+                output_amount_2: 0u32, // No second output for tests
                 volume_fee_bps: DEFAULT_VOLUME_FEE_BPS,
                 nullifier,
-                exit_account,
+                exit_account_1: exit_account,
+                exit_account_2: BytesDigest::default(), // No second exit account
                 block_hash: BytesDigest::try_from(DEFAULT_BLOCK_HASHES[1]).unwrap(),
                 parent_hash: BytesDigest::try_from(DEFAULT_PARENT_HASHES[1]).unwrap(),
                 block_number: DEFAULT_BLOCK_NUMBERS[1],
@@ -209,6 +216,7 @@ pub mod storage_proof {
                 to_account,
                 DEFAULT_INPUT_AMOUNTS[0],
                 DEFAULT_OUTPUT_AMOUNTS[0],
+                0u32, // No second output for tests
                 DEFAULT_VOLUME_FEE_BPS,
             )
             .unwrap()
@@ -223,6 +231,7 @@ pub mod storage_proof {
                 to_account,
                 DEFAULT_INPUT_AMOUNTS[1],
                 DEFAULT_OUTPUT_AMOUNTS[1],
+                0u32, // No second output for tests
                 DEFAULT_VOLUME_FEE_BPS,
             )
             .unwrap()
@@ -235,6 +244,7 @@ pub mod storage_proof {
                 &ProcessedStorageProof::test_inputs_0(),
                 default_root_hash(),
                 LeafInputs::test_inputs_0(),
+                true,
             )
         }
         fn test_inputs_1() -> Self {
@@ -245,6 +255,7 @@ pub mod storage_proof {
                     .try_into()
                     .unwrap(),
                 LeafInputs::test_inputs_1(),
+                true,
             )
         }
     }

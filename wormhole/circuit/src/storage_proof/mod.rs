@@ -3,7 +3,7 @@ use anyhow::bail;
 use plonky2::{
     field::types::Field,
     hash::hash_types::{HashOut, HashOutTarget},
-    iop::target::Target,
+    iop::target::{BoolTarget, Target},
     plonk::circuit_builder::CircuitBuilder,
 };
 
@@ -33,6 +33,8 @@ pub struct StorageProofTargets {
     pub proof_data: Vec<Vec<Target>>,
     pub indices: Vec<Target>,
     pub leaf_inputs: LeafTargets,
+    /// This target is connected to the dummy proof detection logic in connect_shared_targets.
+    pub is_not_dummy: BoolTarget,
 }
 
 impl StorageProofTargets {
@@ -56,6 +58,7 @@ impl StorageProofTargets {
             proof_data,
             indices,
             leaf_inputs,
+            is_not_dummy: builder.add_virtual_bool_target_safe(),
         }
     }
 }
@@ -67,6 +70,7 @@ pub struct StorageProof {
     pub indices: Vec<F>,
     pub root_hash: [u8; 32],
     pub leaf_inputs: LeafInputs,
+    pub is_not_dummy: bool,
 }
 
 impl StorageProof {
@@ -74,6 +78,7 @@ impl StorageProof {
         processed_proof: &ProcessedStorageProof,
         root_hash: [u8; 32],
         leaf_inputs: LeafInputs,
+        is_not_dummy: bool,
     ) -> Self {
         let proof: Vec<Vec<F>> = processed_proof
             .proof
@@ -96,6 +101,7 @@ impl StorageProof {
             indices,
             root_hash,
             leaf_inputs,
+            is_not_dummy,
         }
     }
 }
@@ -104,10 +110,15 @@ impl TryFrom<&CircuitInputs> for StorageProof {
     type Error = anyhow::Error;
 
     fn try_from(inputs: &CircuitInputs) -> Result<Self, Self::Error> {
+        // If the block hash is zero and output amounts are zero, we treat this as a dummy proof and set is_not_dummy to false.
+        let is_not_dummy = !(inputs.public.block_hash.as_ref() == [0u8; 32]
+            && inputs.public.output_amount_1 == 0
+            && inputs.public.output_amount_2 == 0);
         Ok(Self::new(
             &inputs.private.storage_proof,
             *inputs.private.state_root,
             LeafInputs::try_from(inputs)?,
+            is_not_dummy,
         ))
     }
 }
@@ -123,6 +134,7 @@ impl CircuitFragment for StorageProof {
             ref proof_data,
             ref indices,
             ref leaf_inputs,
+            is_not_dummy,
         }: &Self::Targets,
         builder: &mut CircuitBuilder<F, D>,
     ) {
@@ -135,10 +147,12 @@ impl CircuitFragment for StorageProof {
             builder.range_check(*target, 32);
         }
 
-        // Fee constraint: output_amount * 10000 <= input_amount * (10000 - volume_fee_bps)
+        // Fee constraint: (output_amount_1 + output_amount_2) * 10000 <= input_amount * (10000 - volume_fee_bps)
         // This ensures the user receives at most (input_amount - fee) where fee = input_amount * volume_fee_bps / 10000
+        // With 2 outputs, we support Bitcoin-style spend + change in a single proof.
         let ten_thousand = builder.constant(F::from_canonical_u32(10000));
-        let lhs = builder.mul(leaf_inputs.output_amount, ten_thousand); // output_amount * 10000
+        let total_output = builder.add(leaf_inputs.output_amount_1, leaf_inputs.output_amount_2);
+        let lhs = builder.mul(total_output, ten_thousand); // (output_amount_1 + output_amount_2) * 10000
         let fee_complement = builder.sub(ten_thousand, leaf_inputs.volume_fee_bps); // 10000 - volume_fee_bps
 
         // Constrain fee_complement to 14 bits, implying volume_fee_bps <= 10000 and fee_complement < 2^14.
@@ -147,10 +161,11 @@ impl CircuitFragment for StorageProof {
         let rhs = builder.mul(leaf_inputs.input_amount, fee_complement); // input_amount * (10000 - volume_fee_bps)
 
         // Assert lhs <= rhs by checking that rhs - lhs >= 0 (i.e., rhs - lhs fits in range)
-        // With output_amount and input_amount 32-bit, and both 10000 and fee_complement < 2^14, each side is < 2^(32+14) = 2^46,
-        // so their difference fits in 47 bits.
+        // With output_amount_1, output_amount_2, and input_amount 32-bit, total_output < 2^33.
+        // Both 10000 and fee_complement < 2^14, so each side is < 2^(33+14) = 2^47,
+        // so their difference fits in 48 bits.
         let diff = builder.sub(rhs, lhs);
-        builder.range_check(diff, 47);
+        builder.range_check(diff, 48);
 
         // Calculate the leaf inputs hash.
         let leaf_inputs_hash =
@@ -158,6 +173,8 @@ impl CircuitFragment for StorageProof {
 
         // constant 2^32 for (lo + hi * 2^32) reconstruction
         let two_pow_32 = builder.constant(F::from_canonical_u64(1u64 << 32));
+
+        let zero = builder.zero();
 
         // The first node should be the root node so we initialize `prev_hash` to the provided `root_hash`.
         let mut prev_hash = root_hash;
@@ -173,11 +190,12 @@ impl CircuitFragment for StorageProof {
             let is_leaf_node = builder.is_equal(i_t, proof_len);
 
             // Compute the hash of this node and compare it against the previous hash.
+            // Only enforce validation for non-dummy proofs (output_amount > 0).
+            let should_validate_node = builder.mul(is_proof_node.target, is_not_dummy.target);
             let computed_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(node.clone());
             for y in 0..4 {
                 let diff = builder.sub(computed_hash.elements[y], prev_hash.elements[y]);
-                let result = builder.mul(diff, is_proof_node.target);
-                let zero = builder.zero();
+                let result = builder.mul(diff, should_validate_node);
                 builder.connect(result, zero);
             }
 
@@ -216,10 +234,11 @@ impl CircuitFragment for StorageProof {
 
             // For the leaf node, the value is the hash of the leaf inputs. We don't check the full hash
             // here, only the last 3 felts b/c zk trie's length prefix overwrites the 8 bytes of the hash.
+            // Only enforce for non-dummy proofs.
+            let should_validate_leaf = builder.mul(is_leaf_node.target, is_not_dummy.target);
             for y in 1..4 {
                 let diff = builder.sub(leaf_inputs_hash.elements[y], prev_hash.elements[y]);
-                let result = builder.mul(diff, is_leaf_node.target);
-                let zero = builder.zero();
+                let result = builder.mul(diff, should_validate_leaf);
                 builder.connect(result, zero);
             }
 
@@ -238,6 +257,8 @@ impl CircuitFragment for StorageProof {
         const EMPTY_PROOF_NODE: [F; PROOF_NODE_MAX_SIZE_F] = [F::ZERO; PROOF_NODE_MAX_SIZE_F];
 
         pw.set_hash_target(targets.root_hash, bytes_32_to_hashout(self.root_hash))?;
+        // Set is_not_dummy for dummy proof detection logic
+        pw.set_bool_target(targets.is_not_dummy, self.is_not_dummy)?;
         // bail if proof is too long
         if self.proof.len() > MAX_PROOF_LEN {
             bail!(
@@ -288,8 +309,12 @@ impl CircuitFragment for StorageProof {
             self.leaf_inputs.input_amount,
         )?;
         pw.set_target(
-            targets.leaf_inputs.output_amount,
-            self.leaf_inputs.output_amount,
+            targets.leaf_inputs.output_amount_1,
+            self.leaf_inputs.output_amount_1,
+        )?;
+        pw.set_target(
+            targets.leaf_inputs.output_amount_2,
+            self.leaf_inputs.output_amount_2,
         )?;
         pw.set_target(
             targets.leaf_inputs.volume_fee_bps,

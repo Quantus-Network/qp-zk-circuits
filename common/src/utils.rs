@@ -1,15 +1,15 @@
 use crate::circuit::F;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use anyhow::{anyhow, Error};
-use core::fmt::Display;
-use core::ops::Deref;
-use plonky2::field::types::{Field, Field64};
+use anyhow::anyhow;
+use plonky2::field::types::Field;
 use plonky2::hash::hash_types::HashOut;
+
+// Re-export BytesDigest and related types from wormhole_inputs (single source of truth)
+pub use qp_wormhole_inputs::{BytesDigest, DigestError, DIGEST_BYTES_LEN};
 
 pub const INJECTIVE_BYTES_LIMB: usize = 4;
 pub const DIGEST_BYTES_PER_ELEMENT: usize = 8;
-pub const DIGEST_BYTES_LEN: usize = DIGEST_NUM_FIELD_ELEMENTS * DIGEST_BYTES_PER_ELEMENT;
 pub const FELTS_PER_U128: usize = 4;
 pub const FELTS_PER_U64: usize = 2;
 pub const DIGEST_NUM_FIELD_ELEMENTS: usize = 4;
@@ -20,105 +20,9 @@ pub const BIT_32_LIMB_MASK: u64 = 0xFFFF_FFFF;
 pub type Digest = [F; DIGEST_NUM_FIELD_ELEMENTS];
 pub type PrivateKey = [F; 4];
 
-#[derive(Hash, Default, Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
-pub struct BytesDigest([u8; DIGEST_BYTES_LEN]);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DigestError {
-    ChunkOutOfFieldRange { chunk_index: usize, value: u64 },
-    InvalidLength { expected: usize, got: usize },
-    Other,
-}
-
-impl Display for DigestError {
-    fn fmt(&self, f: &mut alloc::fmt::Formatter<'_>) -> alloc::fmt::Result {
-        match self {
-            DigestError::ChunkOutOfFieldRange { chunk_index, value } => {
-                write!(
-                    f,
-                    "Chunk out of field range at index {}: {}",
-                    chunk_index, value
-                )
-            }
-            DigestError::InvalidLength { expected, got } => {
-                write!(f, "Invalid length: expected {}, got {}", expected, got)
-            }
-            DigestError::Other => write!(f, "Other error"),
-        }
-    }
-}
-
-#[cfg(feature = "std")]
-impl std::error::Error for DigestError {}
-
-impl From<Error> for DigestError {
-    fn from(_: Error) -> Self {
-        DigestError::Other
-    }
-}
-
-impl TryFrom<&[u8]> for BytesDigest {
-    type Error = DigestError;
-
-    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        let bytes: [u8; DIGEST_BYTES_LEN] =
-            value.try_into().map_err(|_| DigestError::InvalidLength {
-                expected: DIGEST_BYTES_LEN,
-                got: value.len(),
-            })?;
-        BytesDigest::try_from(bytes)
-    }
-}
-
-impl TryFrom<[u8; DIGEST_BYTES_LEN]> for BytesDigest {
-    type Error = DigestError;
-    fn try_from(value: [u8; DIGEST_BYTES_LEN]) -> Result<Self, Self::Error> {
-        for (i, chunk) in value.chunks(8).enumerate() {
-            let v =
-                u64::from_le_bytes(chunk.try_into().map_err(|_| DigestError::InvalidLength {
-                    expected: 8,
-                    got: chunk.len(),
-                })?);
-            if v >= F::ORDER {
-                return Err(DigestError::ChunkOutOfFieldRange {
-                    chunk_index: i,
-                    value: v,
-                });
-            }
-        }
-        Ok(BytesDigest(value))
-    }
-}
-
-impl From<Digest> for BytesDigest {
-    fn from(value: Digest) -> Self {
-        let bytes = digest_felts_to_bytes(value);
-        Self(*bytes)
-    }
-}
-
-impl TryFrom<&[F]> for BytesDigest {
-    type Error = anyhow::Error;
-
-    fn try_from(value: &[F]) -> Result<Self, Self::Error> {
-        let digest: Digest = value.try_into().map_err(|_| {
-            anyhow!(
-                "failed to deserialize bytes digest from field elements. Expected length 4, got {}",
-                value.len()
-            )
-        })?;
-        let bytes = digest_felts_to_bytes(digest);
-        Ok(Self(*bytes))
-    }
-}
-
-impl Deref for BytesDigest {
-    type Target = [u8; DIGEST_BYTES_LEN];
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
+// ============================================================================
+// Conversion functions
+// ============================================================================
 
 pub fn u128_to_felts(num: u128) -> [F; FELTS_PER_U128] {
     qp_poseidon_core::serialization::u128_to_felts::<F>(num)
@@ -154,14 +58,28 @@ pub fn injective_felts_to_bytes(input: &[F]) -> Result<Vec<u8>, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Convert BytesDigest to field elements
 pub fn digest_bytes_to_felts(input: BytesDigest) -> Digest {
-    qp_poseidon_core::serialization::unsafe_digest_bytes_to_felts::<F>(&input.0)
+    qp_poseidon_core::serialization::unsafe_digest_bytes_to_felts::<F>(&input)
 }
 
+/// Try to convert a slice of field elements to BytesDigest
+pub fn try_felts_slice_to_bytes_digest(value: &[F]) -> anyhow::Result<BytesDigest> {
+    let digest: Digest = value.try_into().map_err(|_| {
+        anyhow!(
+            "failed to deserialize bytes digest from field elements. Expected length 4, got {}",
+            value.len()
+        )
+    })?;
+    Ok(digest_felts_to_bytes(digest))
+}
+
+/// Convert field elements to BytesDigest
 pub fn digest_felts_to_bytes(input: Digest) -> BytesDigest {
-    qp_poseidon_core::serialization::digest_felts_to_bytes::<F>(&input)
-        .try_into()
-        .unwrap()
+    let bytes: [u8; DIGEST_BYTES_LEN] =
+        qp_poseidon_core::serialization::digest_felts_to_bytes::<F>(&input);
+    // Field elements are always in valid range, so this won't fail
+    BytesDigest::try_from(bytes).expect("field elements are always in valid range")
 }
 
 pub fn felts_to_hashout(felts: &[F; 4]) -> HashOut<F> {

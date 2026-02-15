@@ -2,11 +2,12 @@ use std::fs;
 
 use hex;
 use plonky2::plonk::circuit_data::CircuitConfig;
+use qp_wormhole_inputs::PublicCircuitInputs;
 use test_helpers::{
     block_header::{DEFAULT_BLOCK_HASHES, DEFAULT_BLOCK_NUMBERS, DEFAULT_PARENT_HASHES},
     TestInputs, DEFAULT_OUTPUT_AMOUNTS, DEFAULT_VOLUME_FEE_BPS,
 };
-use wormhole_circuit::inputs::{CircuitInputs, PublicCircuitInputs};
+use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::utils::BytesDigest;
 
@@ -26,19 +27,21 @@ fn proof_can_be_deserialized() {
     let inputs = CircuitInputs::test_inputs_0();
     let proof = prover.commit(&inputs).unwrap().prove().unwrap();
 
-    let public_inputs = PublicCircuitInputs::try_from(&proof).unwrap();
+    let public_inputs = PublicCircuitInputs::try_from_proof(&proof).unwrap();
 
     // Build the expected values
     let expected = PublicCircuitInputs {
         asset_id: 0u32,
-        output_amount: DEFAULT_OUTPUT_AMOUNTS[0],
+        output_amount_1: DEFAULT_OUTPUT_AMOUNTS[0],
+        output_amount_2: 0u32, // No second output in tests
         volume_fee_bps: DEFAULT_VOLUME_FEE_BPS,
         nullifier: BytesDigest::try_from([
             102, 213, 23, 119, 137, 1, 172, 231, 97, 86, 27, 28, 210, 26, 24, 162, 195, 135, 231,
             170, 205, 111, 30, 63, 225, 212, 217, 138, 233, 170, 170, 122,
         ])
         .unwrap(),
-        exit_account: BytesDigest::try_from([4u8; 32]).unwrap(),
+        exit_account_1: BytesDigest::try_from([4u8; 32]).unwrap(),
+        exit_account_2: BytesDigest::default(), // No second exit account
         block_hash: BytesDigest::try_from(DEFAULT_BLOCK_HASHES[0]).unwrap(),
         parent_hash: BytesDigest::try_from(DEFAULT_PARENT_HASHES[0]).unwrap(),
         block_number: DEFAULT_BLOCK_NUMBERS[0],

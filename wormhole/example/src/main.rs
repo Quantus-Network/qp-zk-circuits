@@ -10,6 +10,7 @@ use clap::Parser;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_poseidon::PoseidonHasher;
+use qp_wormhole_inputs::{AggregatedPublicCircuitInputs, PublicCircuitInputs};
 use quantus_cli::chain::quantus_subxt::api as quantus_node;
 use quantus_cli::chain::quantus_subxt::api::runtime_types::pallet_wormhole::pallet::Call as WormholeCall;
 use quantus_cli::chain::quantus_subxt::api::runtime_types::quantus_runtime::RuntimeCall;
@@ -31,11 +32,10 @@ use subxt::OnlineClient;
 use wormhole_aggregator::aggregator::WormholeProofAggregator;
 use wormhole_aggregator::circuits::tree::TreeAggregationConfig;
 use wormhole_circuit::inputs::{
-    AggregatedPublicCircuitInputs, CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs,
+    CircuitInputs, ParseAggregatedPublicInputs, ParsePublicInputs, PrivateCircuitInputs,
 };
 use wormhole_circuit::nullifier::Nullifier;
 use wormhole_prover::WormholeProver;
-use wormhole_verifier::WormholeVerifier;
 use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::storage_proof::prepare_proof_for_circuit;
 use zk_circuits_common::utils::{digest_felts_to_bytes, BytesDigest, Digest};
@@ -106,9 +106,9 @@ impl From<CircuitInputs> for DebugInputs {
             leaf_hash_hex: hex::encode(hash),
             transfer_count: inputs.private.transfer_count,
             funding_account_hex: hex::encode(inputs.private.funding_account.as_ref()),
-            dest_account_hex: hex::encode(inputs.public.exit_account.as_ref()),
+            dest_account_hex: hex::encode(inputs.public.exit_account_1.as_ref()),
             input_amount: inputs.private.input_amount,
-            output_amount: inputs.public.output_amount,
+            output_amount: inputs.public.output_amount_1,
             volume_fee_bps: inputs.public.volume_fee_bps,
             block_hash_hex: hex::encode(inputs.public.block_hash.as_ref()),
             extrinsics_root_hex: hex::encode(inputs.private.extrinsics_root.as_ref()),
@@ -199,7 +199,7 @@ impl TryFrom<DebugInputs> for CircuitInputs {
                 transfer_count: inputs.transfer_count,
                 funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
                 storage_proof: processed_storage_proof,
-                unspendable_account: Digest::from(unspendable_account).into(),
+                unspendable_account: digest_felts_to_bytes(Digest::from(unspendable_account)),
                 state_root,
                 extrinsics_root,
                 digest,
@@ -207,12 +207,14 @@ impl TryFrom<DebugInputs> for CircuitInputs {
             },
             public: PublicCircuitInputs {
                 asset_id: 0u32,
-                output_amount: inputs.output_amount,
+                output_amount_1: inputs.output_amount,
+                output_amount_2: 0u32, // No second output in example
                 volume_fee_bps: inputs.volume_fee_bps,
-                nullifier: Nullifier::from_preimage(secret, inputs.transfer_count)
-                    .hash
-                    .into(),
-                exit_account: BytesDigest::try_from(dest_account_id.as_ref() as &[u8])?,
+                nullifier: digest_felts_to_bytes(
+                    Nullifier::from_preimage(secret, inputs.transfer_count).hash,
+                ),
+                exit_account_1: BytesDigest::try_from(dest_account_id.as_ref() as &[u8])?,
+                exit_account_2: BytesDigest::default(), // No second exit account
                 block_hash: BytesDigest::try_from(block_hash.as_ref())?,
                 parent_hash,
                 block_number: inputs.block_number,
@@ -230,7 +232,7 @@ fn generate_zk_proof(inputs: CircuitInputs) -> anyhow::Result<ProofWithPublicInp
     let prover_next = prover.commit(&inputs)?;
     let proof: ProofWithPublicInputs<F, C, D> = prover_next.prove().expect("proof failed; qed");
 
-    let public_inputs = PublicCircuitInputs::try_from(&proof)?;
+    let public_inputs = PublicCircuitInputs::try_from_proof(&proof)?;
     println!(
         "\nSuccessfully generated and verified proof!\nPublic Inputs: {:?}\n",
         public_inputs
@@ -270,14 +272,12 @@ fn aggregate_proofs(
     println!("\n=== Starting Proof Aggregation ===");
     println!("Loading {} proof files...", proof_files.len());
 
-    // Build the wormhole verifier and prover circuit data
+    // Build the wormhole prover circuit data
     let config = CircuitConfig::standard_recursion_zk_config();
-    let verifier = WormholeVerifier::new(config.clone(), None);
-    let prover = WormholeProver::new(config);
+    let prover = WormholeProver::new(config.clone());
     let common_data = &prover.circuit_data.common;
 
-    let mut aggregator =
-        WormholeProofAggregator::new(verifier.circuit_data).with_config(aggregation_config);
+    let mut aggregator = WormholeProofAggregator::from_circuit_config(config, aggregation_config);
 
     println!(
         "Aggregator configured for {} leaf proofs (branching factor: {}, depth: {})",
@@ -318,12 +318,10 @@ fn aggregate_proofs_direct(
     println!("\n=== Starting Proof Aggregation ===");
     println!("Aggregating {} proofs...", proofs.len());
 
-    // Build the wormhole verifier circuit data
+    // Build the wormhole aggregator from circuit config
     let config = CircuitConfig::standard_recursion_zk_config();
-    let verifier = WormholeVerifier::new(config, None);
 
-    let mut aggregator =
-        WormholeProofAggregator::new(verifier.circuit_data).with_config(aggregation_config);
+    let mut aggregator = WormholeProofAggregator::from_circuit_config(config, aggregation_config);
 
     println!(
         "Aggregator configured for {} leaf proofs (branching factor: {}, depth: {})",
@@ -357,7 +355,7 @@ fn aggregate_and_save(
     let aggregated_proof = aggregator.aggregate()?;
 
     // Parse and display aggregated public inputs
-    let aggregated_public_inputs = AggregatedPublicCircuitInputs::try_from_slice(
+    let aggregated_public_inputs = AggregatedPublicCircuitInputs::try_from_felts(
         aggregated_proof.proof.public_inputs.as_slice(),
     )?;
     println!("\n=== Aggregated Public Inputs ===");
@@ -568,7 +566,7 @@ async fn perform_batched_transfers(
                 input_amount,
                 funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
                 storage_proof: processed_storage_proof,
-                unspendable_account: Digest::from(*unspendable_account).into(),
+                unspendable_account: digest_felts_to_bytes(Digest::from(*unspendable_account)),
                 state_root,
                 extrinsics_root,
                 digest,
@@ -576,11 +574,13 @@ async fn perform_batched_transfers(
             public: PublicCircuitInputs {
                 asset_id: 0u32,
                 volume_fee_bps: VOLUME_FEE_BPS,
-                output_amount,
-                nullifier: Nullifier::from_preimage(*secret, event.transfer_count)
-                    .hash
-                    .into(),
-                exit_account: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
+                output_amount_1: output_amount,
+                output_amount_2: 0u32, // No second output in example
+                nullifier: digest_felts_to_bytes(
+                    Nullifier::from_preimage(*secret, event.transfer_count).hash,
+                ),
+                exit_account_1: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
+                exit_account_2: BytesDigest::default(), // No second exit account
                 block_hash: BytesDigest::try_from(block_hash.as_ref())?,
                 parent_hash,
                 block_number,
@@ -719,7 +719,7 @@ async fn perform_transfer_and_get_inputs(
             transfer_count: event.transfer_count,
             funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
             storage_proof: processed_storage_proof,
-            unspendable_account: Digest::from(unspendable_account).into(),
+            unspendable_account: digest_felts_to_bytes(Digest::from(unspendable_account)),
             state_root,
             extrinsics_root,
             digest,
@@ -727,12 +727,14 @@ async fn perform_transfer_and_get_inputs(
         },
         public: PublicCircuitInputs {
             asset_id: 0u32,
-            output_amount,
+            output_amount_1: output_amount,
+            output_amount_2: 0u32, // No second output in example
             volume_fee_bps: VOLUME_FEE_BPS,
-            nullifier: Nullifier::from_preimage(secret, event.transfer_count)
-                .hash
-                .into(),
-            exit_account: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
+            nullifier: digest_felts_to_bytes(
+                Nullifier::from_preimage(secret, event.transfer_count).hash,
+            ),
+            exit_account_1: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
+            exit_account_2: BytesDigest::default(), // No second exit account
             block_hash: BytesDigest::try_from(block_hash.as_ref())?,
             parent_hash,
             block_number,
@@ -821,13 +823,13 @@ struct Cli {
     #[arg(long)]
     generate_and_aggregate: bool,
 
-    /// Tree depth for aggregation (default: 3, use 1 for minimal 2-proof aggregation)
-    #[arg(long, default_value = "3")]
-    aggregation_depth: u32,
+    /// Tree depth for aggregation (required for aggregation modes)
+    #[arg(long)]
+    aggregation_depth: Option<u32>,
 
-    /// Branching factor for aggregation tree (default: 2)
-    #[arg(long, default_value = "2")]
-    aggregation_branching_factor: usize,
+    /// Branching factor for aggregation tree (required for aggregation modes)
+    #[arg(long)]
+    aggregation_branching_factor: Option<usize>,
 
     /// Number of proofs to generate (for --generate-and-aggregate mode)
     /// Defaults to num_leaf_proofs from aggregation config (branching_factor^depth)
@@ -858,15 +860,23 @@ fn parse_funding_amount(s: &str) -> Result<u128, String> {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Build aggregation config from CLI args
-    let aggregation_config =
-        TreeAggregationConfig::new(cli.aggregation_branching_factor, cli.aggregation_depth);
+    // Helper to get aggregation config (required for aggregation modes)
+    let get_aggregation_config = || -> anyhow::Result<TreeAggregationConfig> {
+        let branching_factor = cli
+            .aggregation_branching_factor
+            .context("--aggregation-branching-factor is required for aggregation modes")?;
+        let depth = cli
+            .aggregation_depth
+            .context("--aggregation-depth is required for aggregation modes")?;
+        Ok(TreeAggregationConfig::new(branching_factor, depth))
+    };
 
     // Aggregation-only mode (from files)
     if cli.aggregate && !cli.generate_and_aggregate {
         let proof_files = cli
             .proof_files
             .context("Missing proof files for aggregation")?;
+        let aggregation_config = get_aggregation_config()?;
         return aggregate_proofs(
             proof_files,
             &cli.aggregated_proof_output,
@@ -915,18 +925,26 @@ async fn main() -> anyhow::Result<()> {
         dev_account, &funding_account
     );
 
+    // Get aggregation config if needed (for generate_and_aggregate mode)
+    let aggregation_config = if cli.generate_and_aggregate {
+        Some(get_aggregation_config()?)
+    } else {
+        None
+    };
+
     // Determine number of proofs to generate
     let num_proofs = if cli.generate_and_aggregate {
-        cli.num_proofs.unwrap_or(aggregation_config.num_leaf_proofs)
+        cli.num_proofs
+            .unwrap_or(aggregation_config.as_ref().unwrap().num_leaf_proofs)
     } else {
         1 // Single proof for --live mode
     };
 
-    if cli.generate_and_aggregate {
+    if let Some(ref config) = aggregation_config {
         println!("Running in generate-and-aggregate mode.");
         println!(
             "Will generate {} proofs (aggregation config: branching_factor={}, depth={})",
-            num_proofs, aggregation_config.tree_branching_factor, aggregation_config.tree_depth
+            num_proofs, config.tree_branching_factor, config.tree_depth
         );
     } else {
         println!("Running in live mode (single proof).");
@@ -980,15 +998,13 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // If generate-and-aggregate mode, aggregate all proofs
-    if cli.generate_and_aggregate {
+    if let Some(config) = aggregation_config {
         println!("\n=== Aggregating {} Proofs ===", proofs.len());
         println!(
             "Using aggregation config: branching_factor={}, depth={}, num_leaf_proofs={}",
-            aggregation_config.tree_branching_factor,
-            aggregation_config.tree_depth,
-            aggregation_config.num_leaf_proofs
+            config.tree_branching_factor, config.tree_depth, config.num_leaf_proofs
         );
-        aggregate_proofs_direct(proofs, &cli.aggregated_proof_output, aggregation_config)?;
+        aggregate_proofs_direct(proofs, &cli.aggregated_proof_output, config)?;
     }
 
     Ok(())
