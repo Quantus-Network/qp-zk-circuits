@@ -173,6 +173,14 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "Publishing qp-wormhole-inputs"
+          (cd wormhole/inputs && cargo publish --token "$CARGO_REGISTRY_TOKEN" --allow-dirty)
+
+          echo "Waiting for qp-wormhole-inputs to become available on crates.io"
+          sleep 30
+
+          echo "Preparing qp-zk-circuits-common for publish (strip local paths)"
+          sed -i -E 's/,\s*path\s*=\s*"[^"]+"//g' common/Cargo.toml
           echo "Publishing qp-zk-circuits-common"
           (cd common && cargo publish --token "$CARGO_REGISTRY_TOKEN" --allow-dirty)
 

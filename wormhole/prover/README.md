@@ -1,4 +1,4 @@
-# Wormhole Prover
+# qp-wormhole-prover
 
 Prover logic for the Wormhole circuit.
 
@@ -46,3 +46,7 @@ fn main() -> anyhow::Result<()> {
   Ok(())
 }
 ```
+
+## License
+
+MIT

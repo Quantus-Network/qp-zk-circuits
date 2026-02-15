@@ -1,4 +1,4 @@
-# Wormhole Verifier
+# qp-wormhole-verifier
 
 Verifier logic for the Wormhole circuit.
 
@@ -53,3 +53,7 @@ fn main() -> anyhow::Result<()> {
   Ok(())
 }
 ```
+
+## License
+
+MIT

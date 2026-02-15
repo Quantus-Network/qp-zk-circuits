@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 name = "qp-wormhole-circuit-builder"
 publish = true
+readme = "README.md"
 version.workspace = true
 
 [dependencies]
