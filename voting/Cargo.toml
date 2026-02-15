@@ -10,7 +10,7 @@ version.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 qp-plonky2 = { workspace = true }
-zk-circuits-common = { package = "qp-zk-circuits-common", version = "1.0.2", path = "../common" }
+zk-circuits-common = { package = "qp-zk-circuits-common", version = "1.0.3", path = "../common" }
 
 [features]
 default = ["std"]
