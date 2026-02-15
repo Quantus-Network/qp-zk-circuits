@@ -11,7 +11,7 @@ version.workspace = true
 anyhow = { workspace = true }
 hex = { workspace = true, features = ["alloc"] }
 qp-plonky2 = { workspace = true }
-qp-wormhole-inputs = { path = "../inputs", default-features = false }
+qp-wormhole-inputs = { version = "1.0.3", path = "../inputs", default-features = false }
 zk-circuits-common = { package = "qp-zk-circuits-common", version = "1.0.3", path = "../../common", default-features = false }
 
 [features]
