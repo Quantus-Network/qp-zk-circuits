@@ -66,8 +66,7 @@ impl WormholeProofAggregator {
     /// # Arguments
     /// * `bins_dir` - Directory containing the circuit files
     /// * `num_real_proofs` - Number of real proofs that will be provided (used to generate only needed dummy proofs)
-    /// * `progress_callback` - Optional callback called for each dummy proof generated: (current, total)
-    pub fn from_prebuilt_dir<F: FnMut(usize, usize)>(
+    pub fn from_prebuilt_dir(
         bins_dir: &std::path::Path,
         num_real_proofs: usize,
     ) -> anyhow::Result<Self> {
