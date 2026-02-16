@@ -2,7 +2,7 @@
 
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_inputs::PublicCircuitInputs;
-use wormhole_aggregator::{aggregator::WormholeProofAggregator, circuits::tree::AggregationConfig};
+use wormhole_aggregator::{aggregator::WormholeProofAggregator, AggregationConfig};
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::circuit::{C, D, F};

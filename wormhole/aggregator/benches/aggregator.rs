@@ -2,8 +2,8 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use plonky2::plonk::circuit_data::{CircuitConfig, CommonCircuitData};
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_aggregator::aggregator::WormholeProofAggregator;
-use qp_wormhole_aggregator::circuits::tree::AggregationConfig;
 use qp_wormhole_aggregator::dummy_proof::load_dummy_proof;
+use qp_wormhole_aggregator::AggregationConfig;
 use zk_circuits_common::circuit::{C, D, F};
 
 fn load_dummy_proofs(

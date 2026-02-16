@@ -2,20 +2,18 @@ use plonky2::field::types::Field;
 use plonky2::iop::target::BoolTarget;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use plonky2::{
-    field::extension::Extendable,
-    hash::hash_types::RichField,
     iop::{
         target::Target,
         witness::{PartialWitness, WitnessWrite},
     },
     plonk::{
         circuit_builder::CircuitBuilder,
-        circuit_data::{CircuitData, CommonCircuitData, VerifierOnlyCircuitData},
-        config::GenericConfig,
+        circuit_data::{CommonCircuitData, VerifierOnlyCircuitData},
     },
 };
 use zk_circuits_common::utils::digest_bytes_to_felts;
 use zk_circuits_common::{
+    aggregation::{aggregate_with_wrapper, AggregatedProof, AggregationWrapper},
     circuit::{C, D, F},
     gadgets::{bytes_digest_eq, limb1_at_offset, limbs4_at_offset},
 };
@@ -37,93 +35,57 @@ const EXIT_2_START: usize = 12; // 4 felts (change destination)
 const BLOCK_HASH_START: usize = 16; // 4 felts
 const BLOCK_NUMBER_START: usize = 20; // 1 felt
 
-/// A proof containing both the proof data and the circuit data needed to verify it.
-#[derive(Debug)]
-pub struct AggregatedProof<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
-{
-    pub proof: ProofWithPublicInputs<F, C, D>,
-    pub circuit_data: CircuitData<F, C, D>,
+/// Wormhole-specific aggregation wrapper.
+///
+/// Builds a wrapper circuit around the merged proof that:
+/// - Enforces all real proofs reference the same block (block_hash != 0)
+/// - Enforces asset_id and volume_fee_bps consistency
+/// - Deduplicates exit accounts and sums amounts (2 outputs per proof, Bitcoin-style)
+/// - Replaces dummy nullifiers with random values to prevent collisions on-chain
+///
+/// Dummy proofs are detected by `block_hash == [0,0,0,0]`.
+pub struct WormholeAggregationWrapper {
+    dummy_nullifiers: Vec<[F; 4]>,
 }
 
-/// Configuration for flat proof aggregation.
-#[derive(Debug, Clone, Copy)]
-pub struct AggregationConfig {
-    /// Number of leaf proofs aggregated into a single proof.
-    pub num_leaf_proofs: usize,
-}
-
-impl AggregationConfig {
-    pub fn new(num_leaf_proofs: usize) -> Self {
-        Self { num_leaf_proofs }
+impl WormholeAggregationWrapper {
+    /// Create a new wrapper with random dummy nullifiers for `n_leaf` proofs.
+    pub fn new(n_leaf: usize) -> Self {
+        let dummy_nullifiers = (0..n_leaf)
+            .map(|_| digest_bytes_to_felts(generate_random_nullifier()))
+            .collect();
+        Self { dummy_nullifiers }
     }
 }
 
-/// Aggregate N leaf proofs into a single aggregated proof.
+impl AggregationWrapper for WormholeAggregationWrapper {
+    fn is_dummy(&self, proof: &ProofWithPublicInputs<F, C, D>) -> bool {
+        // Wormhole dummy proofs have block_hash == [0,0,0,0]
+        proof.public_inputs[BLOCK_HASH_START..BLOCK_HASH_START + 4]
+            .iter()
+            .all(|f| f.is_zero())
+    }
+
+    fn build_wrapper(
+        &self,
+        merged: AggregatedProof,
+        n_inner: usize,
+    ) -> anyhow::Result<AggregatedProof> {
+        aggregate_dedupe_public_inputs(merged, n_inner, &self.dummy_nullifiers)
+    }
+}
+
+/// Aggregate N wormhole leaf proofs into a single aggregated proof.
 ///
-/// All leaf proofs are merged in a single level, then wrapped in a deduplicated
-/// output circuit with fixed structure for on-chain verification.
+/// Uses [`WormholeAggregationWrapper`] to apply wormhole-specific constraints
+/// on top of the generic [`aggregate_with_wrapper`] pipeline.
 pub fn aggregate_proofs(
     leaf_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
     common_data: &CommonCircuitData<F, D>,
     verifier_data: &VerifierOnlyCircuitData<C, D>,
-) -> anyhow::Result<AggregatedProof<F, C, D>> {
-    let n_leaf = leaf_proofs.len();
-
-    // Single-level aggregation: merge all leaf proofs into one proof
-    let merged = aggregate_chunk(&leaf_proofs, common_data, verifier_data)?;
-
-    let dummy_nullifiers: Vec<[F; 4]> = (0..n_leaf)
-        .map(|_| digest_bytes_to_felts(generate_random_nullifier()))
-        .collect();
-
-    // Build the final wrapper circuit with fixed structure
-    let root_proof = aggregate_dedupe_public_inputs(vec![merged], n_leaf, &dummy_nullifiers)?;
-
-    Ok(root_proof)
-}
-
-/// Circuit gadget that takes in a chunk of proofs, verifies each one, and aggregates their public inputs.
-///
-/// All proofs must be valid proofs from the same circuit (same CommonCircuitData).
-/// For padding with dummy proofs, use proofs generated from the same WormholeProver
-/// with block_hash = 0 as a sentinel.
-fn aggregate_chunk(
-    chunk: &[ProofWithPublicInputs<F, C, D>],
-    common_data: &CommonCircuitData<F, D>,
-    verifier_data: &VerifierOnlyCircuitData<C, D>,
-) -> anyhow::Result<AggregatedProof<F, C, D>> {
-    let mut builder = CircuitBuilder::new(common_data.config.clone());
-    let verifier_data_t =
-        builder.add_virtual_verifier_data(common_data.fri_params.config.cap_height);
-
-    let mut proof_targets = Vec::with_capacity(chunk.len());
-    for _ in 0..chunk.len() {
-        // Verify the proof
-        let proof_t = builder.add_virtual_proof_with_pis(common_data);
-        builder.verify_proof::<C>(&proof_t, &verifier_data_t, common_data);
-
-        // Aggregate public inputs of proof
-        builder.register_public_inputs(&proof_t.public_inputs);
-
-        proof_targets.push(proof_t);
-    }
-
-    let circuit_data = builder.build();
-
-    // Fill targets.
-    let mut pw = PartialWitness::new();
-    pw.set_verifier_data_target(&verifier_data_t, verifier_data)?;
-    for (target, proof) in proof_targets.iter().zip(chunk) {
-        pw.set_proof_with_pis_target(target, proof)?;
-    }
-
-    let proof = circuit_data.prove(pw)?;
-
-    let aggregated_proof = AggregatedProof {
-        proof,
-        circuit_data,
-    };
-    Ok(aggregated_proof)
+) -> anyhow::Result<AggregatedProof> {
+    let wrapper = WormholeAggregationWrapper::new(leaf_proofs.len());
+    aggregate_with_wrapper(leaf_proofs, common_data, verifier_data, &wrapper)
 }
 
 /// Build a wrapper circuit around the root aggregated proof with FIXED STRUCTURE.
@@ -155,19 +117,14 @@ fn aggregate_chunk(
 /// The chain can deduplicate by exit account after verification. Slots with exit_account=[0;32]
 /// and amount=0 represent unused second outputs.
 fn aggregate_dedupe_public_inputs(
-    proofs: Vec<AggregatedProof<F, C, D>>,
+    root: AggregatedProof,
     n_leaf: usize,
     dummy_nullifiers: &[[F; 4]],
-) -> anyhow::Result<AggregatedProof<F, C, D>> {
+) -> anyhow::Result<AggregatedProof> {
     anyhow::ensure!(
         dummy_nullifiers.len() == n_leaf,
         "dummy_nullifiers must have length n_leaf"
     );
-    anyhow::ensure!(
-        proofs.len() == 1,
-        "aggregate_dedupe_public_inputs expects a single root proof"
-    );
-    let root = &proofs[0];
 
     let root_pi_len = root.proof.public_inputs.len();
     anyhow::ensure!(
@@ -496,7 +453,7 @@ mod tests {
         (data, pis)
     }
 
-    fn prove_dummy_wormhole(pis: [F; LEAF_PI_LEN]) -> AggregatedProof<F, C, D> {
+    fn prove_dummy_wormhole(pis: [F; LEAF_PI_LEN]) -> AggregatedProof {
         let (circuit_data, targets) = generate_dummy_wormhole_circuit();
         let mut pw = PartialWitness::new();
         for (t, v) in targets.into_iter().zip(pis.into_iter()) {

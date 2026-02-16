@@ -11,6 +11,7 @@ version.workspace = true
 anyhow = { workspace = true, default-features = false }
 hex = { workspace = true }
 qp-plonky2 = { workspace = true, default-features = false }
+rand = "0.8"
 qp-poseidon-core = { workspace = true, default-features = false, features = [
 	"p2",
 	"p3",

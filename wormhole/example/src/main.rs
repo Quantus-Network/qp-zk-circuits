@@ -30,7 +30,7 @@ use subxt::ext::jsonrpsee::rpc_params;
 use subxt::utils::{to_hex, AccountId32 as SubxtAccountId};
 use subxt::OnlineClient;
 use wormhole_aggregator::aggregator::WormholeProofAggregator;
-use wormhole_aggregator::circuits::tree::AggregationConfig;
+use wormhole_aggregator::AggregationConfig;
 use wormhole_circuit::inputs::{
     CircuitInputs, ParseAggregatedPublicInputs, ParsePublicInputs, PrivateCircuitInputs,
 };

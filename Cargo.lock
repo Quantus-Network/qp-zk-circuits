@@ -4318,6 +4318,7 @@ dependencies = [
  "qp-plonky2",
  "qp-poseidon-core",
  "qp-wormhole-inputs",
+ "rand 0.8.5",
  "serde",
 ]
 

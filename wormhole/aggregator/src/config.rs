@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::write;
 use std::path::Path;
 
-use crate::circuits::tree::AggregationConfig;
+use zk_circuits_common::aggregation::AggregationConfig;
 
 /// SHA256 hashes of the circuit binary files.
 /// Used to detect mismatches between different copies of the binaries.
