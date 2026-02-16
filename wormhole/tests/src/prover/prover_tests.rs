@@ -4,7 +4,7 @@ use hex;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use qp_wormhole_inputs::PublicCircuitInputs;
 use test_helpers::{
-    block_header::{DEFAULT_BLOCK_HASHES, DEFAULT_BLOCK_NUMBERS, DEFAULT_PARENT_HASHES},
+    block_header::{DEFAULT_BLOCK_HASHES, DEFAULT_BLOCK_NUMBERS},
     TestInputs, DEFAULT_OUTPUT_AMOUNTS, DEFAULT_VOLUME_FEE_BPS,
 };
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
@@ -43,7 +43,6 @@ fn proof_can_be_deserialized() {
         exit_account_1: BytesDigest::try_from([4u8; 32]).unwrap(),
         exit_account_2: BytesDigest::default(), // No second exit account
         block_hash: BytesDigest::try_from(DEFAULT_BLOCK_HASHES[0]).unwrap(),
-        parent_hash: BytesDigest::try_from(DEFAULT_PARENT_HASHES[0]).unwrap(),
         block_number: DEFAULT_BLOCK_NUMBERS[0],
     };
     assert_eq!(public_inputs, expected);

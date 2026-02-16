@@ -15,8 +15,7 @@ use qp_wormhole_inputs::{
     ASSET_ID_INDEX, BLOCK_HASH_END_INDEX, BLOCK_HASH_START_INDEX, BLOCK_NUMBER_INDEX,
     EXIT_ACCOUNT_1_END_INDEX, EXIT_ACCOUNT_1_START_INDEX, EXIT_ACCOUNT_2_END_INDEX,
     EXIT_ACCOUNT_2_START_INDEX, NULLIFIER_END_INDEX, NULLIFIER_START_INDEX, OUTPUT_AMOUNT_1_INDEX,
-    OUTPUT_AMOUNT_2_INDEX, PARENT_HASH_END_INDEX, PARENT_HASH_START_INDEX, PUBLIC_INPUTS_FELTS_LEN,
-    VOLUME_FEE_BPS_INDEX,
+    OUTPUT_AMOUNT_2_INDEX, PUBLIC_INPUTS_FELTS_LEN, VOLUME_FEE_BPS_INDEX,
 };
 
 /// Inputs required to commit to the wormhole circuit.
@@ -43,6 +42,8 @@ pub struct PrivateCircuitInputs {
     pub funding_account: BytesDigest,
     /// The unspendable account hash.
     pub unspendable_account: BytesDigest,
+    /// The parent hash of the block header (private - used to compute block_hash)
+    pub parent_hash: BytesDigest,
     /// The state root of the storage proof
     pub state_root: BytesDigest,
     /// The extrinsics root of the block header
@@ -80,7 +81,6 @@ impl ParsePublicInputs for PublicCircuitInputs {
         // ExitAccount1.address: 4 felts (spend destination)
         // ExitAccount2.address: 4 felts (change destination)
         // BlockHeader.block_hash: 4 felts
-        // BlockHeader.parent_hash: 4 felts
         // BlockHeader.block_number: 1 felt
         if pis.len() != PUBLIC_INPUTS_FELTS_LEN {
             bail!(
@@ -120,9 +120,6 @@ impl ParsePublicInputs for PublicCircuitInputs {
             &pis[EXIT_ACCOUNT_2_START_INDEX..EXIT_ACCOUNT_2_END_INDEX],
         )
         .context("failed to deserialize exit_account_2")?;
-        let parent_hash =
-            try_felts_slice_to_bytes_digest(&pis[PARENT_HASH_START_INDEX..PARENT_HASH_END_INDEX])
-                .context("failed to deserialize parent hash")?;
         let block_number_felt = pis[BLOCK_NUMBER_INDEX];
         let block_number = block_number_felt
             .to_canonical_u64()
@@ -138,7 +135,6 @@ impl ParsePublicInputs for PublicCircuitInputs {
             block_hash,
             exit_account_1,
             exit_account_2,
-            parent_hash,
             block_number,
         })
     }

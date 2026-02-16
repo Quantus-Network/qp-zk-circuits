@@ -56,11 +56,6 @@ impl LeafTargets {
         }
     }
 
-    /// Legacy accessor for backward compatibility
-    pub fn output_amount(&self) -> Target {
-        self.output_amount_1
-    }
-
     /// Collect targets for the leaf hash (uses input_amount, which is what's stored in the trie)
     pub fn collect_to_vec(&self) -> Vec<Target> {
         core::iter::once(self.asset_id)

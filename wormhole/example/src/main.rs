@@ -113,7 +113,7 @@ impl From<CircuitInputs> for DebugInputs {
             block_hash_hex: hex::encode(inputs.public.block_hash.as_ref()),
             extrinsics_root_hex: hex::encode(inputs.private.extrinsics_root.as_ref()),
             digest_hex: hex::encode(inputs.private.digest.as_ref()),
-            parent_hash_hex: hex::encode(inputs.public.parent_hash.as_ref()),
+            parent_hash_hex: hex::encode(inputs.private.parent_hash.as_ref()),
             block_number: inputs.public.block_number,
         }
     }
@@ -200,6 +200,7 @@ impl TryFrom<DebugInputs> for CircuitInputs {
                 funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
                 storage_proof: processed_storage_proof,
                 unspendable_account: digest_felts_to_bytes(Digest::from(unspendable_account)),
+                parent_hash,
                 state_root,
                 extrinsics_root,
                 digest,
@@ -216,7 +217,6 @@ impl TryFrom<DebugInputs> for CircuitInputs {
                 exit_account_1: BytesDigest::try_from(dest_account_id.as_ref() as &[u8])?,
                 exit_account_2: BytesDigest::default(), // No second exit account
                 block_hash: BytesDigest::try_from(block_hash.as_ref())?,
-                parent_hash,
                 block_number: inputs.block_number,
             },
         })
@@ -567,6 +567,7 @@ async fn perform_batched_transfers(
                 funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
                 storage_proof: processed_storage_proof,
                 unspendable_account: digest_felts_to_bytes(Digest::from(*unspendable_account)),
+                parent_hash,
                 state_root,
                 extrinsics_root,
                 digest,
@@ -582,7 +583,6 @@ async fn perform_batched_transfers(
                 exit_account_1: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
                 exit_account_2: BytesDigest::default(), // No second exit account
                 block_hash: BytesDigest::try_from(block_hash.as_ref())?,
-                parent_hash,
                 block_number,
             },
         };
@@ -720,6 +720,7 @@ async fn perform_transfer_and_get_inputs(
             funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
             storage_proof: processed_storage_proof,
             unspendable_account: digest_felts_to_bytes(Digest::from(unspendable_account)),
+            parent_hash,
             state_root,
             extrinsics_root,
             digest,
@@ -736,7 +737,6 @@ async fn perform_transfer_and_get_inputs(
             exit_account_1: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
             exit_account_2: BytesDigest::default(), // No second exit account
             block_hash: BytesDigest::try_from(block_hash.as_ref())?,
-            parent_hash,
             block_number,
         },
     };
