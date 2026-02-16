@@ -106,14 +106,12 @@ pub fn generate_aggregated_circuit_binaries<P: AsRef<Path>>(
 
     let output_path = output_dir.as_ref();
 
-    // IMPORTANT: Use from_prebuilt_with_paths() to load the leaf circuit from the files
-    // we just generated. This ensures the aggregated circuit's leaf verifier data
-    // matches the leaf circuit files exactly.
+    // Load the leaf circuit from the files we just generated (skip hash verification
+    // since we're in the process of building -- config.json hasn't been written yet).
     //
-    // If we used from_circuit_config(), it would build a fresh leaf circuit which
-    // might differ from the one in common.bin/verifier.bin, causing verification
-    // failures when the chain tries to verify aggregated proofs.
-    let mut aggregator = WormholeProofAggregator::from_prebuilt_dir(output_path, config)
+    // We must load from files rather than using from_circuit_config() to ensure the
+    // aggregated circuit's leaf verifier data matches the leaf circuit files exactly.
+    let mut aggregator = WormholeProofAggregator::from_prebuilt_dir_unchecked(output_path, config)
     .map_err(|e| anyhow!("Failed to create aggregator from pre-built files. Make sure generate_circuit_binaries() was called first: {}", e))?;
 
     // We need to run the aggregation to get the circuit data.

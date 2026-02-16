@@ -30,12 +30,12 @@ use subxt::ext::jsonrpsee::rpc_params;
 use subxt::utils::{to_hex, AccountId32 as SubxtAccountId};
 use subxt::OnlineClient;
 use wormhole_aggregator::aggregator::WormholeProofAggregator;
-use zk_circuits_common::aggregation::AggregationConfig;
 use wormhole_circuit::inputs::{
     CircuitInputs, ParseAggregatedPublicInputs, ParsePublicInputs, PrivateCircuitInputs,
 };
 use wormhole_circuit::nullifier::Nullifier;
 use wormhole_prover::WormholeProver;
+use zk_circuits_common::aggregation::AggregationConfig;
 use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::storage_proof::prepare_proof_for_circuit;
 use zk_circuits_common::utils::{digest_felts_to_bytes, BytesDigest, Digest};

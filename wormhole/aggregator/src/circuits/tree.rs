@@ -35,6 +35,58 @@ const EXIT_2_START: usize = 12; // 4 felts (change destination)
 const BLOCK_HASH_START: usize = 16; // 4 felts
 const BLOCK_NUMBER_START: usize = 20; // 1 felt
 
+/// Layer-0 aggregated proof output layout constants.
+///
+/// These define the public inputs layout produced by `WormholeAggregationWrapper`.
+/// Used by higher layers (e.g., Layer1Wrapper) to parse layer-0 output.
+///
+/// Layout:
+/// ```text
+/// [num_exit_slots(1), asset_id(1), volume_fee_bps(1),
+///  block_hash(4), block_number(1),
+///  [sum(1), exit_account(4)] * 2*N,
+///  nullifier(4) * N,
+///  padding...]
+/// ```
+pub mod aggregated_output {
+    use qp_wormhole_inputs::PUBLIC_INPUTS_FELTS_LEN;
+
+    /// Offset of `num_exit_slots` in the output PIs.
+    pub const NUM_EXIT_SLOTS_OFFSET: usize = 0;
+    /// Offset of `asset_id` in the output PIs.
+    pub const ASSET_ID_OFFSET: usize = 1;
+    /// Offset of `volume_fee_bps` in the output PIs.
+    pub const VOLUME_FEE_BPS_OFFSET: usize = 2;
+    /// Offset of `block_hash` (4 felts) in the output PIs.
+    pub const BLOCK_HASH_OFFSET: usize = 3;
+    /// Offset of `block_number` in the output PIs.
+    pub const BLOCK_NUMBER_OFFSET: usize = 7;
+    /// Length of the fixed header before exit slot data.
+    pub const HEADER_LEN: usize = 8;
+    /// Each exit slot is [sum(1), exit_account(4)] = 5 felts.
+    pub const EXIT_SLOT_LEN: usize = 5;
+
+    /// Compute the number of exit slots for a given number of leaf proofs (2 per leaf).
+    pub const fn exit_slots_count(num_leaves: usize) -> usize {
+        num_leaves * 2
+    }
+
+    /// Compute the offset where exit slot data starts.
+    pub const fn exit_slots_start() -> usize {
+        HEADER_LEN
+    }
+
+    /// Compute the offset where nullifier data starts for a given number of leaf proofs.
+    pub const fn nullifiers_start(num_leaves: usize) -> usize {
+        HEADER_LEN + exit_slots_count(num_leaves) * EXIT_SLOT_LEN
+    }
+
+    /// Compute the total PI length of a layer-0 aggregated proof.
+    pub const fn pi_len(num_leaves: usize) -> usize {
+        PUBLIC_INPUTS_FELTS_LEN * num_leaves + 8
+    }
+}
+
 /// Wormhole-specific aggregation wrapper.
 ///
 /// Builds a wrapper circuit around the merged proof that:

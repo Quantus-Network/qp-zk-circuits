@@ -56,6 +56,7 @@ pub struct AggregationConfig {
 
 impl AggregationConfig {
     pub fn new(num_leaf_proofs: usize) -> Self {
+        assert!(num_leaf_proofs > 0, "num_leaf_proofs must be > 0");
         Self { num_leaf_proofs }
     }
 }

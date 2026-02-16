@@ -1,19 +1,28 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use plonky2::plonk::circuit_data::{CircuitConfig, CommonCircuitData};
+use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_aggregator::aggregator::WormholeProofAggregator;
-use qp_wormhole_aggregator::dummy_proof::load_dummy_proof;
 use zk_circuits_common::aggregation::AggregationConfig;
 use zk_circuits_common::circuit::{C, D, F};
 
-fn load_dummy_proofs(
-    common_data: &CommonCircuitData<F, D>,
+/// Generate dummy proofs from the circuit config (no external files needed).
+fn make_dummy_proofs(
+    aggregator: &WormholeProofAggregator,
     len: usize,
 ) -> Vec<ProofWithPublicInputs<F, C, D>> {
-    let dummy_bytes =
-        std::fs::read("generated-bins/dummy_proof.bin").expect("failed to read dummy_proof.bin");
-    let dummy_proof =
-        load_dummy_proof(dummy_bytes, common_data).expect("failed to load dummy proof");
+    use plonky2::iop::witness::PartialWitness;
+    use qp_wormhole_aggregator::build_dummy_circuit_inputs;
+    use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
+    use wormhole_prover::fill_witness;
+
+    let config = aggregator.leaf_circuit_data.common.config.clone();
+    let circuit = WormholeCircuit::new(config);
+    let targets = circuit.targets();
+    let circuit_data = circuit.build_circuit();
+    let inputs = build_dummy_circuit_inputs().expect("failed to build dummy inputs");
+    let mut pw = PartialWitness::new();
+    fill_witness(&mut pw, &inputs, &targets).expect("failed to fill witness");
+    let dummy_proof = circuit_data.prove(pw).expect("failed to prove dummy");
     (0..len).map(|_| dummy_proof.clone()).collect()
 }
 
@@ -24,17 +33,12 @@ macro_rules! aggregate_proofs_benchmark {
             let aggregation_config = AggregationConfig::new($num_leaf_proofs);
             let circuit_config = CircuitConfig::standard_recursion_zk_config();
 
-            // Setup proofs.
-            let proofs = {
-                let temp_aggregator = WormholeProofAggregator::from_circuit_config(
-                    circuit_config.clone(),
-                    aggregation_config,
-                );
-                load_dummy_proofs(
-                    &temp_aggregator.leaf_circuit_data.common,
-                    aggregation_config.num_leaf_proofs,
-                )
-            };
+            // Setup proofs (generated from circuit config, no external files needed).
+            let temp_aggregator = WormholeProofAggregator::from_circuit_config(
+                circuit_config.clone(),
+                aggregation_config,
+            );
+            let proofs = make_dummy_proofs(&temp_aggregator, aggregation_config.num_leaf_proofs);
 
             c.bench_function(
                 &format!("aggregate_proofs_{}", aggregation_config.num_leaf_proofs),
@@ -67,17 +71,12 @@ macro_rules! verify_aggregate_proof_benchmark {
             let aggregation_config = AggregationConfig::new($num_leaf_proofs);
             let circuit_config = CircuitConfig::standard_recursion_zk_config();
 
-            // Setup proofs.
-            let proofs = {
-                let temp_aggregator = WormholeProofAggregator::from_circuit_config(
-                    circuit_config.clone(),
-                    aggregation_config,
-                );
-                load_dummy_proofs(
-                    &temp_aggregator.leaf_circuit_data.common,
-                    aggregation_config.num_leaf_proofs,
-                )
-            };
+            // Setup proofs (generated from circuit config, no external files needed).
+            let temp_aggregator = WormholeProofAggregator::from_circuit_config(
+                circuit_config.clone(),
+                aggregation_config,
+            );
+            let proofs = make_dummy_proofs(&temp_aggregator, aggregation_config.num_leaf_proofs);
 
             c.bench_function(
                 &format!(

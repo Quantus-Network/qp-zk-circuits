@@ -20,16 +20,7 @@ use zk_circuits_common::aggregation::{AggregatedProof, AggregationWrapper};
 use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::gadgets::bytes_digest_eq;
 
-/// Layer-0 aggregated proof header layout.
-/// These are the first 8 felts of any layer-0 aggregated proof's public inputs.
-const L0_ASSET_ID_OFFSET: usize = 1;
-const L0_VOLUME_FEE_BPS_OFFSET: usize = 2;
-const L0_BLOCK_HASH_OFFSET: usize = 3; // 4 felts
-const L0_BLOCK_NUMBER_OFFSET: usize = 7;
-const L0_HEADER_LEN: usize = 8;
-
-/// Each exit slot in layer-0 output is [sum(1), exit_account(4)] = 5 felts.
-const EXIT_SLOT_LEN: usize = 5;
+use crate::circuits::tree::aggregated_output as l0;
 
 /// Layer-1 aggregation wrapper.
 ///
@@ -69,17 +60,12 @@ impl Layer1Wrapper {
 
     /// Compute the expected PI length of a single layer-0 aggregated proof.
     fn layer0_pi_len(&self) -> usize {
-        let n = self.layer0_num_leaves;
-        // header(8) + exit_slots(5 * 2*n) + nullifiers(4 * n) + padding
-        // Padding is to root_pi_len + 8 where root_pi_len = n * LEAF_PI_LEN
-        // LEAF_PI_LEN = 21, so root_pi_len = 21*n
-        // Total padded = 21*n + 8
-        21 * n + 8
+        l0::pi_len(self.layer0_num_leaves)
     }
 
     /// Number of exit slots per layer-0 proof (2 per leaf).
     fn exit_slots_per_l0(&self) -> usize {
-        self.layer0_num_leaves * 2
+        l0::exit_slots_count(self.layer0_num_leaves)
     }
 
     /// Number of nullifiers per layer-0 proof (1 per leaf).
@@ -89,12 +75,12 @@ impl Layer1Wrapper {
 
     /// Offset of exit slot data within a layer-0 proof's PIs.
     fn exit_slots_start(&self) -> usize {
-        L0_HEADER_LEN
+        l0::exit_slots_start()
     }
 
     /// Offset of nullifier data within a layer-0 proof's PIs.
     fn nullifiers_start(&self) -> usize {
-        L0_HEADER_LEN + self.exit_slots_per_l0() * EXIT_SLOT_LEN
+        l0::nullifiers_start(self.layer0_num_leaves)
     }
 }
 
@@ -103,7 +89,7 @@ impl AggregationWrapper for Layer1Wrapper {
         // A dummy layer-0 aggregated proof has block_hash == [0,0,0,0] in its header.
         // This propagates from the layer-0 wrapper: if all leaf proofs are dummies,
         // the layer-0 output's block_hash is [0,0,0,0].
-        proof.public_inputs[L0_BLOCK_HASH_OFFSET..L0_BLOCK_HASH_OFFSET + 4]
+        proof.public_inputs[l0::BLOCK_HASH_OFFSET..l0::BLOCK_HASH_OFFSET + 4]
             .iter()
             .all(|f| f.is_zero())
     }
@@ -147,14 +133,14 @@ impl AggregationWrapper for Layer1Wrapper {
         output_pis.extend_from_slice(&agg_addr_targets);
 
         // 2) Reference values from first layer-0 proof
-        let asset_ref = child_pis[L0_ASSET_ID_OFFSET];
-        let volume_fee_ref = child_pis[L0_VOLUME_FEE_BPS_OFFSET];
+        let asset_ref = child_pis[l0::ASSET_ID_OFFSET];
+        let volume_fee_ref = child_pis[l0::VOLUME_FEE_BPS_OFFSET];
         output_pis.push(asset_ref);
         output_pis.push(volume_fee_ref);
 
         // 3) Block hash validation -- same pattern as layer-0 but over layer-0 headers
-        let block_ref: [Target; 4] = core::array::from_fn(|j| child_pis[L0_BLOCK_HASH_OFFSET + j]);
-        let block_number_ref = child_pis[L0_BLOCK_NUMBER_OFFSET];
+        let block_ref: [Target; 4] = core::array::from_fn(|j| child_pis[l0::BLOCK_HASH_OFFSET + j]);
+        let block_number_ref = child_pis[l0::BLOCK_NUMBER_OFFSET];
 
         let dummy_sentinel = [zero; 4];
 
@@ -162,14 +148,14 @@ impl AggregationWrapper for Layer1Wrapper {
             let base = i * l0_pi_len;
 
             // Enforce same asset_id and volume_fee_bps
-            let asset_i = child_pis[base + L0_ASSET_ID_OFFSET];
+            let asset_i = child_pis[base + l0::ASSET_ID_OFFSET];
             builder.connect(asset_i, asset_ref);
-            let fee_i = child_pis[base + L0_VOLUME_FEE_BPS_OFFSET];
+            let fee_i = child_pis[base + l0::VOLUME_FEE_BPS_OFFSET];
             builder.connect(fee_i, volume_fee_ref);
 
             // Enforce same block (or dummy)
             let block_i: [Target; 4] =
-                core::array::from_fn(|j| child_pis[base + L0_BLOCK_HASH_OFFSET + j]);
+                core::array::from_fn(|j| child_pis[base + l0::BLOCK_HASH_OFFSET + j]);
             let is_dummy = bytes_digest_eq(&mut builder, block_i, dummy_sentinel);
             let matches_ref = bytes_digest_eq(&mut builder, block_i, block_ref);
             let ok = builder.or(is_dummy, matches_ref);
@@ -188,9 +174,9 @@ impl AggregationWrapper for Layer1Wrapper {
         for i in 0..n_inner {
             let base = i * l0_pi_len + self.exit_slots_start();
             for slot in 0..self.exit_slots_per_l0() {
-                let slot_base = base + slot * EXIT_SLOT_LEN;
+                let slot_base = base + slot * l0::EXIT_SLOT_LEN;
                 // [sum(1), exit_account(4)]
-                for j in 0..EXIT_SLOT_LEN {
+                for j in 0..l0::EXIT_SLOT_LEN {
                     output_pis.push(child_pis[slot_base + j]);
                 }
             }
