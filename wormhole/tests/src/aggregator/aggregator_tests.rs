@@ -239,12 +239,10 @@ fn verify_aggregated_proof_with_prebuilt_verifier() {
     // Step 3: Create aggregator from pre-built files (matches circuit-builder)
     // The bins are at repo root, tests run from wormhole/tests
     println!("Creating aggregator from pre-built files...");
-    let num_real_proofs = 2; // We're providing 2 real proofs
     let mut aggregator = WormholeProofAggregator::from_prebuilt_with_paths(
         Path::new("../../generated-bins/common.bin"),
         Path::new("../../generated-bins/verifier.bin"),
         test_aggregation_config(),
-        num_real_proofs,
     )
     .expect("Failed to create aggregator from pre-built files");
 

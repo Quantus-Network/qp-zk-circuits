@@ -103,13 +103,10 @@ pub fn generate_aggregated_circuit_binaries<P: AsRef<Path>>(
     // If we used from_circuit_config(), it would build a fresh leaf circuit which
     // might differ from the one in common.bin/verifier.bin, causing verification
     // failures when the chain tries to verify aggregated proofs.
-    //
-    // We pass 0 real proofs since we're using all dummy proofs to build the circuit.
     let mut aggregator = WormholeProofAggregator::from_prebuilt_with_paths(
         &output_path.join("common.bin"),
         &output_path.join("verifier.bin"),
         config,
-        0, // No real proofs - use all dummies to build the aggregation circuit
     )
     .map_err(|e| anyhow!("Failed to create aggregator from pre-built files. Make sure generate_circuit_binaries() was called first: {}", e))?;
 
