@@ -14,7 +14,7 @@ qp-poseidon = { version = "1.0.7", features = ["default"] }
 qp-poseidon-core = { version = "1.0.7", default-features = false, features = [
 	"p3",
 ] }
-qp-wormhole-inputs = { version = "1.0.5", path = "../inputs" }
+qp-wormhole-inputs = { version = "1.0.6", path = "../inputs" }
 quantus-cli = { git = "https://github.com/Quantus-Network/quantus-cli", branch = "feat/updated-metadata", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["alloc"] }
@@ -23,14 +23,14 @@ sp-runtime = "44.0.0"
 sp-trie = { git = "https://github.com/Quantus-Network/chain.git", default-features = false, features = ["std"] }
 subxt = "0.43.0"
 tokio = "1.48.0"
-wormhole-aggregator = { package = "qp-wormhole-aggregator", version = "1.0.5", path = "../aggregator", default-features = false, features = [
+wormhole-aggregator = { package = "qp-wormhole-aggregator", version = "1.0.6", path = "../aggregator", default-features = false, features = [
 	"multithread",
 	"no_zk",
 	"std",
 ] }
-wormhole-circuit = { package = "qp-wormhole-circuit", version = "1.0.5", path = "../circuit", default-features = false, features = [
+wormhole-circuit = { package = "qp-wormhole-circuit", version = "1.0.6", path = "../circuit", default-features = false, features = [
 	"std",
 ] }
-wormhole-prover = { package = "qp-wormhole-prover", version = "1.0.5", path = "../prover", default-features = false }
-wormhole-verifier = { package = "qp-wormhole-verifier", version = "1.0.5", path = "../verifier", default-features = false }
-zk-circuits-common = { package = "qp-zk-circuits-common", version = "1.0.5", path = "../../common" }
+wormhole-prover = { package = "qp-wormhole-prover", version = "1.0.6", path = "../prover", default-features = false }
+wormhole-verifier = { package = "qp-wormhole-verifier", version = "1.0.6", path = "../verifier", default-features = false }
+zk-circuits-common = { package = "qp-zk-circuits-common", version = "1.0.6", path = "../../common" }
