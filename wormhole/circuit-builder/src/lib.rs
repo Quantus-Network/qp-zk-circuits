@@ -5,8 +5,9 @@ use std::path::Path;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::config::PoseidonGoldilocksConfig;
 use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
-use wormhole_aggregator::{AggregationConfig, WormholeProofAggregator};
+use wormhole_aggregator::WormholeProofAggregator;
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
+use zk_circuits_common::aggregation::AggregationConfig;
 use zk_circuits_common::circuit::D;
 
 // Re-export CircuitBinsConfig from aggregator so users of circuit-builder can access it
