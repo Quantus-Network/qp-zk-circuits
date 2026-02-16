@@ -397,9 +397,9 @@ fn aggregate_dedupe_public_inputs(
             builder.select(is_duplicate, zero, exit_slot[3]),
         ];
 
-        // Range check the sum (with 2 outputs per proof, max sum could be larger)
-        // 32-bit outputs * 2*N proofs, need 32 + log2(2*N) bits
-        builder.range_check(final_sum, 40);
+        // Range check the sum 
+        // Since max supply is 21m coins, then max quantized amount is 2.1b < 2^32
+        builder.range_check(final_sum, 32);
 
         // Output: [sum, exit_account(4)]
         output_pis.push(final_sum);
