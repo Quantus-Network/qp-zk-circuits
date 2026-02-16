@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::write;
 use std::path::Path;
 
-use crate::circuits::tree::TreeAggregationConfig;
+use crate::circuits::tree::AggregationConfig;
 
 /// SHA256 hashes of the circuit binary files.
 /// Used to detect mismatches between different copies of the binaries.
@@ -58,8 +58,6 @@ impl BinaryHashes {
 /// aggregator (to load config when aggregating proofs).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CircuitBinsConfig {
-    pub branching_factor: usize,
-    pub depth: u32,
     pub num_leaf_proofs: usize,
     /// SHA256 hashes of the binary files for integrity verification
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -68,11 +66,9 @@ pub struct CircuitBinsConfig {
 
 impl CircuitBinsConfig {
     /// Create a new config without hashes (hashes should be added via `with_hashes_from_directory`)
-    pub fn new(branching_factor: usize, depth: u32) -> Self {
+    pub fn new(num_leaf_proofs: usize) -> Self {
         Self {
-            branching_factor,
-            depth,
-            num_leaf_proofs: branching_factor.pow(depth),
+            num_leaf_proofs,
             hashes: None,
         }
     }
@@ -172,8 +168,8 @@ impl CircuitBinsConfig {
         }
     }
 
-    /// Convert to TreeAggregationConfig
-    pub fn to_aggregation_config(&self) -> TreeAggregationConfig {
-        TreeAggregationConfig::new(self.branching_factor, self.depth)
+    /// Convert to AggregationConfig
+    pub fn to_aggregation_config(&self) -> AggregationConfig {
+        AggregationConfig::new(self.num_leaf_proofs)
     }
 }

@@ -14,8 +14,6 @@ use plonky2::{
         config::GenericConfig,
     },
 };
-#[cfg(feature = "multithread")]
-use rayon::{iter::ParallelIterator, slice::ParallelSlice};
 use zk_circuits_common::utils::digest_bytes_to_felts;
 use zk_circuits_common::{
     circuit::{C, D, F},
@@ -47,81 +45,41 @@ pub struct AggregatedProof<F: RichField + Extendable<D>, C: GenericConfig<D, F =
     pub circuit_data: CircuitData<F, C, D>,
 }
 
-/// The tree configuration to use when aggregating proofs into a tree.
+/// Configuration for flat proof aggregation.
 #[derive(Debug, Clone, Copy)]
-pub struct TreeAggregationConfig {
+pub struct AggregationConfig {
+    /// Number of leaf proofs aggregated into a single proof.
     pub num_leaf_proofs: usize,
-    pub tree_branching_factor: usize,
-    pub tree_depth: u32,
 }
 
-impl TreeAggregationConfig {
-    pub fn new(tree_branching_factor: usize, tree_depth: u32) -> Self {
-        let num_leaf_proofs = tree_branching_factor.pow(tree_depth);
-        Self {
-            num_leaf_proofs,
-            tree_branching_factor,
-            tree_depth,
-        }
+impl AggregationConfig {
+    pub fn new(num_leaf_proofs: usize) -> Self {
+        Self { num_leaf_proofs }
     }
 }
 
-pub fn aggregate_to_tree(
+/// Aggregate N leaf proofs into a single aggregated proof.
+///
+/// All leaf proofs are merged in a single level, then wrapped in a deduplicated
+/// output circuit with fixed structure for on-chain verification.
+pub fn aggregate_proofs(
     leaf_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
     common_data: &CommonCircuitData<F, D>,
     verifier_data: &VerifierOnlyCircuitData<C, D>,
-    config: TreeAggregationConfig,
 ) -> anyhow::Result<AggregatedProof<F, C, D>> {
     let n_leaf = leaf_proofs.len();
 
-    // Aggregate the first level.
-    let mut proofs = aggregate_level(leaf_proofs, common_data, verifier_data, config)?;
-
-    // Do the next levels by utilizing the circuit data within each aggregated proof.
-    while proofs.len() > 1 {
-        let common_data = &proofs[0].circuit_data.common.clone();
-        let verifier_data = &proofs[0].circuit_data.verifier_only.clone();
-        let to_aggregate = proofs.into_iter().map(|p| p.proof).collect();
-
-        let aggregated_proofs = aggregate_level(to_aggregate, common_data, verifier_data, config)?;
-
-        proofs = aggregated_proofs;
-    }
+    // Single-level aggregation: merge all leaf proofs into one proof
+    let merged = aggregate_chunk(&leaf_proofs, common_data, verifier_data)?;
 
     let dummy_nullifiers: Vec<[F; 4]> = (0..n_leaf)
         .map(|_| digest_bytes_to_felts(generate_random_nullifier()))
         .collect();
 
     // Build the final wrapper circuit with fixed structure
-    let root_proof = aggregate_dedupe_public_inputs(proofs, n_leaf, &dummy_nullifiers)?;
+    let root_proof = aggregate_dedupe_public_inputs(vec![merged], n_leaf, &dummy_nullifiers)?;
 
     Ok(root_proof)
-}
-
-#[cfg(not(feature = "multithread"))]
-fn aggregate_level(
-    proofs: Vec<ProofWithPublicInputs<F, C, D>>,
-    common_data: &CommonCircuitData<F, D>,
-    verifier_data: &VerifierOnlyCircuitData<C, D>,
-    config: TreeAggregationConfig,
-) -> anyhow::Result<Vec<AggregatedProof<F, C, D>>> {
-    proofs
-        .chunks(config.tree_branching_factor)
-        .map(|chunk| aggregate_chunk(chunk, common_data, verifier_data))
-        .collect()
-}
-
-#[cfg(feature = "multithread")]
-fn aggregate_level(
-    proofs: Vec<ProofWithPublicInputs<F, C, D>>,
-    common_data: &CommonCircuitData<F, D>,
-    verifier_data: &VerifierOnlyCircuitData<C, D>,
-    config: TreeAggregationConfig,
-) -> anyhow::Result<Vec<AggregatedProof<F, C, D>>> {
-    proofs
-        .par_chunks(config.tree_branching_factor)
-        .map(|chunk| aggregate_chunk(chunk, common_data, verifier_data))
-        .collect()
 }
 
 /// Circuit gadget that takes in a chunk of proofs, verifies each one, and aggregates their public inputs.
@@ -494,19 +452,15 @@ mod tests {
     use zk_circuits_common::circuit::{C, D, F};
 
     use super::{
-        aggregate_to_tree, AggregatedProof, TreeAggregationConfig, ASSET_ID_START,
-        BLOCK_HASH_START, BLOCK_NUMBER_START, EXIT_1_START, EXIT_2_START, LEAF_PI_LEN,
-        NULLIFIER_START, OUTPUT_AMOUNT_1_START, OUTPUT_AMOUNT_2_START, VOLUME_FEE_BPS_START,
+        aggregate_proofs, AggregatedProof, ASSET_ID_START, BLOCK_HASH_START, BLOCK_NUMBER_START,
+        EXIT_1_START, EXIT_2_START, LEAF_PI_LEN, NULLIFIER_START, OUTPUT_AMOUNT_1_START,
+        OUTPUT_AMOUNT_2_START, VOLUME_FEE_BPS_START,
     };
 
     const TEST_ASSET_ID_U64: u64 = 0;
     const TEST_VOLUME_FEE_BPS: u64 = 10; // 0.1% = 10 basis points
 
     /// Test config: branching_factor=8, depth=1 (8 leaf proofs)
-    fn test_aggregation_config() -> TreeAggregationConfig {
-        TreeAggregationConfig::new(8, 1)
-    }
-
     // ---------------- Circuit ----------------
 
     /// Dummy wormhole leaf for the Bitcoin-style 2-output layout:
@@ -806,9 +760,7 @@ mod tests {
         let verifier_data = &leaves[0].circuit_data.verifier_only.clone();
         let to_aggregate = leaves.into_iter().map(|p| p.proof).collect();
 
-        let config = test_aggregation_config();
-        let root_proof =
-            aggregate_to_tree(to_aggregate, common_data, verifier_data, config).unwrap();
+        let root_proof = aggregate_proofs(to_aggregate, common_data, verifier_data).unwrap();
 
         // ---------------------------
         // Reference aggregation OFF-CIRCUIT
@@ -996,8 +948,7 @@ mod tests {
         let verifier_data = &leaves[0].circuit_data.verifier_only.clone();
         let to_aggregate = leaves.into_iter().map(|p| p.proof).collect();
 
-        let config = test_aggregation_config();
-        let res = aggregate_to_tree(to_aggregate, common_data, verifier_data, config);
+        let res = aggregate_proofs(to_aggregate, common_data, verifier_data);
 
         assert!(
             res.is_err(),
@@ -1046,8 +997,7 @@ mod tests {
         let verifier_data = &leaves[0].circuit_data.verifier_only.clone();
         let to_aggregate = leaves.into_iter().map(|p| p.proof).collect();
 
-        let config = test_aggregation_config();
-        let res = aggregate_to_tree(to_aggregate, common_data, verifier_data, config);
+        let res = aggregate_proofs(to_aggregate, common_data, verifier_data);
 
         assert!(res.is_err(), "expected failure due to mismatched asset IDs");
     }
@@ -1126,9 +1076,7 @@ mod tests {
         let verifier_data = &leaves[0].circuit_data.verifier_only.clone();
         let to_aggregate = leaves.into_iter().map(|p| p.proof).collect();
 
-        let config = test_aggregation_config();
-        let root_proof =
-            aggregate_to_tree(to_aggregate, common_data, verifier_data, config).unwrap();
+        let root_proof = aggregate_proofs(to_aggregate, common_data, verifier_data).unwrap();
 
         // Verify the final root proof.
         root_proof

@@ -2,9 +2,7 @@
 
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_inputs::PublicCircuitInputs;
-use wormhole_aggregator::{
-    aggregator::WormholeProofAggregator, circuits::tree::TreeAggregationConfig,
-};
+use wormhole_aggregator::{aggregator::WormholeProofAggregator, circuits::tree::AggregationConfig};
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::circuit::{C, D, F};
@@ -12,9 +10,9 @@ use zk_circuits_common::circuit::{C, D, F};
 use crate::aggregator::circuit_config;
 use test_helpers::TestInputs;
 
-/// Test aggregation config: branching_factor=2, depth=1 (2 leaf proofs)
-fn test_aggregation_config() -> TreeAggregationConfig {
-    TreeAggregationConfig::new(2, 1)
+/// Test aggregation config: 2 leaf proofs
+fn test_aggregation_config() -> AggregationConfig {
+    AggregationConfig::new(2)
 }
 
 #[test]

@@ -2,7 +2,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use plonky2::plonk::circuit_data::{CircuitConfig, CommonCircuitData};
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_aggregator::aggregator::WormholeProofAggregator;
-use qp_wormhole_aggregator::circuits::tree::TreeAggregationConfig;
+use qp_wormhole_aggregator::circuits::tree::AggregationConfig;
 use qp_wormhole_aggregator::dummy_proof::load_dummy_proof;
 use zk_circuits_common::circuit::{C, D, F};
 
@@ -17,13 +17,11 @@ fn load_dummy_proofs(
     (0..len).map(|_| dummy_proof.clone()).collect()
 }
 
-// A macro for creating an aggregation benchmark with a specified number of proofs to
-// aggregate. The number of proofs is gotten by the tree branching factor and the tree depth.
+// A macro for creating an aggregation benchmark with a specified number of leaf proofs.
 macro_rules! aggregate_proofs_benchmark {
-    ($fn_name:ident, $tree_branching_factor:expr, $tree_depth:expr) => {
+    ($fn_name:ident, $num_leaf_proofs:expr) => {
         pub fn $fn_name(c: &mut Criterion) {
-            let aggregation_config =
-                TreeAggregationConfig::new($tree_branching_factor, $tree_depth);
+            let aggregation_config = AggregationConfig::new($num_leaf_proofs);
             let circuit_config = CircuitConfig::standard_recursion_zk_config();
 
             // Setup proofs.
@@ -39,10 +37,7 @@ macro_rules! aggregate_proofs_benchmark {
             };
 
             c.bench_function(
-                &format!(
-                    "aggregate_proofs_{}_{}",
-                    aggregation_config.tree_branching_factor, aggregation_config.tree_depth
-                ),
+                &format!("aggregate_proofs_{}", aggregation_config.num_leaf_proofs),
                 |b| {
                     b.iter_batched(
                         || {
@@ -67,10 +62,9 @@ macro_rules! aggregate_proofs_benchmark {
 }
 
 macro_rules! verify_aggregate_proof_benchmark {
-    ($fn_name:ident, $tree_branching_factor:expr, $tree_depth:expr) => {
+    ($fn_name:ident, $num_leaf_proofs:expr) => {
         pub fn $fn_name(c: &mut Criterion) {
-            let aggregation_config =
-                TreeAggregationConfig::new($tree_branching_factor, $tree_depth);
+            let aggregation_config = AggregationConfig::new($num_leaf_proofs);
             let circuit_config = CircuitConfig::standard_recursion_zk_config();
 
             // Setup proofs.
@@ -87,8 +81,8 @@ macro_rules! verify_aggregate_proof_benchmark {
 
             c.bench_function(
                 &format!(
-                    "verify_aggregate_proof_{}_{}",
-                    aggregation_config.tree_branching_factor, aggregation_config.tree_depth
+                    "verify_aggregate_proof_{}",
+                    aggregation_config.num_leaf_proofs
                 ),
                 |b| {
                     b.iter_batched(
@@ -116,31 +110,29 @@ macro_rules! verify_aggregate_proof_benchmark {
     };
 }
 
-// Various proof sizes with binary trees.
-aggregate_proofs_benchmark!(bench_aggregate_2_proofs, 2, 1);
-aggregate_proofs_benchmark!(bench_aggregate_4_proofs, 2, 2);
-aggregate_proofs_benchmark!(bench_aggregate_8_proofs, 2, 3);
-aggregate_proofs_benchmark!(bench_aggregate_16_proofs, 2, 4);
-aggregate_proofs_benchmark!(bench_aggregate_32_proofs, 2, 5);
+// Various proof counts.
+aggregate_proofs_benchmark!(bench_aggregate_2_proofs, 2);
+aggregate_proofs_benchmark!(bench_aggregate_4_proofs, 4);
+aggregate_proofs_benchmark!(bench_aggregate_8_proofs, 8);
+aggregate_proofs_benchmark!(bench_aggregate_16_proofs, 16);
+aggregate_proofs_benchmark!(bench_aggregate_32_proofs, 32);
 
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_2, 2, 1);
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_4, 2, 2);
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_8, 2, 3);
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_16, 2, 4);
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_32, 2, 5);
+verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_2, 2);
+verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_4, 4);
+verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_8, 8);
+verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_16, 16);
+verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_32, 32);
 
-// Different tree configurations.
-aggregate_proofs_benchmark!(bench_aggregate_proofs_3_2, 3, 2);
-aggregate_proofs_benchmark!(bench_aggregate_proofs_4_2, 4, 2);
-aggregate_proofs_benchmark!(bench_aggregate_proofs_5_2, 5, 2);
-aggregate_proofs_benchmark!(bench_aggregate_proofs_6_2, 6, 2);
-aggregate_proofs_benchmark!(bench_aggregate_proofs_7_2, 7, 2);
+// Additional proof counts.
+aggregate_proofs_benchmark!(bench_aggregate_proofs_9, 9);
+aggregate_proofs_benchmark!(bench_aggregate_proofs_25, 25);
+aggregate_proofs_benchmark!(bench_aggregate_proofs_36, 36);
+aggregate_proofs_benchmark!(bench_aggregate_proofs_49, 49);
 
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_3_2, 3, 2);
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_4_2, 4, 2);
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_8_2, 5, 2);
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_6_2, 6, 2);
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_7_2, 7, 2);
+verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_9, 9);
+verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_25, 25);
+verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_36, 36);
+verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_49, 49);
 
 criterion_group!(
     name = benches;
@@ -148,7 +140,7 @@ criterion_group!(
         .sample_size(10);
     targets = bench_aggregate_2_proofs, bench_aggregate_4_proofs, bench_aggregate_8_proofs, bench_aggregate_16_proofs, bench_aggregate_32_proofs,
               bench_verify_aggregate_proof_2, bench_verify_aggregate_proof_4, bench_verify_aggregate_proof_8, bench_verify_aggregate_proof_16, bench_verify_aggregate_proof_32,
-              bench_aggregate_proofs_3_2, bench_aggregate_proofs_4_2, bench_aggregate_proofs_5_2, bench_aggregate_proofs_6_2, bench_aggregate_proofs_7_2,
-              bench_verify_aggregate_proof_3_2, bench_verify_aggregate_proof_4_2, bench_verify_aggregate_proof_8_2, bench_verify_aggregate_proof_6_2, bench_verify_aggregate_proof_7_2,
+              bench_aggregate_proofs_9, bench_aggregate_proofs_25, bench_aggregate_proofs_36, bench_aggregate_proofs_49,
+              bench_verify_aggregate_proof_9, bench_verify_aggregate_proof_25, bench_verify_aggregate_proof_36, bench_verify_aggregate_proof_49,
 );
 criterion_main!(benches);

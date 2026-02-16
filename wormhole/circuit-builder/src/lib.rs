@@ -5,7 +5,7 @@ use std::path::Path;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::config::PoseidonGoldilocksConfig;
 use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
-use wormhole_aggregator::{TreeAggregationConfig, WormholeProofAggregator};
+use wormhole_aggregator::{AggregationConfig, WormholeProofAggregator};
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use zk_circuits_common::circuit::D;
 
@@ -85,25 +85,22 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
 /// Generate aggregated circuit binaries (aggregated_verifier.bin, aggregated_common.bin)
 ///
 /// The aggregated circuit is built by running the aggregation process on dummy proofs.
-/// This requires creating a full aggregation tree which is computationally expensive.
 ///
 /// IMPORTANT: This must be called AFTER generate_circuit_binaries() so that the
-/// leaf circuit files (prover.bin, common.bin, verifier.bin) already exist.
+/// leaf circuit files (prover.bin, common.bin, verifier.bin, dummy_proof.bin) already exist.
 /// The aggregator loads from these files to ensure consistency.
 ///
 /// # Arguments
 /// * `output_dir` - Directory to write the binaries to
-/// * `branching_factor` - Number of proofs aggregated at each tree level
-/// * `depth` - Depth of the aggregation tree (num_leaf_proofs = branching_factor^depth)
+/// * `num_leaf_proofs` - Number of leaf proofs aggregated into a single proof
 pub fn generate_aggregated_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
-    branching_factor: usize,
-    depth: u32,
+    num_leaf_proofs: usize,
 ) -> Result<()> {
-    let config = TreeAggregationConfig::new(branching_factor, depth);
+    let config = AggregationConfig::new(num_leaf_proofs);
     println!(
-        "Building aggregated wormhole circuit (branching_factor={}, depth={}, num_leaf_proofs={})...",
-        branching_factor, depth, config.num_leaf_proofs
+        "Building aggregated wormhole circuit (num_leaf_proofs={})...",
+        num_leaf_proofs
     );
 
     let output_path = output_dir.as_ref();
@@ -164,13 +161,11 @@ pub fn generate_aggregated_circuit_binaries<P: AsRef<Path>>(
 /// # Arguments
 /// * `output_dir` - Directory to write the binaries to
 /// * `include_prover` - Whether to include the prover binary
-/// * `branching_factor` - Number of proofs aggregated at each tree level
-/// * `depth` - Depth of the aggregation tree (num_leaf_proofs = branching_factor^depth)
+/// * `num_leaf_proofs` - Number of leaf proofs aggregated into a single proof
 pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
     include_prover: bool,
-    branching_factor: usize,
-    depth: u32,
+    num_leaf_proofs: usize,
 ) -> Result<()> {
     let output_path = output_dir.as_ref();
 
@@ -178,11 +173,10 @@ pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
     generate_circuit_binaries(output_path, include_prover)?;
 
     // Generate aggregated circuit binaries
-    generate_aggregated_circuit_binaries(output_path, branching_factor, depth)?;
+    generate_aggregated_circuit_binaries(output_path, num_leaf_proofs)?;
 
     // Save config file alongside binaries (with hashes for integrity verification)
-    let config =
-        CircuitBinsConfig::new(branching_factor, depth).with_hashes_from_directory(output_path)?;
+    let config = CircuitBinsConfig::new(num_leaf_proofs).with_hashes_from_directory(output_path)?;
     config.save(output_path)?;
 
     // Print hashes for reference
