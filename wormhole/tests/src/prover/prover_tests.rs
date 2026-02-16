@@ -4,7 +4,7 @@ use hex;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use qp_wormhole_inputs::PublicCircuitInputs;
 use test_helpers::{
-    block_header::{DEFAULT_BLOCK_HASHES, DEFAULT_BLOCK_NUMBERS, DEFAULT_PARENT_HASHES},
+    block_header::{DEFAULT_BLOCK_HASHES, DEFAULT_BLOCK_NUMBERS},
     TestInputs, DEFAULT_OUTPUT_AMOUNTS, DEFAULT_VOLUME_FEE_BPS,
 };
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};

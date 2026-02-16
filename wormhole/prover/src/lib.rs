@@ -30,6 +30,7 @@
 //!         funding_account: [2u8; 32].try_into().unwrap(),
 //!         storage_proof: ProcessedStorageProof::new(vec![], vec![]).unwrap(),
 //!         unspendable_account: [1u8; 32].try_into().unwrap(),
+//!         parent_hash: [5u8; 32].try_into().unwrap(),
 //!         state_root: [3u8; 32].try_into().unwrap(),
 //!         extrinsics_root: [4u8; 32].try_into().unwrap(),
 //!         digest: [0u8; 110],
@@ -42,7 +43,6 @@
 //!         volume_fee_bps: 10,    // 0.1% = 10 basis points
 //!         nullifier: [1u8; 32].try_into().unwrap(),
 //!         block_hash: [0u8; 32].try_into().unwrap(),
-//!         parent_hash: [5u8; 32].try_into().unwrap(),
 //!         exit_account_1: [2u8; 32].try_into().unwrap(),  // Spend destination
 //!         exit_account_2: [3u8; 32].try_into().unwrap(),  // Change destination
 //!         block_number: 1,
