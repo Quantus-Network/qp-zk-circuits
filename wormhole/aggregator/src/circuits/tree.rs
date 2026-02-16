@@ -469,7 +469,6 @@ mod tests {
     const TEST_ASSET_ID_U64: u64 = 0;
     const TEST_VOLUME_FEE_BPS: u64 = 10; // 0.1% = 10 basis points
 
-    /// Test config: branching_factor=8, depth=1 (8 leaf proofs)
     // ---------------- Circuit ----------------
 
     /// Dummy wormhole leaf for the Bitcoin-style 2-output layout:
