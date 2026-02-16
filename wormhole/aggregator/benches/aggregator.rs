@@ -10,8 +10,10 @@ fn load_dummy_proofs(
     common_data: &CommonCircuitData<F, D>,
     len: usize,
 ) -> Vec<ProofWithPublicInputs<F, C, D>> {
-    // Load in the dummy proof
-    let dummy_proof = load_dummy_proof(common_data).expect("failed to load dummy proof");
+    let dummy_bytes =
+        std::fs::read("generated-bins/dummy_proof.bin").expect("failed to read dummy_proof.bin");
+    let dummy_proof =
+        load_dummy_proof(dummy_bytes, common_data).expect("failed to load dummy proof");
     (0..len).map(|_| dummy_proof.clone()).collect()
 }
 

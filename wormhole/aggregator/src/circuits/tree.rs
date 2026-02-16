@@ -397,7 +397,7 @@ fn aggregate_dedupe_public_inputs(
             builder.select(is_duplicate, zero, exit_slot[3]),
         ];
 
-        // Range check the sum 
+        // Range check the sum
         // Since max supply is 21m coins, then max quantized amount is 2.1b < 2^32
         builder.range_check(final_sum, 32);
 

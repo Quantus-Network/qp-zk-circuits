@@ -12,7 +12,7 @@ use zk_circuits_common::circuit::D;
 // Re-export CircuitBinsConfig from aggregator so users of circuit-builder can access it
 pub use wormhole_aggregator::CircuitBinsConfig;
 
-/// Generate wormhole circuit binaries (verifier.bin, common.bin, and optionally prover.bin)
+/// Generate wormhole circuit binaries (verifier.bin, common.bin, dummy_proof.bin, and optionally prover.bin)
 pub fn generate_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
     include_prover: bool,
@@ -20,6 +20,7 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
     println!("Building wormhole circuit...");
     let config = CircuitConfig::standard_recursion_zk_config();
     let circuit = WormholeCircuit::new(config);
+    let targets = circuit.targets();
     let circuit_data = circuit.build_circuit();
     println!("Circuit built.");
 
@@ -28,14 +29,25 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
         _phantom: Default::default(),
     };
 
+    let output_path = output_dir.as_ref();
+    create_dir_all(output_path)?;
+
+    // Generate dummy proof BEFORE consuming circuit_data (prove() borrows, prover_data() moves)
+    println!("Generating dummy proof for aggregation padding...");
+    let dummy_proof_bytes = wormhole_aggregator::generate_dummy_proof(&circuit_data, &targets)
+        .map_err(|e| anyhow!("Failed to generate dummy proof: {}", e))?;
+    write(output_path.join("dummy_proof.bin"), &dummy_proof_bytes)?;
+    println!(
+        "Dummy proof saved to {}/dummy_proof.bin ({} bytes)",
+        output_path.display(),
+        dummy_proof_bytes.len()
+    );
+
     println!("Serializing circuit data...");
 
     let verifier_data = circuit_data.verifier_data();
     let prover_data = circuit_data.prover_data();
     let common_data = &verifier_data.common;
-
-    let output_path = output_dir.as_ref();
-    create_dir_all(output_path)?;
 
     // Serialize common data
     let common_bytes = common_data
@@ -103,11 +115,7 @@ pub fn generate_aggregated_circuit_binaries<P: AsRef<Path>>(
     // If we used from_circuit_config(), it would build a fresh leaf circuit which
     // might differ from the one in common.bin/verifier.bin, causing verification
     // failures when the chain tries to verify aggregated proofs.
-    let mut aggregator = WormholeProofAggregator::from_prebuilt_with_paths(
-        &output_path.join("common.bin"),
-        &output_path.join("verifier.bin"),
-        config,
-    )
+    let mut aggregator = WormholeProofAggregator::from_prebuilt_dir(output_path, config)
     .map_err(|e| anyhow!("Failed to create aggregator from pre-built files. Make sure generate_circuit_binaries() was called first: {}", e))?;
 
     // We need to run the aggregation to get the circuit data.
