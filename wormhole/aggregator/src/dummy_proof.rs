@@ -150,7 +150,6 @@ pub fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
             exit_account_2: BytesDigest::default(), // No second exit account
             // Sentinel: block_hash = 0 triggers validation bypass
             block_hash: BytesDigest::try_from(DUMMY_BLOCK_HASH)?,
-            parent_hash: BytesDigest::try_from(DEFAULT_PARENT_HASH)?,
             block_number: DEFAULT_BLOCK_NUMBER,
         },
         private: PrivateCircuitInputs {
@@ -159,6 +158,7 @@ pub fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
             transfer_count: DEFAULT_TRANSFER_COUNT,
             funding_account,
             unspendable_account,
+            parent_hash: BytesDigest::try_from(DEFAULT_PARENT_HASH)?,
             // These values are not validated for dummies but needed for witness structure
             state_root: root_hash.try_into()?,
             extrinsics_root: BytesDigest::try_from(DEFAULT_EXTRINSICS_ROOT)?,

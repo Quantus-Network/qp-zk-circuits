@@ -1,6 +1,6 @@
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
-use qp_wormhole_inputs::{EXIT_ACCOUNT_END_INDEX, EXIT_ACCOUNT_START_INDEX};
+use qp_wormhole_inputs::{EXIT_ACCOUNT_1_END_INDEX, EXIT_ACCOUNT_1_START_INDEX};
 use test_helpers::TestInputs;
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use wormhole_circuit::inputs::CircuitInputs;
@@ -40,11 +40,11 @@ fn cannot_verify_with_modified_exit_account() {
 
     println!("proof before: {:?}", proof.public_inputs);
     let exit_account = SubstrateAccount::from_field_elements(
-        &proof.public_inputs[EXIT_ACCOUNT_START_INDEX..EXIT_ACCOUNT_END_INDEX],
+        &proof.public_inputs[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX],
     );
     println!("exit_account: {:?}", exit_account);
     let modified_exit_account = SubstrateAccount::new(&[8u8; 32]).unwrap();
-    proof.public_inputs[EXIT_ACCOUNT_START_INDEX..EXIT_ACCOUNT_END_INDEX]
+    proof.public_inputs[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX]
         .copy_from_slice(&modified_exit_account.to_field_elements());
     println!("proof after: {:?}", proof.public_inputs);
 

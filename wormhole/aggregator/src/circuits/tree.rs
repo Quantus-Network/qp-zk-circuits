@@ -26,9 +26,9 @@ use crate::dummy_proof::generate_random_nullifier;
 
 /// Public inputs per leaf proof (Bitcoin-style 2-output layout)
 /// Layout: asset_id(1) + output_amount_1(1) + output_amount_2(1) + volume_fee_bps(1) +
-///         nullifier(4) + exit_account_1(4) + exit_account_2(4) + block_hash(4) + parent_hash(4) + block_number(1)
-/// = 1 + 1 + 1 + 1 + 4 + 4 + 4 + 4 + 4 + 1 = 25
-const LEAF_PI_LEN: usize = 25;
+///         nullifier(4) + exit_account_1(4) + exit_account_2(4) + block_hash(4) + block_number(1)
+/// = 1 + 1 + 1 + 1 + 4 + 4 + 4 + 4 + 1 = 21
+const LEAF_PI_LEN: usize = 21;
 const ASSET_ID_START: usize = 0; // 1 felt
 const OUTPUT_AMOUNT_1_START: usize = 1; // 1 felt (spend amount)
 const OUTPUT_AMOUNT_2_START: usize = 2; // 1 felt (change amount)
@@ -37,15 +37,8 @@ const NULLIFIER_START: usize = 4; // 4 felts
 const EXIT_1_START: usize = 8; // 4 felts (spend destination)
 const EXIT_2_START: usize = 12; // 4 felts (change destination)
 const BLOCK_HASH_START: usize = 16; // 4 felts
-#[allow(dead_code)] // Used in tests
-const PARENT_HASH_START: usize = 20; // 4 felts
-const BLOCK_NUMBER_START: usize = 24; // 1 felt
+const BLOCK_NUMBER_START: usize = 20; // 1 felt
 
-// Legacy alias for tests (points to first output)
-#[allow(dead_code)]
-const OUTPUT_AMOUNT_START: usize = OUTPUT_AMOUNT_1_START;
-#[allow(dead_code)]
-const EXIT_START: usize = EXIT_1_START;
 /// A proof containing both the proof data and the circuit data needed to verify it.
 #[derive(Debug)]
 pub struct AggregatedProof<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
@@ -503,8 +496,7 @@ mod tests {
     use super::{
         aggregate_to_tree, AggregatedProof, TreeAggregationConfig, ASSET_ID_START,
         BLOCK_HASH_START, BLOCK_NUMBER_START, EXIT_1_START, EXIT_2_START, LEAF_PI_LEN,
-        NULLIFIER_START, OUTPUT_AMOUNT_1_START, OUTPUT_AMOUNT_2_START, PARENT_HASH_START,
-        VOLUME_FEE_BPS_START,
+        NULLIFIER_START, OUTPUT_AMOUNT_1_START, OUTPUT_AMOUNT_2_START, VOLUME_FEE_BPS_START,
     };
 
     const TEST_ASSET_ID_U64: u64 = 0;
@@ -519,7 +511,7 @@ mod tests {
 
     /// Dummy wormhole leaf for the Bitcoin-style 2-output layout:
     ///
-    /// PIs per leaf (length = LEAF_PI_LEN = 25):
+    /// PIs per leaf (length = LEAF_PI_LEN = 21):
     ///   [ asset_id(1×felt),
     ///     output_amount_1(1×felt),     // spend amount
     ///     output_amount_2(1×felt),     // change amount
@@ -528,7 +520,6 @@ mod tests {
     ///     exit_account_1(4×felt),      // spend destination
     ///     exit_account_2(4×felt),      // change destination
     ///     block_hash(4×felt),
-    ///     parent_hash(4×felt),
     ///     block_number(1×felt) ]
     ///
     fn generate_dummy_wormhole_circuit() -> (CircuitData<F, C, D>, [Target; LEAF_PI_LEN]) {
@@ -589,7 +580,6 @@ mod tests {
         exit_1: [F; 4],
         exit_2: [F; 4],
         block_hash: [F; 4],
-        parent_hash: [F; 4],
         block_number: F,
     ) -> [F; LEAF_PI_LEN] {
         let mut out = [F::ZERO; LEAF_PI_LEN];
@@ -601,7 +591,6 @@ mod tests {
         out[EXIT_1_START..EXIT_1_START + 4].copy_from_slice(&exit_1);
         out[EXIT_2_START..EXIT_2_START + 4].copy_from_slice(&exit_2);
         out[BLOCK_HASH_START..BLOCK_HASH_START + 4].copy_from_slice(&block_hash);
-        out[PARENT_HASH_START..PARENT_HASH_START + 4].copy_from_slice(&parent_hash);
         out[BLOCK_NUMBER_START] = block_number;
         out
     }
@@ -781,7 +770,6 @@ mod tests {
 
         // All proofs must be from the SAME block
         let common_block_hash = block_hashes_felts[0];
-        let common_parent_hash = [F::ZERO; 4];
         let common_block_number = F::from_canonical_u64(42);
 
         let asset_id = F::from_canonical_u64(TEST_ASSET_ID_U64);
@@ -804,7 +792,6 @@ mod tests {
                 exit_1,
                 exit_2,
                 common_block_hash,
-                common_parent_hash,
                 common_block_number,
             ));
         }
@@ -973,8 +960,6 @@ mod tests {
         let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs_u64_to_felts_be);
         let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs_u64_to_felts_be);
 
-        let parent_hashes_felts: [[F; 4]; 8] = [[F::ZERO; 4]; 8];
-
         // Different block numbers (this is the old behavior that should now fail)
         let block_numbers: [F; 8] = core::array::from_fn(|i| F::from_canonical_u64(i as u64));
         let asset_id = F::from_canonical_u64(TEST_ASSET_ID_U64);
@@ -987,7 +972,6 @@ mod tests {
             let exit_2 = [F::ZERO; 4]; // No change output
                                        // Each proof uses a DIFFERENT block hash - this should fail
             let bhash = block_hashes_felts[i];
-            let phash = parent_hashes_felts[i];
             let bnum = block_numbers[i];
 
             pis_list.push(make_pi_from_felts(
@@ -999,7 +983,6 @@ mod tests {
                 exit_1,
                 exit_2,
                 bhash,
-                phash,
                 bnum,
             ));
         }
@@ -1035,9 +1018,6 @@ mod tests {
         let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs_u64_to_felts_be);
         let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs_u64_to_felts_be);
 
-        let mut parent_hashes_felts: [[F; 4]; 8] = [[F::ZERO; 4]; 8];
-        parent_hashes_felts[1..8].copy_from_slice(&block_hashes_felts[..7]);
-
         let block_numbers: [F; 8] = core::array::from_fn(|i| F::from_canonical_u64(i as u64));
         let volume_fee_bps = F::from_canonical_u64(TEST_VOLUME_FEE_BPS);
 
@@ -1053,7 +1033,6 @@ mod tests {
                 exits_felts[i],
                 [F::ZERO; 4], // No second exit
                 block_hashes_felts[i],
-                parent_hashes_felts[i],
                 block_numbers[i],
             ));
         }
@@ -1096,7 +1075,6 @@ mod tests {
 
         // All real proofs must be from the same block
         let common_block_hash = block_hashes_felts[0];
-        let common_parent_hash = [F::ZERO; 4];
         let common_block_number = F::from_canonical_u64(42);
 
         let asset_id = F::from_canonical_u64(TEST_ASSET_ID_U64);
@@ -1115,7 +1093,6 @@ mod tests {
                 exits_felts[i],
                 [F::ZERO; 4], // No second exit
                 common_block_hash,
-                common_parent_hash,
                 common_block_number,
             ));
         }
@@ -1123,7 +1100,6 @@ mod tests {
         // Dummy proofs (indices 2-7): block_hash = 0, exit_account = 0, output_amount = 0
         let dummy_exit = [F::ZERO; 4];
         let dummy_block_hash = [F::ZERO; 4];
-        let dummy_parent_hash = [F::ZERO; 4];
         let dummy_output_amount = F::ZERO;
 
         for nullifier in nullifiers_felts.iter().skip(num_real_proofs) {
@@ -1136,7 +1112,6 @@ mod tests {
                 dummy_exit,
                 dummy_exit, // Both exits zero
                 dummy_block_hash,
-                dummy_parent_hash,
                 F::ZERO,
             ));
         }

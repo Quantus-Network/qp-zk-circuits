@@ -30,7 +30,10 @@ pub struct HeaderTargets {
 impl HeaderTargets {
     pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
         Self {
-            parent_hash: builder.add_virtual_hash_public_input(),
+            // parent_hash is a private input -- it contributes to block_hash computation
+            // but does not need to be exposed as a public input since block_hash already
+            // commits to it (block_hash = H(parent_hash || block_number || ...)).
+            parent_hash: builder.add_virtual_hash(),
             block_number: builder.add_virtual_public_input(),
             state_root: builder.add_virtual_hash(),
             extrinsics_root: builder.add_virtual_hash(),
@@ -91,7 +94,7 @@ impl TryFrom<&CircuitInputs> for HeaderInputs {
 
     fn try_from(inputs: &CircuitInputs) -> Result<Self, Self::Error> {
         Self::new(
-            inputs.public.parent_hash,
+            inputs.private.parent_hash,
             inputs.public.block_number,
             inputs.private.state_root,
             inputs.private.extrinsics_root,

@@ -24,9 +24,12 @@ const GOLDILOCKS_ORDER: u64 = 0xFFFFFFFF00000001;
 
 /// The total size of the public inputs field element vector.
 /// Layout: asset_id(1) + output_amount_1(1) + output_amount_2(1) + volume_fee_bps(1) +
-///         nullifier(4) + exit_account_1(4) + exit_account_2(4) + block_hash(4) + parent_hash(4) + block_number(1)
-/// = 1 + 1 + 1 + 1 + 4 + 4 + 4 + 4 + 4 + 1 = 25
-pub const PUBLIC_INPUTS_FELTS_LEN: usize = 25;
+///         nullifier(4) + exit_account_1(4) + exit_account_2(4) + block_hash(4) + block_number(1)
+/// = 1 + 1 + 1 + 1 + 4 + 4 + 4 + 4 + 1 = 21
+///
+/// Note: parent_hash is a private input to the leaf circuit (used to compute block_hash)
+/// but is not exposed as a public input since block_hash already commits to it.
+pub const PUBLIC_INPUTS_FELTS_LEN: usize = 21;
 
 // Index constants for parsing public inputs
 pub const ASSET_ID_INDEX: usize = 0;
@@ -41,14 +44,7 @@ pub const EXIT_ACCOUNT_2_START_INDEX: usize = 12;
 pub const EXIT_ACCOUNT_2_END_INDEX: usize = 16;
 pub const BLOCK_HASH_START_INDEX: usize = 16;
 pub const BLOCK_HASH_END_INDEX: usize = 20;
-pub const PARENT_HASH_START_INDEX: usize = 20;
-pub const PARENT_HASH_END_INDEX: usize = 24;
-pub const BLOCK_NUMBER_INDEX: usize = 24;
-
-// Legacy aliases for backward compatibility (pointing to first output)
-pub const OUTPUT_AMOUNT_INDEX: usize = OUTPUT_AMOUNT_1_INDEX;
-pub const EXIT_ACCOUNT_START_INDEX: usize = EXIT_ACCOUNT_1_START_INDEX;
-pub const EXIT_ACCOUNT_END_INDEX: usize = EXIT_ACCOUNT_1_END_INDEX;
+pub const BLOCK_NUMBER_INDEX: usize = 20;
 
 /// A 32-byte digest that can be converted to/from field elements.
 #[derive(Hash, Default, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
@@ -169,22 +165,8 @@ pub struct PublicCircuitInputs {
     pub exit_account_2: BytesDigest,
     /// The hash of the block header.
     pub block_hash: BytesDigest,
-    /// The parent hash of the block, parsed from the block header.
-    pub parent_hash: BytesDigest,
     /// The block number, parsed from the block header.
     pub block_number: u32,
-}
-
-impl PublicCircuitInputs {
-    /// Legacy accessor for backward compatibility - returns first output amount
-    pub fn output_amount(&self) -> u32 {
-        self.output_amount_1
-    }
-
-    /// Legacy accessor for backward compatibility - returns first exit account
-    pub fn exit_account(&self) -> BytesDigest {
-        self.exit_account_1
-    }
 }
 
 /// Exit account data in aggregated proofs.
@@ -270,9 +252,6 @@ impl PublicCircuitInputs {
                 .context("failed to parse exit_account_2")?;
         let block_hash = u64s_to_bytes_digest(&pis[BLOCK_HASH_START_INDEX..BLOCK_HASH_END_INDEX])
             .context("failed to parse block_hash")?;
-        let parent_hash =
-            u64s_to_bytes_digest(&pis[PARENT_HASH_START_INDEX..PARENT_HASH_END_INDEX])
-                .context("failed to parse parent_hash")?;
 
         let block_number: u32 = pis[BLOCK_NUMBER_INDEX]
             .try_into()
@@ -287,7 +266,6 @@ impl PublicCircuitInputs {
             exit_account_1,
             exit_account_2,
             block_hash,
-            parent_hash,
             block_number,
         })
     }

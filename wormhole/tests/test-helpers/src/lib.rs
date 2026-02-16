@@ -84,7 +84,6 @@ impl TestInputs for CircuitInputs {
                 exit_account_1: exit_account,
                 exit_account_2: BytesDigest::default(), // No second exit account
                 block_hash: BytesDigest::try_from(DEFAULT_BLOCK_HASHES[0]).unwrap(),
-                parent_hash: BytesDigest::try_from(DEFAULT_PARENT_HASHES[0]).unwrap(),
                 block_number: DEFAULT_BLOCK_NUMBERS[0],
             },
             private: PrivateCircuitInputs {
@@ -93,6 +92,7 @@ impl TestInputs for CircuitInputs {
                 transfer_count: DEFAULT_TRANSFER_COUNTS[0],
                 funding_account,
                 unspendable_account,
+                parent_hash: BytesDigest::try_from(DEFAULT_PARENT_HASHES[0]).unwrap(),
                 state_root: root_hash,
                 extrinsics_root: DEFAULT_EXTRINSICS_ROOTS[0].try_into().unwrap(),
                 digest: DEFAULT_DIGESTS[0],
@@ -129,7 +129,6 @@ impl TestInputs for CircuitInputs {
                 exit_account_1: exit_account,
                 exit_account_2: BytesDigest::default(), // No second exit account
                 block_hash: BytesDigest::try_from(DEFAULT_BLOCK_HASHES[1]).unwrap(),
-                parent_hash: BytesDigest::try_from(DEFAULT_PARENT_HASHES[1]).unwrap(),
                 block_number: DEFAULT_BLOCK_NUMBERS[1],
             },
             private: PrivateCircuitInputs {
@@ -138,6 +137,7 @@ impl TestInputs for CircuitInputs {
                 transfer_count: DEFAULT_TRANSFER_COUNTS[1],
                 funding_account,
                 unspendable_account,
+                parent_hash: BytesDigest::try_from(DEFAULT_PARENT_HASHES[1]).unwrap(),
                 state_root: root_hash,
                 extrinsics_root: DEFAULT_EXTRINSICS_ROOTS[1].try_into().unwrap(),
                 digest: DEFAULT_DIGESTS[1],

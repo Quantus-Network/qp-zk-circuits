@@ -43,7 +43,6 @@ fn proof_can_be_deserialized() {
         exit_account_1: BytesDigest::try_from([4u8; 32]).unwrap(),
         exit_account_2: BytesDigest::default(), // No second exit account
         block_hash: BytesDigest::try_from(DEFAULT_BLOCK_HASHES[0]).unwrap(),
-        parent_hash: BytesDigest::try_from(DEFAULT_PARENT_HASHES[0]).unwrap(),
         block_number: DEFAULT_BLOCK_NUMBERS[0],
     };
     assert_eq!(public_inputs, expected);
