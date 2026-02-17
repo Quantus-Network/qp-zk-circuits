@@ -2,22 +2,18 @@ use plonky2::field::types::Field;
 use plonky2::iop::target::BoolTarget;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use plonky2::{
-    field::extension::Extendable,
-    hash::hash_types::RichField,
     iop::{
         target::Target,
         witness::{PartialWitness, WitnessWrite},
     },
     plonk::{
         circuit_builder::CircuitBuilder,
-        circuit_data::{CircuitData, CommonCircuitData, VerifierOnlyCircuitData},
-        config::GenericConfig,
+        circuit_data::{CommonCircuitData, VerifierOnlyCircuitData},
     },
 };
-#[cfg(feature = "multithread")]
-use rayon::{iter::ParallelIterator, slice::ParallelSlice};
 use zk_circuits_common::utils::digest_bytes_to_felts;
 use zk_circuits_common::{
+    aggregation::{aggregate_with_wrapper, AggregatedProof, AggregationWrapper},
     circuit::{C, D, F},
     gadgets::{bytes_digest_eq, limb1_at_offset, limbs4_at_offset},
 };
@@ -39,133 +35,109 @@ const EXIT_2_START: usize = 12; // 4 felts (change destination)
 const BLOCK_HASH_START: usize = 16; // 4 felts
 const BLOCK_NUMBER_START: usize = 20; // 1 felt
 
-/// A proof containing both the proof data and the circuit data needed to verify it.
-#[derive(Debug)]
-pub struct AggregatedProof<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
-{
-    pub proof: ProofWithPublicInputs<F, C, D>,
-    pub circuit_data: CircuitData<F, C, D>,
-}
+/// Layer-0 aggregated proof output layout constants.
+///
+/// These define the public inputs layout produced by `WormholeAggregationWrapper`.
+/// Used by higher layers (e.g., Layer1Wrapper) to parse layer-0 output.
+///
+/// Layout:
+/// ```text
+/// [num_exit_slots(1), asset_id(1), volume_fee_bps(1),
+///  block_hash(4), block_number(1),
+///  [sum(1), exit_account(4)] * 2*N,
+///  nullifier(4) * N,
+///  padding...]
+/// ```
+pub mod aggregated_output {
+    use qp_wormhole_inputs::PUBLIC_INPUTS_FELTS_LEN;
 
-/// The tree configuration to use when aggregating proofs into a tree.
-#[derive(Debug, Clone, Copy)]
-pub struct TreeAggregationConfig {
-    pub num_leaf_proofs: usize,
-    pub tree_branching_factor: usize,
-    pub tree_depth: u32,
-}
+    /// Offset of `num_exit_slots` in the output PIs.
+    pub const NUM_EXIT_SLOTS_OFFSET: usize = 0;
+    /// Offset of `asset_id` in the output PIs.
+    pub const ASSET_ID_OFFSET: usize = 1;
+    /// Offset of `volume_fee_bps` in the output PIs.
+    pub const VOLUME_FEE_BPS_OFFSET: usize = 2;
+    /// Offset of `block_hash` (4 felts) in the output PIs.
+    pub const BLOCK_HASH_OFFSET: usize = 3;
+    /// Offset of `block_number` in the output PIs.
+    pub const BLOCK_NUMBER_OFFSET: usize = 7;
+    /// Length of the fixed header before exit slot data.
+    pub const HEADER_LEN: usize = 8;
+    /// Each exit slot is [sum(1), exit_account(4)] = 5 felts.
+    pub const EXIT_SLOT_LEN: usize = 5;
 
-impl TreeAggregationConfig {
-    pub fn new(tree_branching_factor: usize, tree_depth: u32) -> Self {
-        let num_leaf_proofs = tree_branching_factor.pow(tree_depth);
-        Self {
-            num_leaf_proofs,
-            tree_branching_factor,
-            tree_depth,
-        }
+    /// Compute the number of exit slots for a given number of leaf proofs (2 per leaf).
+    pub const fn exit_slots_count(num_leaves: usize) -> usize {
+        num_leaves * 2
+    }
+
+    /// Compute the offset where exit slot data starts.
+    pub const fn exit_slots_start() -> usize {
+        HEADER_LEN
+    }
+
+    /// Compute the offset where nullifier data starts for a given number of leaf proofs.
+    pub const fn nullifiers_start(num_leaves: usize) -> usize {
+        HEADER_LEN + exit_slots_count(num_leaves) * EXIT_SLOT_LEN
+    }
+
+    /// Compute the total PI length of a layer-0 aggregated proof.
+    pub const fn pi_len(num_leaves: usize) -> usize {
+        PUBLIC_INPUTS_FELTS_LEN * num_leaves + 8
     }
 }
 
-pub fn aggregate_to_tree(
+/// Wormhole-specific aggregation wrapper.
+///
+/// Builds a wrapper circuit around the merged proof that:
+/// - Enforces all real proofs reference the same block (block_hash != 0)
+/// - Enforces asset_id and volume_fee_bps consistency
+/// - Deduplicates exit accounts and sums amounts (2 outputs per proof, Bitcoin-style)
+/// - Replaces dummy nullifiers with random values to prevent collisions on-chain
+///
+/// Dummy proofs are detected by `block_hash == [0,0,0,0]`.
+pub struct WormholeAggregationWrapper {
+    dummy_nullifiers: Vec<[F; 4]>,
+}
+
+impl WormholeAggregationWrapper {
+    /// Create a new wrapper with random dummy nullifiers for `n_leaf` proofs.
+    pub fn new(n_leaf: usize) -> Self {
+        let dummy_nullifiers = (0..n_leaf)
+            .map(|_| digest_bytes_to_felts(generate_random_nullifier()))
+            .collect();
+        Self { dummy_nullifiers }
+    }
+}
+
+impl AggregationWrapper for WormholeAggregationWrapper {
+    fn is_dummy(&self, proof: &ProofWithPublicInputs<F, C, D>) -> bool {
+        // Wormhole dummy proofs have block_hash == [0,0,0,0]
+        proof.public_inputs[BLOCK_HASH_START..BLOCK_HASH_START + 4]
+            .iter()
+            .all(|f| f.is_zero())
+    }
+
+    fn build_wrapper(
+        &self,
+        merged: AggregatedProof,
+        n_inner: usize,
+    ) -> anyhow::Result<AggregatedProof> {
+        aggregate_dedupe_public_inputs(merged, n_inner, &self.dummy_nullifiers)
+    }
+}
+
+/// Aggregate N wormhole leaf proofs into a single aggregated proof.
+///
+/// Uses [`WormholeAggregationWrapper`] to apply wormhole-specific constraints
+/// on top of the generic [`aggregate_with_wrapper`] pipeline.
+pub fn aggregate_proofs(
     leaf_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
     common_data: &CommonCircuitData<F, D>,
     verifier_data: &VerifierOnlyCircuitData<C, D>,
-    config: TreeAggregationConfig,
-) -> anyhow::Result<AggregatedProof<F, C, D>> {
-    let n_leaf = leaf_proofs.len();
-
-    // Aggregate the first level.
-    let mut proofs = aggregate_level(leaf_proofs, common_data, verifier_data, config)?;
-
-    // Do the next levels by utilizing the circuit data within each aggregated proof.
-    while proofs.len() > 1 {
-        let common_data = &proofs[0].circuit_data.common.clone();
-        let verifier_data = &proofs[0].circuit_data.verifier_only.clone();
-        let to_aggregate = proofs.into_iter().map(|p| p.proof).collect();
-
-        let aggregated_proofs = aggregate_level(to_aggregate, common_data, verifier_data, config)?;
-
-        proofs = aggregated_proofs;
-    }
-
-    let dummy_nullifiers: Vec<[F; 4]> = (0..n_leaf)
-        .map(|_| digest_bytes_to_felts(generate_random_nullifier()))
-        .collect();
-
-    // Build the final wrapper circuit with fixed structure
-    let root_proof = aggregate_dedupe_public_inputs(proofs, n_leaf, &dummy_nullifiers)?;
-
-    Ok(root_proof)
-}
-
-#[cfg(not(feature = "multithread"))]
-fn aggregate_level(
-    proofs: Vec<ProofWithPublicInputs<F, C, D>>,
-    common_data: &CommonCircuitData<F, D>,
-    verifier_data: &VerifierOnlyCircuitData<C, D>,
-    config: TreeAggregationConfig,
-) -> anyhow::Result<Vec<AggregatedProof<F, C, D>>> {
-    proofs
-        .chunks(config.tree_branching_factor)
-        .map(|chunk| aggregate_chunk(chunk, common_data, verifier_data))
-        .collect()
-}
-
-#[cfg(feature = "multithread")]
-fn aggregate_level(
-    proofs: Vec<ProofWithPublicInputs<F, C, D>>,
-    common_data: &CommonCircuitData<F, D>,
-    verifier_data: &VerifierOnlyCircuitData<C, D>,
-    config: TreeAggregationConfig,
-) -> anyhow::Result<Vec<AggregatedProof<F, C, D>>> {
-    proofs
-        .par_chunks(config.tree_branching_factor)
-        .map(|chunk| aggregate_chunk(chunk, common_data, verifier_data))
-        .collect()
-}
-
-/// Circuit gadget that takes in a chunk of proofs, verifies each one, and aggregates their public inputs.
-///
-/// All proofs must be valid proofs from the same circuit (same CommonCircuitData).
-/// For padding with dummy proofs, use proofs generated from the same WormholeProver
-/// with block_hash = 0 as a sentinel.
-fn aggregate_chunk(
-    chunk: &[ProofWithPublicInputs<F, C, D>],
-    common_data: &CommonCircuitData<F, D>,
-    verifier_data: &VerifierOnlyCircuitData<C, D>,
-) -> anyhow::Result<AggregatedProof<F, C, D>> {
-    let mut builder = CircuitBuilder::new(common_data.config.clone());
-    let verifier_data_t =
-        builder.add_virtual_verifier_data(common_data.fri_params.config.cap_height);
-
-    let mut proof_targets = Vec::with_capacity(chunk.len());
-    for _ in 0..chunk.len() {
-        // Verify the proof
-        let proof_t = builder.add_virtual_proof_with_pis(common_data);
-        builder.verify_proof::<C>(&proof_t, &verifier_data_t, common_data);
-
-        // Aggregate public inputs of proof
-        builder.register_public_inputs(&proof_t.public_inputs);
-
-        proof_targets.push(proof_t);
-    }
-
-    let circuit_data = builder.build();
-
-    // Fill targets.
-    let mut pw = PartialWitness::new();
-    pw.set_verifier_data_target(&verifier_data_t, verifier_data)?;
-    for (target, proof) in proof_targets.iter().zip(chunk) {
-        pw.set_proof_with_pis_target(target, proof)?;
-    }
-
-    let proof = circuit_data.prove(pw)?;
-
-    let aggregated_proof = AggregatedProof {
-        proof,
-        circuit_data,
-    };
-    Ok(aggregated_proof)
+) -> anyhow::Result<AggregatedProof> {
+    let wrapper = WormholeAggregationWrapper::new(leaf_proofs.len());
+    aggregate_with_wrapper(leaf_proofs, common_data, verifier_data, &wrapper)
 }
 
 /// Build a wrapper circuit around the root aggregated proof with FIXED STRUCTURE.
@@ -197,19 +169,14 @@ fn aggregate_chunk(
 /// The chain can deduplicate by exit account after verification. Slots with exit_account=[0;32]
 /// and amount=0 represent unused second outputs.
 fn aggregate_dedupe_public_inputs(
-    proofs: Vec<AggregatedProof<F, C, D>>,
+    root: AggregatedProof,
     n_leaf: usize,
     dummy_nullifiers: &[[F; 4]],
-) -> anyhow::Result<AggregatedProof<F, C, D>> {
+) -> anyhow::Result<AggregatedProof> {
     anyhow::ensure!(
         dummy_nullifiers.len() == n_leaf,
         "dummy_nullifiers must have length n_leaf"
     );
-    anyhow::ensure!(
-        proofs.len() == 1,
-        "aggregate_dedupe_public_inputs expects a single root proof"
-    );
-    let root = &proofs[0];
 
     let root_pi_len = root.proof.public_inputs.len();
     anyhow::ensure!(
@@ -397,9 +364,9 @@ fn aggregate_dedupe_public_inputs(
             builder.select(is_duplicate, zero, exit_slot[3]),
         ];
 
-        // Range check the sum (with 2 outputs per proof, max sum could be larger)
-        // 32-bit outputs * 2*N proofs, need 32 + log2(2*N) bits
-        builder.range_check(final_sum, 40);
+        // Range check the sum
+        // Since max supply is 21m coins, then max quantized amount is 2.1b < 2^32
+        builder.range_check(final_sum, 32);
 
         // Output: [sum, exit_account(4)]
         output_pis.push(final_sum);
@@ -494,18 +461,13 @@ mod tests {
     use zk_circuits_common::circuit::{C, D, F};
 
     use super::{
-        aggregate_to_tree, AggregatedProof, TreeAggregationConfig, ASSET_ID_START,
-        BLOCK_HASH_START, BLOCK_NUMBER_START, EXIT_1_START, EXIT_2_START, LEAF_PI_LEN,
-        NULLIFIER_START, OUTPUT_AMOUNT_1_START, OUTPUT_AMOUNT_2_START, VOLUME_FEE_BPS_START,
+        aggregate_proofs, AggregatedProof, ASSET_ID_START, BLOCK_HASH_START, BLOCK_NUMBER_START,
+        EXIT_1_START, EXIT_2_START, LEAF_PI_LEN, NULLIFIER_START, OUTPUT_AMOUNT_1_START,
+        OUTPUT_AMOUNT_2_START, VOLUME_FEE_BPS_START,
     };
 
     const TEST_ASSET_ID_U64: u64 = 0;
     const TEST_VOLUME_FEE_BPS: u64 = 10; // 0.1% = 10 basis points
-
-    /// Test config: branching_factor=8, depth=1 (8 leaf proofs)
-    fn test_aggregation_config() -> TreeAggregationConfig {
-        TreeAggregationConfig::new(8, 1)
-    }
 
     // ---------------- Circuit ----------------
 
@@ -542,7 +504,7 @@ mod tests {
         (data, pis)
     }
 
-    fn prove_dummy_wormhole(pis: [F; LEAF_PI_LEN]) -> AggregatedProof<F, C, D> {
+    fn prove_dummy_wormhole(pis: [F; LEAF_PI_LEN]) -> AggregatedProof {
         let (circuit_data, targets) = generate_dummy_wormhole_circuit();
         let mut pw = PartialWitness::new();
         for (t, v) in targets.into_iter().zip(pis.into_iter()) {
@@ -806,9 +768,7 @@ mod tests {
         let verifier_data = &leaves[0].circuit_data.verifier_only.clone();
         let to_aggregate = leaves.into_iter().map(|p| p.proof).collect();
 
-        let config = test_aggregation_config();
-        let root_proof =
-            aggregate_to_tree(to_aggregate, common_data, verifier_data, config).unwrap();
+        let root_proof = aggregate_proofs(to_aggregate, common_data, verifier_data).unwrap();
 
         // ---------------------------
         // Reference aggregation OFF-CIRCUIT
@@ -996,8 +956,7 @@ mod tests {
         let verifier_data = &leaves[0].circuit_data.verifier_only.clone();
         let to_aggregate = leaves.into_iter().map(|p| p.proof).collect();
 
-        let config = test_aggregation_config();
-        let res = aggregate_to_tree(to_aggregate, common_data, verifier_data, config);
+        let res = aggregate_proofs(to_aggregate, common_data, verifier_data);
 
         assert!(
             res.is_err(),
@@ -1046,8 +1005,7 @@ mod tests {
         let verifier_data = &leaves[0].circuit_data.verifier_only.clone();
         let to_aggregate = leaves.into_iter().map(|p| p.proof).collect();
 
-        let config = test_aggregation_config();
-        let res = aggregate_to_tree(to_aggregate, common_data, verifier_data, config);
+        let res = aggregate_proofs(to_aggregate, common_data, verifier_data);
 
         assert!(res.is_err(), "expected failure due to mismatched asset IDs");
     }
@@ -1126,9 +1084,7 @@ mod tests {
         let verifier_data = &leaves[0].circuit_data.verifier_only.clone();
         let to_aggregate = leaves.into_iter().map(|p| p.proof).collect();
 
-        let config = test_aggregation_config();
-        let root_proof =
-            aggregate_to_tree(to_aggregate, common_data, verifier_data, config).unwrap();
+        let root_proof = aggregate_proofs(to_aggregate, common_data, verifier_data).unwrap();
 
         // Verify the final root proof.
         root_proof

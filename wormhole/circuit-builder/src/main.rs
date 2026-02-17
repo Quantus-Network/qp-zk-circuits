@@ -10,13 +10,9 @@ struct Args {
     #[arg(short, long, default_value = "generated-bins")]
     output: String,
 
-    /// Branching factor for aggregation tree (number of proofs aggregated at each level)
+    /// Number of leaf proofs aggregated into a single proof
     #[arg(short, long)]
-    branching_factor: usize,
-
-    /// Depth of the aggregation tree (num_leaf_proofs = branching_factor^depth)
-    #[arg(short, long)]
-    depth: u32,
+    num_leaf_proofs: usize,
 
     /// Skip prover binary generation (only generate verifier binaries)
     #[arg(long)]
@@ -27,16 +23,9 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     println!(
-        "Generating circuit binaries with branching_factor={}, depth={} (max {} proofs)",
-        args.branching_factor,
-        args.depth,
-        args.branching_factor.pow(args.depth)
+        "Generating circuit binaries (num_leaf_proofs={})",
+        args.num_leaf_proofs,
     );
 
-    generate_all_circuit_binaries(
-        &args.output,
-        !args.skip_prover,
-        args.branching_factor,
-        args.depth,
-    )
+    generate_all_circuit_binaries(&args.output, !args.skip_prover, args.num_leaf_proofs)
 }

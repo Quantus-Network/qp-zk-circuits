@@ -1,46 +1,47 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use plonky2::plonk::circuit_data::{CircuitConfig, CommonCircuitData};
+use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_aggregator::aggregator::WormholeProofAggregator;
-use qp_wormhole_aggregator::circuits::tree::TreeAggregationConfig;
-use qp_wormhole_aggregator::dummy_proof::load_dummy_proof;
+use zk_circuits_common::aggregation::AggregationConfig;
 use zk_circuits_common::circuit::{C, D, F};
 
-fn load_dummy_proofs(
-    common_data: &CommonCircuitData<F, D>,
+/// Generate dummy proofs from the circuit config (no external files needed).
+fn make_dummy_proofs(
+    aggregator: &WormholeProofAggregator,
     len: usize,
 ) -> Vec<ProofWithPublicInputs<F, C, D>> {
-    // Load in the dummy proof
-    let dummy_proof = load_dummy_proof(common_data).expect("failed to load dummy proof");
+    use plonky2::iop::witness::PartialWitness;
+    use qp_wormhole_aggregator::build_dummy_circuit_inputs;
+    use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
+    use wormhole_prover::fill_witness;
+
+    let config = aggregator.leaf_circuit_data.common.config.clone();
+    let circuit = WormholeCircuit::new(config);
+    let targets = circuit.targets();
+    let circuit_data = circuit.build_circuit();
+    let inputs = build_dummy_circuit_inputs().expect("failed to build dummy inputs");
+    let mut pw = PartialWitness::new();
+    fill_witness(&mut pw, &inputs, &targets).expect("failed to fill witness");
+    let dummy_proof = circuit_data.prove(pw).expect("failed to prove dummy");
     (0..len).map(|_| dummy_proof.clone()).collect()
 }
 
-// A macro for creating an aggregation benchmark with a specified number of proofs to
-// aggregate. The number of proofs is gotten by the tree branching factor and the tree depth.
+// A macro for creating an aggregation benchmark with a specified number of leaf proofs.
 macro_rules! aggregate_proofs_benchmark {
-    ($fn_name:ident, $tree_branching_factor:expr, $tree_depth:expr) => {
+    ($fn_name:ident, $num_leaf_proofs:expr) => {
         pub fn $fn_name(c: &mut Criterion) {
-            let aggregation_config =
-                TreeAggregationConfig::new($tree_branching_factor, $tree_depth);
+            let aggregation_config = AggregationConfig::new($num_leaf_proofs);
             let circuit_config = CircuitConfig::standard_recursion_zk_config();
 
-            // Setup proofs.
-            let proofs = {
-                let temp_aggregator = WormholeProofAggregator::from_circuit_config(
-                    circuit_config.clone(),
-                    aggregation_config,
-                );
-                load_dummy_proofs(
-                    &temp_aggregator.leaf_circuit_data.common,
-                    aggregation_config.num_leaf_proofs,
-                )
-            };
+            // Setup proofs (generated from circuit config, no external files needed).
+            let temp_aggregator = WormholeProofAggregator::from_circuit_config(
+                circuit_config.clone(),
+                aggregation_config,
+            );
+            let proofs = make_dummy_proofs(&temp_aggregator, aggregation_config.num_leaf_proofs);
 
             c.bench_function(
-                &format!(
-                    "aggregate_proofs_{}_{}",
-                    aggregation_config.tree_branching_factor, aggregation_config.tree_depth
-                ),
+                &format!("aggregate_proofs_{}", aggregation_config.num_leaf_proofs),
                 |b| {
                     b.iter_batched(
                         || {
@@ -65,28 +66,22 @@ macro_rules! aggregate_proofs_benchmark {
 }
 
 macro_rules! verify_aggregate_proof_benchmark {
-    ($fn_name:ident, $tree_branching_factor:expr, $tree_depth:expr) => {
+    ($fn_name:ident, $num_leaf_proofs:expr) => {
         pub fn $fn_name(c: &mut Criterion) {
-            let aggregation_config =
-                TreeAggregationConfig::new($tree_branching_factor, $tree_depth);
+            let aggregation_config = AggregationConfig::new($num_leaf_proofs);
             let circuit_config = CircuitConfig::standard_recursion_zk_config();
 
-            // Setup proofs.
-            let proofs = {
-                let temp_aggregator = WormholeProofAggregator::from_circuit_config(
-                    circuit_config.clone(),
-                    aggregation_config,
-                );
-                load_dummy_proofs(
-                    &temp_aggregator.leaf_circuit_data.common,
-                    aggregation_config.num_leaf_proofs,
-                )
-            };
+            // Setup proofs (generated from circuit config, no external files needed).
+            let temp_aggregator = WormholeProofAggregator::from_circuit_config(
+                circuit_config.clone(),
+                aggregation_config,
+            );
+            let proofs = make_dummy_proofs(&temp_aggregator, aggregation_config.num_leaf_proofs);
 
             c.bench_function(
                 &format!(
-                    "verify_aggregate_proof_{}_{}",
-                    aggregation_config.tree_branching_factor, aggregation_config.tree_depth
+                    "verify_aggregate_proof_{}",
+                    aggregation_config.num_leaf_proofs
                 ),
                 |b| {
                     b.iter_batched(
@@ -114,31 +109,29 @@ macro_rules! verify_aggregate_proof_benchmark {
     };
 }
 
-// Various proof sizes with binary trees.
-aggregate_proofs_benchmark!(bench_aggregate_2_proofs, 2, 1);
-aggregate_proofs_benchmark!(bench_aggregate_4_proofs, 2, 2);
-aggregate_proofs_benchmark!(bench_aggregate_8_proofs, 2, 3);
-aggregate_proofs_benchmark!(bench_aggregate_16_proofs, 2, 4);
-aggregate_proofs_benchmark!(bench_aggregate_32_proofs, 2, 5);
+// Various proof counts.
+aggregate_proofs_benchmark!(bench_aggregate_2_proofs, 2);
+aggregate_proofs_benchmark!(bench_aggregate_4_proofs, 4);
+aggregate_proofs_benchmark!(bench_aggregate_8_proofs, 8);
+aggregate_proofs_benchmark!(bench_aggregate_16_proofs, 16);
+aggregate_proofs_benchmark!(bench_aggregate_32_proofs, 32);
 
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_2, 2, 1);
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_4, 2, 2);
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_8, 2, 3);
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_16, 2, 4);
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_32, 2, 5);
+verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_2, 2);
+verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_4, 4);
+verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_8, 8);
+verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_16, 16);
+verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_32, 32);
 
-// Different tree configurations.
-aggregate_proofs_benchmark!(bench_aggregate_proofs_3_2, 3, 2);
-aggregate_proofs_benchmark!(bench_aggregate_proofs_4_2, 4, 2);
-aggregate_proofs_benchmark!(bench_aggregate_proofs_5_2, 5, 2);
-aggregate_proofs_benchmark!(bench_aggregate_proofs_6_2, 6, 2);
-aggregate_proofs_benchmark!(bench_aggregate_proofs_7_2, 7, 2);
+// Additional proof counts.
+aggregate_proofs_benchmark!(bench_aggregate_proofs_9, 9);
+aggregate_proofs_benchmark!(bench_aggregate_proofs_25, 25);
+aggregate_proofs_benchmark!(bench_aggregate_proofs_36, 36);
+aggregate_proofs_benchmark!(bench_aggregate_proofs_49, 49);
 
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_3_2, 3, 2);
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_4_2, 4, 2);
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_8_2, 5, 2);
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_6_2, 6, 2);
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_7_2, 7, 2);
+verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_9, 9);
+verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_25, 25);
+verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_36, 36);
+verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_49, 49);
 
 criterion_group!(
     name = benches;
@@ -146,7 +139,7 @@ criterion_group!(
         .sample_size(10);
     targets = bench_aggregate_2_proofs, bench_aggregate_4_proofs, bench_aggregate_8_proofs, bench_aggregate_16_proofs, bench_aggregate_32_proofs,
               bench_verify_aggregate_proof_2, bench_verify_aggregate_proof_4, bench_verify_aggregate_proof_8, bench_verify_aggregate_proof_16, bench_verify_aggregate_proof_32,
-              bench_aggregate_proofs_3_2, bench_aggregate_proofs_4_2, bench_aggregate_proofs_5_2, bench_aggregate_proofs_6_2, bench_aggregate_proofs_7_2,
-              bench_verify_aggregate_proof_3_2, bench_verify_aggregate_proof_4_2, bench_verify_aggregate_proof_8_2, bench_verify_aggregate_proof_6_2, bench_verify_aggregate_proof_7_2,
+              bench_aggregate_proofs_9, bench_aggregate_proofs_25, bench_aggregate_proofs_36, bench_aggregate_proofs_49,
+              bench_verify_aggregate_proof_9, bench_verify_aggregate_proof_25, bench_verify_aggregate_proof_36, bench_verify_aggregate_proof_49,
 );
 criterion_main!(benches);

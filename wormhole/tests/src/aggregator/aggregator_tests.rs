@@ -2,19 +2,18 @@
 
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_inputs::PublicCircuitInputs;
-use wormhole_aggregator::{
-    aggregator::WormholeProofAggregator, circuits::tree::TreeAggregationConfig,
-};
+use wormhole_aggregator::aggregator::WormholeProofAggregator;
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_prover::WormholeProver;
+use zk_circuits_common::aggregation::AggregationConfig;
 use zk_circuits_common::circuit::{C, D, F};
 
 use crate::aggregator::circuit_config;
 use test_helpers::TestInputs;
 
-/// Test aggregation config: branching_factor=2, depth=1 (2 leaf proofs)
-fn test_aggregation_config() -> TreeAggregationConfig {
-    TreeAggregationConfig::new(2, 1)
+/// Test aggregation config: 2 leaf proofs
+fn test_aggregation_config() -> AggregationConfig {
+    AggregationConfig::new(2)
 }
 
 #[test]
@@ -239,12 +238,9 @@ fn verify_aggregated_proof_with_prebuilt_verifier() {
     // Step 3: Create aggregator from pre-built files (matches circuit-builder)
     // The bins are at repo root, tests run from wormhole/tests
     println!("Creating aggregator from pre-built files...");
-    let num_real_proofs = 2; // We're providing 2 real proofs
-    let mut aggregator = WormholeProofAggregator::from_prebuilt_with_paths(
-        Path::new("../../generated-bins/common.bin"),
-        Path::new("../../generated-bins/verifier.bin"),
+    let mut aggregator = WormholeProofAggregator::from_prebuilt_dir(
+        Path::new("../../generated-bins"),
         test_aggregation_config(),
-        num_real_proofs,
     )
     .expect("Failed to create aggregator from pre-built files");
 

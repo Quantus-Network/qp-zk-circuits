@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::write;
 use std::path::Path;
 
-use crate::circuits::tree::TreeAggregationConfig;
+use zk_circuits_common::aggregation::AggregationConfig;
 
 /// SHA256 hashes of the circuit binary files.
 /// Used to detect mismatches between different copies of the binaries.
@@ -24,6 +24,9 @@ pub struct BinaryHashes {
     /// Hash of aggregated_verifier.bin (aggregated circuit verifier data)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aggregated_verifier: Option<String>,
+    /// Hash of dummy_proof.bin (pre-generated dummy proof for aggregation padding)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dummy_proof: Option<String>,
 }
 
 impl BinaryHashes {
@@ -45,6 +48,7 @@ impl BinaryHashes {
             prover: Self::hash_file(dir.join("prover.bin")).ok(),
             aggregated_common: Self::hash_file(dir.join("aggregated_common.bin")).ok(),
             aggregated_verifier: Self::hash_file(dir.join("aggregated_verifier.bin")).ok(),
+            dummy_proof: Self::hash_file(dir.join("dummy_proof.bin")).ok(),
         })
     }
 }
@@ -54,8 +58,6 @@ impl BinaryHashes {
 /// aggregator (to load config when aggregating proofs).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CircuitBinsConfig {
-    pub branching_factor: usize,
-    pub depth: u32,
     pub num_leaf_proofs: usize,
     /// SHA256 hashes of the binary files for integrity verification
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -64,11 +66,9 @@ pub struct CircuitBinsConfig {
 
 impl CircuitBinsConfig {
     /// Create a new config without hashes (hashes should be added via `with_hashes_from_directory`)
-    pub fn new(branching_factor: usize, depth: u32) -> Self {
+    pub fn new(num_leaf_proofs: usize) -> Self {
         Self {
-            branching_factor,
-            depth,
-            num_leaf_proofs: branching_factor.pow(depth),
+            num_leaf_proofs,
             hashes: None,
         }
     }
@@ -100,72 +100,59 @@ impl CircuitBinsConfig {
     }
 
     /// Verify that the binary files in a directory match the stored hashes.
-    /// Returns Ok(()) if hashes match or if no hashes are stored.
-    /// Returns Err with details if there's a mismatch.
+    /// Returns Ok(()) if all present hashes match.
+    /// Returns Err if any hash mismatches or if config has hashes but a binary file is missing.
+    /// If no hashes are stored in config, verification is skipped.
     pub fn verify_hashes<P: AsRef<Path>>(&self, bins_dir: P) -> Result<()> {
         let Some(ref stored_hashes) = self.hashes else {
-            // No hashes stored, skip verification
             return Ok(());
         };
 
         let current_hashes = BinaryHashes::from_directory(&bins_dir)?;
 
+        let checks: &[(&str, &Option<String>, &Option<String>)] = &[
+            ("common.bin", &stored_hashes.common, &current_hashes.common),
+            (
+                "verifier.bin",
+                &stored_hashes.verifier,
+                &current_hashes.verifier,
+            ),
+            ("prover.bin", &stored_hashes.prover, &current_hashes.prover),
+            (
+                "aggregated_common.bin",
+                &stored_hashes.aggregated_common,
+                &current_hashes.aggregated_common,
+            ),
+            (
+                "aggregated_verifier.bin",
+                &stored_hashes.aggregated_verifier,
+                &current_hashes.aggregated_verifier,
+            ),
+            (
+                "dummy_proof.bin",
+                &stored_hashes.dummy_proof,
+                &current_hashes.dummy_proof,
+            ),
+        ];
+
         let mut mismatches = Vec::new();
-
-        // Check each hash field
-        if let (Some(stored), Some(current)) = (
-            &stored_hashes.aggregated_common,
-            &current_hashes.aggregated_common,
-        ) {
-            if stored != current {
-                mismatches.push(format!(
-                    "aggregated_common.bin: expected {}, got {}",
-                    &stored[..16],
-                    &current[..16]
-                ));
-            }
-        }
-
-        if let (Some(stored), Some(current)) = (
-            &stored_hashes.aggregated_verifier,
-            &current_hashes.aggregated_verifier,
-        ) {
-            if stored != current {
-                mismatches.push(format!(
-                    "aggregated_verifier.bin: expected {}, got {}",
-                    &stored[..16],
-                    &current[..16]
-                ));
-            }
-        }
-
-        if let (Some(stored), Some(current)) = (&stored_hashes.common, &current_hashes.common) {
-            if stored != current {
-                mismatches.push(format!(
-                    "common.bin: expected {}, got {}",
-                    &stored[..16],
-                    &current[..16]
-                ));
-            }
-        }
-
-        if let (Some(stored), Some(current)) = (&stored_hashes.verifier, &current_hashes.verifier) {
-            if stored != current {
-                mismatches.push(format!(
-                    "verifier.bin: expected {}, got {}",
-                    &stored[..16],
-                    &current[..16]
-                ));
-            }
-        }
-
-        if let (Some(stored), Some(current)) = (&stored_hashes.prover, &current_hashes.prover) {
-            if stored != current {
-                mismatches.push(format!(
-                    "prover.bin: expected {}, got {}",
-                    &stored[..16],
-                    &current[..16]
-                ));
+        for (filename, stored, current) in checks {
+            match (stored, current) {
+                (Some(s), Some(c)) if s != c => {
+                    mismatches.push(format!(
+                        "{}: expected {}..., got {}...",
+                        filename,
+                        &s[..s.len().min(16)],
+                        &c[..c.len().min(16)]
+                    ));
+                }
+                (Some(_), None) => {
+                    mismatches.push(format!(
+                        "{}: hash in config but file not found or unreadable",
+                        filename
+                    ));
+                }
+                _ => {} // Both match, or no stored hash for this file
             }
         }
 
@@ -173,14 +160,16 @@ impl CircuitBinsConfig {
             Ok(())
         } else {
             Err(anyhow!(
-                "Binary hash mismatch detected:\n  {}",
+                "Binary hash verification failed:\n  {}\n\n\
+                 This can happen if binaries were regenerated without updating config.json.\n\
+                 Run the circuit builder to regenerate all binaries and config.",
                 mismatches.join("\n  ")
             ))
         }
     }
 
-    /// Convert to TreeAggregationConfig
-    pub fn to_aggregation_config(&self) -> TreeAggregationConfig {
-        TreeAggregationConfig::new(self.branching_factor, self.depth)
+    /// Convert to AggregationConfig
+    pub fn to_aggregation_config(&self) -> AggregationConfig {
+        AggregationConfig::new(self.num_leaf_proofs)
     }
 }

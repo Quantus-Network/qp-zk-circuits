@@ -98,21 +98,29 @@ const DEFAULT_STORAGE_PROOF_INDICES: [usize; 7] = [768, 48, 240, 48, 160, 128, 1
 // Public API
 // ============================================================================
 
-pub const EMBEDDED_DUMMY_PROOF_BYTES: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/data/dummy_proof_zk.bin"
-));
-
-/// Load the embedded universal dummy proof.
+/// Deserialize a dummy proof from raw bytes.
 pub fn load_dummy_proof(
+    bytes: Vec<u8>,
     common_data: &CommonCircuitData<F, D>,
 ) -> anyhow::Result<ProofWithPublicInputs<F, C, D>> {
-    // Most Plonky2 forks provide this API; if yours differs, adapt the call-site accordingly.
-    let proof = ProofWithPublicInputs::<F, C, D>::from_bytes(
-        EMBEDDED_DUMMY_PROOF_BYTES.to_vec(),
-        common_data,
-    )?;
-    Ok(proof)
+    ProofWithPublicInputs::<F, C, D>::from_bytes(bytes, common_data)
+}
+
+/// Generate a fresh dummy proof from circuit data and targets.
+///
+/// Used by the circuit builder to produce a `dummy_proof.bin` that is guaranteed
+/// to be compatible with the circuit binaries generated in the same run.
+pub fn generate_dummy_proof(
+    circuit_data: &plonky2::plonk::circuit_data::CircuitData<F, C, D>,
+    targets: &wormhole_circuit::circuit::circuit_logic::CircuitTargets,
+) -> anyhow::Result<Vec<u8>> {
+    use plonky2::iop::witness::PartialWitness;
+
+    let inputs = build_dummy_circuit_inputs()?;
+    let mut pw = PartialWitness::new();
+    wormhole_prover::fill_witness(&mut pw, &inputs, targets)?;
+    let proof = circuit_data.prove(pw)?;
+    Ok(proof.to_bytes())
 }
 
 /// Build circuit inputs for a dummy proof.
@@ -190,20 +198,4 @@ fn build_storage_proof() -> Result<ProcessedStorageProof> {
     let indices = DEFAULT_STORAGE_PROOF_INDICES.to_vec();
 
     ProcessedStorageProof::new(proof, indices)
-}
-
-#[test]
-#[ignore = "debug"]
-fn export_dummy_proof_zk() {
-    use plonky2::plonk::circuit_data::CircuitConfig;
-    use wormhole_prover::WormholeProver;
-    const FILE_PATH: &str = "data/dummy_proof_zk.bin";
-
-    let circuit_config = CircuitConfig::standard_recursion_zk_config();
-
-    let prover = WormholeProver::new(circuit_config);
-    let inputs = build_dummy_circuit_inputs().unwrap();
-    let proof = prover.commit(&inputs).unwrap().prove().unwrap();
-    let proof_bytes = proof.to_bytes();
-    let _ = std::fs::write(FILE_PATH, proof_bytes);
 }

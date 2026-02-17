@@ -16,6 +16,7 @@ qp-poseidon-core = { workspace = true, default-features = false, features = [
 	"p3",
 ] }
 qp-wormhole-inputs = { version = "1.0.6", path = "../wormhole/inputs", default-features = false }
+rand = "0.8"
 serde = { workspace = true }
 
 [features]
