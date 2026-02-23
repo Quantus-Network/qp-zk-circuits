@@ -29,7 +29,7 @@ use subxt::ext::jsonrpsee::core::client::ClientT;
 use subxt::ext::jsonrpsee::rpc_params;
 use subxt::utils::{to_hex, AccountId32 as SubxtAccountId};
 use subxt::OnlineClient;
-use wormhole_aggregator::aggregator::WormholeProofAggregator;
+use wormhole_aggregator::aggregator::WormholeAggregator;
 use wormhole_circuit::inputs::{
     CircuitInputs, ParseAggregatedPublicInputs, ParsePublicInputs, PrivateCircuitInputs,
 };
@@ -277,7 +277,8 @@ fn aggregate_proofs(
     let prover = WormholeProver::new(config.clone());
     let common_data = &prover.circuit_data.common;
 
-    let mut aggregator = WormholeProofAggregator::from_circuit_config(config, aggregation_config);
+    let mut aggregator =
+        WormholeAggregator::from_circuit_config(config, aggregation_config).unwrap();
 
     println!(
         "Aggregator configured for {} leaf proofs",
@@ -319,7 +320,7 @@ fn aggregate_proofs_direct(
     // Build the wormhole aggregator from circuit config
     let config = CircuitConfig::standard_recursion_zk_config();
 
-    let mut aggregator = WormholeProofAggregator::from_circuit_config(config, aggregation_config);
+    let mut aggregator = WormholeAggregator::from_circuit_config(config, aggregation_config)?;
 
     println!(
         "Aggregator configured for {} leaf proofs",
@@ -343,29 +344,25 @@ fn aggregate_proofs_direct(
 }
 
 /// Common aggregation logic - aggregate and save
-fn aggregate_and_save(
-    mut aggregator: WormholeProofAggregator,
-    output_file: &str,
-) -> anyhow::Result<()> {
+fn aggregate_and_save(mut aggregator: WormholeAggregator, output_file: &str) -> anyhow::Result<()> {
     println!("\nRunning aggregation...");
     let aggregated_proof = aggregator.aggregate()?;
 
     // Parse and display aggregated public inputs
-    let aggregated_public_inputs = AggregatedPublicCircuitInputs::try_from_felts(
-        aggregated_proof.proof.public_inputs.as_slice(),
-    )?;
+    let aggregated_public_inputs =
+        AggregatedPublicCircuitInputs::try_from_felts(aggregated_proof.public_inputs.as_slice())?;
     println!("\n=== Aggregated Public Inputs ===");
     println!("{:#?}", aggregated_public_inputs);
 
     // Verify the aggregated proof
     println!("\nVerifying aggregated proof...");
-    aggregated_proof
-        .circuit_data
-        .verify(aggregated_proof.proof.clone())?;
+    aggregator
+        .verify_aggregated_proof(aggregated_proof.clone())
+        .expect("Aggregated proof verification failed");
     println!("Aggregated proof verified successfully!");
 
     // Save aggregated proof
-    save_proof(&aggregated_proof.proof, output_file)?;
+    save_proof(&aggregated_proof, output_file)?;
     println!("\n=== Aggregation Complete ===");
     println!("Aggregated proof saved to: {}", output_file);
 

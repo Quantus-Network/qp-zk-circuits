@@ -1,355 +1,374 @@
-use std::collections::BTreeMap;
+//! High-level aggregation orchestrator.
+//!
+//! Responsibilities:
+//! - Buffer leaf proofs
+//! - Invoke the prebuilt layer-0 aggregation prover
+//! - Optionally buffer layer-0 aggregated proofs and delegate to a layer-1 backend
+//!
+//! IMPORTANT:
+//! Padding with dummies, shuffling, and dummy-nullifier generation are handled
+//! inside `layer0::prover::Layer0AggregationProver::commit(...)`.
+//! The orchestrator intentionally does NOT duplicate that logic.
 
-use anyhow::{bail, Context};
-use plonky2::field::types::PrimeField64;
-use plonky2::plonk::circuit_data::{CircuitConfig, VerifierCircuitData};
-use plonky2::plonk::proof::ProofWithPublicInputs;
-use qp_wormhole_inputs::{
-    AggregatedPublicCircuitInputs, BlockData, PublicCircuitInputs, PublicInputsByAccount,
+use anyhow::{anyhow, bail, Context, Result};
+use plonky2::plonk::{
+    circuit_data::{
+        CircuitConfig, CommonCircuitData, VerifierCircuitData, VerifierOnlyCircuitData,
+    },
+    proof::ProofWithPublicInputs,
+    // 👇 add these if not already in scope in your crate version
+    // (they're only needed for loading prebuilt verifier/common bytes)
 };
-use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
-use wormhole_circuit::inputs::ParsePublicInputs;
-use wormhole_prover::fill_witness;
+use plonky2::util::serialization::DefaultGateSerializer;
+use std::path::{Path, PathBuf};
+
+#[cfg(feature = "std")]
+use std::fs;
+
 use zk_circuits_common::{
+    aggregation::AggregationConfig,
     circuit::{C, D, F},
-    utils::BytesDigest,
 };
 
-use zk_circuits_common::aggregation::{
-    shuffle_proofs_preserving_first_real, AggregatedProof, AggregationConfig,
+use crate::layer0::{
+    circuit::circuit_logic::Layer0AggregationCircuit,
+    prover::{Layer0AggregationInputs, Layer0AggregationProver},
 };
 
-use crate::build_dummy_circuit_inputs;
-use crate::{
-    circuits::tree::{aggregate_proofs, WormholeAggregationWrapper},
-    dummy_proof::load_dummy_proof,
-};
+/// Optional abstraction for delegated layer-1 aggregation.
+///
+/// You can implement this later with your prebuilt `layer1::prover::...`.
+pub trait Layer1AggregationBackend: Send + Sync {
+    /// Aggregate a batch of layer-0 aggregated proofs into a single higher-level proof.
+    fn aggregate(
+        &self,
+        layer0_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
+    ) -> Result<ProofWithPublicInputs<F, C, D>>;
 
-/// A circuit that aggregates proofs from the Wormhole circuit.
-pub struct WormholeProofAggregator {
-    pub leaf_circuit_data: VerifierCircuitData<F, C, D>,
-    pub config: AggregationConfig,
-    pub proofs_buffer: Option<Vec<ProofWithPublicInputs<F, C, D>>>,
-    /// A single dummy proof template compatible with this aggregator's circuit.
-    /// Cloned as many times as needed for padding during `aggregate()`.
-    /// Each clone gets a unique nullifier to avoid duplicate nullifier errors on-chain.
-    dummy_proof_template: ProofWithPublicInputs<F, C, D>,
+    /// Recommended batch size for this backend (orchestrator can use this to decide when to flush).
+    fn batch_size(&self) -> usize;
 }
 
-impl WormholeProofAggregator {
-    /// Creates a new [`WormholeProofAggregator`] with a given [`VerifierCircuitData`],
-    /// a dummy proof template, and aggregation config.
-    ///
-    /// The dummy proof must be compatible with the verifier data (generated from the same circuit).
-    /// It will be cloned as needed for padding during aggregation.
-    pub fn new(
-        verifier_circuit_data: VerifierCircuitData<F, C, D>,
+/// Where the orchestrator should get a fresh layer-0 prover from.
+#[allow(clippy::large_enum_variant)]
+pub enum Layer0ProverSource {
+    /// Production path: load a fresh prover from prebuilt binaries each time.
+    BinariesDir(PathBuf),
+
+    /// Local/dev/test path: rebuild the aggregation prover from in-memory circuit configs/data.
+    InMemory {
+        agg_circuit_config: CircuitConfig,
+        leaf_common: CommonCircuitData<F, D>,
+        leaf_verifier_only: VerifierOnlyCircuitData<C, D>,
         dummy_proof_template: ProofWithPublicInputs<F, C, D>,
-        config: AggregationConfig,
-    ) -> Self {
-        let proofs_buffer = Some(Vec::with_capacity(config.num_leaf_proofs));
+    },
+}
 
-        Self {
-            leaf_circuit_data: verifier_circuit_data,
+/// High-level wormhole aggregation orchestrator.
+///
+/// Buffers leaf proofs, then hands them to the prebuilt layer-0 prover when ready.
+/// The returned layer-0 proof can be buffered for a future layer-1 backend.
+pub struct WormholeAggregator {
+    /// How we construct a fresh layer-0 prover for each batch.
+    pub layer0_source: Layer0ProverSource,
+
+    /// Public config (kept public for compatibility with older tests/code).
+    pub config: AggregationConfig,
+
+    /// Buffer of leaf proofs waiting to be aggregated into one layer-0 proof.
+    pub leaf_proofs_buffer: Vec<ProofWithPublicInputs<F, C, D>>,
+
+    /// Optional buffer of layer-0 aggregated proofs (used when layer1 backend is configured).
+    layer0_buffer: Vec<ProofWithPublicInputs<F, C, D>>,
+
+    /// Optional layer-1 backend.
+    layer1_backend: Option<Box<dyn Layer1AggregationBackend>>,
+}
+
+impl WormholeAggregator {
+    /// Create an orchestrator from a directory with prebuilt binaries.
+    ///
+    /// Expected layer-0 files:
+    /// - `aggregated_prover.bin`
+    /// - `aggregated_common.bin`
+    /// - `layer0_targets.json`
+    ///
+    /// Expected leaf files:
+    /// - `common.bin`
+    /// - `verifier.bin`
+    /// - `dummy_proof.bin`
+    ///
+    /// If `config.json` exists, hash verification is performed by
+    /// `Layer0AggregationProver::new_from_binaries_dir(...)`.
+    pub fn from_binaries_dir<P: AsRef<Path>>(bins_dir: P) -> Result<Self> {
+        let bins_dir = bins_dir.as_ref().to_path_buf();
+
+        // Load once to discover configured batch size (and verify hashes if config.json exists).
+        let layer0_prover = Layer0AggregationProver::new_from_binaries_dir(&bins_dir)
+            .context("failed to load prebuilt layer-0 aggregation prover")?;
+
+        let config = AggregationConfig::new(layer0_prover.num_leaf_proofs());
+
+        Ok(Self {
+            layer0_source: Layer0ProverSource::BinariesDir(bins_dir),
+            leaf_proofs_buffer: Vec::with_capacity(config.num_leaf_proofs),
+            layer0_buffer: Vec::new(),
+            layer1_backend: None,
             config,
-            proofs_buffer,
-            dummy_proof_template,
-        }
-    }
-
-    /// Creates a new [`WormholeProofAggregator`] from a directory containing pre-built circuit files.
-    ///
-    /// Verifies binary integrity via SHA256 hashes in config.json (if present),
-    /// then loads common.bin, verifier.bin, and dummy_proof.bin.
-    /// Expects the directory to contain all files generated by the circuit builder.
-    pub fn from_prebuilt_dir(
-        bins_dir: &std::path::Path,
-        config: AggregationConfig,
-    ) -> anyhow::Result<Self> {
-        // Verify binary hashes if config.json exists
-        let config_path = bins_dir.join("config.json");
-        if config_path.exists() {
-            let bins_config = crate::config::CircuitBinsConfig::load(bins_dir)?;
-            bins_config.verify_hashes(bins_dir)?;
-        }
-
-        Self::from_prebuilt_dir_unchecked(bins_dir, config)
-    }
-
-    /// Creates a new [`WormholeProofAggregator`] from a directory containing pre-built circuit files
-    /// **without** verifying binary hashes.
-    ///
-    /// Use this during circuit building when binaries are being generated and config.json
-    /// may not yet exist or may contain stale hashes. For normal usage, prefer [`from_prebuilt_dir`].
-    pub fn from_prebuilt_dir_unchecked(
-        bins_dir: &std::path::Path,
-        config: AggregationConfig,
-    ) -> anyhow::Result<Self> {
-        let verifier_data = Self::load_verifier_data_from_paths(
-            &bins_dir.join("common.bin"),
-            &bins_dir.join("verifier.bin"),
-        )?;
-
-        let dummy_proof_path = bins_dir.join("dummy_proof.bin");
-        let dummy_bytes = std::fs::read(&dummy_proof_path).map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to read {:?}: {}. \
-                 Run 'quantus developer build-circuits' to generate all required binaries.",
-                dummy_proof_path,
-                e
-            )
-        })?;
-        let dummy_proof_template = load_dummy_proof(dummy_bytes, &verifier_data.common)?;
-
-        Ok(Self::new(verifier_data, dummy_proof_template, config))
-    }
-
-    /// Load verifier circuit data from pre-built files.
-    fn load_verifier_data_from_paths(
-        common_path: &std::path::Path,
-        verifier_path: &std::path::Path,
-    ) -> anyhow::Result<VerifierCircuitData<F, C, D>> {
-        use plonky2::plonk::circuit_data::{CommonCircuitData, VerifierOnlyCircuitData};
-        use plonky2::util::serialization::DefaultGateSerializer;
-        use std::fs;
-
-        let gate_serializer = DefaultGateSerializer;
-
-        // Load common data
-        let common_bytes = fs::read(common_path)
-            .map_err(|e| anyhow::anyhow!("Failed to read {:?}: {}", common_path, e))?;
-        let common = CommonCircuitData::from_bytes(common_bytes, &gate_serializer)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize common data: {}", e))?;
-
-        // Load verifier-only data
-        let verifier_only_bytes = fs::read(verifier_path)
-            .map_err(|e| anyhow::anyhow!("Failed to read {:?}: {}", verifier_path, e))?;
-        let verifier_only = VerifierOnlyCircuitData::<C, D>::from_bytes(verifier_only_bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize verifier data: {}", e))?;
-
-        Ok(VerifierCircuitData {
-            verifier_only,
-            common,
         })
     }
 
-    /// Creates a new [`WormholeProofAggregator`] with a given [`CircuitConfig`]
-    /// by building the circuit, extracting verifier data, and generating a compatible dummy proof.
+    /// Create an orchestrator directly from circuit configs (local/dev/test path).
+    ///
+    /// This mirrors the old `from_circuit_config(...)` flow and avoids requiring prebuilt files.
+    ///
+    /// It internally:
+    /// - builds the leaf verifier data (common + verifier_only)
+    /// - generates a dummy leaf proof template
+    /// - stores enough state to build a fresh layer-0 prover on each `aggregate_layer0()`
     pub fn from_circuit_config(
-        circuit_config: CircuitConfig,
+        leaf_circuit_config: CircuitConfig,
         aggregation_config: AggregationConfig,
-    ) -> Self {
-        use plonky2::iop::witness::PartialWitness;
+    ) -> Result<Self> {
+        use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
+        use wormhole_prover::WormholeProver;
 
-        // Build the circuit once to get both prover and verifier data from the SAME build.
-        // This is critical - using separate builds causes wire assignment mismatches.
-        let circuit = WormholeCircuit::new(circuit_config.clone());
-        let targets = circuit.targets();
-        let circuit_data = circuit.build_circuit();
+        // Build leaf verifier data (used by layer-0 prover witness filling).
+        let leaf_verifier_circuit =
+            WormholeCircuit::new(leaf_circuit_config.clone()).build_verifier();
+        let leaf_common = leaf_verifier_circuit.common.clone();
+        let leaf_verifier_only = leaf_verifier_circuit.verifier_only;
 
-        // Extract verifier data from this circuit
-        let verifier_data = circuit_data.verifier_data();
+        // Build a reusable dummy leaf proof template.
+        let dummy_inputs = crate::dummy_proof::build_dummy_circuit_inputs()
+            .context("failed to build dummy leaf circuit inputs")?;
 
-        // Generate a single dummy proof template (cloned as needed during aggregation)
-        let dummy_inputs =
-            build_dummy_circuit_inputs().expect("failed to build dummy circuit inputs");
-        let mut pw = PartialWitness::new();
-        fill_witness(&mut pw, &dummy_inputs, &targets).expect("failed to fill witness");
-        let dummy_proof_template = circuit_data
-            .prove(pw)
-            .expect("failed to generate dummy proof");
+        let dummy_proof_template = WormholeProver::new(leaf_circuit_config.clone())
+            .commit(&dummy_inputs)
+            .context("failed to commit dummy leaf inputs")?
+            .prove()
+            .context("failed to generate dummy leaf proof")?;
 
-        Self::new(verifier_data, dummy_proof_template, aggregation_config)
+        Ok(Self {
+            layer0_source: Layer0ProverSource::InMemory {
+                agg_circuit_config: leaf_circuit_config,
+                leaf_common,
+                leaf_verifier_only,
+                dummy_proof_template,
+            },
+            leaf_proofs_buffer: Vec::with_capacity(aggregation_config.num_leaf_proofs),
+            layer0_buffer: Vec::new(),
+            layer1_backend: None,
+            config: aggregation_config,
+        })
     }
 
-    pub fn push_proof(&mut self, proof: ProofWithPublicInputs<F, C, D>) -> anyhow::Result<()> {
-        if let Some(proofs_buffer) = self.proofs_buffer.as_mut() {
-            if proofs_buffer.len() >= self.config.num_leaf_proofs {
-                bail!("tried to add proof when proof buffer is full")
-            }
-            proofs_buffer.push(proof);
-        } else {
-            self.proofs_buffer = Some(vec![proof]);
+    /// Attach a layer-1 backend for delegated higher-level aggregation.
+    pub fn with_layer1_backend(mut self, backend: Box<dyn Layer1AggregationBackend>) -> Self {
+        self.layer1_backend = Some(backend);
+        self
+    }
+
+    /// Number of leaf proofs currently buffered.
+    pub fn leaf_buffer_len(&self) -> usize {
+        self.leaf_proofs_buffer.len()
+    }
+
+    /// Number of layer-0 aggregated proofs currently buffered.
+    pub fn layer0_buffer_len(&self) -> usize {
+        self.layer0_buffer.len()
+    }
+
+    /// Layer-0 batch capacity (number of leaf proofs per aggregate).
+    pub fn num_leaf_proofs(&self) -> usize {
+        self.config.num_leaf_proofs
+    }
+
+    /// Backwards-compatible alias for older call sites.
+    pub fn push_proof(&mut self, proof: ProofWithPublicInputs<F, C, D>) -> Result<()> {
+        self.push_leaf_proof(proof)
+    }
+
+    /// Push a leaf proof into the layer-0 buffer.
+    ///
+    /// Returns an error if the buffer is already full (exactly `num_leaf_proofs`).
+    pub fn push_leaf_proof(&mut self, proof: ProofWithPublicInputs<F, C, D>) -> Result<()> {
+        if self.leaf_proofs_buffer.len() >= self.config.num_leaf_proofs {
+            bail!(
+                "layer-0 leaf buffer is full (capacity = {})",
+                self.config.num_leaf_proofs
+            );
         }
 
+        self.leaf_proofs_buffer.push(proof);
         Ok(())
     }
 
-    /// Extract and aggregate leaf public inputs from the filled proof buffer OUTSIDE the circuit.
-    /// Groups by `blocks`, then `exit_account`, sums `output_amount`, and collects `nullifiers`.
-    /// Used for sanity checks to ensure it matches the public inputs results from the aggregation circuit.
-    pub fn parse_aggregated_public_inputs_from_proof_buffer(
-        &self,
-    ) -> anyhow::Result<AggregatedPublicCircuitInputs> {
-        let num_leaves = self.config.num_leaf_proofs;
-        let proofs = &self.proofs_buffer;
-        let Some(proofs) = proofs else {
-            bail!("there are no proofs to aggregate")
-        };
-        if num_leaves != proofs.len() {
-            bail!(
-                "proof buffer length {} does not match expected num_leaves {}",
-                proofs.len(),
-                num_leaves
-            )
-        };
-        let mut leaves: Vec<PublicCircuitInputs> = Vec::new();
-        for proof in proofs {
-            let pi = PublicCircuitInputs::try_from_proof(proof)?;
-            leaves.push(pi);
-        }
-        aggregate_public_inputs(leaves)
-    }
-
-    /// Aggregates `N` number of leaf proofs into an [`AggregatedProof`].
+    /// Aggregate the currently buffered leaf proofs into one layer-0 aggregated proof.
     ///
-    /// # Note
-    /// Pre-generated dummy proofs use `asset_id = 0` (native token). All real proofs
-    /// must also use `asset_id = 0` for the aggregation to succeed, since the circuit
-    /// enforces all proofs have the same asset_id.
-    pub fn aggregate(&mut self) -> anyhow::Result<AggregatedProof> {
-        let Some(mut proofs) = self.proofs_buffer.take() else {
-            bail!("there are no proofs to aggregate")
+    /// Behavior:
+    /// - Requires at least 1 proof in the buffer
+    /// - Delegates padding/shuffling/dummy-nullifier handling to `Layer0AggregationProver::commit`
+    /// - Clears the leaf buffer on success
+    pub fn aggregate_layer0(&mut self) -> Result<ProofWithPublicInputs<F, C, D>> {
+        if self.leaf_proofs_buffer.is_empty() {
+            bail!("there are no leaf proofs to aggregate");
+        }
+
+        // Move proofs out of the buffer (the prover takes ownership).
+        let proofs = std::mem::take(&mut self.leaf_proofs_buffer);
+
+        // Fresh prover instance (from binaries OR in-memory config path).
+        let prover = self
+            .build_layer0_prover()
+            .context("failed to create layer-0 aggregation prover")?;
+
+        // Commit handles:
+        // - padding with dummies
+        // - shuffling while preserving a real proof in slot 0
+        // - dummy nullifier generation
+        let prover = prover
+            .commit(Layer0AggregationInputs { proofs })
+            .context("failed to commit leaf proofs to layer-0 aggregation prover")?;
+
+        let proof = prover.prove().context("layer-0 proving failed")?;
+
+        Ok(proof)
+    }
+
+    /// Backwards-compatible alias for older call sites that used `aggregate()`.
+    pub fn aggregate(&mut self) -> Result<ProofWithPublicInputs<F, C, D>> {
+        self.aggregate_layer0()
+    }
+
+    /// Verify a layer-0 aggregated proof against the orchestrator's configured circuit.
+    ///
+    /// - In `from_binaries_dir(...)` mode, this loads the prebuilt aggregated verifier/common files.
+    /// - In `from_circuit_config(...)` mode, this rebuilds the layer-0 verifier circuit in memory.
+    pub fn verify_aggregated_proof(&self, proof: ProofWithPublicInputs<F, C, D>) -> Result<()> {
+        let verifier = self
+            .build_layer0_verifier()
+            .context("failed to build/load layer-0 verifier")?;
+
+        verifier
+            .verify(proof)
+            .map_err(|e| anyhow!("layer-0 aggregated proof verification failed: {}", e))
+    }
+
+    /// Convenience method: aggregate layer-0 and immediately push the result to the layer-1 buffer.
+    pub fn aggregate_layer0_into_layer1_buffer(&mut self) -> Result<()> {
+        let l0 = self.aggregate_layer0()?;
+        self.layer0_buffer.push(l0);
+        Ok(())
+    }
+
+    /// Push an externally produced layer-0 aggregated proof into the layer-1 buffer.
+    pub fn push_layer0_proof(&mut self, proof: ProofWithPublicInputs<F, C, D>) {
+        self.layer0_buffer.push(proof);
+    }
+
+    /// Try to aggregate the buffered layer-0 proofs using the configured layer-1 backend.
+    ///
+    /// Returns:
+    /// - `Ok(None)` if no layer-1 backend is configured
+    /// - `Ok(None)` if there aren't enough buffered proofs yet
+    /// - `Ok(Some(proof))` when a layer-1 aggregation was produced
+    pub fn try_aggregate_layer1(&mut self) -> Result<Option<ProofWithPublicInputs<F, C, D>>> {
+        let Some(backend) = self.layer1_backend.as_ref() else {
+            return Ok(None);
         };
 
-        // Pad with dummy proofs if needed
-        let num_dummies_needed = self.config.num_leaf_proofs.saturating_sub(proofs.len());
-        if num_dummies_needed > 0 {
-            // Verify asset_id matches dummy proofs (asset_id = 0)
-            // We cannot modify public inputs post-proof as that invalidates the proof.
-            if let Some(first_proof) = proofs.first() {
-                let real_asset_id: u32 = first_proof.public_inputs[0]
-                    .to_canonical_u64()
-                    .try_into()
-                    .context("asset_id in first proof exceeds u32 range")?;
-                if real_asset_id != 0 {
-                    bail!(
-                        "Real proofs have asset_id={}, but dummy proofs use asset_id=0. \
-                         All proofs must have the same asset_id for aggregation.",
-                        real_asset_id
-                    );
+        let batch_size = backend.batch_size();
+        if self.layer0_buffer.len() < batch_size {
+            return Ok(None);
+        }
+
+        let batch = self.layer0_buffer.drain(0..batch_size).collect::<Vec<_>>();
+        let out = backend.aggregate(batch)?;
+        Ok(Some(out))
+    }
+
+    /// Clear all in-memory buffers (leaf + layer0).
+    pub fn clear_buffers(&mut self) {
+        self.leaf_proofs_buffer.clear();
+        self.layer0_buffer.clear();
+    }
+
+    /// Internal helper: build a fresh layer-0 prover from the configured source.
+    fn build_layer0_prover(&self) -> Result<Layer0AggregationProver> {
+        match &self.layer0_source {
+            Layer0ProverSource::BinariesDir(bins_dir) => {
+                Layer0AggregationProver::new_from_binaries_dir(bins_dir)
+                    .context("failed to load prebuilt layer-0 prover from binaries dir")
+            }
+            Layer0ProverSource::InMemory {
+                agg_circuit_config,
+                leaf_common,
+                leaf_verifier_only,
+                dummy_proof_template,
+            } => Ok(Layer0AggregationProver::new(
+                agg_circuit_config.clone(),
+                leaf_common.clone(),
+                leaf_verifier_only.clone(),
+                self.config,
+                dummy_proof_template.clone(),
+            )),
+        }
+    }
+
+    /// Internal helper: build/load the layer-0 verifier circuit.
+    fn build_layer0_verifier(&self) -> Result<VerifierCircuitData<F, C, D>> {
+        match &self.layer0_source {
+            Layer0ProverSource::BinariesDir(bins_dir) => {
+                // Optional integrity verification (same pattern as prover path).
+                let config_path = bins_dir.join("config.json");
+                if config_path.exists() {
+                    let bins_config = crate::config::CircuitBinsConfig::load(bins_dir)?;
+                    bins_config.verify_hashes(bins_dir)?;
                 }
+
+                let gate_serializer = DefaultGateSerializer;
+
+                let aggregated_common_bytes = fs::read(bins_dir.join("aggregated_common.bin"))
+                    .context("failed to read aggregated_common.bin")?;
+                let common =
+                    CommonCircuitData::from_bytes(aggregated_common_bytes, &gate_serializer)
+                        .map_err(|e| {
+                            anyhow!(
+                                "failed to deserialize aggregated common circuit data: {}",
+                                e
+                            )
+                        })?;
+
+                let aggregated_verifier_bytes = fs::read(bins_dir.join("aggregated_verifier.bin"))
+                    .context("failed to read aggregated_verifier.bin")?;
+                let verifier_only =
+                    VerifierOnlyCircuitData::<C, D>::from_bytes(aggregated_verifier_bytes)
+                        .map_err(|e| {
+                            anyhow!(
+                                "failed to deserialize aggregated verifier circuit data: {}",
+                                e
+                            )
+                        })?;
+
+                Ok(VerifierCircuitData {
+                    verifier_only,
+                    common,
+                })
             }
-
-            // Clone the dummy proof template as many times as needed for padding.
-            // Each clone gets a unique nullifier during aggregation to avoid
-            // duplicate nullifier errors on-chain.
-            for _ in 0..num_dummies_needed {
-                proofs.push(self.dummy_proof_template.clone());
+            Layer0ProverSource::InMemory {
+                agg_circuit_config,
+                leaf_common,
+                ..
+            } => {
+                // Rebuild the layer-0 aggregation verifier from the same config/source data.
+                let circuit = Layer0AggregationCircuit::new(
+                    agg_circuit_config.clone(),
+                    leaf_common.clone(),
+                    self.config.num_leaf_proofs,
+                );
+                Ok(circuit.build_verifier())
             }
         }
-
-        // Shuffle proofs to hide dummy positions while keeping a real proof in slot 0.
-        // This makes dummy proofs indistinguishable from duplicate exit accounts in the output.
-        let wrapper = WormholeAggregationWrapper::new(proofs.len());
-        shuffle_proofs_preserving_first_real(&mut proofs, &wrapper);
-
-        let root_proof = aggregate_proofs(
-            proofs,
-            &self.leaf_circuit_data.common,
-            &self.leaf_circuit_data.verifier_only,
-        )?;
-
-        Ok(root_proof)
     }
-}
-
-/// Turn flat leaf public inputs into `AggregatedPublicCircuitInputs`.
-fn aggregate_public_inputs(
-    leaves: Vec<PublicCircuitInputs>,
-) -> anyhow::Result<AggregatedPublicCircuitInputs> {
-    let first_leaf = leaves
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("no leaves provided"))?;
-    let asset_id = first_leaf.asset_id;
-    let volume_fee_bps = first_leaf.volume_fee_bps;
-
-    // Verify all leaves have the same volume_fee_bps
-    for leaf in &leaves {
-        if leaf.volume_fee_bps != volume_fee_bps {
-            anyhow::bail!(
-                "all leaves must have the same volume_fee_bps, expected {} but got {}",
-                volume_fee_bps,
-                leaf.volume_fee_bps
-            );
-        }
-    }
-
-    let mut by_account: BTreeMap<BytesDigest, PublicInputsByAccount> = BTreeMap::new();
-    let nullifiers: Vec<BytesDigest> = leaves.iter().map(|leaf| leaf.nullifier).collect();
-
-    let mut block_data = BlockData::default();
-
-    for leaf in leaves {
-        // If the block number is greater than the current, update block_data.
-        if leaf.block_number > block_data.block_number {
-            block_data.block_number = leaf.block_number;
-            block_data.block_hash = leaf.block_hash;
-        }
-
-        // Process first output (exit_account_1, output_amount_1)
-        let acct_entry_1 =
-            by_account
-                .entry(leaf.exit_account_1)
-                .or_insert_with(|| PublicInputsByAccount {
-                    summed_output_amount: 0u32,
-                    exit_account: leaf.exit_account_1,
-                });
-
-        acct_entry_1.summed_output_amount = acct_entry_1
-            .summed_output_amount
-            .checked_add(leaf.output_amount_1)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "overflow while summing output amounts for exit account {:?}",
-                    acct_entry_1.exit_account
-                )
-            })?;
-
-        // Process second output (exit_account_2, output_amount_2)
-        // Only if the exit account is non-zero (skip unused second outputs)
-        if leaf.exit_account_2 != BytesDigest::default() || leaf.output_amount_2 > 0 {
-            let acct_entry_2 =
-                by_account
-                    .entry(leaf.exit_account_2)
-                    .or_insert_with(|| PublicInputsByAccount {
-                        summed_output_amount: 0u32,
-                        exit_account: leaf.exit_account_2,
-                    });
-
-            acct_entry_2.summed_output_amount = acct_entry_2
-                .summed_output_amount
-                .checked_add(leaf.output_amount_2)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "overflow while summing output amounts for exit account {:?}",
-                        acct_entry_2.exit_account
-                    )
-                })?;
-        }
-    }
-
-    let mut accounts: Vec<PublicInputsByAccount> = by_account.into_values().collect();
-
-    // Sort accounts by the same comparator on the exit account.
-    accounts.sort_by_key(|a| digest_key_le_u64x4(&a.exit_account));
-
-    Ok(AggregatedPublicCircuitInputs {
-        asset_id,
-        volume_fee_bps,
-        block_data,
-        account_data: accounts,
-        nullifiers,
-    })
-}
-
-#[inline]
-fn digest_key_le_u64x4(d: &BytesDigest) -> [u64; 4] {
-    let bytes: &[u8; 32] = d; // e.g., impl AsRef<[u8;32]> for BytesDigest
-    [
-        u64::from_le_bytes(bytes[0..8].try_into().unwrap()),
-        u64::from_le_bytes(bytes[8..16].try_into().unwrap()),
-        u64::from_le_bytes(bytes[16..24].try_into().unwrap()),
-        u64::from_le_bytes(bytes[24..32].try_into().unwrap()),
-    ]
 }

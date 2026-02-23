@@ -5,8 +5,8 @@ use std::path::Path;
 
 use zk_circuits_common::aggregation::AggregationConfig;
 
-/// SHA256 hashes of the circuit binary files.
-/// Used to detect mismatches between different copies of the binaries.
+/// SHA256 hashes of the circuit binary/files.
+/// Used to detect mismatches between different copies of the artifacts.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct BinaryHashes {
     /// Hash of common.bin (leaf circuit common data)
@@ -18,37 +18,54 @@ pub struct BinaryHashes {
     /// Hash of prover.bin (leaf circuit prover data)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prover: Option<String>,
-    /// Hash of aggregated_common.bin (aggregated circuit common data)
+
+    /// Hash of aggregated_common.bin (layer-0 aggregated circuit common data)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aggregated_common: Option<String>,
-    /// Hash of aggregated_verifier.bin (aggregated circuit verifier data)
+    /// Hash of aggregated_verifier.bin (layer-0 aggregated circuit verifier data)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aggregated_verifier: Option<String>,
+    /// Hash of aggregated_prover.bin (layer-0 aggregated circuit prover data)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggregated_prover: Option<String>,
+
     /// Hash of dummy_proof.bin (pre-generated dummy proof for aggregation padding)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dummy_proof: Option<String>,
+
+    /// Hash of layer0_targets.json (serialized target layout for prebuilt layer-0 prover)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layer0_targets: Option<String>,
 }
 
 impl BinaryHashes {
     /// Compute SHA256 hash of a file and return as hex string
     pub fn hash_file<P: AsRef<Path>>(path: P) -> Result<String> {
         use sha2::{Digest, Sha256};
+
         let bytes = std::fs::read(path.as_ref())
             .map_err(|e| anyhow!("Failed to read {}: {}", path.as_ref().display(), e))?;
         let hash = Sha256::digest(&bytes);
         Ok(hex::encode(hash))
     }
 
-    /// Compute hashes for all binary files in a directory
+    /// Compute hashes for all known artifact files in a directory.
+    ///
+    /// Missing files are represented as `None` so config remains compatible across
+    /// flows that generate only a subset of artifacts.
     pub fn from_directory<P: AsRef<Path>>(bins_dir: P) -> Result<Self> {
         let dir = bins_dir.as_ref();
         Ok(Self {
             common: Self::hash_file(dir.join("common.bin")).ok(),
             verifier: Self::hash_file(dir.join("verifier.bin")).ok(),
             prover: Self::hash_file(dir.join("prover.bin")).ok(),
+
             aggregated_common: Self::hash_file(dir.join("aggregated_common.bin")).ok(),
             aggregated_verifier: Self::hash_file(dir.join("aggregated_verifier.bin")).ok(),
+            aggregated_prover: Self::hash_file(dir.join("aggregated_prover.bin")).ok(),
+
             dummy_proof: Self::hash_file(dir.join("dummy_proof.bin")).ok(),
+            layer0_targets: Self::hash_file(dir.join("layer0_targets.json")).ok(),
         })
     }
 }
@@ -59,7 +76,9 @@ impl BinaryHashes {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CircuitBinsConfig {
     pub num_leaf_proofs: usize,
-    /// SHA256 hashes of the binary files for integrity verification
+
+    /// SHA256 hashes of the artifact files for integrity verification.
+    /// Optional for backward compatibility with older configs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hashes: Option<BinaryHashes>,
 }
@@ -73,7 +92,7 @@ impl CircuitBinsConfig {
         }
     }
 
-    /// Add hashes computed from the binary files in a directory
+    /// Add hashes computed from the artifact files in a directory
     pub fn with_hashes_from_directory<P: AsRef<Path>>(mut self, bins_dir: P) -> Result<Self> {
         self.hashes = Some(BinaryHashes::from_directory(bins_dir)?);
         Ok(self)
@@ -99,9 +118,10 @@ impl CircuitBinsConfig {
         Ok(())
     }
 
-    /// Verify that the binary files in a directory match the stored hashes.
+    /// Verify that the artifact files in a directory match the stored hashes.
+    ///
     /// Returns Ok(()) if all present hashes match.
-    /// Returns Err if any hash mismatches or if config has hashes but a binary file is missing.
+    /// Returns Err if any hash mismatches or if config has hashes but a file is missing.
     /// If no hashes are stored in config, verification is skipped.
     pub fn verify_hashes<P: AsRef<Path>>(&self, bins_dir: P) -> Result<()> {
         let Some(ref stored_hashes) = self.hashes else {
@@ -129,9 +149,19 @@ impl CircuitBinsConfig {
                 &current_hashes.aggregated_verifier,
             ),
             (
+                "aggregated_prover.bin",
+                &stored_hashes.aggregated_prover,
+                &current_hashes.aggregated_prover,
+            ),
+            (
                 "dummy_proof.bin",
                 &stored_hashes.dummy_proof,
                 &current_hashes.dummy_proof,
+            ),
+            (
+                "layer0_targets.json",
+                &stored_hashes.layer0_targets,
+                &current_hashes.layer0_targets,
             ),
         ];
 

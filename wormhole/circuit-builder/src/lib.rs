@@ -5,9 +5,8 @@ use std::path::Path;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::config::PoseidonGoldilocksConfig;
 use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
-use wormhole_aggregator::WormholeProofAggregator;
+use wormhole_aggregator::layer0::circuit::build::generate_layer0_circuit_binaries;
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
-use zk_circuits_common::aggregation::AggregationConfig;
 use zk_circuits_common::circuit::D;
 
 // Re-export CircuitBinsConfig from aggregator so users of circuit-builder can access it
@@ -83,78 +82,6 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
     Ok(())
 }
 
-/// Generate aggregated circuit binaries (aggregated_verifier.bin, aggregated_common.bin)
-///
-/// The aggregated circuit is built by running the aggregation process on dummy proofs.
-///
-/// IMPORTANT: This must be called AFTER generate_circuit_binaries() so that the
-/// leaf circuit files (prover.bin, common.bin, verifier.bin, dummy_proof.bin) already exist.
-/// The aggregator loads from these files to ensure consistency.
-///
-/// # Arguments
-/// * `output_dir` - Directory to write the binaries to
-/// * `num_leaf_proofs` - Number of leaf proofs aggregated into a single proof
-pub fn generate_aggregated_circuit_binaries<P: AsRef<Path>>(
-    output_dir: P,
-    num_leaf_proofs: usize,
-) -> Result<()> {
-    let config = AggregationConfig::new(num_leaf_proofs);
-    println!(
-        "Building aggregated wormhole circuit (num_leaf_proofs={})...",
-        num_leaf_proofs
-    );
-
-    let output_path = output_dir.as_ref();
-
-    // Load the leaf circuit from the files we just generated (skip hash verification
-    // since we're in the process of building -- config.json hasn't been written yet).
-    //
-    // We must load from files rather than using from_circuit_config() to ensure the
-    // aggregated circuit's leaf verifier data matches the leaf circuit files exactly.
-    let mut aggregator = WormholeProofAggregator::from_prebuilt_dir_unchecked(output_path, config)
-    .map_err(|e| anyhow!("Failed to create aggregator from pre-built files. Make sure generate_circuit_binaries() was called first: {}", e))?;
-
-    // We need to run the aggregation to get the circuit data.
-    // The aggregator builds the circuit dynamically during aggregation.
-    // To get the circuit data without real proofs, we use dummy proofs.
-    println!("Running aggregation with dummy proofs to build circuit...");
-    let aggregated_proof = aggregator.aggregate()?;
-    println!("Aggregated circuit built.");
-
-    let gate_serializer = DefaultGateSerializer;
-
-    create_dir_all(output_path)?;
-
-    // Serialize aggregated common data
-    let agg_common_bytes = aggregated_proof
-        .circuit_data
-        .common
-        .to_bytes(&gate_serializer)
-        .map_err(|e| anyhow!("Failed to serialize aggregated common data: {}", e))?;
-    write(output_path.join("aggregated_common.bin"), agg_common_bytes)?;
-    println!(
-        "Aggregated common data saved to {}/aggregated_common.bin",
-        output_path.display()
-    );
-
-    // Serialize aggregated verifier only data
-    let agg_verifier_only_bytes = aggregated_proof
-        .circuit_data
-        .verifier_only
-        .to_bytes()
-        .map_err(|e| anyhow!("Failed to serialize aggregated verifier data: {}", e))?;
-    write(
-        output_path.join("aggregated_verifier.bin"),
-        agg_verifier_only_bytes,
-    )?;
-    println!(
-        "Aggregated verifier data saved to {}/aggregated_verifier.bin",
-        output_path.display()
-    );
-
-    Ok(())
-}
-
 /// Generate all circuit binaries (both regular and aggregated)
 ///
 /// # Arguments
@@ -172,7 +99,7 @@ pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
     generate_circuit_binaries(output_path, include_prover)?;
 
     // Generate aggregated circuit binaries
-    generate_aggregated_circuit_binaries(output_path, num_leaf_proofs)?;
+    generate_layer0_circuit_binaries(output_path, num_leaf_proofs)?;
 
     // Save config file alongside binaries (with hashes for integrity verification)
     let config = CircuitBinsConfig::new(num_leaf_proofs).with_hashes_from_directory(output_path)?;

@@ -1,13 +1,13 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
-use qp_wormhole_aggregator::aggregator::WormholeProofAggregator;
+use qp_wormhole_aggregator::aggregator::WormholeAggregator;
 use zk_circuits_common::aggregation::AggregationConfig;
 use zk_circuits_common::circuit::{C, D, F};
 
 /// Generate dummy proofs from the circuit config (no external files needed).
 fn make_dummy_proofs(
-    aggregator: &WormholeProofAggregator,
+    aggregator: &WormholeAggregator,
     len: usize,
 ) -> Vec<ProofWithPublicInputs<F, C, D>> {
     use plonky2::iop::witness::PartialWitness;
@@ -15,7 +15,12 @@ fn make_dummy_proofs(
     use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
     use wormhole_prover::fill_witness;
 
-    let config = aggregator.leaf_circuit_data.common.config.clone();
+    let config = match &aggregator.layer0_source {
+        qp_wormhole_aggregator::aggregator::Layer0ProverSource::InMemory {
+            leaf_common, ..
+        } => leaf_common.config.clone(),
+        _ => panic!("Unsupported layer0_source for dummy proof generation"),
+    };
     let circuit = WormholeCircuit::new(config);
     let targets = circuit.targets();
     let circuit_data = circuit.build_circuit();
@@ -34,10 +39,9 @@ macro_rules! aggregate_proofs_benchmark {
             let circuit_config = CircuitConfig::standard_recursion_zk_config();
 
             // Setup proofs (generated from circuit config, no external files needed).
-            let temp_aggregator = WormholeProofAggregator::from_circuit_config(
-                circuit_config.clone(),
-                aggregation_config,
-            );
+            let temp_aggregator =
+                WormholeAggregator::from_circuit_config(circuit_config.clone(), aggregation_config)
+                    .unwrap();
             let proofs = make_dummy_proofs(&temp_aggregator, aggregation_config.num_leaf_proofs);
 
             c.bench_function(
@@ -45,10 +49,11 @@ macro_rules! aggregate_proofs_benchmark {
                 |b| {
                     b.iter_batched(
                         || {
-                            let mut aggregator = WormholeProofAggregator::from_circuit_config(
+                            let mut aggregator = WormholeAggregator::from_circuit_config(
                                 circuit_config.clone(),
                                 aggregation_config,
-                            );
+                            )
+                            .unwrap();
                             for proof in proofs.clone() {
                                 aggregator.push_proof(proof).unwrap();
                             }
@@ -72,10 +77,9 @@ macro_rules! verify_aggregate_proof_benchmark {
             let circuit_config = CircuitConfig::standard_recursion_zk_config();
 
             // Setup proofs (generated from circuit config, no external files needed).
-            let temp_aggregator = WormholeProofAggregator::from_circuit_config(
-                circuit_config.clone(),
-                aggregation_config,
-            );
+            let temp_aggregator =
+                WormholeAggregator::from_circuit_config(circuit_config.clone(), aggregation_config)
+                    .unwrap();
             let proofs = make_dummy_proofs(&temp_aggregator, aggregation_config.num_leaf_proofs);
 
             c.bench_function(
@@ -86,20 +90,21 @@ macro_rules! verify_aggregate_proof_benchmark {
                 |b| {
                     b.iter_batched(
                         || {
-                            let mut aggregator = WormholeProofAggregator::from_circuit_config(
+                            let mut aggregator = WormholeAggregator::from_circuit_config(
                                 circuit_config.clone(),
                                 aggregation_config,
-                            );
+                            )
+                            .unwrap();
                             for proof in proofs.clone() {
                                 aggregator.push_proof(proof).unwrap();
                             }
 
-                            aggregator.aggregate().unwrap()
+                            (aggregator.aggregate().unwrap(), aggregator)
                         },
-                        |aggregated_proof| {
-                            let proof = aggregated_proof.proof;
-                            let circuit_data = aggregated_proof.circuit_data;
-                            circuit_data.verify(proof).unwrap();
+                        |(aggregated_proof, aggregator)| {
+                            aggregator
+                                .verify_aggregated_proof(aggregated_proof)
+                                .unwrap();
                         },
                         criterion::BatchSize::SmallInput,
                     );
