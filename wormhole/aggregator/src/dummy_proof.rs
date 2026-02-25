@@ -23,6 +23,7 @@
 //! ```
 //!
 
+// TODO: Create layer 0 dummy proof methods for use in circuit builder.
 use anyhow::Result;
 use plonky2::plonk::circuit_data::CommonCircuitData;
 use plonky2::plonk::proof::ProofWithPublicInputs;

@@ -3,6 +3,7 @@ pub mod common;
 pub mod config;
 pub mod dummy_proof;
 pub mod layer0;
+pub mod layer1;
 
 pub use config::CircuitBinsConfig;
 pub use dummy_proof::{

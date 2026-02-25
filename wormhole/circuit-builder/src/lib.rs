@@ -88,6 +88,7 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
 /// * `output_dir` - Directory to write the binaries to
 /// * `include_prover` - Whether to include the prover binary
 /// * `num_leaf_proofs` - Number of leaf proofs aggregated into a single proof
+// TODO: add `num_inner_proofs` argument once we support inner proof aggregation in layer-1 circuit
 pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
     include_prover: bool,

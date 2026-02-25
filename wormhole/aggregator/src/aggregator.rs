@@ -10,6 +10,7 @@
 //! inside `layer0::prover::Layer0AggregationProver::commit(...)`.
 //! The orchestrator intentionally does NOT duplicate that logic.
 
+// TODO connect layer 2 backend
 use anyhow::{anyhow, bail, Context, Result};
 use plonky2::plonk::{
     circuit_data::{
