@@ -29,10 +29,7 @@ use zk_circuits_common::{
     circuit::{C, D, F},
 };
 
-use crate::layer0::{
-    circuit::circuit_logic::Layer0AggregationCircuit,
-    prover::{Layer0AggregationInputs, Layer0AggregationProver},
-};
+use crate::layer0::prover::{Layer0AggregationInputs, Layer0AggregationProver};
 
 /// Optional abstraction for delegated layer-1 aggregation.
 ///
