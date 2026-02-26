@@ -1,33 +1,60 @@
 #![cfg(test)]
 
+use circuit_builder::generate_all_circuit_binaries;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_inputs::PublicCircuitInputs;
+use std::path::Path;
+use std::sync::Once;
 use test_helpers::TestInputs;
 use wormhole_aggregator::aggregator::WormholeAggregator;
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_prover::WormholeProver;
-use zk_circuits_common::aggregation::AggregationConfig;
 use zk_circuits_common::circuit::{C, D, F};
 
 use crate::aggregator::circuit_config;
 
-/// Fast local unit-test aggregation config (2 leaf proofs).
-fn test_aggregation_config() -> AggregationConfig {
-    AggregationConfig::new(2)
+const TEST_OUTPUT_DIR: &str = "tmp-test-bins";
+
+static TEST_INIT: Once = Once::new();
+
+extern "C" fn cleanup_test_output_dir() {
+    // Best-effort cleanup (don’t panic during shutdown)
+    let _ = std::fs::remove_dir_all(TEST_OUTPUT_DIR);
+}
+
+fn setup_test_binaries() {
+    TEST_INIT.call_once(|| {
+        generate_all_circuit_binaries(TEST_OUTPUT_DIR, true, 2)
+            .expect("Failed to generate test circuit binaries");
+
+        // Register a process-exit cleanup so the directory is removed once all tests finish.
+        unsafe {
+            // Ignore return value; if registration fails we simply won't auto-clean.
+            let _ = libc::atexit(cleanup_test_output_dir);
+        }
+    });
 }
 
 fn make_leaf_proof(inputs: &CircuitInputs) -> ProofWithPublicInputs<F, C, D> {
-    let prover = WormholeProver::new(circuit_config());
+    setup_test_binaries();
+
+    let prover_path = format!("{}/prover.bin", TEST_OUTPUT_DIR);
+    let common_path = format!("{}/common.bin", TEST_OUTPUT_DIR);
+    let prover = WormholeProver::new_from_files(Path::new(&prover_path), Path::new(&common_path))
+        .expect("Failed to create prover from binaries");
     prover.commit(inputs).unwrap().prove().unwrap()
+}
+fn make_aggregator() -> WormholeAggregator {
+    setup_test_binaries();
+    WormholeAggregator::from_binaries_dir(TEST_OUTPUT_DIR).unwrap()
 }
 
 #[test]
 fn push_proof_to_buffer() {
+    setup_test_binaries();
     let proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
 
-    let mut aggregator =
-        WormholeAggregator::from_circuit_config(circuit_config(), test_aggregation_config())
-            .unwrap();
+    let mut aggregator = make_aggregator();
 
     aggregator.push_proof(proof).unwrap();
 
@@ -37,11 +64,10 @@ fn push_proof_to_buffer() {
 
 #[test]
 fn push_proof_to_full_buffer() {
+    setup_test_binaries();
     let proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
 
-    let aggregation_config = test_aggregation_config();
-    let mut aggregator =
-        WormholeAggregator::from_circuit_config(circuit_config(), aggregation_config).unwrap();
+    let mut aggregator = make_aggregator();
 
     // Fill the buffer
     for _ in 0..aggregator.config.num_leaf_proofs {
@@ -58,11 +84,10 @@ fn push_proof_to_full_buffer() {
 
 #[test]
 fn aggregate_single_proof() {
+    setup_test_binaries();
     let proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
 
-    let mut aggregator =
-        WormholeAggregator::from_circuit_config(circuit_config(), test_aggregation_config())
-            .unwrap();
+    let mut aggregator = make_aggregator();
 
     aggregator.push_proof(proof).unwrap();
 
@@ -74,6 +99,7 @@ fn aggregate_single_proof() {
 
 #[test]
 fn aggregate_proofs_into_tree() {
+    setup_test_binaries();
     // All proofs must be from the SAME BLOCK for fixed-structure aggregation.
     let inputs = CircuitInputs::test_inputs_0();
 
@@ -86,9 +112,7 @@ fn aggregate_proofs_into_tree() {
     println!("proof_0 public inputs = {:?}", pi0);
     println!("proof_1 public inputs = {:?}", pi1);
 
-    let mut aggregator =
-        WormholeAggregator::from_circuit_config(circuit_config(), test_aggregation_config())
-            .unwrap();
+    let mut aggregator = make_aggregator();
 
     aggregator.push_proof(proof_0).unwrap();
     aggregator.push_proof(proof_1).unwrap();
@@ -101,12 +125,11 @@ fn aggregate_proofs_into_tree() {
 
 #[test]
 fn aggregate_half_full_proof_array_into_tree() {
+    setup_test_binaries();
     // Intentionally only push one proof into a 2-proof aggregator to exercise padding.
     let proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
 
-    let mut aggregator =
-        WormholeAggregator::from_circuit_config(circuit_config(), test_aggregation_config())
-            .unwrap();
+    let mut aggregator = make_aggregator();
 
     aggregator.push_proof(proof).unwrap();
 
@@ -123,6 +146,7 @@ fn aggregate_half_full_proof_array_into_tree() {
 /// 4. Aggregate them
 #[test]
 fn aggregate_proofs_from_separate_prover_instances_serialized() {
+    setup_test_binaries();
     println!("=== Testing local CLI-like flow with separate prover instances ===");
 
     // Proof 1 from prover A
@@ -138,9 +162,7 @@ fn aggregate_proofs_from_separate_prover_instances_serialized() {
     let proof_2_bytes = proof_2.to_bytes();
 
     // Create aggregator (local/in-memory path)
-    let mut aggregator =
-        WormholeAggregator::from_circuit_config(circuit_config(), test_aggregation_config())
-            .unwrap();
+    let mut aggregator = make_aggregator();
 
     // Use fresh common_data to deserialize like CLI would
     let deser_common_data = WormholeProver::new(circuit_config()).circuit_data.common;
@@ -168,6 +190,7 @@ fn aggregate_proofs_from_separate_prover_instances_serialized() {
 /// Same as above but includes hex encoding/decoding to match CLI proof handoff format.
 #[test]
 fn aggregate_proofs_from_separate_prover_instances_hex_serialized() {
+    setup_test_binaries();
     println!("=== Testing local CLI-like flow with hex encoding ===");
 
     // Proof 1 from prover A
@@ -182,9 +205,7 @@ fn aggregate_proofs_from_separate_prover_instances_hex_serialized() {
     let proof_2 = prover_b.commit(&inputs_2).unwrap().prove().unwrap();
     let proof_2_hex = hex::encode(proof_2.to_bytes());
 
-    let mut aggregator =
-        WormholeAggregator::from_circuit_config(circuit_config(), test_aggregation_config())
-            .unwrap();
+    let mut aggregator = make_aggregator();
 
     let deser_common_data = WormholeProver::new(circuit_config()).circuit_data.common;
 

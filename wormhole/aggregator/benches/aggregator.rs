@@ -1,71 +1,51 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use plonky2::plonk::circuit_data::CircuitConfig;
-use plonky2::plonk::proof::ProofWithPublicInputs;
+use plonky2::plonk::circuit_data::CommonCircuitData;
+use plonky2::util::serialization::DefaultGateSerializer;
 use qp_wormhole_aggregator::aggregator::WormholeAggregator;
-use zk_circuits_common::aggregation::AggregationConfig;
-use zk_circuits_common::circuit::{C, D, F};
+use qp_wormhole_aggregator::dummy_proof::load_dummy_proof;
+use qp_wormhole_aggregator::layer0::circuit::build::generate_layer0_circuit_binaries;
 
 /// Generate dummy proofs from the circuit config (no external files needed).
-fn make_dummy_proofs(
-    aggregator: &WormholeAggregator,
-    len: usize,
-) -> Vec<ProofWithPublicInputs<F, C, D>> {
-    use plonky2::iop::witness::PartialWitness;
-    use qp_wormhole_aggregator::build_dummy_circuit_inputs;
-    use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
-    use wormhole_prover::fill_witness;
-
-    let config = match &aggregator.layer0_source {
-        qp_wormhole_aggregator::aggregator::Layer0ProverSource::InMemory {
-            leaf_common, ..
-        } => leaf_common.config.clone(),
-        _ => panic!("Unsupported layer0_source for dummy proof generation"),
-    };
-    let circuit = WormholeCircuit::new(config);
-    let targets = circuit.targets();
-    let circuit_data = circuit.build_circuit();
-    let inputs = build_dummy_circuit_inputs().expect("failed to build dummy inputs");
-    let mut pw = PartialWitness::new();
-    fill_witness(&mut pw, &inputs, &targets).expect("failed to fill witness");
-    let dummy_proof = circuit_data.prove(pw).expect("failed to prove dummy");
-    (0..len).map(|_| dummy_proof.clone()).collect()
-}
+const BINS_DIR: &str = "../../generated-bins";
 
 // A macro for creating an aggregation benchmark with a specified number of leaf proofs.
 macro_rules! aggregate_proofs_benchmark {
     ($fn_name:ident, $num_leaf_proofs:expr) => {
         pub fn $fn_name(c: &mut Criterion) {
-            let aggregation_config = AggregationConfig::new($num_leaf_proofs);
-            let circuit_config = CircuitConfig::standard_recursion_zk_config();
+            let gate_serializer = DefaultGateSerializer;
+            // load the dummy proof bytes from the file path
+            let proof_bytes = std::fs::read(format!("{}/dummy_proof.bin", BINS_DIR))
+                .expect("Failed to read dummy proof bytes");
+            let common_circuit_data = std::fs::read(format!("{}/common.bin", BINS_DIR))
+                .expect("Failed to read common circuit data bytes");
+            // 1) Load prebuilt aggregation circuit prover data
+            let agg_common =
+                CommonCircuitData::from_bytes(common_circuit_data.to_vec(), &gate_serializer)
+                    .expect("Failed to deserialize aggregated common data");
+            let proof = load_dummy_proof(proof_bytes, &agg_common)
+                .expect("Failed to load dummy proof from bytes");
 
-            // Setup proofs (generated from circuit config, no external files needed).
-            let temp_aggregator =
-                WormholeAggregator::from_circuit_config(circuit_config.clone(), aggregation_config)
-                    .unwrap();
-            let proofs = make_dummy_proofs(&temp_aggregator, aggregation_config.num_leaf_proofs);
-
-            c.bench_function(
-                &format!("aggregate_proofs_{}", aggregation_config.num_leaf_proofs),
-                |b| {
-                    b.iter_batched(
-                        || {
-                            let mut aggregator = WormholeAggregator::from_circuit_config(
-                                circuit_config.clone(),
-                                aggregation_config,
-                            )
-                            .unwrap();
-                            for proof in proofs.clone() {
-                                aggregator.push_proof(proof).unwrap();
-                            }
-                            aggregator
-                        },
-                        |mut aggregator| {
-                            aggregator.aggregate().unwrap();
-                        },
-                        criterion::BatchSize::SmallInput,
-                    );
-                },
-            );
+            c.bench_function(&format!("aggregate_proofs_{}", $num_leaf_proofs), |b| {
+                b.iter_batched(
+                    || {
+                        // Call "generate_layer0_circuit_binaries" before we instantiate a new wormhole aggregator,
+                        // to ensure the binaries represent the circuit with the correct number of leaf proofs.
+                        generate_layer0_circuit_binaries(BINS_DIR, $num_leaf_proofs, true).expect(
+                            "Failed to generate layer0 circuit binaries for aggregation benchmark",
+                        );
+                        let mut aggregator =
+                            WormholeAggregator::from_binaries_dir(BINS_DIR).unwrap();
+                        for proof in std::iter::repeat(proof.clone()).take($num_leaf_proofs) {
+                            aggregator.push_proof(proof).unwrap();
+                        }
+                        aggregator
+                    },
+                    |mut aggregator| {
+                        aggregator.aggregate().unwrap();
+                    },
+                    criterion::BatchSize::SmallInput,
+                );
+            });
         }
     };
 }
@@ -73,29 +53,32 @@ macro_rules! aggregate_proofs_benchmark {
 macro_rules! verify_aggregate_proof_benchmark {
     ($fn_name:ident, $num_leaf_proofs:expr) => {
         pub fn $fn_name(c: &mut Criterion) {
-            let aggregation_config = AggregationConfig::new($num_leaf_proofs);
-            let circuit_config = CircuitConfig::standard_recursion_zk_config();
-
-            // Setup proofs (generated from circuit config, no external files needed).
-            let temp_aggregator =
-                WormholeAggregator::from_circuit_config(circuit_config.clone(), aggregation_config)
-                    .unwrap();
-            let proofs = make_dummy_proofs(&temp_aggregator, aggregation_config.num_leaf_proofs);
+            let gate_serializer = DefaultGateSerializer;
+            // load the dummy proof bytes from the file path
+            let proof_bytes = std::fs::read(format!("{}/dummy_proof.bin", BINS_DIR))
+                .expect("Failed to read dummy proof bytes");
+            let common_circuit_data = std::fs::read(format!("{}/common.bin", BINS_DIR))
+                .expect("Failed to read common circuit data bytes");
+            // 1) Load prebuilt aggregation circuit prover data
+            let agg_common =
+                CommonCircuitData::from_bytes(common_circuit_data.to_vec(), &gate_serializer)
+                    .expect("Failed to deserialize aggregated common data");
+            let proof = load_dummy_proof(proof_bytes, &agg_common)
+                .expect("Failed to load dummy proof from bytes");
 
             c.bench_function(
-                &format!(
-                    "verify_aggregate_proof_{}",
-                    aggregation_config.num_leaf_proofs
-                ),
+                &format!("verify_aggregate_proof_{}", $num_leaf_proofs),
                 |b| {
                     b.iter_batched(
                         || {
-                            let mut aggregator = WormholeAggregator::from_circuit_config(
-                                circuit_config.clone(),
-                                aggregation_config,
-                            )
-                            .unwrap();
-                            for proof in proofs.clone() {
+                            // Call "generate_layer0_circuit_binaries" before we instantiate a new wormhole aggregator,
+                            // to ensure the binaries represent the circuit with the correct number of leaf proofs.
+                            generate_layer0_circuit_binaries(BINS_DIR, $num_leaf_proofs, true).expect(
+                                "Failed to generate layer0 circuit binaries for aggregation benchmark",
+                            );
+                            let mut aggregator =
+                                WormholeAggregator::from_binaries_dir(BINS_DIR).unwrap();
+                            for proof in std::iter::repeat(proof.clone()).take($num_leaf_proofs) {
                                 aggregator.push_proof(proof).unwrap();
                             }
 

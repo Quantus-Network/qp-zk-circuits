@@ -43,6 +43,7 @@ use zk_circuits_common::utils::{digest_felts_to_bytes, BytesDigest, Digest};
 const DEBUG_FILE: &str = "proof_debug.json";
 const SCALE_DOWN_FACTOR: u128 = 10_000_000_000u128; // 10^10
 const VOLUME_FEE_BPS: u32 = 10; // 0.1% = 10 basis points
+const BINS_DIR: &str = "../../generated-bins";
 
 /// Compute output amount after fee deduction
 /// output = input * (10000 - fee_bps) / 10000
@@ -264,11 +265,7 @@ fn load_proof(
 }
 
 /// Aggregate multiple proofs from files
-fn aggregate_proofs(
-    proof_files: Vec<String>,
-    output_file: &str,
-    aggregation_config: AggregationConfig,
-) -> anyhow::Result<()> {
+fn aggregate_proofs(proof_files: Vec<String>, output_file: &str) -> anyhow::Result<()> {
     println!("\n=== Starting Proof Aggregation ===");
     println!("Loading {} proof files...", proof_files.len());
 
@@ -277,8 +274,7 @@ fn aggregate_proofs(
     let prover = WormholeProver::new(config.clone());
     let common_data = &prover.circuit_data.common;
 
-    let mut aggregator =
-        WormholeAggregator::from_circuit_config(config, aggregation_config).unwrap();
+    let mut aggregator = WormholeAggregator::from_binaries_dir(BINS_DIR).unwrap();
 
     println!(
         "Aggregator configured for {} leaf proofs",
@@ -312,15 +308,11 @@ fn aggregate_proofs(
 fn aggregate_proofs_direct(
     proofs: Vec<ProofWithPublicInputs<F, C, D>>,
     output_file: &str,
-    aggregation_config: AggregationConfig,
 ) -> anyhow::Result<()> {
     println!("\n=== Starting Proof Aggregation ===");
     println!("Aggregating {} proofs...", proofs.len());
 
-    // Build the wormhole aggregator from circuit config
-    let config = CircuitConfig::standard_recursion_zk_config();
-
-    let mut aggregator = WormholeAggregator::from_circuit_config(config, aggregation_config)?;
+    let mut aggregator = WormholeAggregator::from_binaries_dir(BINS_DIR)?;
 
     println!(
         "Aggregator configured for {} leaf proofs",
@@ -862,12 +854,7 @@ async fn main() -> anyhow::Result<()> {
         let proof_files = cli
             .proof_files
             .context("Missing proof files for aggregation")?;
-        let aggregation_config = get_aggregation_config()?;
-        return aggregate_proofs(
-            proof_files,
-            &cli.aggregated_proof_output,
-            aggregation_config,
-        );
+        return aggregate_proofs(proof_files, &cli.aggregated_proof_output);
     }
 
     // Offline debug mode
@@ -990,7 +977,7 @@ async fn main() -> anyhow::Result<()> {
             "Using aggregation config: num_leaf_proofs={}",
             config.num_leaf_proofs
         );
-        aggregate_proofs_direct(proofs, &cli.aggregated_proof_output, config)?;
+        aggregate_proofs_direct(proofs, &cli.aggregated_proof_output)?;
     }
 
     Ok(())

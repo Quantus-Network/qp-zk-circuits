@@ -47,6 +47,7 @@ use crate::layer0::{
 pub fn generate_layer0_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
     num_leaf_proofs: usize,
+    include_prover: bool,
 ) -> Result<()> {
     let output_path = output_dir.as_ref();
     create_dir_all(output_path)?;
@@ -107,15 +108,19 @@ pub fn generate_layer0_circuit_binaries<P: AsRef<Path>>(
     // -------------------------------------------------------------------------
     // Serialize aggregated prover.bin
     // -------------------------------------------------------------------------
-    let agg_prover_only_bytes = prover_data
-        .prover_only
-        .to_bytes(&generator_serializer, common_data)
-        .map_err(|e| anyhow!("Failed to serialize aggregated prover data: {}", e))?;
-    write(
-        output_path.join("aggregated_prover.bin"),
-        agg_prover_only_bytes,
-    )?;
-    println!("Saved {}/aggregated_prover.bin", output_path.display());
+    if include_prover {
+        let agg_prover_only_bytes = prover_data
+            .prover_only
+            .to_bytes(&generator_serializer, common_data)
+            .map_err(|e| anyhow!("Failed to serialize aggregated prover data: {}", e))?;
+        write(
+            output_path.join("aggregated_prover.bin"),
+            agg_prover_only_bytes,
+        )?;
+        println!("Saved {}/aggregated_prover.bin", output_path.display());
+    } else {
+        println!("Skipping aggregated prover binary generation");
+    }
 
     // -------------------------------------------------------------------------
     // Serialize layer0 target layout

@@ -13,9 +13,7 @@
 // TODO connect layer 2 backend
 use anyhow::{anyhow, bail, Context, Result};
 use plonky2::plonk::{
-    circuit_data::{
-        CircuitConfig, CommonCircuitData, VerifierCircuitData, VerifierOnlyCircuitData,
-    },
+    circuit_data::{CommonCircuitData, VerifierCircuitData, VerifierOnlyCircuitData},
     proof::ProofWithPublicInputs,
     // 👇 add these if not already in scope in your crate version
     // (they're only needed for loading prebuilt verifier/common bytes)
@@ -50,28 +48,15 @@ pub trait Layer1AggregationBackend: Send + Sync {
     fn batch_size(&self) -> usize;
 }
 
-/// Where the orchestrator should get a fresh layer-0 prover from.
-#[allow(clippy::large_enum_variant)]
-pub enum Layer0ProverSource {
-    /// Production path: load a fresh prover from prebuilt binaries each time.
-    BinariesDir(PathBuf),
-
-    /// Local/dev/test path: rebuild the aggregation prover from in-memory circuit configs/data.
-    InMemory {
-        agg_circuit_config: CircuitConfig,
-        leaf_common: CommonCircuitData<F, D>,
-        leaf_verifier_only: VerifierOnlyCircuitData<C, D>,
-        dummy_proof_template: ProofWithPublicInputs<F, C, D>,
-    },
-}
-
 /// High-level wormhole aggregation orchestrator.
 ///
 /// Buffers leaf proofs, then hands them to the prebuilt layer-0 prover when ready.
 /// The returned layer-0 proof can be buffered for a future layer-1 backend.
 pub struct WormholeAggregator {
-    /// How we construct a fresh layer-0 prover for each batch.
-    pub layer0_source: Layer0ProverSource,
+    /// The directory that contains all the prebuilt circuit artifacts (layer-0 + leaf).
+    /// DEV NOTE: we could optionally support separate paths for layer-0 vs leaf artifacts,
+    /// but this is simpler for now since the layer-0 build already depends on the leaf common data.
+    pub bin_dir: PathBuf,
 
     /// Public config (kept public for compatibility with older tests/code).
     pub config: AggregationConfig,
@@ -111,56 +96,11 @@ impl WormholeAggregator {
         let config = AggregationConfig::new(layer0_prover.num_leaf_proofs());
 
         Ok(Self {
-            layer0_source: Layer0ProverSource::BinariesDir(bins_dir),
+            bin_dir: bins_dir,
             leaf_proofs_buffer: Vec::with_capacity(config.num_leaf_proofs),
             layer0_buffer: Vec::new(),
             layer1_backend: None,
             config,
-        })
-    }
-
-    /// Create an orchestrator directly from circuit configs (local/dev/test path).
-    ///
-    /// This mirrors the old `from_circuit_config(...)` flow and avoids requiring prebuilt files.
-    ///
-    /// It internally:
-    /// - builds the leaf verifier data (common + verifier_only)
-    /// - generates a dummy leaf proof template
-    /// - stores enough state to build a fresh layer-0 prover on each `aggregate_layer0()`
-    pub fn from_circuit_config(
-        leaf_circuit_config: CircuitConfig,
-        aggregation_config: AggregationConfig,
-    ) -> Result<Self> {
-        use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
-        use wormhole_prover::WormholeProver;
-
-        // Build leaf verifier data (used by layer-0 prover witness filling).
-        let leaf_verifier_circuit =
-            WormholeCircuit::new(leaf_circuit_config.clone()).build_verifier();
-        let leaf_common = leaf_verifier_circuit.common.clone();
-        let leaf_verifier_only = leaf_verifier_circuit.verifier_only;
-
-        // Build a reusable dummy leaf proof template.
-        let dummy_inputs = crate::dummy_proof::build_dummy_circuit_inputs()
-            .context("failed to build dummy leaf circuit inputs")?;
-
-        let dummy_proof_template = WormholeProver::new(leaf_circuit_config.clone())
-            .commit(&dummy_inputs)
-            .context("failed to commit dummy leaf inputs")?
-            .prove()
-            .context("failed to generate dummy leaf proof")?;
-
-        Ok(Self {
-            layer0_source: Layer0ProverSource::InMemory {
-                agg_circuit_config: leaf_circuit_config,
-                leaf_common,
-                leaf_verifier_only,
-                dummy_proof_template,
-            },
-            leaf_proofs_buffer: Vec::with_capacity(aggregation_config.num_leaf_proofs),
-            layer0_buffer: Vec::new(),
-            layer1_backend: None,
-            config: aggregation_config,
         })
     }
 
@@ -297,79 +237,44 @@ impl WormholeAggregator {
 
     /// Internal helper: build a fresh layer-0 prover from the configured source.
     fn build_layer0_prover(&self) -> Result<Layer0AggregationProver> {
-        match &self.layer0_source {
-            Layer0ProverSource::BinariesDir(bins_dir) => {
-                Layer0AggregationProver::new_from_binaries_dir(bins_dir)
-                    .context("failed to load prebuilt layer-0 prover from binaries dir")
-            }
-            Layer0ProverSource::InMemory {
-                agg_circuit_config,
-                leaf_common,
-                leaf_verifier_only,
-                dummy_proof_template,
-            } => Ok(Layer0AggregationProver::new(
-                agg_circuit_config.clone(),
-                leaf_common.clone(),
-                leaf_verifier_only.clone(),
-                self.config,
-                dummy_proof_template.clone(),
-            )),
-        }
+        Layer0AggregationProver::new_from_binaries_dir(&self.bin_dir)
+            .context("failed to load prebuilt layer-0 prover from binaries dir")
     }
 
     /// Internal helper: build/load the layer-0 verifier circuit.
     fn build_layer0_verifier(&self) -> Result<VerifierCircuitData<F, C, D>> {
-        match &self.layer0_source {
-            Layer0ProverSource::BinariesDir(bins_dir) => {
-                // Optional integrity verification (same pattern as prover path).
-                let config_path = bins_dir.join("config.json");
-                if config_path.exists() {
-                    let bins_config = crate::config::CircuitBinsConfig::load(bins_dir)?;
-                    bins_config.verify_hashes(bins_dir)?;
-                }
-
-                let gate_serializer = DefaultGateSerializer;
-
-                let aggregated_common_bytes = fs::read(bins_dir.join("aggregated_common.bin"))
-                    .context("failed to read aggregated_common.bin")?;
-                let common =
-                    CommonCircuitData::from_bytes(aggregated_common_bytes, &gate_serializer)
-                        .map_err(|e| {
-                            anyhow!(
-                                "failed to deserialize aggregated common circuit data: {}",
-                                e
-                            )
-                        })?;
-
-                let aggregated_verifier_bytes = fs::read(bins_dir.join("aggregated_verifier.bin"))
-                    .context("failed to read aggregated_verifier.bin")?;
-                let verifier_only =
-                    VerifierOnlyCircuitData::<C, D>::from_bytes(aggregated_verifier_bytes)
-                        .map_err(|e| {
-                            anyhow!(
-                                "failed to deserialize aggregated verifier circuit data: {}",
-                                e
-                            )
-                        })?;
-
-                Ok(VerifierCircuitData {
-                    verifier_only,
-                    common,
-                })
-            }
-            Layer0ProverSource::InMemory {
-                agg_circuit_config,
-                leaf_common,
-                ..
-            } => {
-                // Rebuild the layer-0 aggregation verifier from the same config/source data.
-                let circuit = Layer0AggregationCircuit::new(
-                    agg_circuit_config.clone(),
-                    leaf_common.clone(),
-                    self.config.num_leaf_proofs,
-                );
-                Ok(circuit.build_verifier())
-            }
+        // Optional integrity verification (same pattern as prover path).
+        let config_path = self.bin_dir.join("config.json");
+        if config_path.exists() {
+            let bins_config = crate::config::CircuitBinsConfig::load(&self.bin_dir)?;
+            bins_config.verify_hashes(&self.bin_dir)?;
         }
+
+        let gate_serializer = DefaultGateSerializer;
+
+        let aggregated_common_bytes = fs::read(self.bin_dir.join("aggregated_common.bin"))
+            .context("failed to read aggregated_common.bin")?;
+        let common = CommonCircuitData::from_bytes(aggregated_common_bytes, &gate_serializer)
+            .map_err(|e| {
+                anyhow!(
+                    "failed to deserialize aggregated common circuit data: {}",
+                    e
+                )
+            })?;
+
+        let aggregated_verifier_bytes = fs::read(self.bin_dir.join("aggregated_verifier.bin"))
+            .context("failed to read aggregated_verifier.bin")?;
+        let verifier_only = VerifierOnlyCircuitData::<C, D>::from_bytes(aggregated_verifier_bytes)
+            .map_err(|e| {
+                anyhow!(
+                    "failed to deserialize aggregated verifier circuit data: {}",
+                    e
+                )
+            })?;
+
+        Ok(VerifierCircuitData {
+            verifier_only,
+            common,
+        })
     }
 }
