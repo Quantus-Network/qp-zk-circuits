@@ -29,7 +29,7 @@ use subxt::ext::jsonrpsee::core::client::ClientT;
 use subxt::ext::jsonrpsee::rpc_params;
 use subxt::utils::{to_hex, AccountId32 as SubxtAccountId};
 use subxt::OnlineClient;
-use wormhole_aggregator::aggregator::WormholeAggregator;
+use wormhole_aggregator::aggregator::{AggregationBackend, Layer0Aggregator};
 use wormhole_circuit::inputs::{
     CircuitInputs, ParseAggregatedPublicInputs, ParsePublicInputs, PrivateCircuitInputs,
 };
@@ -274,18 +274,18 @@ fn aggregate_proofs(proof_files: Vec<String>, output_file: &str) -> anyhow::Resu
     let prover = WormholeProver::new(config.clone());
     let common_data = &prover.circuit_data.common;
 
-    let mut aggregator = WormholeAggregator::from_binaries_dir(BINS_DIR).unwrap();
+    let mut aggregator = Layer0Aggregator::new(BINS_DIR).unwrap();
 
     println!(
         "Aggregator configured for {} leaf proofs",
-        aggregator.config.num_leaf_proofs,
+        aggregator.batch_size(),
     );
 
-    if proof_files.len() > aggregator.config.num_leaf_proofs {
+    if proof_files.len() > aggregator.batch_size() {
         anyhow::bail!(
             "Too many proof files provided: {} (max: {})",
             proof_files.len(),
-            aggregator.config.num_leaf_proofs
+            aggregator.batch_size()
         );
     }
 
@@ -312,18 +312,18 @@ fn aggregate_proofs_direct(
     println!("\n=== Starting Proof Aggregation ===");
     println!("Aggregating {} proofs...", proofs.len());
 
-    let mut aggregator = WormholeAggregator::from_binaries_dir(BINS_DIR)?;
+    let mut aggregator = Layer0Aggregator::new(BINS_DIR)?;
 
     println!(
         "Aggregator configured for {} leaf proofs",
-        aggregator.config.num_leaf_proofs,
+        aggregator.batch_size(),
     );
 
-    if proofs.len() > aggregator.config.num_leaf_proofs {
+    if proofs.len() > aggregator.batch_size() {
         anyhow::bail!(
             "Too many proofs provided: {} (max: {})",
             proofs.len(),
-            aggregator.config.num_leaf_proofs
+            aggregator.batch_size()
         );
     }
 
@@ -336,7 +336,7 @@ fn aggregate_proofs_direct(
 }
 
 /// Common aggregation logic - aggregate and save
-fn aggregate_and_save(mut aggregator: WormholeAggregator, output_file: &str) -> anyhow::Result<()> {
+fn aggregate_and_save(mut aggregator: Layer0Aggregator, output_file: &str) -> anyhow::Result<()> {
     println!("\nRunning aggregation...");
     let aggregated_proof = aggregator.aggregate()?;
 
@@ -349,7 +349,7 @@ fn aggregate_and_save(mut aggregator: WormholeAggregator, output_file: &str) -> 
     // Verify the aggregated proof
     println!("\nVerifying aggregated proof...");
     aggregator
-        .verify_aggregated_proof(aggregated_proof.clone())
+        .verify(aggregated_proof.clone())
         .expect("Aggregated proof verification failed");
     println!("Aggregated proof verified successfully!");
 
@@ -808,9 +808,13 @@ struct Cli {
     #[arg(long)]
     generate_and_aggregate: bool,
 
-    /// Number of leaf proofs for aggregation (required for aggregation modes)
+    /// Number of leaf proofs for first layer of aggregation (required for aggregation modes)
     #[arg(long)]
     num_leaf_proofs: Option<usize>,
+
+    /// Number of leaf proofs for first layer of aggregation (required for aggregation modes)
+    #[arg(long)]
+    num_inner_proofs: Option<usize>,
 
     /// Number of proofs to generate (for --generate-and-aggregate mode)
     /// Defaults to num_leaf_proofs from aggregation config
@@ -846,7 +850,8 @@ async fn main() -> anyhow::Result<()> {
         let num_leaf_proofs = cli
             .num_leaf_proofs
             .context("--num-leaf-proofs is required for aggregation modes")?;
-        Ok(AggregationConfig::new(num_leaf_proofs))
+        let num_inner_proofs = cli.num_inner_proofs;
+        Ok(AggregationConfig::new(num_leaf_proofs, num_inner_proofs))
     };
 
     // Aggregation-only mode (from files)

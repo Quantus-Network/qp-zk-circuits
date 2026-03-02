@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use std::fs::{create_dir_all, write};
 use std::path::Path;
+use wormhole_aggregator::layer1::circuit::generate_layer1_circuit_binaries;
 
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::config::PoseidonGoldilocksConfig;
@@ -89,11 +90,11 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
 /// * `include_prover` - Whether to include the prover binary
 /// * `num_leaf_proofs` - Number of leaf proofs aggregated into a single proof
 /// * `num_innner_proofs` - Optional param for number of inner proofs (for layer-1 circuit). Set to none if you only want layer-0 aggregation.
-// TODO: add `num_inner_proofs` argument once we support inner proof aggregation in layer-1 circuit
 pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
     include_prover: bool,
     num_leaf_proofs: usize,
+    num_inner_proofs: Option<usize>,
 ) -> Result<()> {
     let output_path = output_dir.as_ref();
 
@@ -103,8 +104,13 @@ pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
     // Generate aggregated circuit binaries
     generate_layer0_circuit_binaries(output_path, num_leaf_proofs, include_prover)?;
 
+    // If num_inner_proofs is specified, generate layer-1 aggregation circuit binaries
+    if let Some(num_layer0_proofs) = num_inner_proofs {
+        generate_layer1_circuit_binaries(output_path, num_layer0_proofs, include_prover)?;
+    }
+
     // Save config file alongside binaries (with hashes for integrity verification)
-    let config = CircuitBinsConfig::new(num_leaf_proofs).with_hashes_from_directory(output_path)?;
+    let config = CircuitBinsConfig::new(output_path)?;
     config.save(output_path)?;
 
     // Print hashes for reference

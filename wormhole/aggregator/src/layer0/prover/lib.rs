@@ -31,7 +31,6 @@ use rand::seq::SliceRandom;
 use std::{fs, path::Path};
 
 use zk_circuits_common::{
-    aggregation::AggregationConfig,
     circuit::{C, D, F},
     utils::digest_bytes_to_felts,
 };
@@ -67,7 +66,7 @@ pub struct Layer0AggregationProver {
     leaf_verifier_only: VerifierOnlyCircuitData<C, D>,
 
     /// Aggregation config (`num_leaf_proofs`).
-    config: AggregationConfig,
+    num_leaf_proofs: usize,
 
     /// Dummy leaf proof template for padding.
     dummy_proof_template: ProofWithPublicInputs<F, C, D>,
@@ -81,16 +80,16 @@ impl Layer0AggregationProver {
     /// Build a fresh layer-0 aggregation prover from circuit definitions.
     ///
     /// This is the "dev/fallback" path. In production, prefer `new_from_binaries_dir(...)`
-    /// or `new_from_files(...)` so the aggregation circuit is prebuilt and loaded.
+    /// or `new_from_files(...)` so the aggregation circuit is prebuilt and loaded to reduce overhead.
     pub fn new(
         agg_circuit_config: CircuitConfig,
         leaf_common: CommonCircuitData<F, D>,
         leaf_verifier_only: VerifierOnlyCircuitData<C, D>,
-        config: AggregationConfig,
+        num_leaf_proofs: usize,
         dummy_proof_template: ProofWithPublicInputs<F, C, D>,
     ) -> Self {
         let agg_circuit =
-            Layer0AggregationCircuit::new(agg_circuit_config, leaf_common, config.num_leaf_proofs);
+            Layer0AggregationCircuit::new(agg_circuit_config, leaf_common, num_leaf_proofs);
 
         let targets = Some(agg_circuit.targets());
         let circuit_data = agg_circuit.build_prover();
@@ -100,7 +99,7 @@ impl Layer0AggregationProver {
             partial_witness: PartialWitness::new(),
             targets,
             leaf_verifier_only,
-            config,
+            num_leaf_proofs,
             dummy_proof_template,
         }
     }
@@ -150,7 +149,7 @@ impl Layer0AggregationProver {
             .to_runtime()
             .context("Failed to reconstruct layer0 runtime targets")?;
 
-        let config = AggregationConfig::new(layout.n_leaf);
+        let num_leaf_proofs = layout.n_leaf;
 
         let targets = Some(AggregationCircuitTargets {
             leaf_verifier_data: runtime_targets.leaf_verifier_data_t,
@@ -175,7 +174,7 @@ impl Layer0AggregationProver {
             partial_witness: PartialWitness::new(),
             targets,
             leaf_verifier_only: leaf_verifier_data.verifier_only,
-            config,
+            num_leaf_proofs,
             dummy_proof_template,
         })
     }
@@ -265,7 +264,7 @@ impl Layer0AggregationProver {
 
     /// Number of leaf proofs aggregated by this layer-0 prover.
     pub fn num_leaf_proofs(&self) -> usize {
-        self.config.num_leaf_proofs
+        self.num_leaf_proofs
     }
 
     /// Commit leaf proofs to the aggregation circuit witness.
@@ -288,17 +287,17 @@ impl Layer0AggregationProver {
 
         let mut proofs = inputs.proofs;
 
-        if proofs.len() > self.config.num_leaf_proofs {
+        if proofs.len() > self.num_leaf_proofs {
             bail!(
                 "too many proofs: got {}, expected at most {}",
                 proofs.len(),
-                self.config.num_leaf_proofs
+                self.num_leaf_proofs
             );
         }
 
         // If we're going to pad with dummy proofs (asset_id = 0), ensure real proofs are asset_id=0.
         // (Same guard as the current dynamic aggregator path.)
-        let num_dummies_needed = self.config.num_leaf_proofs.saturating_sub(proofs.len());
+        let num_dummies_needed = self.num_leaf_proofs.saturating_sub(proofs.len());
         if num_dummies_needed > 0 {
             assert_dummy_padding_asset_id_compatible(&proofs)?;
         }

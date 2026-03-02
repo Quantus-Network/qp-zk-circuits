@@ -54,6 +54,12 @@ pub const fn l0_pi_len(layer0_num_leaves: usize) -> usize {
     layer0_num_leaves * L0_LEAF_PI_LEN + L0_HEADER_LEN
 }
 
+#[inline]
+pub const fn l0_num_leaves_from_pi_len(pi_len: usize) -> usize {
+    // Inverse of l0_pi_len: given total PI length, extract layer0_num_leaves
+    (pi_len - L0_HEADER_LEN) / L0_LEAF_PI_LEN
+}
+
 // -----------------------------------------------------------------------------
 // Layer-1 aggregated proof PI layout (output of layer-1 circuit)
 // -----------------------------------------------------------------------------

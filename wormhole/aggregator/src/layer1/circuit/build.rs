@@ -5,7 +5,6 @@
 //! - `layer1_verifier.bin`
 //! - `layer1_prover.bin` (optional)
 //! - `layer1_targets.json`
-//! - `layer1_dummy_proof.bin` (serialized dummy layer-0 aggregated proof for layer-1 padding)
 //!
 //! Expects layer-0 artifacts to already exist in `output_dir`:
 //! - `aggregated_common.bin`
@@ -28,51 +27,18 @@ use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerial
 
 use zk_circuits_common::circuit::{C, D, F};
 
-use crate::layer0::prover::{Layer0AggregationInputs, Layer0AggregationProver};
+use crate::layer1::circuit::constants::l0_num_leaves_from_pi_len;
 use crate::layer1::{
     circuit::circuit_logic::Layer1AggregationCircuit, prover::targets_layout::Layer1TargetsLayoutD,
 };
 
-/// Build configuration for the layer-1 circuit.
-#[derive(Debug, Clone)]
-pub struct Layer1BuildConfig {
-    /// Number of layer-0 aggregated proofs to combine in one layer-1 proof.
-    pub num_layer0_proofs: usize,
-    /// Number of leaf proofs represented in each layer-0 proof.
-    pub layer0_num_leaves: usize,
-    /// Whether to also emit `layer1_prover.bin`.
-    pub include_prover: bool,
-    /// Circuit config for the layer-1 circuit.
-    pub circuit_config: CircuitConfig,
-}
-
-impl Layer1BuildConfig {
-    pub fn new(num_layer0_proofs: usize, layer0_num_leaves: usize) -> Self {
-        Self {
-            num_layer0_proofs,
-            layer0_num_leaves,
-            include_prover: true,
-            circuit_config: CircuitConfig::standard_recursion_zk_config(),
-        }
-    }
-
-    pub fn with_include_prover(mut self, include_prover: bool) -> Self {
-        self.include_prover = include_prover;
-        self
-    }
-
-    pub fn with_circuit_config(mut self, circuit_config: CircuitConfig) -> Self {
-        self.circuit_config = circuit_config;
-        self
-    }
-}
-
 /// Build and write all layer-1 artifacts into `output_dir`.
 ///
 /// This assumes layer-0 artifacts are already present in `output_dir`.
-pub fn build_layer1_circuit_binaries<P: AsRef<Path>>(
+pub fn generate_layer1_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
-    cfg: Layer1BuildConfig,
+    num_layer0_proofs: usize,
+    include_prover: bool,
 ) -> Result<()> {
     let output_dir = output_dir.as_ref();
     create_dir_all(output_dir)
@@ -82,16 +48,17 @@ pub fn build_layer1_circuit_binaries<P: AsRef<Path>>(
     // 1) Load layer-0 common circuit data (child circuit for layer-1)
     // -------------------------------------------------------------------------
     let layer0_common = load_layer0_common_from_bins(output_dir)
-        .context("Failed to load layer-0 common circuit data from bins dir")?;
+        .context("Failed to load layer-0 common circuit data from bins dir. Make sure the dependent layer-0 artifacts are present in the output directory")?;
 
+    let layer0_num_leaves = l0_num_leaves_from_pi_len(layer0_common.num_public_inputs);
     // -------------------------------------------------------------------------
     // 2) Build layer-1 circuit + targets layout
     // -------------------------------------------------------------------------
     let layer1_circuit = Layer1AggregationCircuit::new(
-        cfg.circuit_config.clone(),
+        CircuitConfig::standard_recursion_zk_config(),
         layer0_common,
-        cfg.num_layer0_proofs,
-        cfg.layer0_num_leaves,
+        num_layer0_proofs,
+        layer0_num_leaves,
     );
 
     let targets = layer1_circuit.targets();
@@ -116,40 +83,16 @@ pub fn build_layer1_circuit_binaries<P: AsRef<Path>>(
     // -------------------------------------------------------------------------
     // 4) Optionally build prover artifact
     // -------------------------------------------------------------------------
-    if cfg.include_prover {
+    if include_prover {
         let prover_data = layer1_circuit.build_prover();
         write_prover_artifact(output_dir, &prover_data)?;
     }
 
-    // -------------------------------------------------------------------------
-    // 5) Generate and write layer-1 dummy proof template (a dummy layer-0 proof)
-    // -------------------------------------------------------------------------
-    //
-    // Layer-1 pads with *layer-0 aggregated proofs*, so the dummy template is produced
-    // by running the layer-0 prover with an empty batch (it self-pads with leaf dummies).
-    let layer0_dummy_proof = Layer0AggregationProver::new_from_binaries_dir(output_dir)
-        .context("Failed to load layer-0 prover while generating layer1 dummy proof")?
-        .commit(Layer0AggregationInputs { proofs: vec![] })
-        .context("Failed to commit empty batch to layer-0 prover (for layer1 dummy proof)")?
-        .prove()
-        .context("Failed to generate layer1 dummy proof (dummy layer-0 proof)")?;
-
-    write(
-        output_dir.join("layer1_dummy_proof.bin"),
-        layer0_dummy_proof.to_bytes(),
-    )
-    .with_context(|| {
-        format!(
-            "Failed to write {}",
-            output_dir.join("layer1_dummy_proof.bin").display()
-        )
-    })?;
-
     println!(
         "Layer-1 circuit artifacts written to {} (num_layer0_proofs={}, layer0_num_leaves={})",
         output_dir.display(),
-        cfg.num_layer0_proofs,
-        cfg.layer0_num_leaves
+        num_layer0_proofs,
+        layer0_num_leaves
     );
 
     Ok(())

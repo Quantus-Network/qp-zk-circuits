@@ -19,10 +19,7 @@ use std::{
     path::Path,
 };
 
-use zk_circuits_common::{
-    aggregation::AggregationConfig,
-    circuit::{D, F},
-};
+use zk_circuits_common::circuit::{D, F};
 
 use crate::layer0::{
     circuit::circuit_logic::Layer0AggregationCircuit, prover::targets_layout::Layer0TargetsLayoutD,
@@ -61,11 +58,10 @@ pub fn generate_layer0_circuit_binaries<P: AsRef<Path>>(
     let leaf_common = load_leaf_common_data(&output_path.join("common.bin"))?;
 
     // Build monolithic layer-0 aggregation circuit
-    let config = AggregationConfig::new(num_leaf_proofs);
     let agg_circuit = Layer0AggregationCircuit::new(
         CircuitConfig::standard_recursion_zk_config(),
         leaf_common,
-        config.num_leaf_proofs,
+        num_leaf_proofs,
     );
 
     // Capture targets BEFORE consuming the circuit
@@ -126,7 +122,7 @@ pub fn generate_layer0_circuit_binaries<P: AsRef<Path>>(
     // Serialize layer0 target layout
     // -------------------------------------------------------------------------
     let targets_layout = Layer0TargetsLayoutD::from_runtime(
-        config.num_leaf_proofs,
+        num_leaf_proofs,
         &targets.leaf_verifier_data,
         &targets.leaf_proofs,
         &targets.dummy_nullifiers,

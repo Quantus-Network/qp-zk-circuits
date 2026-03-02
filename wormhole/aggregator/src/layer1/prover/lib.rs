@@ -7,7 +7,6 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use plonky2::{
-    field::types::PrimeField64,
     iop::witness::PartialWitness,
     plonk::{
         circuit_data::{
@@ -29,15 +28,9 @@ use zk_circuits_common::{
     utils::digest_bytes_to_felts,
 };
 
-use crate::{
-    dummy_proof::load_dummy_proof,
-    layer1::{
-        circuit::{
-            circuit_logic::{Layer1AggregationCircuit, Layer1AggregationCircuitTargets},
-            constants as l1c,
-        },
-        prover::{targets_layout::Layer1TargetsLayoutD, witness::fill_layer1_aggregation_witness},
-    },
+use crate::layer1::{
+    circuit::circuit_logic::{Layer1AggregationCircuit, Layer1AggregationCircuitTargets},
+    prover::{targets_layout::Layer1TargetsLayoutD, witness::fill_layer1_aggregation_witness},
 };
 
 /// Inputs for layer-1 aggregation.
@@ -64,9 +57,6 @@ pub struct Layer1AggregationProver {
 
     /// Number of layer-0 proofs expected in one batch.
     num_layer0_proofs: usize,
-
-    /// Dummy layer-0 proof template used for padding.
-    dummy_layer0_proof_template: ProofWithPublicInputs<F, C, D>,
 }
 
 impl Layer1AggregationProver {
@@ -74,6 +64,10 @@ impl Layer1AggregationProver {
     // Constructors (fresh build path)
     // -------------------------------------------------------------------------
 
+    /// Build a fresh layer-0 aggregation prover from circuit definitions.
+    ///
+    /// This is the "dev/fallback" path. In production, prefer `new_from_binaries_dir(...)`
+    /// or `new_from_files(...)` so the aggregation circuit is prebuilt and loaded to reduce overhead.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         layer1_circuit_config: CircuitConfig,
@@ -81,7 +75,6 @@ impl Layer1AggregationProver {
         layer0_verifier_only: VerifierOnlyCircuitData<C, D>,
         num_layer0_proofs: usize,
         layer0_num_leaves: usize,
-        dummy_layer0_proof_template: ProofWithPublicInputs<F, C, D>,
     ) -> Self {
         let l1_circuit = Layer1AggregationCircuit::new(
             layer1_circuit_config,
@@ -99,7 +92,6 @@ impl Layer1AggregationProver {
             targets,
             layer0_verifier_only,
             num_layer0_proofs,
-            dummy_layer0_proof_template,
         }
     }
 
@@ -115,14 +107,12 @@ impl Layer1AggregationProver {
     /// - `layer1_targets_bytes` (serialized Layer1TargetsLayoutD)
     /// - `layer0_common_bytes`
     /// - `layer0_verifier_only_bytes`
-    /// - `layer1_dummy_proof_bytes` (serialized dummy layer-0 proof)
     pub fn new_from_bytes(
         layer1_prover_only_bytes: &[u8],
         layer1_common_bytes: &[u8],
         layer1_targets_bytes: &[u8],
         layer0_common_bytes: &[u8],
         layer0_verifier_only_bytes: &[u8],
-        layer1_dummy_proof_bytes: &[u8],
     ) -> Result<Self> {
         let gate_serializer = DefaultGateSerializer;
         let generator_serializer = DefaultGeneratorSerializer::<PoseidonGoldilocksConfig, D> {
@@ -158,13 +148,6 @@ impl Layer1AggregationProver {
         let layer0_verifier_data =
             load_layer0_verifier_data_from_bytes(layer0_common_bytes, layer0_verifier_only_bytes)?;
 
-        // 4) Load dummy layer-0 proof template
-        let dummy_layer0_proof_template = load_dummy_proof(
-            layer1_dummy_proof_bytes.to_vec(),
-            &layer0_verifier_data.common,
-        )
-        .map_err(|e| anyhow!("Failed to deserialize layer1 dummy proof: {}", e))?;
-
         Ok(Self {
             circuit_data: ProverCircuitData {
                 prover_only: l1_prover_only,
@@ -174,7 +157,6 @@ impl Layer1AggregationProver {
             targets,
             layer0_verifier_only: layer0_verifier_data.verifier_only,
             num_layer0_proofs: layout.n_layer0,
-            dummy_layer0_proof_template,
         })
     }
 
@@ -187,7 +169,6 @@ impl Layer1AggregationProver {
         layer1_targets_path: &Path,
         layer0_common_path: &Path,
         layer0_verifier_path: &Path,
-        layer1_dummy_proof_path: &Path,
     ) -> Result<Self> {
         let layer1_prover_only_bytes = fs::read(layer1_prover_path)
             .with_context(|| format!("Failed to read {:?}", layer1_prover_path))?;
@@ -201,16 +182,12 @@ impl Layer1AggregationProver {
         let layer0_verifier_only_bytes = fs::read(layer0_verifier_path)
             .with_context(|| format!("Failed to read {:?}", layer0_verifier_path))?;
 
-        let layer1_dummy_proof_bytes = fs::read(layer1_dummy_proof_path)
-            .with_context(|| format!("Failed to read {:?}", layer1_dummy_proof_path))?;
-
         Self::new_from_bytes(
             &layer1_prover_only_bytes,
             &layer1_common_bytes,
             &layer1_targets_bytes,
             &layer0_common_bytes,
             &layer0_verifier_only_bytes,
-            &layer1_dummy_proof_bytes,
         )
     }
 
@@ -222,7 +199,6 @@ impl Layer1AggregationProver {
     /// - `layer1_targets.json`
     /// - `aggregated_common.bin`      (layer-0 common)
     /// - `aggregated_verifier.bin`    (layer-0 verifier-only)
-    /// - `layer1_dummy_proof.bin`     (dummy layer-0 proof)
     ///
     /// If `config.json` exists, hash verification is run first.
     #[cfg(feature = "std")]
@@ -239,7 +215,6 @@ impl Layer1AggregationProver {
             &bins_dir.join("layer1_targets.json"),
             &bins_dir.join("aggregated_common.bin"),
             &bins_dir.join("aggregated_verifier.bin"),
-            &bins_dir.join("layer1_dummy_proof.bin"),
         )
     }
 
@@ -251,36 +226,24 @@ impl Layer1AggregationProver {
         self.num_layer0_proofs
     }
 
-    /// Commit layer-0 aggregated proofs into the layer-1 circuit witness, handling dummy proof padding.
+    /// Commit layer-0 aggregated proofs into the layer-1 circuit witness
+    /// We don't perform dummy padding here since it doesn't serve a privacy preserving purpose like it does for layer 0.
     pub fn commit(mut self, inputs: Layer1AggregationInputs) -> Result<Self> {
         let Some(targets) = self.targets.take() else {
             bail!("layer-1 aggregation prover has already committed to inputs");
         };
 
-        let mut proofs = inputs.proofs;
+        let proofs = inputs.proofs;
         let aggregator_address = inputs.aggregator_address;
 
         let aggregator_address_felts = digest_bytes_to_felts(aggregator_address);
 
-        if proofs.len() > self.num_layer0_proofs {
+        if proofs.len() != self.num_layer0_proofs {
             bail!(
-                "too many layer0 proofs: got {}, expected at most {}",
-                proofs.len(),
-                self.num_layer0_proofs
+                "Expected {} layer-0 proofs, but got {}",
+                self.num_layer0_proofs,
+                proofs.len()
             );
-        }
-
-        let num_dummies_needed = self.num_layer0_proofs.saturating_sub(proofs.len());
-
-        if num_dummies_needed > 0 {
-            assert_dummy_padding_compatible_with_template(
-                &proofs,
-                &self.dummy_layer0_proof_template,
-            )?;
-        }
-
-        for _ in 0..num_dummies_needed {
-            proofs.push(self.dummy_layer0_proof_template.clone());
         }
 
         fill_layer1_aggregation_witness(
@@ -299,64 +262,6 @@ impl Layer1AggregationProver {
             .prove(self.partial_witness)
             .map_err(|e| anyhow!("Failed to prove layer-1 aggregation circuit: {}", e))
     }
-}
-
-// -----------------------------------------------------------------------------
-// Helpers
-// -----------------------------------------------------------------------------
-
-/// If padding with dummy layer-0 proofs, the real proofs must match the dummy template's
-/// asset_id and volume_fee_bps because the layer-1 circuit enforces equality across all proofs.
-fn assert_dummy_padding_compatible_with_template(
-    proofs: &[ProofWithPublicInputs<F, C, D>],
-    dummy_template: &ProofWithPublicInputs<F, C, D>,
-) -> Result<()> {
-    let Some(first_real) = proofs.first() else {
-        return Ok(());
-    };
-
-    let real_asset = first_real
-        .public_inputs
-        .get(l1c::L0_ASSET_ID_OFFSET)
-        .ok_or_else(|| anyhow!("missing asset_id in layer0 proof PI"))?;
-    let real_fee = first_real
-        .public_inputs
-        .get(l1c::L0_VOLUME_FEE_BPS_OFFSET)
-        .ok_or_else(|| anyhow!("missing volume_fee_bps in layer0 proof PI"))?;
-
-    let dummy_asset = dummy_template
-        .public_inputs
-        .get(l1c::L0_ASSET_ID_OFFSET)
-        .ok_or_else(|| anyhow!("missing asset_id in layer1 dummy proof template"))?;
-    let dummy_fee = dummy_template
-        .public_inputs
-        .get(l1c::L0_VOLUME_FEE_BPS_OFFSET)
-        .ok_or_else(|| anyhow!("missing volume_fee_bps in layer1 dummy proof template"))?;
-
-    let real_asset_u64 = real_asset.to_canonical_u64();
-    let dummy_asset_u64 = dummy_asset.to_canonical_u64();
-    let real_fee_u64 = real_fee.to_canonical_u64();
-    let dummy_fee_u64 = dummy_fee.to_canonical_u64();
-
-    if real_asset_u64 != dummy_asset_u64 {
-        bail!(
-            "Cannot pad with layer1 dummy proofs: real layer0 proofs use asset_id={}, \
-             but dummy template uses asset_id={}",
-            real_asset_u64,
-            dummy_asset_u64
-        );
-    }
-
-    if real_fee_u64 != dummy_fee_u64 {
-        bail!(
-            "Cannot pad with layer1 dummy proofs: real layer0 proofs use volume_fee_bps={}, \
-             but dummy template uses volume_fee_bps={}",
-            real_fee_u64,
-            dummy_fee_u64
-        );
-    }
-
-    Ok(())
 }
 
 fn load_layer0_verifier_data_from_bytes(

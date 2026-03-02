@@ -6,7 +6,7 @@ use qp_wormhole_inputs::PublicCircuitInputs;
 use std::path::Path;
 use std::sync::Once;
 use test_helpers::TestInputs;
-use wormhole_aggregator::aggregator::WormholeAggregator;
+use wormhole_aggregator::aggregator::{AggregationBackend, Layer0Aggregator};
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::circuit::{C, D, F};
@@ -24,7 +24,7 @@ extern "C" fn cleanup_test_output_dir() {
 
 fn setup_test_binaries() {
     TEST_INIT.call_once(|| {
-        generate_all_circuit_binaries(TEST_OUTPUT_DIR, true, 2)
+        generate_all_circuit_binaries(TEST_OUTPUT_DIR, true, 2, None)
             .expect("Failed to generate test circuit binaries");
 
         // Register a process-exit cleanup so the directory is removed once all tests finish.
@@ -44,9 +44,9 @@ fn make_leaf_proof(inputs: &CircuitInputs) -> ProofWithPublicInputs<F, C, D> {
         .expect("Failed to create prover from binaries");
     prover.commit(inputs).unwrap().prove().unwrap()
 }
-fn make_aggregator() -> WormholeAggregator {
+fn make_aggregator() -> Layer0Aggregator {
     setup_test_binaries();
-    WormholeAggregator::from_binaries_dir(TEST_OUTPUT_DIR).unwrap()
+    Layer0Aggregator::new(TEST_OUTPUT_DIR).unwrap()
 }
 
 #[test]
@@ -58,8 +58,7 @@ fn push_proof_to_buffer() {
 
     aggregator.push_proof(proof).unwrap();
 
-    let proofs_buffer = aggregator.leaf_proofs_buffer;
-    assert_eq!(proofs_buffer.len(), 1);
+    assert_eq!(aggregator.buffer_len(), 1);
 }
 
 #[test]
@@ -70,7 +69,7 @@ fn push_proof_to_full_buffer() {
     let mut aggregator = make_aggregator();
 
     // Fill the buffer
-    for _ in 0..aggregator.config.num_leaf_proofs {
+    for _ in 0..aggregator.batch_size() {
         aggregator.push_proof(proof.clone()).unwrap();
     }
 
@@ -93,7 +92,7 @@ fn aggregate_single_proof() {
 
     let aggregated = aggregator.aggregate().unwrap();
     aggregator
-        .verify_aggregated_proof(aggregated)
+        .verify(aggregated)
         .expect("Aggregated proof should verify");
 }
 
@@ -119,7 +118,7 @@ fn aggregate_proofs_into_tree() {
 
     let aggregated = aggregator.aggregate().unwrap();
     aggregator
-        .verify_aggregated_proof(aggregated)
+        .verify(aggregated)
         .expect("Aggregated proof should verify");
 }
 
@@ -135,7 +134,7 @@ fn aggregate_half_full_proof_array_into_tree() {
 
     let aggregated = aggregator.aggregate().unwrap();
     aggregator
-        .verify_aggregated_proof(aggregated)
+        .verify(aggregated)
         .expect("Aggregated proof should verify");
 }
 
@@ -181,7 +180,7 @@ fn aggregate_proofs_from_separate_prover_instances_serialized() {
     let aggregated = aggregator.aggregate().expect("Aggregation failed");
 
     aggregator
-        .verify_aggregated_proof(aggregated)
+        .verify(aggregated)
         .expect("Aggregated proof verification failed");
 
     println!("=== Test passed ===");
@@ -226,7 +225,7 @@ fn aggregate_proofs_from_separate_prover_instances_hex_serialized() {
     let aggregated = aggregator.aggregate().expect("Aggregation failed");
 
     aggregator
-        .verify_aggregated_proof(aggregated)
+        .verify(aggregated)
         .expect("Aggregated proof verification failed");
 
     println!("=== Test passed ===");

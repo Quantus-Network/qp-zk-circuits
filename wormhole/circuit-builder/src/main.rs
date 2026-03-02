@@ -10,9 +10,14 @@ struct Args {
     #[arg(short, long, default_value = "generated-bins")]
     output: String,
 
-    /// Number of leaf proofs aggregated into a single proof
+    /// Number of leaf proofs aggregated into a single layer-0 proof
     #[arg(short, long)]
     num_leaf_proofs: usize,
+
+    /// Number of inner layer0 proofs aggregated into a single layer-1 proof
+    /// Set to none if you only need the layer-0 aggregation circui.
+    #[arg(short, long)]
+    num_inner_proofs: Option<usize>,
 
     /// Skip prover binary generation (only generate verifier binaries)
     #[arg(long)]
@@ -27,5 +32,10 @@ fn main() -> Result<()> {
         args.num_leaf_proofs,
     );
 
-    generate_all_circuit_binaries(&args.output, !args.skip_prover, args.num_leaf_proofs)
+    generate_all_circuit_binaries(
+        &args.output,
+        !args.skip_prover,
+        args.num_leaf_proofs,
+        args.num_inner_proofs,
+    )
 }

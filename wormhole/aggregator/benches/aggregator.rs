@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use plonky2::plonk::circuit_data::CommonCircuitData;
 use plonky2::util::serialization::DefaultGateSerializer;
-use qp_wormhole_aggregator::aggregator::WormholeAggregator;
+use qp_wormhole_aggregator::aggregator::{AggregationBackend, Layer0Aggregator};
 use qp_wormhole_aggregator::dummy_proof::load_dummy_proof;
 use qp_wormhole_aggregator::layer0::circuit::build::generate_layer0_circuit_binaries;
 
@@ -33,8 +33,7 @@ macro_rules! aggregate_proofs_benchmark {
                         generate_layer0_circuit_binaries(BINS_DIR, $num_leaf_proofs, true).expect(
                             "Failed to generate layer0 circuit binaries for aggregation benchmark",
                         );
-                        let mut aggregator =
-                            WormholeAggregator::from_binaries_dir(BINS_DIR).unwrap();
+                        let mut aggregator = Layer0Aggregator::new(BINS_DIR).unwrap();
                         for proof in std::iter::repeat(proof.clone()).take($num_leaf_proofs) {
                             aggregator.push_proof(proof).unwrap();
                         }
@@ -77,7 +76,7 @@ macro_rules! verify_aggregate_proof_benchmark {
                                 "Failed to generate layer0 circuit binaries for aggregation benchmark",
                             );
                             let mut aggregator =
-                                WormholeAggregator::from_binaries_dir(BINS_DIR).unwrap();
+                                Layer0Aggregator::new(BINS_DIR).unwrap();
                             for proof in std::iter::repeat(proof.clone()).take($num_leaf_proofs) {
                                 aggregator.push_proof(proof).unwrap();
                             }
@@ -86,7 +85,7 @@ macro_rules! verify_aggregate_proof_benchmark {
                         },
                         |(aggregated_proof, aggregator)| {
                             aggregator
-                                .verify_aggregated_proof(aggregated_proof)
+                                .verify(aggregated_proof)
                                 .unwrap();
                         },
                         criterion::BatchSize::SmallInput,
