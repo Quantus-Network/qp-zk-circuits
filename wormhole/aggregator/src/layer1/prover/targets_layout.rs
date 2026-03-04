@@ -53,18 +53,6 @@ impl<const D2: usize> Layer1TargetsLayout<D2> {
         })
     }
 
-    // /// Convenience if your circuit target struct is named `Layer1AggregationCircuitTargets`.
-    // pub fn from(
-    //     targets: &crate::layer1::circuit::circuit_logic::Layer1AggregationCircuitTargets,
-    // ) -> Result<Self> {
-    //     Self::from_runtime(
-    //         targets.layer0_proofs.len(),
-    //         &targets.layer0_verifier_data,
-    //         &targets.layer0_proofs,
-    //         &targets.aggregator_address,
-    //     )
-    // }
-
     /// Reconstruct runtime targets from serialized layout.
     pub fn to_runtime(&self) -> Result<Layer1RuntimeTargets<D2>> {
         let proofs = self

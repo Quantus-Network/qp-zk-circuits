@@ -18,7 +18,7 @@ use plonky2::{
     plonk::{
         circuit_data::{
             CircuitConfig, CommonCircuitData, ProverCircuitData, ProverOnlyCircuitData,
-            VerifierCircuitData, VerifierOnlyCircuitData,
+            VerifierOnlyCircuitData,
         },
         config::PoseidonGoldilocksConfig,
         proof::ProofWithPublicInputs,
@@ -36,6 +36,7 @@ use zk_circuits_common::{
 };
 
 use crate::{
+    common::utils::load_verifier_data_from_bytes,
     dummy_proof::{generate_random_nullifier, load_dummy_proof},
     layer0::{
         circuit::circuit_logic::{AggregationCircuitTargets, Layer0AggregationCircuit},
@@ -159,7 +160,7 @@ impl Layer0AggregationProver {
 
         // 3) Load leaf verifier data (needed to set verifier target + parse dummy proof)
         let leaf_verifier_data =
-            load_leaf_verifier_data_from_bytes(leaf_common_bytes, leaf_verifier_only_bytes)?;
+            load_verifier_data_from_bytes(leaf_common_bytes, leaf_verifier_only_bytes, "leaf")?;
 
         // 4) Load dummy proof template compatible with the leaf verifier common data
         let dummy_proof_template =
@@ -410,26 +411,4 @@ fn generate_dummy_nullifiers_for_slots(n_slots: usize) -> Vec<[F; 4]> {
     (0..n_slots)
         .map(|_| digest_bytes_to_felts(generate_random_nullifier()))
         .collect()
-}
-
-/// Load leaf verifier circuit data from serialized bytes (`common.bin`, `verifier.bin`).
-fn load_leaf_verifier_data_from_bytes(
-    leaf_common_bytes: &[u8],
-    leaf_verifier_only_bytes: &[u8],
-) -> Result<VerifierCircuitData<F, C, D>> {
-    use plonky2::util::serialization::DefaultGateSerializer;
-
-    let gate_serializer = DefaultGateSerializer;
-
-    let common = CommonCircuitData::from_bytes(leaf_common_bytes.to_vec(), &gate_serializer)
-        .map_err(|e| anyhow!("Failed to deserialize leaf common data: {}", e))?;
-
-    let verifier_only =
-        VerifierOnlyCircuitData::<C, D>::from_bytes(leaf_verifier_only_bytes.to_vec())
-            .map_err(|e| anyhow!("Failed to deserialize leaf verifier data: {}", e))?;
-
-    Ok(VerifierCircuitData {
-        verifier_only,
-        common,
-    })
 }

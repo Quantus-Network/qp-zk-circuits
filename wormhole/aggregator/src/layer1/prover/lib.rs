@@ -11,7 +11,7 @@ use plonky2::{
     plonk::{
         circuit_data::{
             CircuitConfig, CommonCircuitData, ProverCircuitData, ProverOnlyCircuitData,
-            VerifierCircuitData, VerifierOnlyCircuitData,
+            VerifierOnlyCircuitData,
         },
         config::PoseidonGoldilocksConfig,
         proof::ProofWithPublicInputs,
@@ -28,9 +28,12 @@ use zk_circuits_common::{
     utils::digest_bytes_to_felts,
 };
 
-use crate::layer1::{
-    circuit::circuit_logic::{Layer1AggregationCircuit, Layer1AggregationCircuitTargets},
-    prover::{targets_layout::Layer1TargetsLayoutD, witness::fill_layer1_aggregation_witness},
+use crate::{
+    common::utils::load_verifier_data_from_bytes,
+    layer1::{
+        circuit::circuit_logic::{Layer1AggregationCircuit, Layer1AggregationCircuitTargets},
+        prover::{targets_layout::Layer1TargetsLayoutD, witness::fill_layer1_aggregation_witness},
+    },
 };
 
 /// Inputs for layer-1 aggregation.
@@ -145,8 +148,11 @@ impl Layer1AggregationProver {
         });
 
         // 3) Load layer-0 verifier data (needed for witness filling and dummy proof parsing)
-        let layer0_verifier_data =
-            load_layer0_verifier_data_from_bytes(layer0_common_bytes, layer0_verifier_only_bytes)?;
+        let layer0_verifier_data = load_verifier_data_from_bytes(
+            layer0_common_bytes,
+            layer0_verifier_only_bytes,
+            "layer0",
+        )?;
 
         Ok(Self {
             circuit_data: ProverCircuitData {
@@ -262,23 +268,4 @@ impl Layer1AggregationProver {
             .prove(self.partial_witness)
             .map_err(|e| anyhow!("Failed to prove layer-1 aggregation circuit: {}", e))
     }
-}
-
-fn load_layer0_verifier_data_from_bytes(
-    layer0_common_bytes: &[u8],
-    layer0_verifier_only_bytes: &[u8],
-) -> Result<VerifierCircuitData<F, C, D>> {
-    let gate_serializer = DefaultGateSerializer;
-
-    let common = CommonCircuitData::from_bytes(layer0_common_bytes.to_vec(), &gate_serializer)
-        .map_err(|e| anyhow!("Failed to deserialize layer0 common data: {}", e))?;
-
-    let verifier_only =
-        VerifierOnlyCircuitData::<C, D>::from_bytes(layer0_verifier_only_bytes.to_vec())
-            .map_err(|e| anyhow!("Failed to deserialize layer0 verifier-only data: {}", e))?;
-
-    Ok(VerifierCircuitData {
-        verifier_only,
-        common,
-    })
 }

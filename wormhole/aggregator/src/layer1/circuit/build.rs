@@ -77,14 +77,15 @@ pub fn generate_layer1_circuit_binaries<P: AsRef<Path>>(
     // -------------------------------------------------------------------------
     // 3) Build verifier artifacts (common + verifier)
     // -------------------------------------------------------------------------
-    let verifier_data = layer1_circuit.build_verifier();
+    let circuit_data = layer1_circuit.build_circuit();
+    let verifier_data = circuit_data.verifier_data();
     write_verifier_artifacts(output_dir, &verifier_data)?;
 
     // -------------------------------------------------------------------------
     // 4) Optionally build prover artifact
     // -------------------------------------------------------------------------
     if include_prover {
-        let prover_data = layer1_circuit.build_prover();
+        let prover_data = circuit_data.prover_data();
         write_prover_artifact(output_dir, &prover_data)?;
     }
 

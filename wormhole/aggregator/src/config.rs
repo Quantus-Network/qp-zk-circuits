@@ -156,12 +156,6 @@ impl CircuitBinsConfig {
         })
     }
 
-    /// Add hashes computed from the artifact files in a directory
-    pub fn with_hashes_from_directory<P: AsRef<Path>>(mut self, bins_dir: P) -> Result<Self> {
-        self.hashes = Some(BinaryHashes::from_directory(bins_dir)?);
-        Ok(self)
-    }
-
     /// Load config from a directory containing circuit binaries
     pub fn load<P: AsRef<Path>>(bins_dir: P) -> Result<Self> {
         let config_path = bins_dir.as_ref().join("config.json");

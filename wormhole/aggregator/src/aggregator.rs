@@ -142,9 +142,6 @@ pub struct Layer1Aggregator {
     bins_dir: PathBuf,
     aggregator_address: BytesDigest,
     buf: ProofBuffer,
-    /// If false, requires full batches (no partial aggregation).
-    /// If true, allows the prover to pad with layer1_dummy_proof.bin (if your Layer1AggregationProver supports it).
-    allow_padding: bool,
 }
 
 impl Layer1Aggregator {
@@ -162,13 +159,7 @@ impl Layer1Aggregator {
             bins_dir,
             aggregator_address,
             buf: ProofBuffer::new(cap),
-            allow_padding: false,
         })
-    }
-
-    pub fn with_allow_padding(mut self, allow_padding: bool) -> Self {
-        self.allow_padding = allow_padding;
-        self
     }
 
     fn load_verifier(&self) -> Result<VerifierCircuitData<F, C, D>> {
@@ -192,19 +183,11 @@ impl AggregationBackend for Layer1Aggregator {
     fn aggregate(&mut self) -> Result<Proof> {
         let cap = self.batch_size();
 
-        // Policy: either require a full batch, or allow partial (padding handled in prover if supported).
-        let batch = if self.allow_padding {
-            // If padding is allowed, we can take whatever is buffered (must be >=1).
-            if self.buf.len() == 0 {
-                bail!("no layer-0 proofs buffered for layer-1 aggregation");
-            }
-            self.buf.take_all()
-        } else {
-            // Strict mode: require full batches, no dummy padding.
-            self.buf.drain_exact(cap).with_context(|| {
-                "No dummy padding for layer-1: need a full batch of layer-0 proofs"
-            })?
-        };
+        // We require a full batch for layer1. No padding allowed
+        let batch = self
+            .buf
+            .drain_exact(cap)
+            .with_context(|| "No dummy padding for layer-1: need a full batch of layer-0 proofs")?;
 
         let prover = Layer1AggregationProver::new_from_binaries_dir(&self.bins_dir)
             .context("failed to load prebuilt layer-1 prover")?;

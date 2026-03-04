@@ -25,14 +25,14 @@ macro_rules! aggregate_proofs_benchmark {
             let proof = load_dummy_proof(proof_bytes, &agg_common)
                 .expect("Failed to load dummy proof from bytes");
 
+            // Call "generate_layer0_circuit_binaries" before we instantiate a new wormhole aggregator,
+            // to ensure the binaries represent the circuit with the correct number of leaf proofs.
+            generate_layer0_circuit_binaries(BINS_DIR, $num_leaf_proofs, true)
+                .expect("Failed to generate layer0 circuit binaries for aggregation benchmark");
+
             c.bench_function(&format!("aggregate_proofs_{}", $num_leaf_proofs), |b| {
                 b.iter_batched(
                     || {
-                        // Call "generate_layer0_circuit_binaries" before we instantiate a new wormhole aggregator,
-                        // to ensure the binaries represent the circuit with the correct number of leaf proofs.
-                        generate_layer0_circuit_binaries(BINS_DIR, $num_leaf_proofs, true).expect(
-                            "Failed to generate layer0 circuit binaries for aggregation benchmark",
-                        );
                         let mut aggregator = Layer0Aggregator::new(BINS_DIR).unwrap();
                         for proof in std::iter::repeat(proof.clone()).take($num_leaf_proofs) {
                             aggregator.push_proof(proof).unwrap();
