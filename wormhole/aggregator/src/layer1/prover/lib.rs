@@ -6,6 +6,7 @@
 //! - `prove()`
 
 use anyhow::{anyhow, bail, Context, Result};
+#[cfg(feature = "std")]
 use plonky2::{
     iop::witness::PartialWitness,
     plonk::{
@@ -32,7 +33,7 @@ use crate::{
     common::utils::load_verifier_data_from_bytes,
     layer1::{
         circuit::circuit_logic::{Layer1AggregationCircuit, Layer1AggregationCircuitTargets},
-        prover::{targets_layout::Layer1TargetsLayoutD, witness::fill_layer1_aggregation_witness},
+        prover::witness::fill_layer1_aggregation_witness,
     },
 };
 
@@ -110,12 +111,13 @@ impl Layer1AggregationProver {
     /// - `layer1_targets_bytes` (serialized Layer1TargetsLayoutD)
     /// - `layer0_common_bytes`
     /// - `layer0_verifier_only_bytes`
+    /// - `config` tuple: (num_leaf_proofs, num_layer0_proofs)
     pub fn new_from_bytes(
         layer1_prover_only_bytes: &[u8],
         layer1_common_bytes: &[u8],
-        layer1_targets_bytes: &[u8],
         layer0_common_bytes: &[u8],
         layer0_verifier_only_bytes: &[u8],
+        config: (usize, usize), // (num_leaf_proofs, num_layer0_proofs)
     ) -> Result<Self> {
         let gate_serializer = DefaultGateSerializer;
         let generator_serializer = DefaultGeneratorSerializer::<PoseidonGoldilocksConfig, D> {
@@ -134,25 +136,25 @@ impl Layer1AggregationProver {
         )
         .map_err(|e| anyhow!("Failed to deserialize layer1 prover data: {}", e))?;
 
-        // 2) Load targets layout
-        let layout = Layer1TargetsLayoutD::from_bytes(layer1_targets_bytes)
-            .context("Failed to deserialize layer1 targets layout")?;
-        let runtime_targets = layout
-            .to_runtime()
-            .context("Failed to reconstruct layer1 runtime targets")?;
-
-        let targets = Some(Layer1AggregationCircuitTargets {
-            layer0_verifier_data: runtime_targets.layer0_verifier_data_t,
-            layer0_proofs: runtime_targets.layer0_proof_targets,
-            aggregator_address: runtime_targets.aggregator_address_targets,
-        });
-
-        // 3) Load layer-0 verifier data (needed for witness filling and dummy proof parsing)
+        // 2) Load layer-0 verifier data (needed for witness filling and dummy proof parsing)
         let layer0_verifier_data = load_verifier_data_from_bytes(
             layer0_common_bytes,
             layer0_verifier_only_bytes,
             "layer0",
         )?;
+
+        // 3) Create circuit and get targets
+
+        let (num_leaf_proofs, num_layer0_proofs) = config;
+
+        let circuit = Layer1AggregationCircuit::new(
+            l1_common.config.clone(),
+            layer0_verifier_data.common.clone(),
+            num_layer0_proofs,
+            num_leaf_proofs,
+        );
+
+        let targets = Some(circuit.targets());
 
         Ok(Self {
             circuit_data: ProverCircuitData {
@@ -162,7 +164,7 @@ impl Layer1AggregationProver {
             partial_witness: PartialWitness::new(),
             targets,
             layer0_verifier_only: layer0_verifier_data.verifier_only,
-            num_layer0_proofs: layout.n_layer0,
+            num_layer0_proofs,
         })
     }
 
@@ -172,16 +174,14 @@ impl Layer1AggregationProver {
     pub fn new_from_files(
         layer1_prover_path: &Path,
         layer1_common_path: &Path,
-        layer1_targets_path: &Path,
         layer0_common_path: &Path,
         layer0_verifier_path: &Path,
+        config: (usize, usize), // (num_leaf_proofs, num_layer0_proofs)
     ) -> Result<Self> {
         let layer1_prover_only_bytes = fs::read(layer1_prover_path)
             .with_context(|| format!("Failed to read {:?}", layer1_prover_path))?;
         let layer1_common_bytes = fs::read(layer1_common_path)
             .with_context(|| format!("Failed to read {:?}", layer1_common_path))?;
-        let layer1_targets_bytes = fs::read(layer1_targets_path)
-            .with_context(|| format!("Failed to read {:?}", layer1_targets_path))?;
 
         let layer0_common_bytes = fs::read(layer0_common_path)
             .with_context(|| format!("Failed to read {:?}", layer0_common_path))?;
@@ -191,9 +191,9 @@ impl Layer1AggregationProver {
         Self::new_from_bytes(
             &layer1_prover_only_bytes,
             &layer1_common_bytes,
-            &layer1_targets_bytes,
             &layer0_common_bytes,
             &layer0_verifier_only_bytes,
+            config,
         )
     }
 
@@ -209,18 +209,22 @@ impl Layer1AggregationProver {
     /// If `config.json` exists, hash verification is run first.
     #[cfg(feature = "std")]
     pub fn new_from_binaries_dir(bins_dir: &Path) -> Result<Self> {
-        let config_path = bins_dir.join("config.json");
-        if config_path.exists() {
-            let bins_config = crate::config::CircuitBinsConfig::load(bins_dir)?;
-            bins_config.verify_hashes(bins_dir)?;
-        }
+        let bins_config = crate::config::CircuitBinsConfig::load(bins_dir)?;
+        bins_config.verify_hashes(bins_dir)?;
+
+        let config = (
+            bins_config.num_leaf_proofs,
+            bins_config.num_layer0_proofs.expect(
+                "config should have num_layer0_proofs since it's required for layer-1 prover. Regenerate binaries with num_inner_proofs set to get this field populated.",
+            ),
+        );
 
         Self::new_from_files(
             &bins_dir.join("layer1_prover.bin"),
             &bins_dir.join("layer1_common.bin"),
-            &bins_dir.join("layer1_targets.json"),
             &bins_dir.join("aggregated_common.bin"),
             &bins_dir.join("aggregated_verifier.bin"),
+            config,
         )
     }
 

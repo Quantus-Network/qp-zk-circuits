@@ -26,10 +26,8 @@ use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerial
 
 use zk_circuits_common::circuit::{C, D, F};
 
+use crate::layer1::circuit::circuit_logic::Layer1AggregationCircuit;
 use crate::layer1::circuit::constants::l0_num_leaves_from_pi_len;
-use crate::layer1::{
-    circuit::circuit_logic::Layer1AggregationCircuit, prover::targets_layout::Layer1TargetsLayoutD,
-};
 
 /// Build and write all layer-1 artifacts into `output_dir`.
 ///
@@ -59,19 +57,6 @@ pub fn generate_layer1_circuit_binaries<P: AsRef<Path>>(
         num_layer0_proofs,
         layer0_num_leaves,
     );
-
-    let targets = layer1_circuit.targets();
-    let targets_layout = Layer1TargetsLayoutD::from(&targets);
-    let targets_layout_bytes = targets_layout
-        .to_bytes()
-        .context("Failed to serialize layer1 targets layout")?;
-
-    write(output_dir.join("layer1_targets.json"), targets_layout_bytes).with_context(|| {
-        format!(
-            "Failed to write {}",
-            output_dir.join("layer1_targets.json").display()
-        )
-    })?;
 
     // -------------------------------------------------------------------------
     // 3) Build verifier artifacts (common + verifier)
