@@ -8,9 +8,7 @@
 //! - `prove()` to generate the aggregated proof
 //!
 //! The prover expects a prebuilt aggregation circuit (prover/common) plus a
-//! serialized target layout (`layer0_targets.json`) so we do NOT need to rebuild
-//! the aggregation circuit during proving time.
-
+//! config.json file (`config.json`) which contains the aggregation config (number of leaf/layer0 proofs) and binary hashes for integrity verification.
 use anyhow::{anyhow, bail, Context, Result};
 use plonky2::{
     field::types::{Field, PrimeField64},
@@ -40,7 +38,7 @@ use crate::{
     dummy_proof::{generate_random_nullifier, load_dummy_proof},
     layer0::{
         circuit::circuit_logic::{AggregationCircuitTargets, Layer0AggregationCircuit},
-        prover::{targets_layout::Layer0TargetsLayoutD, witness::fill_layer0_aggregation_witness},
+        prover::witness::fill_layer0_aggregation_witness,
     },
 };
 
@@ -114,17 +112,17 @@ impl Layer0AggregationProver {
     /// Expected bytes:
     /// - `aggregated_prover_only_bytes`: layer-0 aggregated prover-only circuit data
     /// - `aggregated_common_bytes`: layer-0 aggregated common circuit data
-    /// - `layer0_targets_bytes`: serialized `Layer0TargetsLayoutD` (JSON)
     /// - `leaf_common_bytes`: leaf circuit common data (`common.bin`)
     /// - `leaf_verifier_only_bytes`: leaf verifier-only data (`verifier.bin`)
     /// - `dummy_proof_bytes`: serialized dummy leaf proof (`dummy_proof.bin`)
+    /// - `num_leaf_proofs`: number of leaf proofs aggregated by this layer-0 prover
     pub fn new_from_bytes(
         aggregated_prover_only_bytes: &[u8],
         aggregated_common_bytes: &[u8],
-        layer0_targets_bytes: &[u8],
         leaf_common_bytes: &[u8],
         leaf_verifier_only_bytes: &[u8],
         dummy_proof_bytes: &[u8],
+        num_leaf_proofs: usize,
     ) -> Result<Self> {
         let gate_serializer = DefaultGateSerializer;
         let generator_serializer = DefaultGeneratorSerializer::<PoseidonGoldilocksConfig, D> {
@@ -143,24 +141,18 @@ impl Layer0AggregationProver {
         )
         .map_err(|e| anyhow!("Failed to deserialize aggregated prover data: {}", e))?;
 
-        // 2) Load layer-0 target layout (target indices for witness filling)
-        let layout = Layer0TargetsLayoutD::from_bytes(layer0_targets_bytes)
-            .context("Failed to deserialize layer0 target layout")?;
-        let runtime_targets = layout
-            .to_runtime()
-            .context("Failed to reconstruct layer0 runtime targets")?;
-
-        let num_leaf_proofs = layout.n_leaf;
-
-        let targets = Some(AggregationCircuitTargets {
-            leaf_verifier_data: runtime_targets.leaf_verifier_data_t,
-            leaf_proofs: runtime_targets.leaf_proof_targets,
-            dummy_nullifiers: runtime_targets.dummy_nullifier_targets,
-        });
-
-        // 3) Load leaf verifier data (needed to set verifier target + parse dummy proof)
+        // 2) Load leaf verifier data (needed to set verifier target + parse dummy proof)
         let leaf_verifier_data =
             load_verifier_data_from_bytes(leaf_common_bytes, leaf_verifier_only_bytes, "leaf")?;
+
+        // 3) Reconstruct the aggregation circuit to get targets.
+        let circuit = Layer0AggregationCircuit::new(
+            agg_common.config.clone(),
+            leaf_verifier_data.common.clone(),
+            num_leaf_proofs,
+        );
+
+        let targets = Some(circuit.targets());
 
         // 4) Load dummy proof template compatible with the leaf verifier common data
         let dummy_proof_template =
@@ -186,10 +178,10 @@ impl Layer0AggregationProver {
     pub fn new_from_files(
         aggregated_prover_path: &Path,
         aggregated_common_path: &Path,
-        layer0_targets_path: &Path,
         leaf_common_path: &Path,
         leaf_verifier_path: &Path,
         dummy_proof_path: &Path,
+        num_leaf_proofs: usize,
     ) -> Result<Self> {
         let aggregated_prover_only_bytes = fs::read(aggregated_prover_path).with_context(|| {
             format!(
@@ -203,13 +195,6 @@ impl Layer0AggregationProver {
                 aggregated_common_path
             )
         })?;
-        let layer0_targets_bytes = fs::read(layer0_targets_path).with_context(|| {
-            format!(
-                "Failed to read layer0 targets layout file {:?}",
-                layer0_targets_path
-            )
-        })?;
-
         let leaf_common_bytes = fs::read(leaf_common_path)
             .with_context(|| format!("Failed to read leaf common file {:?}", leaf_common_path))?;
         let leaf_verifier_only_bytes = fs::read(leaf_verifier_path).with_context(|| {
@@ -221,10 +206,10 @@ impl Layer0AggregationProver {
         Self::new_from_bytes(
             &aggregated_prover_only_bytes,
             &aggregated_common_bytes,
-            &layer0_targets_bytes,
             &leaf_common_bytes,
             &leaf_verifier_only_bytes,
             &dummy_proof_bytes,
+            num_leaf_proofs,
         )
     }
 
@@ -233,29 +218,27 @@ impl Layer0AggregationProver {
     /// Expected files:
     /// - `aggregated_prover.bin`
     /// - `aggregated_common.bin`
-    /// - `layer0_targets.json`
     /// - `common.bin`
     /// - `verifier.bin`
     /// - `dummy_proof.bin`
+    /// - `config.json` (hashes are verified before loading)
     ///
     /// If `config.json` exists, binary hashes are verified before loading.
     #[cfg(feature = "std")]
     pub fn new_from_binaries_dir(bins_dir: &Path) -> Result<Self> {
         // Optional integrity verification (if your existing config is present)
-        let config_path = bins_dir.join("config.json");
-        if config_path.exists() {
-            // This matches the existing hash-verification flow in your current code.
-            let bins_config = crate::config::CircuitBinsConfig::load(bins_dir)?;
-            bins_config.verify_hashes(bins_dir)?;
-        }
+        let bins_config = crate::config::CircuitBinsConfig::load(bins_dir)
+            .expect("Failed to load config.json for circuit binary integrity verification");
+        bins_config.verify_hashes(bins_dir)?;
+        let num_leaf_proofs = bins_config.num_leaf_proofs;
 
         Self::new_from_files(
             &bins_dir.join("aggregated_prover.bin"),
             &bins_dir.join("aggregated_common.bin"),
-            &bins_dir.join("layer0_targets.json"),
             &bins_dir.join("common.bin"),
             &bins_dir.join("verifier.bin"),
             &bins_dir.join("dummy_proof.bin"),
+            num_leaf_proofs,
         )
     }
 

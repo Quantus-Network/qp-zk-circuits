@@ -38,9 +38,6 @@ use super::constants::{
 };
 
 /// Runtime targets for the prebuilt layer-0 aggregation circuit.
-///
-/// These are serialized separately into `layer0_targets.json` so the prover can
-/// reconstruct and fill them later without rebuilding the circuit.
 #[derive(Debug, Clone)]
 pub struct AggregationCircuitTargets {
     /// Verifier target for the leaf wormhole circuit.

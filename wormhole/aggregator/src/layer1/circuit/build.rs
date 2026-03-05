@@ -10,7 +10,6 @@
 //! - `aggregated_common.bin`
 //! - `aggregated_verifier.bin`
 //! - `aggregated_prover.bin`
-//! - `layer0_targets.json`
 //! - `common.bin`
 //! - `verifier.bin`
 //! - `dummy_proof.bin`

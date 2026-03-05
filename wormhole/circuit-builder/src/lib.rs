@@ -110,7 +110,7 @@ pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
     }
 
     // Save config file alongside binaries (with hashes for integrity verification)
-    let config = CircuitBinsConfig::new(output_path)?;
+    let config = CircuitBinsConfig::new(output_path, num_leaf_proofs, num_inner_proofs)?;
     config.save(output_path)?;
 
     // Print hashes for reference

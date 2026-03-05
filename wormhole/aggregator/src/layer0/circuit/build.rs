@@ -1,10 +1,9 @@
 //! Prebuild / serialization helpers for the monolithic Layer-0 aggregation circuit.
 //!
-//! This generates the prebuilt circuit artifacts used by `Layer0AggregationProver`:
+//! This generates the prebuilt circuit artifacts used by `Layer0AggregationProver` and verifier:
 //! - `aggregated_common.bin`
 //! - `aggregated_verifier.bin`
 //! - `aggregated_prover.bin`
-//! - `layer0_targets.json`
 //!
 //! It expects the leaf circuit `common.bin` to already exist in the same output directory.
 
@@ -21,9 +20,7 @@ use std::{
 
 use zk_circuits_common::circuit::{D, F};
 
-use crate::layer0::{
-    circuit::circuit_logic::Layer0AggregationCircuit, prover::targets_layout::Layer0TargetsLayoutD,
-};
+use crate::layer0::circuit::circuit_logic::Layer0AggregationCircuit;
 
 /// Generate prebuilt Layer-0 aggregation circuit binaries + target layout.
 ///
@@ -34,7 +31,6 @@ use crate::layer0::{
 /// - `aggregated_common.bin`
 /// - `aggregated_verifier.bin`
 /// - `aggregated_prover.bin`
-/// - `layer0_targets.json`
 ///
 /// # Notes
 /// This builds a monolithic aggregation circuit that verifies `num_leaf_proofs` leaf proofs
@@ -63,9 +59,6 @@ pub fn generate_layer0_circuit_binaries<P: AsRef<Path>>(
         leaf_common,
         num_leaf_proofs,
     );
-
-    // Capture targets BEFORE consuming the circuit
-    let targets = agg_circuit.targets();
 
     // Build full circuit so we can serialize verifier + prover + common
     let circuit_data = agg_circuit.build_circuit();
@@ -117,24 +110,6 @@ pub fn generate_layer0_circuit_binaries<P: AsRef<Path>>(
     } else {
         println!("Skipping aggregated prover binary generation");
     }
-
-    // -------------------------------------------------------------------------
-    // Serialize layer0 target layout
-    // -------------------------------------------------------------------------
-    let targets_layout = Layer0TargetsLayoutD::from_runtime(
-        num_leaf_proofs,
-        &targets.leaf_verifier_data,
-        &targets.leaf_proofs,
-        &targets.dummy_nullifiers,
-    )
-    .context("Failed to convert layer-0 targets into serializable layout")?;
-
-    let targets_json = serde_json::to_vec_pretty(&targets_layout)
-        .map_err(|e| anyhow!("Failed to serialize layer0 target layout JSON: {}", e))?;
-    write(output_path.join("layer0_targets.json"), targets_json)?;
-    println!("Saved {}/layer0_targets.json", output_path.display());
-
-    println!("Layer-0 prebuilt circuit generation complete.");
     Ok(())
 }
 

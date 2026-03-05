@@ -22,7 +22,7 @@ use crate::layer0::circuit::circuit_logic::AggregationCircuitTargets;
 ///
 /// # Arguments
 /// * `pw` - Partial witness to fill
-/// * `targets` - Runtime targets reconstructed from `layer0_targets.json`
+/// * `targets` - Runtime targets reconstructed from circuit
 /// * `leaf_verifier_only` - Verifier data for the leaf wormhole circuit
 /// * `proofs` - Exactly N leaf proofs (already padded/shuffled by the prover)
 /// * `dummy_nullifiers` - Exactly N dummy nullifiers (one per slot)
