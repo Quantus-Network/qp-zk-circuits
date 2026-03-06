@@ -17,7 +17,7 @@ struct Args {
     /// Number of inner layer0 proofs aggregated into a single layer-1 proof
     /// Set to none if you only need the layer-0 aggregation circui.
     #[arg(short, long)]
-    num_inner_proofs: Option<usize>,
+    num_layer0_proofs: Option<usize>,
 
     /// Skip prover binary generation (only generate verifier binaries)
     #[arg(long)]
@@ -36,6 +36,6 @@ fn main() -> Result<()> {
         &args.output,
         !args.skip_prover,
         args.num_leaf_proofs,
-        args.num_inner_proofs,
+        args.num_layer0_proofs,
     )
 }

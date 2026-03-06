@@ -215,7 +215,7 @@ impl Layer1AggregationProver {
         let config = (
             bins_config.num_leaf_proofs,
             bins_config.num_layer0_proofs.expect(
-                "config should have num_layer0_proofs since it's required for layer-1 prover. Regenerate binaries with num_inner_proofs set to get this field populated.",
+                "config should have num_layer0_proofs since it's required for layer-1 prover. Regenerate binaries with num_layer0_proofs set to get this field populated.",
             ),
         );
 

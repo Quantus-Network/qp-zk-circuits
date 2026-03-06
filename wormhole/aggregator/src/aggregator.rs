@@ -22,10 +22,17 @@ use std::fs;
 
 use zk_circuits_common::circuit::{C, D, F};
 
-use crate::layer0::prover::{Layer0AggregationInputs, Layer0AggregationProver};
 use crate::layer1::prover::{Layer1AggregationInputs, Layer1AggregationProver};
+use crate::{
+    layer0::prover::{Layer0AggregationInputs, Layer0AggregationProver},
+    CircuitBinsConfig,
+};
 
 type Proof = ProofWithPublicInputs<F, C, D>;
+pub enum CircuitType {
+    Root,
+    Leaf,
+}
 
 /// Generic trait that both layer-0 and layer-1 backends implement.
 pub trait AggregationBackend: Send + Sync {
@@ -45,19 +52,35 @@ pub trait AggregationBackend: Send + Sync {
     fn verify(&self, _proof: Proof) -> Result<()> {
         bail!("this aggregation backend does not implement verification")
     }
+
+    /// Load common circuit data for this backend's circuit type (leaf or root).
+    fn load_common_data(&self, circuit_type: CircuitType) -> Result<CommonCircuitData<F, D>>;
 }
 
 // ============================================================================
 // Shared helpers
 // ============================================================================
 
-fn verify_hashes_if_present(bins_dir: &Path) -> Result<()> {
-    let config_path = bins_dir.join("config.json");
-    if config_path.exists() {
-        let bins_config = crate::config::CircuitBinsConfig::load(bins_dir)?;
-        bins_config.verify_hashes(bins_dir)?;
-    }
-    Ok(())
+fn verify_hashes(bins_dir: &Path) -> Result<CircuitBinsConfig> {
+    let bins_config = crate::config::CircuitBinsConfig::load(bins_dir)?;
+    bins_config.verify_hashes(bins_dir)?;
+    Ok(bins_config)
+}
+
+fn load_common_from_bins<P: AsRef<Path>>(
+    bins_dir: P,
+    common_file: &str,
+) -> Result<CommonCircuitData<F, D>> {
+    let gate_serializer = DefaultGateSerializer;
+
+    let common_bytes = fs::read(bins_dir.as_ref().join(common_file)).with_context(|| {
+        format!(
+            "failed to read {}",
+            bins_dir.as_ref().join(common_file).display()
+        )
+    })?;
+    CommonCircuitData::from_bytes(common_bytes, &gate_serializer)
+        .map_err(|e| anyhow!("failed to deserialize {}: {}", common_file, e))
 }
 
 fn load_verifier_from_bins(
@@ -65,7 +88,7 @@ fn load_verifier_from_bins(
     common_file: &str,
     verifier_file: &str,
 ) -> Result<VerifierCircuitData<F, C, D>> {
-    verify_hashes_if_present(bins_dir)?;
+    verify_hashes(bins_dir)?;
 
     let gate_serializer = DefaultGateSerializer;
 
@@ -148,17 +171,17 @@ impl Layer1Aggregator {
     pub fn new<P: AsRef<Path>>(bins_dir: P, aggregator_address: BytesDigest) -> Result<Self> {
         let bins_dir = bins_dir.as_ref().to_path_buf();
 
-        // Verify if config exists, but do not rely on config fields for sizes.
-        verify_hashes_if_present(&bins_dir)?;
+        // Verify binaries and return config
+        let config = verify_hashes(&bins_dir)?;
 
-        let prover = Layer1AggregationProver::new_from_binaries_dir(&bins_dir)
-            .context("failed to load prebuilt layer-1 prover")?;
-        let cap = prover.num_layer0_proofs();
+        let num_layer0_proofs = config
+            .num_layer0_proofs
+            .ok_or_else(|| anyhow!("config is missing num_layer0_proofs. Please regenerate the binaries and set \"num_layer0_proofs\""))?;
 
         Ok(Self {
             bins_dir,
             aggregator_address,
-            buf: ProofBuffer::new(cap),
+            buf: ProofBuffer::new(num_layer0_proofs),
         })
     }
 
@@ -208,6 +231,15 @@ impl AggregationBackend for Layer1Aggregator {
             .verify(proof)
             .map_err(|e| anyhow!("layer-1 aggregated proof verification failed: {}", e))
     }
+
+    fn load_common_data(&self, circuit_type: CircuitType) -> Result<CommonCircuitData<F, D>> {
+        let common_file = match circuit_type {
+            CircuitType::Root => "layer1_common.bin",
+            CircuitType::Leaf => "aggregated_common.bin",
+        };
+
+        load_common_from_bins(&self.bins_dir, common_file)
+    }
 }
 
 // ============================================================================
@@ -223,16 +255,12 @@ impl Layer0Aggregator {
     pub fn new<P: AsRef<Path>>(bins_dir: P) -> Result<Self> {
         let bins_dir = bins_dir.as_ref().to_path_buf();
 
-        // Verify if config exists, but do not rely on config fields for sizes.
-        verify_hashes_if_present(&bins_dir)?;
-
-        let prover = Layer0AggregationProver::new_from_binaries_dir(&bins_dir)
-            .context("failed to load prebuilt layer-0 prover")?;
-        let cap = prover.num_leaf_proofs();
+        // Verify binaries and return config
+        let config = verify_hashes(&bins_dir)?;
 
         Ok(Self {
             bins_dir,
-            buf: ProofBuffer::new(cap),
+            buf: ProofBuffer::new(config.num_leaf_proofs),
         })
     }
 
@@ -247,11 +275,6 @@ impl Layer0Aggregator {
             "aggregated_common.bin",
             "aggregated_verifier.bin",
         )
-    }
-
-    /// Convenience alias (keeps your old API name around).
-    pub fn aggregate_layer0(&mut self) -> Result<Proof> {
-        self.aggregate()
     }
 }
 
@@ -290,5 +313,14 @@ impl AggregationBackend for Layer0Aggregator {
         verifier
             .verify(proof)
             .map_err(|e| anyhow!("layer-0 aggregated proof verification failed: {}", e))
+    }
+
+    fn load_common_data(&self, circuit_type: CircuitType) -> Result<CommonCircuitData<F, D>> {
+        let common_file = match circuit_type {
+            CircuitType::Root => "aggregated_common.bin",
+            CircuitType::Leaf => "common.bin",
+        };
+
+        load_common_from_bins(&self.bins_dir, common_file)
     }
 }

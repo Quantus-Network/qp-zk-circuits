@@ -814,7 +814,7 @@ struct Cli {
 
     /// Number of leaf proofs for first layer of aggregation (required for aggregation modes)
     #[arg(long)]
-    num_inner_proofs: Option<usize>,
+    num_layer0_proofs: Option<usize>,
 
     /// Number of proofs to generate (for --generate-and-aggregate mode)
     /// Defaults to num_leaf_proofs from aggregation config
@@ -850,8 +850,8 @@ async fn main() -> anyhow::Result<()> {
         let num_leaf_proofs = cli
             .num_leaf_proofs
             .context("--num-leaf-proofs is required for aggregation modes")?;
-        let num_inner_proofs = cli.num_inner_proofs;
-        Ok(AggregationConfig::new(num_leaf_proofs, num_inner_proofs))
+        let num_layer0_proofs = cli.num_layer0_proofs;
+        Ok(AggregationConfig::new(num_leaf_proofs, num_layer0_proofs))
     };
 
     // Aggregation-only mode (from files)
