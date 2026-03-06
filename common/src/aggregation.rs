@@ -52,12 +52,23 @@ pub struct AggregatedProof {
 pub struct AggregationConfig {
     /// Number of inner proofs aggregated into a single proof.
     pub num_leaf_proofs: usize,
+
+    /// Number of layer0 proofs aggregated into a single layer1 proof.
+    /// Set to none if no layer1 aggregation is desired.
+    pub num_layer0_proofs: Option<usize>,
 }
 
 impl AggregationConfig {
-    pub fn new(num_leaf_proofs: usize) -> Self {
+    pub fn new(num_leaf_proofs: usize, num_layer0_proofs: Option<usize>) -> Self {
         assert!(num_leaf_proofs > 0, "num_leaf_proofs must be > 0");
-        Self { num_leaf_proofs }
+        assert!(
+            num_layer0_proofs.is_none_or(|n| n > 0),
+            "num_layer0_proofs must be > 0 if specified"
+        );
+        Self {
+            num_leaf_proofs,
+            num_layer0_proofs,
+        }
     }
 }
 

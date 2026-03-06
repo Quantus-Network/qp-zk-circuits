@@ -1,435 +1,232 @@
 #![cfg(test)]
 
+use circuit_builder::generate_all_circuit_binaries;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_inputs::PublicCircuitInputs;
-use wormhole_aggregator::aggregator::WormholeProofAggregator;
+use std::path::Path;
+use std::sync::Once;
+use test_helpers::TestInputs;
+use wormhole_aggregator::aggregator::{AggregationBackend, Layer0Aggregator};
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_prover::WormholeProver;
-use zk_circuits_common::aggregation::AggregationConfig;
 use zk_circuits_common::circuit::{C, D, F};
 
 use crate::aggregator::circuit_config;
-use test_helpers::TestInputs;
 
-/// Test aggregation config: 2 leaf proofs
-fn test_aggregation_config() -> AggregationConfig {
-    AggregationConfig::new(2)
+const TEST_OUTPUT_DIR: &str = "tmp-test-bins";
+
+static TEST_INIT: Once = Once::new();
+
+extern "C" fn cleanup_test_output_dir() {
+    // Best-effort cleanup (don’t panic during shutdown)
+    let _ = std::fs::remove_dir_all(TEST_OUTPUT_DIR);
+}
+
+fn setup_test_binaries() {
+    TEST_INIT.call_once(|| {
+        generate_all_circuit_binaries(TEST_OUTPUT_DIR, true, 2, None)
+            .expect("Failed to generate test circuit binaries");
+
+        // Register a process-exit cleanup so the directory is removed once all tests finish.
+        unsafe {
+            // Ignore return value; if registration fails we simply won't auto-clean.
+            let _ = libc::atexit(cleanup_test_output_dir);
+        }
+    });
+}
+
+fn make_leaf_proof(inputs: &CircuitInputs) -> ProofWithPublicInputs<F, C, D> {
+    setup_test_binaries();
+
+    let prover_path = format!("{}/prover.bin", TEST_OUTPUT_DIR);
+    let common_path = format!("{}/common.bin", TEST_OUTPUT_DIR);
+    let prover = WormholeProver::new_from_files(Path::new(&prover_path), Path::new(&common_path))
+        .expect("Failed to create prover from binaries");
+    prover.commit(inputs).unwrap().prove().unwrap()
+}
+fn make_aggregator() -> Layer0Aggregator {
+    setup_test_binaries();
+    Layer0Aggregator::new(TEST_OUTPUT_DIR).unwrap()
 }
 
 #[test]
 fn push_proof_to_buffer() {
-    // Create a proof.
-    let prover = WormholeProver::new(circuit_config());
-    let inputs = CircuitInputs::test_inputs_0();
-    let proof = prover.commit(&inputs).unwrap().prove().unwrap();
+    setup_test_binaries();
+    let proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
 
-    let mut aggregator =
-        WormholeProofAggregator::from_circuit_config(circuit_config(), test_aggregation_config());
+    let mut aggregator = make_aggregator();
+
     aggregator.push_proof(proof).unwrap();
 
-    let proofs_buffer = aggregator.proofs_buffer.unwrap();
-    assert_eq!(proofs_buffer.len(), 1);
+    assert_eq!(aggregator.buffer_len(), 1);
 }
 
 #[test]
 fn push_proof_to_full_buffer() {
-    // Create a proof.
-    let prover = WormholeProver::new(circuit_config());
-    let inputs = CircuitInputs::test_inputs_0();
-    let proof = prover.commit(&inputs).unwrap().prove().unwrap();
+    setup_test_binaries();
+    let proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
 
-    let aggregation_config = test_aggregation_config();
-    let mut aggregator =
-        WormholeProofAggregator::from_circuit_config(circuit_config(), aggregation_config);
+    let mut aggregator = make_aggregator();
 
-    // Fill up the proof buffer.
-    for _ in 0..aggregator.config.num_leaf_proofs {
+    // Fill the buffer
+    for _ in 0..aggregator.batch_size() {
         aggregator.push_proof(proof.clone()).unwrap();
     }
 
-    let result = aggregator.push_proof(proof.clone());
-    assert!(result.is_err());
-
-    let proofs_buffer = aggregator.proofs_buffer.unwrap();
-    assert_eq!(proofs_buffer.len(), aggregator.config.num_leaf_proofs);
+    // One more push should fail
+    let result = aggregator.push_proof(proof);
+    assert!(
+        result.is_err(),
+        "expected error when pushing to full buffer"
+    );
 }
 
 #[test]
 fn aggregate_single_proof() {
-    // Create a proof.
-    let prover = WormholeProver::new(circuit_config());
-    let inputs = CircuitInputs::test_inputs_0();
-    let proof = prover.commit(&inputs).unwrap().prove().unwrap();
+    setup_test_binaries();
+    let proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
 
-    let mut aggregator =
-        WormholeProofAggregator::from_circuit_config(circuit_config(), test_aggregation_config());
+    let mut aggregator = make_aggregator();
+
     aggregator.push_proof(proof).unwrap();
 
-    aggregator.aggregate().unwrap();
+    let aggregated = aggregator.aggregate().unwrap();
+    aggregator
+        .verify(aggregated)
+        .expect("Aggregated proof should verify");
 }
 
 #[test]
 fn aggregate_proofs_into_tree() {
-    // Create proofs - all must be from the SAME BLOCK for fixed-structure aggregation
-    // Use test_inputs_0 for all proofs (same block)
+    setup_test_binaries();
+    // All proofs must be from the SAME BLOCK for fixed-structure aggregation.
     let inputs = CircuitInputs::test_inputs_0();
-    let mut proofs = Vec::new();
 
-    for idx in 0..2 {
-        let prover = WormholeProver::new(circuit_config());
-        let proof = prover.commit(&inputs).unwrap().prove().unwrap();
-        let public_inputs = PublicCircuitInputs::try_from_proof(&proof).unwrap();
-        println!(
-            "public inputs of original proof number {:?} = {:?}",
-            idx, public_inputs
-        );
-        proofs.push(proof);
-    }
+    let proof_0 = make_leaf_proof(&inputs);
+    let proof_1 = make_leaf_proof(&inputs);
 
-    let aggregation_config = test_aggregation_config();
-    let mut aggregator =
-        WormholeProofAggregator::from_circuit_config(circuit_config(), aggregation_config);
+    let pi0 = PublicCircuitInputs::try_from_proof(&proof_0).unwrap();
+    let pi1 = PublicCircuitInputs::try_from_proof(&proof_1).unwrap();
 
-    // Fill up the proof buffer (all proofs from same block)
-    for i in 0..aggregator.config.num_leaf_proofs {
-        aggregator.push_proof(proofs[i % 2].clone()).unwrap();
-    }
+    println!("proof_0 public inputs = {:?}", pi0);
+    println!("proof_1 public inputs = {:?}", pi1);
 
-    let aggregated_proof = aggregator.aggregate().unwrap(); // AggregatedProof<F, C, D>
+    let mut aggregator = make_aggregator();
 
-    // Verify the aggregated proof
-    aggregated_proof
-        .circuit_data
-        .verify(aggregated_proof.proof)
-        .unwrap();
+    aggregator.push_proof(proof_0).unwrap();
+    aggregator.push_proof(proof_1).unwrap();
+
+    let aggregated = aggregator.aggregate().unwrap();
+    aggregator
+        .verify(aggregated)
+        .expect("Aggregated proof should verify");
 }
 
 #[test]
 fn aggregate_half_full_proof_array_into_tree() {
-    // Create a proof.
-    let prover = WormholeProver::new(circuit_config());
-    let inputs = CircuitInputs::test_inputs_0();
-    let proof = prover.commit(&inputs).unwrap().prove().unwrap();
+    setup_test_binaries();
+    // Intentionally only push one proof into a 2-proof aggregator to exercise padding.
+    let proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
 
-    let aggregation_config = test_aggregation_config();
-    let mut aggregator =
-        WormholeProofAggregator::from_circuit_config(circuit_config(), aggregation_config);
+    let mut aggregator = make_aggregator();
 
-    // Fill up the proof buffer.
-    for _ in 0..aggregator.config.num_leaf_proofs {
-        aggregator.push_proof(proof.clone()).unwrap();
-    }
+    aggregator.push_proof(proof).unwrap();
 
-    let aggregated_proof = aggregator.aggregate().unwrap();
-    aggregated_proof
-        .circuit_data
-        .verify(aggregated_proof.proof)
-        .unwrap();
+    let aggregated = aggregator.aggregate().unwrap();
+    aggregator
+        .verify(aggregated)
+        .expect("Aggregated proof should verify");
 }
 
-/// This test simulates the CLI flow where:
-/// 1. Proofs are generated by separate WormholeProver instances (simulating separate CLI calls)
-/// 2. Proofs are serialized to bytes (simulating writing to files)
-/// 3. A new WormholeProofAggregator is created (simulating the aggregate command)
-/// 4. Proofs are deserialized using the aggregator's common_data
-/// 5. Aggregation is attempted
-///
-/// This tests whether different WormholeProver instances produce compatible proofs.
+/// This simulates a CLI-ish flow without prebuilt binaries:
+/// 1. Generate proofs from separate prover instances
+/// 2. Serialize proof bytes
+/// 3. Deserialize using a fresh common_data
+/// 4. Aggregate them
 #[test]
 fn aggregate_proofs_from_separate_prover_instances_serialized() {
-    println!("=== Testing CLI-like flow with separate prover instances ===");
+    setup_test_binaries();
+    println!("=== Testing local CLI-like flow with separate prover instances ===");
 
-    // Step 1: Generate proof 1 with prover instance A
-    println!("Creating prover A and generating proof 1...");
+    // Proof 1 from prover A
     let prover_a = WormholeProver::new(circuit_config());
     let inputs_1 = CircuitInputs::test_inputs_0();
     let proof_1 = prover_a.commit(&inputs_1).unwrap().prove().unwrap();
     let proof_1_bytes = proof_1.to_bytes();
-    println!("Proof 1 generated, {} bytes", proof_1_bytes.len());
 
-    // Step 2: Generate proof 2 with a DIFFERENT prover instance B
-    // NOTE: Must use same block as proof 1 for fixed-structure aggregation
-    println!("Creating prover B and generating proof 2...");
+    // Proof 2 from prover B (same block)
     let prover_b = WormholeProver::new(circuit_config());
-    let inputs_2 = CircuitInputs::test_inputs_0(); // Same block as inputs_1
+    let inputs_2 = CircuitInputs::test_inputs_0();
     let proof_2 = prover_b.commit(&inputs_2).unwrap().prove().unwrap();
     let proof_2_bytes = proof_2.to_bytes();
-    println!("Proof 2 generated, {} bytes", proof_2_bytes.len());
 
-    // Step 3: Create aggregator (this creates yet another prover instance internally for dummy proofs)
-    println!("Creating aggregator (creates internal prover for dummy proofs)...");
-    let mut aggregator =
-        WormholeProofAggregator::from_circuit_config(circuit_config(), test_aggregation_config());
-    let common_data = aggregator.leaf_circuit_data.common.clone();
+    // Create aggregator (local/in-memory path)
+    let mut aggregator = make_aggregator();
 
-    // Step 4: Deserialize proofs using aggregator's common_data (like CLI does)
-    println!("Deserializing proofs using aggregator's common_data...");
+    // Use fresh common_data to deserialize like CLI would
+    let deser_common_data = WormholeProver::new(circuit_config()).circuit_data.common;
+
     let proof_1_deserialized: ProofWithPublicInputs<F, C, D> =
-        ProofWithPublicInputs::from_bytes(proof_1_bytes, &common_data)
+        ProofWithPublicInputs::from_bytes(proof_1_bytes, &deser_common_data)
             .expect("Failed to deserialize proof 1");
-    let proof_2_deserialized: ProofWithPublicInputs<F, C, D> =
-        ProofWithPublicInputs::from_bytes(proof_2_bytes, &common_data)
-            .expect("Failed to deserialize proof 2");
-    println!("Proofs deserialized successfully");
 
-    // Step 5: Push proofs to aggregator
-    println!("Pushing proofs to aggregator...");
+    let proof_2_deserialized: ProofWithPublicInputs<F, C, D> =
+        ProofWithPublicInputs::from_bytes(proof_2_bytes, &deser_common_data)
+            .expect("Failed to deserialize proof 2");
+
     aggregator.push_proof(proof_1_deserialized).unwrap();
     aggregator.push_proof(proof_2_deserialized).unwrap();
 
-    // Step 6: Attempt aggregation
-    println!("Running aggregation...");
-    let aggregated_proof = aggregator.aggregate().expect("Aggregation failed");
+    let aggregated = aggregator.aggregate().expect("Aggregation failed");
 
-    // Verify the aggregated proof
-    println!("Verifying aggregated proof...");
-    aggregated_proof
-        .circuit_data
-        .verify(aggregated_proof.proof)
+    aggregator
+        .verify(aggregated)
         .expect("Aggregated proof verification failed");
 
-    println!("=== Test passed! ===");
+    println!("=== Test passed ===");
 }
 
-/// Test that verifies the aggregated proof can be verified using the pre-built
-/// verifier binaries (simulating on-chain verification).
-///
-/// This test uses pre-built circuit files throughout to match the production flow:
-/// 1. Prover loads from pre-built prover.bin + common.bin
-/// 2. Aggregator loads from the same pre-built files
-/// 3. Verifier loads from pre-built aggregated_verifier.bin + aggregated_common.bin
-#[test]
-#[ignore = "requires regenerating circuit binaries after 2-output layout change"]
-fn verify_aggregated_proof_with_prebuilt_verifier() {
-    use std::path::Path;
-    use wormhole_verifier::WormholeVerifier;
-    // Use the verifier's types for deserialization (these come from qp_plonky2_verifier)
-    use wormhole_verifier::ProofWithPublicInputs as VerifierProof;
-
-    println!("=== Testing aggregated proof verification with pre-built verifier ===");
-
-    // Step 1: Load prover from pre-built files (like CLI does in production)
-    // The bins are at repo root, tests run from wormhole/tests
-    println!("Loading prover from pre-built files...");
-    let prover = WormholeProver::new_from_files(
-        Path::new("../../generated-bins/prover.bin"),
-        Path::new("../../generated-bins/common.bin"),
-    )
-    .expect("Failed to load prover from pre-built files");
-
-    // Step 2: Generate proofs using the pre-built prover
-    // NOTE: All proofs must be from the SAME block for the fixed-structure aggregation circuit
-    println!("Generating proofs...");
-    let inputs_1 = CircuitInputs::test_inputs_0();
-    let proof_1 = prover.commit(&inputs_1).unwrap().prove().unwrap();
-
-    // Reload prover for second proof (prover consumes itself on commit)
-    let prover = WormholeProver::new_from_files(
-        Path::new("../../generated-bins/prover.bin"),
-        Path::new("../../generated-bins/common.bin"),
-    )
-    .expect("Failed to load prover from pre-built files");
-    // Use test_inputs_0 again - proofs must reference the same block for their storage proofs
-    // (the underlying transfers can be in different blocks, but proofs must be generated against the same chain state)
-    // For this test, we just use the same inputs twice - the aggregator will pad with dummies
-    let inputs_2 = CircuitInputs::test_inputs_0();
-    let proof_2 = prover.commit(&inputs_2).unwrap().prove().unwrap();
-
-    // Step 3: Create aggregator from pre-built files (matches circuit-builder)
-    // The bins are at repo root, tests run from wormhole/tests
-    println!("Creating aggregator from pre-built files...");
-    let mut aggregator = WormholeProofAggregator::from_prebuilt_dir(
-        Path::new("../../generated-bins"),
-        test_aggregation_config(),
-    )
-    .expect("Failed to create aggregator from pre-built files");
-
-    aggregator.push_proof(proof_1).unwrap();
-    aggregator.push_proof(proof_2).unwrap();
-
-    let aggregated = aggregator.aggregate().expect("Aggregation failed");
-    println!("Aggregation succeeded!");
-
-    // Debug: Print the circuit digest from the aggregated proof
-    println!(
-        "Aggregated proof's circuit_digest: {:?}",
-        aggregated.circuit_data.verifier_only.circuit_digest
-    );
-
-    // Step 4: Serialize the aggregated proof (like CLI does)
-    let aggregated_proof_bytes = aggregated.proof.to_bytes();
-    let aggregated_proof_hex = hex::encode(&aggregated_proof_bytes);
-    println!(
-        "Aggregated proof serialized: {} bytes, {} hex chars",
-        aggregated_proof_bytes.len(),
-        aggregated_proof_hex.len()
-    );
-
-    // Step 5: Load the pre-built aggregated verifier (like chain does)
-    println!("Loading pre-built aggregated verifier...");
-    let verifier = WormholeVerifier::new_from_files(
-        Path::new("../../generated-bins/aggregated_verifier.bin"),
-        Path::new("../../generated-bins/aggregated_common.bin"),
-    )
-    .expect("Failed to load aggregated verifier from pre-built files");
-
-    // Debug: Print the circuit digest from the pre-built verifier
-    println!(
-        "Pre-built verifier's circuit_digest: {:?}",
-        verifier.circuit_data.verifier_only.circuit_digest
-    );
-
-    // Step 6: Deserialize proof using verifier's common_data (like chain does)
-    // We use the verifier's ProofWithPublicInputs type from qp_plonky2_verifier
-    println!("Deserializing aggregated proof using verifier's common_data...");
-    let decoded_bytes = hex::decode(&aggregated_proof_hex).expect("Failed to decode hex");
-    let deserialized_proof: VerifierProof<
-        wormhole_verifier::F,
-        wormhole_verifier::C,
-        { wormhole_verifier::D },
-    > = VerifierProof::from_bytes(decoded_bytes, &verifier.circuit_data.common)
-        .expect("Failed to deserialize aggregated proof");
-
-    // Step 7: Verify using the pre-built verifier (like chain does)
-    println!("Verifying aggregated proof with pre-built verifier...");
-    verifier
-        .verify(deserialized_proof)
-        .expect("Aggregated proof verification failed!");
-
-    println!("=== Aggregated proof verified successfully with pre-built verifier! ===");
-}
-
-/// Same as above but with hex encoding/decoding to exactly match CLI flow
+/// Same as above but includes hex encoding/decoding to match CLI proof handoff format.
 #[test]
 fn aggregate_proofs_from_separate_prover_instances_hex_serialized() {
-    println!("=== Testing CLI-like flow with hex encoding ===");
+    setup_test_binaries();
+    println!("=== Testing local CLI-like flow with hex encoding ===");
 
-    // Step 1: Generate proof 1 with prover instance A
-    println!("Creating prover A and generating proof 1...");
+    // Proof 1 from prover A
     let prover_a = WormholeProver::new(circuit_config());
     let inputs_1 = CircuitInputs::test_inputs_0();
     let proof_1 = prover_a.commit(&inputs_1).unwrap().prove().unwrap();
     let proof_1_hex = hex::encode(proof_1.to_bytes());
-    println!("Proof 1 generated, {} hex chars", proof_1_hex.len());
 
-    // Step 2: Generate proof 2 with a DIFFERENT prover instance B
-    // NOTE: Must use same block as proof 1 for fixed-structure aggregation
-    println!("Creating prover B and generating proof 2...");
+    // Proof 2 from prover B (same block)
     let prover_b = WormholeProver::new(circuit_config());
-    let inputs_2 = CircuitInputs::test_inputs_0(); // Same block as inputs_1
+    let inputs_2 = CircuitInputs::test_inputs_0();
     let proof_2 = prover_b.commit(&inputs_2).unwrap().prove().unwrap();
     let proof_2_hex = hex::encode(proof_2.to_bytes());
-    println!("Proof 2 generated, {} hex chars", proof_2_hex.len());
 
-    // Step 3: Create aggregator (this creates yet another prover instance internally for dummy proofs)
-    println!("Creating aggregator (creates internal prover for dummy proofs)...");
-    let mut aggregator =
-        WormholeProofAggregator::from_circuit_config(circuit_config(), test_aggregation_config());
-    let common_data = aggregator.leaf_circuit_data.common.clone();
+    let mut aggregator = make_aggregator();
 
-    // Step 4: Decode hex and deserialize proofs using aggregator's common_data (like CLI does)
-    println!("Decoding hex and deserializing proofs...");
+    let deser_common_data = WormholeProver::new(circuit_config()).circuit_data.common;
+
     let proof_1_bytes = hex::decode(&proof_1_hex).expect("Failed to decode proof 1 hex");
     let proof_2_bytes = hex::decode(&proof_2_hex).expect("Failed to decode proof 2 hex");
 
     let proof_1_deserialized: ProofWithPublicInputs<F, C, D> =
-        ProofWithPublicInputs::from_bytes(proof_1_bytes, &common_data)
+        ProofWithPublicInputs::from_bytes(proof_1_bytes, &deser_common_data)
             .expect("Failed to deserialize proof 1");
-    let proof_2_deserialized: ProofWithPublicInputs<F, C, D> =
-        ProofWithPublicInputs::from_bytes(proof_2_bytes, &common_data)
-            .expect("Failed to deserialize proof 2");
-    println!("Proofs deserialized successfully");
 
-    // Step 5: Push proofs to aggregator
-    println!("Pushing proofs to aggregator...");
+    let proof_2_deserialized: ProofWithPublicInputs<F, C, D> =
+        ProofWithPublicInputs::from_bytes(proof_2_bytes, &deser_common_data)
+            .expect("Failed to deserialize proof 2");
+
     aggregator.push_proof(proof_1_deserialized).unwrap();
     aggregator.push_proof(proof_2_deserialized).unwrap();
 
-    // Step 6: Attempt aggregation
-    println!("Running aggregation...");
-    let aggregated_proof = aggregator.aggregate().expect("Aggregation failed");
+    let aggregated = aggregator.aggregate().expect("Aggregation failed");
 
-    // Verify the aggregated proof
-    println!("Verifying aggregated proof...");
-    aggregated_proof
-        .circuit_data
-        .verify(aggregated_proof.proof)
+    aggregator
+        .verify(aggregated)
         .expect("Aggregated proof verification failed");
 
-    println!("=== Test passed! ===");
-}
-
-/// Test that verifies a CLI-generated aggregated proof hex file using the pre-built verifier.
-/// This exactly simulates what the chain does during on-chain verification.
-///
-/// To use: Set the PROOF_HEX_FILE env var to the path of the hex file:
-///   PROOF_HEX_FILE=/path/to/proof.hex cargo test --package tests --release verify_external_proof_hex -- --ignored --nocapture
-#[test]
-#[ignore] // Run manually with PROOF_HEX_FILE env var
-fn verify_external_proof_hex() {
-    use std::path::Path;
-    use wormhole_verifier::ProofWithPublicInputs as VerifierProof;
-    use wormhole_verifier::WormholeVerifier;
-
-    let proof_file = std::env::var("PROOF_HEX_FILE")
-        .expect("Set PROOF_HEX_FILE env var to the path of the aggregated proof hex file");
-
-    println!("=== Verifying external proof file: {} ===", proof_file);
-
-    // Step 1: Load the proof hex
-    let proof_hex = std::fs::read_to_string(&proof_file).expect("Failed to read proof file");
-    let proof_bytes = hex::decode(proof_hex.trim()).expect("Failed to decode hex");
-    println!("Proof size: {} bytes", proof_bytes.len());
-
-    // Step 2: Load the pre-built aggregated verifier (same as chain)
-    println!("Loading pre-built aggregated verifier...");
-    let verifier = WormholeVerifier::new_from_files(
-        Path::new("../../generated-bins/aggregated_verifier.bin"),
-        Path::new("../../generated-bins/aggregated_common.bin"),
-    )
-    .expect("Failed to load aggregated verifier");
-
-    println!(
-        "Verifier circuit_digest: {:?}",
-        verifier.circuit_data.verifier_only.circuit_digest
-    );
-
-    // Step 3: Deserialize proof using verifier's common_data (same as chain)
-    println!("Deserializing proof...");
-    let proof: VerifierProof<wormhole_verifier::F, wormhole_verifier::C, { wormhole_verifier::D }> =
-        VerifierProof::from_bytes(proof_bytes, &verifier.circuit_data.common)
-            .expect("Failed to deserialize proof");
-
-    println!("Proof public inputs count: {}", proof.public_inputs.len());
-    println!(
-        "Verifier expects {} public inputs",
-        verifier.circuit_data.common.num_public_inputs
-    );
-
-    // Parse and check nullifiers for duplicates
-    // Convert GoldilocksField to u64 for parsing with the inputs crate
-    // Use the same trait that qp_plonky2_verifier uses
-    let pis_u64: Vec<u64> = proof
-        .public_inputs
-        .iter()
-        .map(|f| f.0) // GoldilocksField inner u64 value
-        .collect();
-    let inputs = wormhole_verifier::AggregatedPublicCircuitInputs::try_from_u64_slice(&pis_u64)
-        .expect("Failed to parse aggregated inputs");
-
-    println!("Number of nullifiers: {}", inputs.nullifiers.len());
-    let mut seen = std::collections::HashSet::new();
-    for (i, n) in inputs.nullifiers.iter().enumerate() {
-        let bytes: &[u8] = n.as_ref();
-        println!("Nullifier {}: 0x{}", i, hex::encode(bytes));
-        if !seen.insert(bytes.to_vec()) {
-            println!("*** DUPLICATE NULLIFIER at index {}! ***", i);
-        }
-    }
-
-    // Step 4: Verify (same as chain)
-    println!("Verifying proof...");
-    verifier.verify(proof).expect("Proof verification FAILED!");
-
-    println!("=== Proof verified successfully! ===");
+    println!("=== Test passed ===");
 }

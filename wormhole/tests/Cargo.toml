@@ -12,7 +12,9 @@ bench = []
 
 [dependencies]
 anyhow = { workspace = true }
+circuit-builder = { package = "qp-wormhole-circuit-builder", version = "1.0.7", path = "../circuit-builder" }
 hex = { workspace = true }
+libc = "0.2"
 qp-plonky2 = { workspace = true, default-features = true }
 qp-wormhole-inputs = { path = "../inputs" }
 rand = { version = "0.9.1", default-features = false, features = [

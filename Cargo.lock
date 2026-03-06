@@ -6499,9 +6499,11 @@ version = "1.0.7"
 dependencies = [
  "anyhow",
  "hex",
+ "libc",
  "qp-plonky2",
  "qp-wormhole-aggregator 1.0.7",
  "qp-wormhole-circuit 1.0.7",
+ "qp-wormhole-circuit-builder",
  "qp-wormhole-inputs",
  "qp-wormhole-prover 1.0.7",
  "qp-wormhole-verifier 1.0.7",
