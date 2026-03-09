@@ -28,8 +28,9 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     println!(
-        "Generating circuit binaries (num_leaf_proofs={})",
+        "Generating circuit binaries (num_leaf_proofs={}, num_layer0_proofs={})",
         args.num_leaf_proofs,
+        args.num_layer0_proofs.unwrap_or(0),
     );
 
     generate_all_circuit_binaries(
