@@ -51,9 +51,7 @@ We extend the EIP-7503 paradigm to address two critical challenges: \emph{post-q
     
     \item \textbf{Privacy Score Heuristic:} We develop a practical metric for quantifying anonymity set size, helping users make informed privacy decisions.
     
-    \item \textbf{ZK-Friendly State Trie:} We develop a felt-aligned variant of Substrate's Merkle-Patricia Trie that enables efficient in-circuit verification of storage proofs, with fixed 8-byte headers and padded data structures.
-    
-    \item \textbf{Production Implementation:} We implement and deploy the complete system on the Quantus Network, demonstrating practical feasibility.
+    \item \textbf{Production Implementation:} We implement and deploy the complete system on the Quantus Network, including a ZK-friendly variant of Substrate's state trie optimized for in-circuit verification.
 \end{enumerate}
 
 \subsection{Technical Overview}
@@ -111,12 +109,12 @@ We build our protocol on Plonky2~\cite{plonky2}, a recursive SNARK combining PLO
 
 \begin{itemize}
     \item \textbf{Transparent Setup:} No trusted setup ceremony is required; public parameters are deterministically derived.
-    \item \textbf{Post-Quantum Security:} Security relies on the hardness of finding low-degree polynomials close to random functions, not on discrete logarithm or factoring assumptions.
+    \item \textbf{Post-Quantum Security:} Security relies only on the collision resistance of hash functions (in the random oracle model), avoiding discrete logarithm or pairing-based assumptions vulnerable to quantum attacks.
     \item \textbf{Efficient Recursion:} Proofs can verify other proofs, enabling aggregation with logarithmic overhead.
     \item \textbf{Configurable Security:} With extension degree $D = 2$ over $\mathbb{F}_p$, Plonky2 achieves approximately 100 bits of security.
 \end{itemize}
 
-FRI (Fast Reed-Solomon Interactive Oracle Proofs of Proximity) is an interactive oracle proof that a committed function is close to a low-degree polynomial. The prover commits to evaluations of a polynomial and recursively folds the polynomial until the verifier can directly check a constant polynomial. Security follows from the proximity gaps of Reed-Solomon codes.
+FRI (Fast Reed-Solomon Interactive Oracle Proofs of Proximity) is an interactive oracle proof that a committed function is close to a low-degree polynomial. The prover commits to evaluations of a polynomial using Merkle trees and recursively folds the polynomial until the verifier can directly check a constant polynomial. Soundness follows from the proximity gaps of Reed-Solomon codes, while the overall security reduces to the collision resistance of the hash function used for Merkle commitments.
 
 \subsection{Merkle-Patricia Tries}
 
@@ -229,9 +227,7 @@ n = \mathcal{H}(\mathcal{H}(\mathsf{``\sim nullif\sim''} \| s \| c))
 \label{eq:nullifier}
 \end{equation}
 
-where $c$ is a monotonically increasing counter per wormhole address. The on-chain nullifier set $\mathcal{N}$ tracks all published nullifiers; a withdrawal is rejected if its nullifier already exists in $\mathcal{N}$.
-
-The counter $c$ is stored on-chain in a \texttt{TransferProof} record associated with each deposit, enabling multiple withdrawals from addresses that receive multiple deposits.
+where $c$ is a per-address transaction counter that increments with each deposit received. Each wormhole address maintains its own counter, and a unique nullifier is derived for each deposit. The on-chain nullifier set $\mathcal{N}$ tracks all published nullifiers; a withdrawal is rejected if its nullifier already exists in $\mathcal{N}$.
 
 \subsection{The Wormhole Circuit}
 
@@ -658,49 +654,9 @@ Despite these limitations, the score provides actionable guidance for privacy-co
 \section{Implementation and Evaluation}
 \label{sec:impl}
 
-We implement the wormhole protocol in production on the Quantus Network, a Substrate-based blockchain~\cite{substrate}.
+We implement the wormhole protocol on the Quantus Network, a Substrate-based blockchain~\cite{substrate}. The circuits are implemented in Rust using Plonky2~\cite{plonky2} with Poseidon2~\cite{poseidon2} for in-circuit hashing. We use extension degree $D = 2$ over the Goldilocks field ($p = 2^{64} - 2^{32} + 1$), providing approximately 100 bits of security.
 
-\subsection{Implementation Overview}
-
-\paragraph{Circuit Implementation:} The ZK circuits are implemented in Rust using Plonky2~\cite{plonky2}. Key design decisions include:
-\begin{itemize}
-    \item \textbf{no\_std compatibility:} Core crates compile without the standard library, enabling WASM deployment.
-    \item \textbf{Modular fragments:} Each constraint set (nullifier, storage proof, etc.) is a separate \texttt{CircuitFragment} for composability.
-    \item \textbf{Pre-built binaries:} Circuit data is serialized with SHA-256 hash verification for deterministic deployment.
-\end{itemize}
-
-\paragraph{Cryptographic Primitives:}
-\begin{itemize}
-    \item \textbf{Hash function:} Poseidon2~\cite{poseidon2} with 4-element (256-bit) digests over the Goldilocks field.
-    \item \textbf{Proof system:} Plonky2 with $D = 2$ extension degree, providing approximately 100 bits of security.
-    \item \textbf{Field:} Goldilocks prime $p = 2^{64} - 2^{32} + 1$ for efficient 64-bit arithmetic.
-\end{itemize}
-
-\paragraph{On-Chain Verifier:} The \texttt{wormhole} pallet implements on-chain verification:
-\begin{itemize}
-    \item Proof deserialization and Plonky2 verification
-    \item Block hash validation against chain history
-    \item Nullifier set management (storage map)
-    \item Token minting to exit accounts
-\end{itemize}
-
-\subsection{ZK-Friendly Merkle-Patricia Trie}
-
-A key implementation challenge is verifying Merkle-Patricia Trie (MPT) inclusion proofs inside a ZK circuit. Standard Substrate tries use compact encoding optimized for storage efficiency, with variable-length headers (1--4 bytes) and unaligned data boundaries. This creates significant overhead in ZK circuits, which operate on fixed-size field elements (64-bit in our case).
-
-We developed a \emph{felt-aligned} variant of Substrate's \texttt{sp-trie} with the following modifications:
-
-\begin{itemize}
-    \item \textbf{Fixed 8-byte headers:} Node type and metadata encoded in a fixed 64-bit header, eliminating variable-length parsing.
-    \item \textbf{Padded data sections:} All partial keys, values, and child references padded to 8-byte boundaries.
-    \item \textbf{8-byte length prefixes:} All length fields encoded as little-endian \texttt{u64} instead of compact encoding.
-    \item \textbf{No inlined children:} All child nodes referenced by hash (minimum padded size equals hash size anyway).
-    \item \textbf{8-byte bitmap:} Branch node child bitmap expanded from 2 to 8 bytes.
-\end{itemize}
-
-These modifications enable the ZK circuit to process trie nodes using native field arithmetic without expensive bit-shifting operations. The trade-off is approximately 35\% larger storage proofs, which we consider acceptable given the dramatic reduction in circuit complexity.
-
-The ZK-trie maintains API compatibility with standard \texttt{sp-trie}, allowing drop-in replacement via Cargo's patch mechanism. Block headers commit to the ZK-trie state root using Poseidon2 hashing, ensuring the entire storage proof verification chain uses ZK-friendly primitives.
+A key challenge is verifying Merkle-Patricia Trie (MPT) inclusion proofs inside a ZK circuit. Standard Substrate tries use variable-length compact encoding optimized for storage, which is expensive to parse in circuits operating on fixed-size field elements. We developed a \emph{felt-aligned} variant with fixed-width headers and data structures padded to 64-bit boundaries, enabling efficient in-circuit verification at the cost of approximately 35\% larger storage proofs.
 
 \subsection{Performance Characteristics}
 
