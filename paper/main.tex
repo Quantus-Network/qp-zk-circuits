@@ -295,7 +295,7 @@ The zero-knowledge circuit proves the following relation:
 \end{enumerate}
 
 \paragraph{Dummy Proof Handling:}
-For batch padding, dummy proofs use sentinel values: $h_B = \mathbf{0}$ \emph{and} $v_1 = v_2 = 0$. The circuit skips constraints (C3)--(C4) for dummy proofs while still enforcing the remaining structure. Dummy nullifiers are set to random values to prevent on-chain collision.
+For batch padding, dummy proofs use sentinel values: $h_B = \mathbf{0}$ \emph{and} $v_1 = v_2 = 0$. The circuit skips constraints (C3)--(C4) for dummy proofs while still enforcing the remaining structure. Dummy nullifiers are set to random values to prevent on-chain collision. Crucially, dummy proofs also strengthen privacy by making the number of real inputs in a batch variable and unknown to observers, increasing the difficulty of balance-linking attacks (which reduce to a knapsack problem over candidate deposits).
 
 \subsection{Transaction Flow}
 
@@ -321,6 +321,7 @@ The protocol operates in three phases:
     \State Fetch current block header $(h_B, b, \mathsf{rt}, \ldots)$
     \State Fetch MPT proof $\pi_{\mathsf{MPT}}$ for \texttt{TransferProof}
     \State $n \gets \mathcal{H}(\mathcal{H}(\mathsf{``\sim nullif\sim''} \| s \| c))$
+    \State $\mathbf{x} \gets (a, v_1, v_2, f, n, \alpha_1, \alpha_2, h_B, b)$ \Comment{Public inputs}
     \State $\pi \gets \mathsf{Prove}(\mathsf{pp}, \mathbf{x}, \mathbf{w})$
     \State Submit $(\pi, \mathbf{x})$ for on-chain verification
 \EndProcedure
@@ -355,25 +356,28 @@ Layer 0 aggregates $N$ leaf proofs from a single client. This layer is \emph{pri
 \caption{Layer-0 Aggregation}
 \label{alg:layer0}
 \begin{algorithmic}[1]
-\Procedure{AggregateLayer0}{$\{\pi_i\}_{i=1}^N$}
+\Procedure{AggregateLayer0}{$\{\pi_i, \mathbf{x}_i\}_{i=1}^N$}
     \State Shuffle proofs, preserving first real proof position
     \For{each duplicate exit account pair}
         \State Sum amounts to single slot, zero the duplicate
     \EndFor
     \State Verify all real proofs share same $(h_B, a, f)$
-    \State $\pi_{\mathsf{agg}} \gets$ recursive verification of $\{\pi_i\}$
-    \State \Return $(\pi_{\mathsf{agg}}, \mathbf{x}_{\mathsf{agg}})$
+    \State $\pi^{(0)} \gets$ recursive verification of $\{\pi_i\}$
+    \State $\mathbf{x}^{(0)} \gets$ aggregated public inputs (exit slots, nullifiers, shared params)
+    \State \Return $(\pi^{(0)}, \mathbf{x}^{(0)})$
 \EndProcedure
 \end{algorithmic}
 \end{algorithm}
 
-The Layer-0 output contains:
+The Layer-0 aggregated public inputs $\mathbf{x}^{(0)}$ contain:
 \begin{itemize}
     \item Number of exit slots ($2N$ for two outputs per leaf)
     \item Asset ID, fee rate, block hash, block number
     \item Exit slots: $[(v_i, \alpha_i)]$ for each output
     \item Nullifiers from all $N$ proofs
 \end{itemize}
+
+We adopt consistent notation for public inputs at each layer: $\mathbf{x}$ denotes leaf proof public inputs, $\mathbf{x}^{(0)}$ denotes Layer-0 aggregated public inputs, and $\mathbf{x}^{(L)}$ denotes Layer-$L$ aggregated public inputs for $L \geq 1$.
 
 \subsubsection{Layer 1: Delegated Aggregation}
 
@@ -724,6 +728,8 @@ Our work is most directly inspired by EIP-7503~\cite{eip7503}, proposed by Kamba
 
 \paragraph{Privacy-Preserving Cryptocurrencies.}
 Zcash~\cite{zcash} pioneered practical zero-knowledge transactions using zk-SNARKs, enabling shielded transfers that hide sender, receiver, and amount. However, Zcash relies on pairing-based cryptography vulnerable to quantum attacks and required a trusted setup ceremony. Tornado Cash~\cite{tornadocash} brought privacy to Ethereum via a mixing protocol, but similarly lacks post-quantum security and requires explicit smart contract interaction (unlike the wormhole approach).
+
+A significant practical limitation of both Zcash and Monero is \emph{client-side scanning}: because transactions are encrypted, recipients must download and trial-decrypt every transaction on the network to discover payments intended for them. This creates substantial bandwidth and computational overhead that scales linearly with network activity, making lightweight clients impractical. In contrast, wormhole deposits are to addresses the recipient already knows (derived from their secret), so standard blockchain indexing identifies relevant deposits without trial decryption. Recipients need only monitor their known wormhole addresses, enabling efficient light clients and better scaling as network usage grows.
 
 \paragraph{Post-Quantum Blockchain Signatures.}
 The NIST post-quantum standardization~\cite{mldsa} selected ML-DSA (Dilithium)~\cite{dilithium} for digital signatures. Direct adoption in blockchains faces scalability challenges due to large key and signature sizes. Hash-based signatures (SPHINCS+) offer smaller keys but even larger signatures. Our approach sidesteps these limitations by moving signature verification off-chain entirely.
