@@ -36,20 +36,24 @@ However, the transition to post-quantum cryptography introduces a severe scalabi
 
 \subsection{Our Contribution}
 
-We propose \emph{wormhole addresses}, a construction that fundamentally reimagines how transaction authorization works in post-quantum blockchains. Rather than verifying signatures on-chain, users deposit funds to \emph{provably unspendable addresses} and later withdraw using zero-knowledge proofs that demonstrate knowledge of a secret value linking them to the deposit. The key insight is that proving ownership via a ZK proof requires only $O(1)$ on-chain verification regardless of the underlying signature scheme's size.
+Our work builds upon EIP-7503 (Zero-Knowledge Wormholes)~\cite{eip7503}, a proposal by Kambakhsh et al.\ for Ethereum that introduced the concept of \emph{private proof-of-burn}: users send funds to provably unspendable addresses and later mint equivalent tokens by producing a zero-knowledge proof of knowledge of the burn secret. EIP-7503 elegantly observes that burn addresses are indistinguishable from regular addresses, providing plausible deniability---deposits appear as ordinary transfers, and the anonymity set naturally includes all Ethereum accounts with zero outgoing transactions.
 
-Our contributions are as follows:
+We extend the EIP-7503 paradigm to address two critical challenges: \emph{post-quantum security} and \emph{scalability via proof aggregation}. While EIP-7503 targets Ethereum's elliptic curve setting, we design our system for blockchains transitioning to post-quantum signatures, where the scalability benefits are even more pronounced. Our specific contributions are:
 
 \begin{enumerate}
-    \item \textbf{Wormhole Address Construction:} We introduce a double-hashing construction $\mathcal{H}(\mathcal{H}(\mathsf{salt} \| s))$ that creates addresses provably unspendable under any signature scheme with public keys larger than the hash preimage size.
+    \item \textbf{Post-Quantum Proof System:} We instantiate the wormhole construction using Plonky2~\cite{plonky2}, a FRI-based proof system that requires no trusted setup and achieves post-quantum security by relying only on hash function collision resistance (rather than elliptic curve assumptions). We use Poseidon2 for in-circuit hashing due to its efficiency in arithmetic circuits.
     
-    \item \textbf{Privacy-Preserving Withdrawals:} We design a zero-knowledge circuit that proves fund ownership while hiding which specific deposit is being spent, providing unlinkability guarantees.
+    \item \textbf{Recursive Proof Aggregation:} We develop a multi-layer aggregation scheme that batches thousands of withdrawals into a single on-chain proof verification. This addresses a key limitation of per-withdrawal proofs and is essential for practical throughput. Our design includes careful handling of dummy proofs to preserve privacy at the aggregation layer.
     
-    \item \textbf{Recursive Proof Aggregation:} We develop a multi-layer aggregation scheme that batches thousands of withdrawals into a single on-chain proof verification, with careful handling of dummy proofs to preserve privacy.
+    \item \textbf{Two-Output Transaction Model:} We extend the single-output model with Bitcoin-style two-output transactions (spend + change), enabling partial withdrawals and reducing on-chain fingerprinting.
     
-    \item \textbf{Formal Security Analysis:} We provide rigorous security definitions and proofs for double-spend resistance, unspendability, and privacy against balance-linking attacks.
+    \item \textbf{Formal Security Analysis:} We provide rigorous security definitions and proofs for double-spend resistance, unspendability, and privacy against balance-linking attacks, formalizing properties implicit in EIP-7503.
     
-    \item \textbf{Production Implementation:} We implement and deploy the system on the Quantus Network using Plonky2~\cite{plonky2}, achieving post-quantum security without trusted setup.
+    \item \textbf{Privacy Score Heuristic:} We develop a practical metric for quantifying anonymity set size, helping users make informed privacy decisions.
+    
+    \item \textbf{ZK-Friendly State Trie:} We develop a felt-aligned variant of Substrate's Merkle-Patricia Trie that enables efficient in-circuit verification of storage proofs, with fixed 8-byte headers and padded data structures.
+    
+    \item \textbf{Production Implementation:} We implement and deploy the complete system on the Quantus Network, demonstrating practical feasibility.
 \end{enumerate}
 
 \subsection{Technical Overview}
@@ -680,6 +684,24 @@ We implement the wormhole protocol in production on the Quantus Network, a Subst
     \item Token minting to exit accounts
 \end{itemize}
 
+\subsection{ZK-Friendly Merkle-Patricia Trie}
+
+A key implementation challenge is verifying Merkle-Patricia Trie (MPT) inclusion proofs inside a ZK circuit. Standard Substrate tries use compact encoding optimized for storage efficiency, with variable-length headers (1--4 bytes) and unaligned data boundaries. This creates significant overhead in ZK circuits, which operate on fixed-size field elements (64-bit in our case).
+
+We developed a \emph{felt-aligned} variant of Substrate's \texttt{sp-trie} with the following modifications:
+
+\begin{itemize}
+    \item \textbf{Fixed 8-byte headers:} Node type and metadata encoded in a fixed 64-bit header, eliminating variable-length parsing.
+    \item \textbf{Padded data sections:} All partial keys, values, and child references padded to 8-byte boundaries.
+    \item \textbf{8-byte length prefixes:} All length fields encoded as little-endian \texttt{u64} instead of compact encoding.
+    \item \textbf{No inlined children:} All child nodes referenced by hash (minimum padded size equals hash size anyway).
+    \item \textbf{8-byte bitmap:} Branch node child bitmap expanded from 2 to 8 bytes.
+\end{itemize}
+
+These modifications enable the ZK circuit to process trie nodes using native field arithmetic without expensive bit-shifting operations. The trade-off is approximately 35\% larger storage proofs, which we consider acceptable given the dramatic reduction in circuit complexity.
+
+The ZK-trie maintains API compatibility with standard \texttt{sp-trie}, allowing drop-in replacement via Cargo's patch mechanism. Block headers commit to the ZK-trie state root using Poseidon2 hashing, ensuring the entire storage proof verification chain uses ZK-friendly primitives.
+
 \subsection{Performance Characteristics}
 
 Table~\ref{tab:perf} summarizes expected performance characteristics. Detailed benchmarks are ongoing.
@@ -741,17 +763,20 @@ Multi-asset support (non-native tokens) and additional aggregation layers are pl
 \section{Related Work}
 \label{sec:related}
 
+\paragraph{Zero-Knowledge Wormholes (EIP-7503).}
+Our work is most directly inspired by EIP-7503~\cite{eip7503}, proposed by Kambakhsh et al.\ for Ethereum. EIP-7503 introduced the elegant concept of \emph{private proof-of-burn}: users deposit to addresses derived as $\mathsf{addr} = \mathsf{sha256}(\mathsf{MAGIC} \| \mathsf{secret})[12:]$, which are provably unspendable since no private key maps to them. Users later mint equivalent tokens by proving knowledge of the secret in zero-knowledge. The key insight is that such deposits are indistinguishable from regular transfers, providing strong plausible deniability. EIP-7503 also incorporates privacy pools~\cite{privacypools} for regulatory compliance. Our work extends EIP-7503 to the post-quantum setting with FRI-based proofs, adds recursive aggregation for scalability, and provides formal security analysis.
+
 \paragraph{Privacy-Preserving Cryptocurrencies.}
-Zcash~\cite{zcash} pioneered practical zero-knowledge transactions using zk-SNARKs, enabling shielded transfers that hide sender, receiver, and amount. However, Zcash relies on pairing-based cryptography vulnerable to quantum attacks and required a trusted setup ceremony. Tornado Cash~\cite{tornadocash} brought privacy to Ethereum via a mixing protocol, but similarly lacks post-quantum security. Our work extends these privacy techniques to the post-quantum setting.
+Zcash~\cite{zcash} pioneered practical zero-knowledge transactions using zk-SNARKs, enabling shielded transfers that hide sender, receiver, and amount. However, Zcash relies on pairing-based cryptography vulnerable to quantum attacks and required a trusted setup ceremony. Tornado Cash~\cite{tornadocash} brought privacy to Ethereum via a mixing protocol, but similarly lacks post-quantum security and requires explicit smart contract interaction (unlike the wormhole approach).
 
 \paragraph{Post-Quantum Blockchain Signatures.}
 The NIST post-quantum standardization~\cite{mldsa} selected ML-DSA (Dilithium)~\cite{dilithium} for digital signatures. Direct adoption in blockchains faces scalability challenges due to large key and signature sizes. Hash-based signatures (SPHINCS+) offer smaller keys but even larger signatures. Our approach sidesteps these limitations by moving signature verification off-chain entirely.
 
 \paragraph{ZK-Based Signature Compression.}
-Ziggy~\cite{ziggy} from StarkWare proposes using STARKs to verify post-quantum signatures off-chain, similar in spirit to our approach. The key difference is that Ziggy compresses \emph{existing} signature verification, while wormhole addresses eliminate signatures entirely via the unspendable address construction. EIP-7503~\cite{eip7503} proposed ``zero-knowledge wormholes'' for Ethereum, introducing the proof-of-burn concept we build upon. Our work extends this with formal security analysis, recursive aggregation, and privacy score quantification.
+Ziggy~\cite{ziggy} from StarkWare proposes using STARKs to verify post-quantum signatures off-chain. The key difference from our approach is that Ziggy compresses \emph{existing} signature verification, while wormhole addresses eliminate signatures entirely via the unspendable address construction.
 
 \paragraph{Recursive SNARKs.}
-Recursive proof composition was introduced in theoretical work and made practical by systems like Halo~\cite{plonky2} and Plonky2. We leverage Plonky2's efficient recursion for proof aggregation. Unlike pairing-based recursive SNARKs, Plonky2's FRI-based approach~\cite{fri,stark} provides post-quantum security without trusted setup.
+Recursive proof composition was introduced in theoretical work and made practical by systems like Halo and Plonky2~\cite{plonky2}. We leverage Plonky2's efficient recursion for proof aggregation. Unlike pairing-based recursive SNARKs, Plonky2's FRI-based approach~\cite{fri,stark} provides post-quantum security without trusted setup.
 
 \paragraph{Anonymity Set Analysis.}
 Our privacy score draws inspiration from anonymity metrics in mix networks and differential privacy. The CLT-based subset-sum approximation relates to lattice cryptography techniques for analyzing noisy subset-sum problems. Similar heuristics appear in Tornado Cash anonymity mining and Zcash shielded pool analysis.

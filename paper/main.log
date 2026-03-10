@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.3.10)  10 MAR 2026 14:19
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.3.10)  10 MAR 2026 14:43
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -473,47 +473,51 @@ LaTeX Font Info:    Trying to load font information for U+msb on input line 26.
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/amsfonts/umsb.fd
 File: umsb.fd 2013/01/14 v3.01 AMS symbols B
-)
-Overfull \hbox (14.81668pt too wide) in paragraph at lines 44--45
-[]\OT1/cmr/bx/n/10.95 Wormhole Ad-dress Con-struc-tion: \OT1/cmr/m/n/10.95 We i
-n-tro-duce a double-hashing con-struc-tion $\OMS/cmsy/m/n/10.95 H\OT1/cmr/m/n/1
-0.95 (\OMS/cmsy/m/n/10.95 H\OT1/cmr/m/n/10.95 ([]\OMS/cmsy/m/n/10.95 k\OML/cmm/
-m/it/10.95 s\OT1/cmr/m/n/10.95 ))$
- []
-
-[1
+) [1
 
 {/usr/local/texlive/2026basic/texmf-var/fonts/map/pdftex/updmap/pdftex.map}]
+Overfull \hbox (9.08174pt too wide) in paragraph at lines 44--45
+[]\OT1/cmr/bx/n/10.95 Post-Quantum Proof Sys-tem: \OT1/cmr/m/n/10.95 We in-stan
+-ti-ate the worm-hole con-struc-tion us-ing Plonky2 [[]],
+ []
+
 [2] [3{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/cm-super/cm-supe
 r-ts1.enc}] [4] [5] [6]
 Package hyperref Info: bookmark level for unknown algorithm defaults to 0 on in
-put line 305.
- [7] [8] [9] [10] [11] [12] [13] [14]
+put line 309.
+ [7] [8] [9] [10] [11] [12]
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+[13] [14]
 
 LaTeX Warning: `h' float specifier changed to `ht'.
 
 
-Overfull \hbox (0.72751pt too wide) in paragraph at lines 727--728
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+
+Overfull \hbox (0.72751pt too wide) in paragraph at lines 749--750
 []\OT1/cmr/m/n/10.95 With two-layer ag-gre-ga-tion (256 with-drawals per on-cha
 in proof), worm-hole trans-ac-tions achieve
  []
 
-[15] [16] (./main.bbl [17]) [18] (./main.aux)
+[15] [16] [17] (./main.bbl [18]) [19] (./main.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
  ***********
 Package rerunfilecheck Info: File `main.out' has not changed.
-(rerunfilecheck)             Checksum: 67DDD202B17BFC04E5A8FD6B6D1A6F92;7080.
+(rerunfilecheck)             Checksum: BDB5F4ABAF5A84EABA96572E07D35869;7304.
  ) 
 Here is how much of TeX's memory you used:
- 11771 strings out of 469006
- 178314 string characters out of 5454813
- 607009 words of memory out of 5000000
- 40161 multiletter control sequences out of 15000+600000
+ 11780 strings out of 469006
+ 178415 string characters out of 5454813
+ 602044 words of memory out of 5000000
+ 40164 multiletter control sequences out of 15000+600000
  641468 words of font info for 91 fonts, out of 8000000 for 9000
  319 hyphenation exceptions out of 8191
- 75i,10n,79p,1227b,604s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,10n,79p,1227b,596s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx1
 0.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/cm/c
 mbx12.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/
@@ -535,10 +539,10 @@ basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmti10.pfb></usr/local/texlive/
 2026basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt10.pfb></usr/local/texl
 ive/2026basic/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb></usr/l
 ocal/texlive/2026basic/texmf-dist/fonts/type1/public/cm-super/sfrm1095.pfb>
-Output written on main.pdf (18 pages, 320108 bytes).
+Output written on main.pdf (19 pages, 325160 bytes).
 PDF statistics:
- 527 PDF objects out of 1000 (max. 8388607)
- 462 compressed objects within 5 object streams
- 149 named destinations out of 1000 (max. 500000)
- 361 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 542 PDF objects out of 1000 (max. 8388607)
+ 476 compressed objects within 5 object streams
+ 155 named destinations out of 1000 (max. 500000)
+ 369 words of extra memory for PDF output out of 10000 (max. 10000000)
 

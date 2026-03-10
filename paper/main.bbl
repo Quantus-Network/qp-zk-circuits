@@ -11,10 +11,12 @@ Eli Ben-Sasson, Iddo Bentov, Yinon Horesh, and Michael Riabzev.
   integrity.
 \newblock Cryptology ePrint Archive, 2018.
 
-\bibitem{eip7503}
-Ethereum Community.
-\newblock Eip-7503: Zero-knowledge wormholes.
-\newblock \url{https://eips.ethereum.org/EIPS/eip-7503}, 2023.
+\bibitem{privacypools}
+Vitalik Buterin, Jacob Illum, Matthias Nadler, Fabian Sch{\"a}r, and Ameen
+  Soleimani.
+\newblock Blockchain privacy and regulatory compliance: Towards a practical
+  equilibrium.
+\newblock SSRN, 2023.
 
 \bibitem{dilithium}
 L{\'e}o Ducas, Eike Kiltz, Tancr{\`e}de Lepoint, Vadim Lyubashevsky, Peter
@@ -31,6 +33,12 @@ Lorenzo Grassi, Dmitry Khovratovich, and Markus Schofnegger.
 Daira Hopwood, Sean Bowe, Taylor Hornby, and Nathan Wilcox.
 \newblock Zcash protocol specification.
 \newblock \url{https://zips.z.cash/protocol/protocol.pdf}, 2023.
+
+\bibitem{eip7503}
+Keyvan Kambakhsh, Hamid Bateni, Amir Kahoori, and {Nobitex Labs}.
+\newblock Eip-7503: Zero-knowledge wormholes.
+\newblock \url{https://eips.ethereum.org/EIPS/eip-7503}, 2023.
+\newblock Ethereum Improvement Proposal.
 
 \bibitem{mldsa}
 NIST.
