@@ -10,18 +10,17 @@ clap = { version = "4.5", features = ["derive"] }
 hex = { workspace = true, features = ["alloc"] }
 parity-scale-codec = "3.7.5"
 qp-plonky2 = { workspace = true, features = ["default"] }
-qp-poseidon = { version = "1.0.7", features = ["default"] }
-qp-poseidon-core = { version = "1.0.7", default-features = false, features = [
+qp-poseidon = { version = "1.1.0", features = ["default"] }
+qp-poseidon-core = { version = "1.1.0", default-features = false, features = [
 	"p3",
 ] }
 qp-wormhole-inputs = { version = "1.0.7", path = "../inputs" }
-quantus-cli = { git = "https://github.com/Quantus-Network/quantus-cli", branch = "feat/updated-metadata", default-features = false }
+quantus-cli = { git = "https://github.com/Quantus-Network/quantus-cli", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["alloc"] }
-sp-core = "38.1.0"
-sp-runtime = "44.0.0"
+sp-core = "39.0.0"
 sp-trie = { git = "https://github.com/Quantus-Network/chain.git", default-features = false, features = ["std"] }
-subxt = "0.43.0"
+subxt = "0.44.2"
 tokio = "1.48.0"
 wormhole-aggregator = { package = "qp-wormhole-aggregator", version = "1.0.7", path = "../aggregator", default-features = false, features = [
 	"multithread",

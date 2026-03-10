@@ -12,7 +12,7 @@ use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_poseidon::PoseidonHasher;
 use qp_wormhole_inputs::{AggregatedPublicCircuitInputs, PublicCircuitInputs};
 use quantus_cli::chain::quantus_subxt::api as quantus_node;
-use quantus_cli::chain::quantus_subxt::api::runtime_types::pallet_wormhole::pallet::Call as WormholeCall;
+use quantus_cli::chain::quantus_subxt::api::runtime_types::pallet_balances::pallet::Call as BalancesCall;
 use quantus_cli::chain::quantus_subxt::api::runtime_types::quantus_runtime::RuntimeCall;
 use quantus_cli::chain::quantus_subxt::api::wormhole;
 use quantus_cli::cli::common::{submit_transaction, ExecutionMode};
@@ -421,9 +421,9 @@ async fn perform_batched_transfers(
         );
 
         // Create transfer call
-        let call = RuntimeCall::Wormhole(WormholeCall::transfer_native {
+        let call = RuntimeCall::Balances(BalancesCall::transfer_allow_death {
             dest: subxt::ext::subxt_core::utils::MultiAddress::Id(unspendable_account_id.clone()),
-            amount: funding_amount,
+            value: funding_amount,
         });
 
         secrets.push(secret);
@@ -609,10 +609,10 @@ async fn perform_transfer_and_get_inputs(
     println!("\n=== Transfer {} ===", proof_index + 1);
     println!("Unspendable account: {:?}", &unspendable_account_id);
 
-    // Make the transfer TO the unspendable account using wormhole pallet
+    // Make the transfer TO the unspendable account using balances pallet
     let transfer_tx = quantus_cli::chain::quantus_subxt::api::tx()
-        .wormhole()
-        .transfer_native(
+        .balances()
+        .transfer_allow_death(
             subxt::ext::subxt_core::utils::MultiAddress::Id(unspendable_account_id.clone()),
             funding_amount,
         );
