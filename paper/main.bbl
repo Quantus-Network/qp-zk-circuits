@@ -1,0 +1,66 @@
+\begin{thebibliography}{10}
+
+\bibitem{fri}
+Eli Ben-Sasson, Iddo Bentov, Yinon Horesh, and Michael Riabzev.
+\newblock Fast reed-solomon interactive oracle proofs of proximity.
+\newblock ICALP, 2018.
+
+\bibitem{stark}
+Eli Ben-Sasson, Iddo Bentov, Yinon Horesh, and Michael Riabzev.
+\newblock Scalable, transparent, and post-quantum secure computational
+  integrity.
+\newblock Cryptology ePrint Archive, 2018.
+
+\bibitem{eip7503}
+Ethereum Community.
+\newblock Eip-7503: Zero-knowledge wormholes.
+\newblock \url{https://eips.ethereum.org/EIPS/eip-7503}, 2023.
+
+\bibitem{dilithium}
+L{\'e}o Ducas, Eike Kiltz, Tancr{\`e}de Lepoint, Vadim Lyubashevsky, Peter
+  Schwabe, Gregor Seiler, and Damien Stehl{\'e}.
+\newblock Crystals-dilithium: A lattice-based digital signature scheme.
+\newblock TCHES, 2018.
+
+\bibitem{poseidon2}
+Lorenzo Grassi, Dmitry Khovratovich, and Markus Schofnegger.
+\newblock Poseidon2: A faster version of the poseidon hash function.
+\newblock Cryptology ePrint Archive, Report 2023/323, 2023.
+
+\bibitem{zcash}
+Daira Hopwood, Sean Bowe, Taylor Hornby, and Nathan Wilcox.
+\newblock Zcash protocol specification.
+\newblock \url{https://zips.z.cash/protocol/protocol.pdf}, 2023.
+
+\bibitem{mldsa}
+NIST.
+\newblock Module-lattice-based digital signature standard (fips 204).
+\newblock \url{https://csrc.nist.gov/pubs/fips/204/final}, 2024.
+
+\bibitem{tornadocash}
+Alexey Pertsev, Roman Semenov, and Roman Storm.
+\newblock Tornado cash privacy solution.
+\newblock \url{https://tornado.cash}, 2019.
+
+\bibitem{shor}
+Peter~W. Shor.
+\newblock Polynomial-time algorithms for prime factorization and discrete
+  logarithms on a quantum computer.
+\newblock {\em SIAM Journal on Computing}, 26(5):1484--1509, 1997.
+
+\bibitem{ziggy}
+StarkWare.
+\newblock Ziggy: Post-quantum signatures from starks.
+\newblock \url{https://starkware.co/}, 2024.
+
+\bibitem{plonky2}
+Polygon~Zero Team.
+\newblock Plonky2: Fast recursive arguments with plonk and fri.
+\newblock \url{https://github.com/0xPolygonZero/plonky2}, 2022.
+
+\bibitem{substrate}
+Parity Technologies.
+\newblock Substrate: The blockchain framework for a multichain future.
+\newblock \url{https://substrate.io/}, 2023.
+
+\end{thebibliography}
