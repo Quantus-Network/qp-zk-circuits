@@ -25,12 +25,12 @@
 \maketitle
 
 \begin{abstract}
-The transition to post-quantum cryptography presents a significant scalability challenge for blockchain systems. Post-quantum signature schemes such as ML-DSA (Dilithium) require public keys and signatures that are 50--100$\times$ larger than their elliptic curve counterparts, severely limiting transaction throughput. We introduce \emph{wormhole addresses}, a novel construction that combines provably unspendable addresses with recursive zero-knowledge proofs to enable scalable, privacy-preserving transactions without revealing large post-quantum signatures on-chain. Our protocol leverages Plonky2, a FRI-based proof system requiring no trusted setup, to achieve post-quantum security while enabling recursive proof aggregation. We demonstrate that wormhole transactions can achieve over 60$\times$ throughput improvement compared to naive post-quantum signature verification, while simultaneously providing unlinkability guarantees similar to mixing protocols. We provide formal security definitions and proofs for double-spend resistance, unspendability, and transaction privacy. The system is implemented and deployed on the Quantus Network, a production blockchain.
+The transition to post-quantum cryptography presents a significant scalability challenge for blockchain systems. Post-quantum signature schemes require public keys and signatures that are 50--100$\times$ larger than their elliptic curve counterparts, severely limiting transaction throughput. We extend prior work on \emph{wormhole addresses}, introducing a novel construction that combines provably unspendable addresses with recursive zero-knowledge proofs to enable scalable, privacy-preserving transactions without revealing large post-quantum signatures on-chain. Our protocol leverages Plonky2, a FRI-based proof system requiring no trusted setup, to achieve post-quantum security while enabling recursive proof aggregation. We demonstrate that wormhole transactions can achieve over 60$\times$ throughput improvement compared to naive post-quantum signature verification, while simultaneously providing unlinkability guarantees similar to mixing protocols. We provide formal security definitions and proofs for double-spend resistance, unspendability, and transaction privacy. The system is implemented and deployed on the Quantus Network, a blockchain currently on testnet.
 \end{abstract}
 
 \section{Introduction}
 
-The emergence of practical quantum computers poses an existential threat to the cryptographic foundations of modern blockchain systems. Elliptic curve cryptography, which underpins the security of Bitcoin, Ethereum, and virtually all major cryptocurrencies, is vulnerable to Shor's algorithm~\cite{shor}. In response, the cryptographic community has developed post-quantum signature schemes, with NIST standardizing ML-DSA (formerly CRYSTALS-Dilithium)~\cite{mldsa} as the primary replacement for classical signatures.
+The emergence of practical quantum computers poses an existential threat to the cryptographic foundations of modern blockchain systems. Elliptic curve cryptography, which underpins the security of Bitcoin, Ethereum, and virtually all major cryptocurrencies, is vulnerable to Shor's algorithm~\cite{shor}. In response, the cryptographic community has developed post-quantum signature schemes, with NIST standardizing ML-DSA (formerly CRYSTALS-Dilithium)~\cite{mldsa} as one of the primary replacements for classical signatures.
 
 However, the transition to post-quantum cryptography introduces a severe scalability problem. While Ed25519 signatures require only 64 bytes with 32-byte public keys, ML-DSA-87 (the highest security level) requires 4,627-byte signatures with 2,592-byte public keys---a combined overhead increase of nearly 75$\times$. For a blockchain with 5MB blocks, this reduces maximum throughput from tens of thousands of transactions per block to fewer than 700.
 
@@ -45,7 +45,7 @@ We extend the EIP-7503 paradigm to address two critical challenges: \emph{post-q
     
     \item \textbf{Recursive Proof Aggregation:} We develop a multi-layer aggregation scheme that batches thousands of withdrawals into a single on-chain proof verification. This addresses a key limitation of per-withdrawal proofs and is essential for practical throughput. Our design includes careful handling of dummy proofs to preserve privacy at the aggregation layer.
     
-    \item \textbf{Two-Output Transaction Model:} We extend the single-output model with Bitcoin-style two-output transactions (spend + change), enabling partial withdrawals and reducing on-chain fingerprinting.
+    \item \textbf{Two-Output Transaction Model:} We extend the single-output model with Bitcoin-style two-output transactions (spend + change), enabling partial withdrawals.
     
     \item \textbf{Formal Security Analysis:} We provide rigorous security definitions and proofs for double-spend resistance, unspendability, and privacy against balance-linking attacks, formalizing properties implicit in EIP-7503.
     
@@ -518,31 +518,24 @@ The balance-linking advantage of adversary $\mathcal{A}$ is:
 \[
 \mathsf{Adv}^{\mathsf{link}}_\mathcal{A} = \left| \Pr[\mathcal{A} \text{ correctly links withdrawal to deposit}] - \frac{1}{|\mathsf{Candidates}|} \right|
 \]
-where $\mathsf{Candidates}$ is the set of deposits that could have funded the withdrawal.
+where $\mathsf{Candidates}$ is the set of deposit subsets that could have funded the withdrawal.
 \end{definition}
 
-\begin{theorem}[Privacy Under Aggregation]
-\label{thm:privacy}
-For a batch of $k$ withdrawals with $d$ dummy proofs, the balance-linking advantage is bounded by:
+\paragraph{Privacy Analysis.}
+Balance-linking reduces to a \emph{fuzzy knapsack problem}. Given observed output sum $V$ and fee rate $f$, the adversary seeks deposit subsets $S$ satisfying:
 \[
-\mathsf{Adv}^{\mathsf{link}}_\mathcal{A} \leq \frac{1}{\binom{|\mathcal{D}|}{k-d}}
+V \leq \sum_{d \in S} d \cdot (1 - f)
 \]
-where $\mathcal{D}$ is the set of deposits with compatible amounts.
-\end{theorem}
-
-\begin{proof}[Proof sketch]
-The adversary observes: (1) total batch output amounts, (2) nullifiers (unlinkable to deposits), (3) exit accounts. The adversary does not observe which proofs are dummies or the input amounts.
-
-For a batch output of total value $V$, the adversary must determine which subset of deposits sums to $V$ (accounting for fees). This is a variant of the subset-sum problem. With $|\mathcal{D}|$ candidate deposits and $k-d$ real proofs, there are $\binom{|\mathcal{D}|}{k-d}$ possible subsets.
-
-Additional privacy comes from:
+This is an inequality (not equality) because users may forfeit small amounts to fees or intentionally withdraw less than their full balance. Additionally:
 \begin{itemize}
-    \item \textbf{Amount quantization:} Reduces distinguishing information.
-    \item \textbf{Two-output splitting:} Each proof can split amounts arbitrarily.
-    \item \textbf{Exit deduplication:} Duplicate exit accounts are summed, hiding individual contributions.
-    \item \textbf{Dummy shuffling:} Real proof positions are randomized within the batch.
+    \item Deposits larger than $V / (1-f)$ can be excluded from consideration, reducing the candidate set $\mathcal{D}$.
+    \item Amount quantization (to 0.01 units) introduces ambiguity: deposits differing by less than one quantum are indistinguishable in their contribution to outputs.
+    \item The adversary observes the number of non-zero exit slots $m$ but not the number of real proofs. They can only establish a lower bound of $\lceil m/2 \rceil$ real proofs (since each proof produces at most two outputs), and must consider all subset sizes up to the batch capacity $k$.
 \end{itemize}
-\end{proof}
+
+The effective anonymity set consists of all deposit subsets $S \subseteq \mathcal{D}$ where $|S| \in [\lceil m/2 \rceil, k]$ and the subset sum (after fees) falls within a quantization window of the observed output. The two-output model further increases ambiguity, as each proof can split its input arbitrarily between outputs, and duplicate exit accounts are summed (hiding individual contributions).
+
+We note that a precise closed-form bound is difficult to state due to the inequality constraint and quantization effects. In practice, the privacy score heuristic (Section~\ref{sec:privacy}) provides a concrete estimate of anonymity set size for specific withdrawal parameters.
 
 \subsection{Dummy Proof Indistinguishability}
 
@@ -560,14 +553,14 @@ Dummy proofs use sentinel values: $h_B = \mathbf{0}$ and $v_1 = v_2 = 0$. After 
     \item Duplicate exit accounts are zeroed, matching dummy format.
 \end{enumerate}
 
-The aggregated public inputs do not reveal which of the $N$ constituent proofs were dummies. By zero-knowledge, the proof itself reveals nothing beyond the public inputs.
+The aggregated public inputs do not reveal which or how many of the $N$ constituent proofs were dummies. By zero-knowledge, the proof itself reveals nothing beyond the public inputs.
 \end{proof}
 
 \subsection{Attack Mitigations}
 
 \paragraph{Timing Correlation:} Users should introduce random delays between deposits and withdrawals, and withdraw to fresh addresses.
 
-\paragraph{Amount Fingerprinting:} The two-output model and quantization reduce unique amount patterns. Users can sacrifice precision for privacy by withdrawing round amounts.
+\paragraph{Amount Fingerprinting:} Quantization reduces unique amount patterns. Additionally, users can sacrifice coins for privacy by withdrawing less than the maximum amounts.
 
 \paragraph{Graph Analysis:} Exit account reuse is discouraged. The system supports HD-wallet-style address derivation for fresh exit addresses per withdrawal.
 
@@ -727,18 +720,18 @@ Multi-asset support (non-native tokens) and additional aggregation layers are pl
 Our work is most directly inspired by EIP-7503~\cite{eip7503}, proposed by Kambakhsh et al.\ for Ethereum. EIP-7503 introduced the elegant concept of \emph{private proof-of-burn}: users deposit to addresses derived as $\mathsf{addr} = \mathsf{sha256}(\mathsf{MAGIC} \| \mathsf{secret})[12:]$, which are provably unspendable since no private key maps to them. Users later mint equivalent tokens by proving knowledge of the secret in zero-knowledge. The key insight is that such deposits are indistinguishable from regular transfers, providing strong plausible deniability. EIP-7503 also incorporates privacy pools~\cite{privacypools} for regulatory compliance. Our work extends EIP-7503 to the post-quantum setting with FRI-based proofs, adds recursive aggregation for scalability, and provides formal security analysis.
 
 \paragraph{Privacy-Preserving Cryptocurrencies.}
-Zcash~\cite{zcash} pioneered practical zero-knowledge transactions using zk-SNARKs, enabling shielded transfers that hide sender, receiver, and amount. However, Zcash relies on pairing-based cryptography vulnerable to quantum attacks and required a trusted setup ceremony. Tornado Cash~\cite{tornadocash} brought privacy to Ethereum via a mixing protocol, but similarly lacks post-quantum security and requires explicit smart contract interaction (unlike the wormhole approach).
+Zcash~\cite{zcash} pioneered practical zero-knowledge transactions using zk-SNARKs, enabling shielded transfers that hide sender, receiver, and amount. However, Zcash relies on pairing-based cryptography vulnerable to quantum attacks and originally required a trusted setup ceremony. Tornado Cash~\cite{tornadocash} brought privacy to Ethereum via a mixing protocol, but similarly lacks post-quantum security and requires explicit smart contract interaction (unlike the wormhole approach).
 
 A significant practical limitation of both Zcash and Monero is \emph{client-side scanning}: because transactions are encrypted, recipients must download and trial-decrypt every transaction on the network to discover payments intended for them. This creates substantial bandwidth and computational overhead that scales linearly with network activity, making lightweight clients impractical. In contrast, wormhole deposits are to addresses the recipient already knows (derived from their secret), so standard blockchain indexing identifies relevant deposits without trial decryption. Recipients need only monitor their known wormhole addresses, enabling efficient light clients and better scaling as network usage grows.
 
 \paragraph{Post-Quantum Blockchain Signatures.}
-The NIST post-quantum standardization~\cite{mldsa} selected ML-DSA (Dilithium)~\cite{dilithium} for digital signatures. Direct adoption in blockchains faces scalability challenges due to large key and signature sizes. Hash-based signatures (SPHINCS+) offer smaller keys but even larger signatures. Our approach sidesteps these limitations by moving signature verification off-chain entirely.
+The NIST post-quantum standardization~\cite{mldsa} selected ML-DSA (Dilithium)~\cite{dilithium} for digital signatures. Direct adoption in blockchains faces scalability challenges due to large key and signature sizes. Hash-based signatures (SPHINCS+) offer smaller keys but even larger signatures. Our approach sidesteps these limitations by moving ownership validation off-chain entirely.
 
 \paragraph{ZK-Based Signature Compression.}
-Ziggy~\cite{ziggy} from StarkWare proposes using STARKs to verify post-quantum signatures off-chain. The key difference from our approach is that Ziggy compresses \emph{existing} signature verification, while wormhole addresses eliminate signatures entirely via the unspendable address construction.
+Ziggy~\cite{ziggy} from StarkWare proposes using a STARK proof of knowledge-of-hash-preimage as a post-quantum signature. We use this idea to avoid unnecessary complexity like verifying dilithium signatures in a STARK.
 
 \paragraph{Recursive SNARKs.}
-Recursive proof composition was introduced in theoretical work and made practical by systems like Halo and Plonky2~\cite{plonky2}. We leverage Plonky2's efficient recursion for proof aggregation. Unlike pairing-based recursive SNARKs, Plonky2's FRI-based approach~\cite{fri,stark} provides post-quantum security without trusted setup.
+Recursive proof composition was introduced in theoretical work and made practical by systems like Halo~\cite{halo} and Plonky2~\cite{plonky2}. We leverage Plonky2's efficient recursion for proof aggregation. Unlike pairing-based recursive SNARKs, Plonky2's FRI-based approach~\cite{fri,stark} provides post-quantum security without trusted setup.
 
 \paragraph{Anonymity Set Analysis.}
 Our privacy score draws inspiration from anonymity metrics in mix networks and differential privacy. The CLT-based subset-sum approximation relates to lattice cryptography techniques for analyzing noisy subset-sum problems. Similar heuristics appear in Tornado Cash anonymity mining and Zcash shielded pool analysis.

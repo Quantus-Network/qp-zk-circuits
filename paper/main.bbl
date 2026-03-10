@@ -11,6 +11,11 @@ Eli Ben-Sasson, Iddo Bentov, Yinon Horesh, and Michael Riabzev.
   integrity.
 \newblock Cryptology ePrint Archive, 2018.
 
+\bibitem{halo}
+Sean Bowe, Jack Grigg, and Daira Hopwood.
+\newblock Recursive proof composition without a trusted setup.
+\newblock Cryptology ePrint Archive, Report 2019/1021, 2019.
+
 \bibitem{privacypools}
 Vitalik Buterin, Jacob Illum, Matthias Nadler, Fabian Sch{\"a}r, and Ameen
   Soleimani.
