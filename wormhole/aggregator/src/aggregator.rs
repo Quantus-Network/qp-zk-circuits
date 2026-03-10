@@ -88,8 +88,6 @@ fn load_verifier_from_bins(
     common_file: &str,
     verifier_file: &str,
 ) -> Result<VerifierCircuitData<F, C, D>> {
-    verify_hashes(bins_dir)?;
-
     let gate_serializer = DefaultGateSerializer;
 
     let common_bytes = fs::read(bins_dir.join(common_file))
@@ -212,7 +210,8 @@ impl AggregationBackend for Layer1Aggregator {
             .drain_exact(cap)
             .with_context(|| "No dummy padding for layer-1: need a full batch of layer-0 proofs")?;
 
-        let prover = Layer1AggregationProver::new_from_binaries_dir(&self.bins_dir)
+        // Load the layer-1 prover, skipping hash verification since it was already done in the aggregator constructor.
+        let prover = Layer1AggregationProver::new_from_binaries_dir(&self.bins_dir, false)
             .context("failed to load prebuilt layer-1 prover")?;
 
         let prover = prover
@@ -265,7 +264,8 @@ impl Layer0Aggregator {
     }
 
     fn build_prover(&self) -> Result<Layer0AggregationProver> {
-        Layer0AggregationProver::new_from_binaries_dir(&self.bins_dir)
+        // We don't have to verify hashes again here since the aggregation backend constructor already verifies them.
+        Layer0AggregationProver::new_from_binaries_dir(&self.bins_dir, false)
             .context("failed to load prebuilt layer-0 prover from binaries dir")
     }
 

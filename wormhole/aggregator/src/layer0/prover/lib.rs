@@ -214,6 +214,8 @@ impl Layer0AggregationProver {
     }
 
     /// Convenience constructor that loads everything from a generated binaries directory.
+    /// We pass the `verify` flag to optionally verify binary integrity using the hashes in `config.json`.
+    /// We expose this option because while integrity verification is critical in production, it can add overhead during development when binaries are frequently rebuilt.
     ///
     /// Expected files:
     /// - `aggregated_prover.bin`
@@ -221,15 +223,15 @@ impl Layer0AggregationProver {
     /// - `common.bin`
     /// - `verifier.bin`
     /// - `dummy_proof.bin`
-    /// - `config.json` (hashes are verified before loading)
+    /// - `config.json`
     ///
-    /// If `config.json` exists, binary hashes are verified before loading.
     #[cfg(feature = "std")]
-    pub fn new_from_binaries_dir(bins_dir: &Path) -> Result<Self> {
-        // Optional integrity verification (if your existing config is present)
+    pub fn new_from_binaries_dir(bins_dir: &Path, verify: bool) -> Result<Self> {
         let bins_config = crate::config::CircuitBinsConfig::load(bins_dir)
             .expect("Failed to load config.json for circuit binary integrity verification");
-        bins_config.verify_hashes(bins_dir)?;
+        if verify {
+            bins_config.verify_hashes(bins_dir)?;
+        }
         let num_leaf_proofs = bins_config.num_leaf_proofs;
 
         Self::new_from_files(
