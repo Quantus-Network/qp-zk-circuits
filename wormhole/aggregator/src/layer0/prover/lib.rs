@@ -262,7 +262,7 @@ impl Layer0AggregationProver {
     /// This performs:
     /// 1. Padding with dummy proofs
     /// 2. Shuffle (while keeping a real proof in slot 0 if any real proof exists)
-    /// 3. Dummy nullifier generation (used only for dummy slots in-circuit)
+    /// 3. Dummy nullifier preimage generation (hashed only for dummy slots in-circuit)
     /// 4. Witness filling
     ///
     /// # Errors
@@ -300,9 +300,10 @@ impl Layer0AggregationProver {
         // Shuffle proofs to hide dummy positions while preserving a real proof in slot 0 (if any)
         shuffle_proofs_preserving_first_real_layer0(&mut proofs);
 
-        // Generate one dummy nullifier per slot.
-        // In-circuit selects these only for dummy proofs.
-        let dummy_nullifiers = generate_dummy_nullifiers_for_slots(proofs.len());
+        // Generate one dummy nullifier preimage per slot.
+        // In-circuit hashes these only for dummy proofs.
+        let dummy_nullifier_pre_images =
+            generate_dummy_nullifier_pre_images_for_slots(proofs.len());
 
         // Fill witness
         fill_layer0_aggregation_witness(
@@ -310,7 +311,7 @@ impl Layer0AggregationProver {
             &targets,
             &self.leaf_verifier_only,
             &proofs,
-            &dummy_nullifiers,
+            &dummy_nullifier_pre_images,
         )?;
 
         Ok(self)
@@ -392,11 +393,11 @@ fn assert_dummy_padding_asset_id_compatible(
     Ok(())
 }
 
-/// Generate a dummy nullifier for every slot.
+/// Generate a dummy nullifier preimage for every slot.
 ///
-/// The layer-0 circuit only uses these for dummy slots (`block_hash == 0`) and ignores them
+/// The layer-0 circuit hashes these for dummy slots (`block_hash == 0`) and ignores them
 /// for real slots via conditional select.
-fn generate_dummy_nullifiers_for_slots(n_slots: usize) -> Vec<[F; 4]> {
+fn generate_dummy_nullifier_pre_images_for_slots(n_slots: usize) -> Vec<[F; 4]> {
     (0..n_slots)
         .map(|_| digest_bytes_to_felts(generate_random_nullifier()))
         .collect()

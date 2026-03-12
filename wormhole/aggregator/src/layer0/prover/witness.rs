@@ -18,20 +18,20 @@ use crate::layer0::circuit::circuit_logic::AggregationCircuitTargets;
 /// It sets:
 /// - the leaf verifier target (`add_virtual_verifier_data`)
 /// - all leaf proof targets (`add_virtual_proof_with_pis`)
-/// - all dummy nullifier targets (used only for dummy slots in-circuit)
+/// - all dummy nullifier preimage targets (hashed only for dummy slots in-circuit)
 ///
 /// # Arguments
 /// * `pw` - Partial witness to fill
 /// * `targets` - Runtime targets reconstructed from circuit
 /// * `leaf_verifier_only` - Verifier data for the leaf wormhole circuit
 /// * `proofs` - Exactly N leaf proofs (already padded/shuffled by the prover)
-/// * `dummy_nullifiers` - Exactly N dummy nullifiers (one per slot)
+/// * `dummy_nullifier_pre_images` - Exactly N dummy nullifier preimages (one per slot)
 pub fn fill_layer0_aggregation_witness(
     pw: &mut PartialWitness<F>,
     targets: &AggregationCircuitTargets,
     leaf_verifier_only: &VerifierOnlyCircuitData<C, D>,
     proofs: &[ProofWithPublicInputs<F, C, D>],
-    dummy_nullifiers: &[[F; 4]],
+    dummy_nullifier_pre_images: &[[F; 4]],
 ) -> Result<()> {
     let n_targets = targets.leaf_proofs.len();
 
@@ -43,18 +43,18 @@ pub fn fill_layer0_aggregation_witness(
         );
     }
 
-    if targets.dummy_nullifiers.len() != n_targets {
+    if targets.dummy_nullifier_pre_images.len() != n_targets {
         bail!(
-            "target layout is inconsistent: dummy_nullifier target count {} != leaf proof target count {}",
-            targets.dummy_nullifiers.len(),
+            "target layout is inconsistent: dummy_nullifier_pre_image target count {} != leaf proof target count {}",
+            targets.dummy_nullifier_pre_images.len(),
             n_targets
         );
     }
 
-    if dummy_nullifiers.len() != n_targets {
+    if dummy_nullifier_pre_images.len() != n_targets {
         bail!(
-            "dummy nullifier count mismatch: got {}, but circuit expects {}",
-            dummy_nullifiers.len(),
+            "dummy nullifier preimage count mismatch: got {}, but circuit expects {}",
+            dummy_nullifier_pre_images.len(),
             n_targets
         );
     }
@@ -69,18 +69,18 @@ pub fn fill_layer0_aggregation_witness(
             .map_err(|e| anyhow!("failed to set leaf proof target at slot {}: {}", i, e))?;
     }
 
-    // Fill dummy nullifier targets (the circuit conditionally selects these for dummy proofs)
+    // Fill dummy nullifier preimage targets (the circuit hashes these only for dummy proofs)
     for (i, (nullifier_targets, nullifier_vals)) in targets
-        .dummy_nullifiers
+        .dummy_nullifier_pre_images
         .iter()
-        .zip(dummy_nullifiers.iter())
+        .zip(dummy_nullifier_pre_images.iter())
         .enumerate()
     {
         for limb in 0..4 {
             pw.set_target(nullifier_targets[limb], nullifier_vals[limb])
                 .map_err(|e| {
                     anyhow!(
-                        "failed to set dummy nullifier target at slot {}, limb {}: {}",
+                        "failed to set dummy nullifier preimage target at slot {}, limb {}: {}",
                         i,
                         limb,
                         e

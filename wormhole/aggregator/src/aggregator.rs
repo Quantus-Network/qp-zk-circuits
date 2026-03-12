@@ -295,7 +295,7 @@ impl AggregationBackend for Layer0Aggregator {
             bail!("there are no leaf proofs to aggregate");
         }
 
-        // Layer-0 prover commit does padding/shuffling/dummy-nullifier handling,
+        // Layer-0 prover commit does padding/shuffling/dummy-nullifier-preimage handling,
         // so we can pass any non-empty batch.
         let proofs = self.buf.take_all();
 

@@ -5,16 +5,17 @@
 //! - enforce block consistency across real proofs
 //! - enforce asset_id / volume_fee_bps consistency
 //! - dedupe exit accounts and sum output amounts (2 outputs per proof)
-//! - replace dummy nullifiers with externally provided random nullifiers
+//! - replace dummy nullifiers with hashes of externally provided random preimages
 //! - emit fixed-format aggregated public inputs
 //!
 //! The runtime prover fills:
 //! - `leaf_verifier_data`
 //! - `leaf_proofs[i]`
-//! - `dummy_nullifiers[i]`
+//! - `dummy_nullifier_pre_images[i]`
 
 use plonky2::{
     field::types::Field,
+    hash::poseidon2::Poseidon2Hash,
     iop::target::{BoolTarget, Target},
     plonk::{
         circuit_builder::CircuitBuilder,
@@ -44,8 +45,8 @@ pub struct AggregationCircuitTargets {
     pub leaf_verifier_data: VerifierCircuitTarget,
     /// One proof target per leaf slot.
     pub leaf_proofs: Vec<ProofWithPublicInputsTarget<D>>,
-    /// One dummy-nullifier target (4 felts) per leaf slot.
-    pub dummy_nullifiers: Vec<[Target; 4]>,
+    /// One dummy-nullifier preimage target (4 felts) per leaf slot.
+    pub dummy_nullifier_pre_images: Vec<[Target; 4]>,
 }
 
 pub struct Layer0AggregationCircuit {
@@ -77,10 +78,10 @@ impl Layer0AggregationCircuit {
             leaf_proofs.push(pt);
         }
 
-        // Allocate one dummy-nullifier target (4 felts) per slot.
-        let mut dummy_nullifiers = Vec::with_capacity(n_leaf);
+        // Allocate one dummy-nullifier preimage target (4 felts) per slot.
+        let mut dummy_nullifier_pre_images = Vec::with_capacity(n_leaf);
         for _ in 0..n_leaf {
-            dummy_nullifiers.push([
+            dummy_nullifier_pre_images.push([
                 builder.add_virtual_target(),
                 builder.add_virtual_target(),
                 builder.add_virtual_target(),
@@ -91,7 +92,7 @@ impl Layer0AggregationCircuit {
         let targets = AggregationCircuitTargets {
             leaf_verifier_data,
             leaf_proofs,
-            dummy_nullifiers,
+            dummy_nullifier_pre_images,
         };
 
         // Build the wormhole-specific wrapper logic directly in this circuit.
@@ -279,22 +280,22 @@ fn build_layer0_wrapper_constraints(
     }
 
     // =========================================================================
-    // Nullifiers (replace dummies with provided random nullifiers)
+    // Nullifiers (replace dummies with hashes of provided random preimages)
     // =========================================================================
 
     for i in 0..n_leaf {
         let pis_i = leaf_pi_targets[i];
         let real_null_i = limbs4_at_offset::<LEAF_PI_LEN, NULLIFIER_START>(pis_i, 0);
-
-        let dn = targets.dummy_nullifiers[i];
+        let dummy_null_i =
+            hash_dummy_nullifier_pre_image(builder, targets.dummy_nullifier_pre_images[i]);
         let is_dummy_i = is_dummy_flags[i];
 
-        // output = is_dummy ? dummy_nullifier[i] : real_nullifier[i]
+        // output = is_dummy ? hash(dummy_nullifier_pre_image[i]) : real_nullifier[i]
         output_pis.extend_from_slice(&[
-            builder.select(is_dummy_i, dn[0], real_null_i[0]),
-            builder.select(is_dummy_i, dn[1], real_null_i[1]),
-            builder.select(is_dummy_i, dn[2], real_null_i[2]),
-            builder.select(is_dummy_i, dn[3], real_null_i[3]),
+            builder.select(is_dummy_i, dummy_null_i[0], real_null_i[0]),
+            builder.select(is_dummy_i, dummy_null_i[1], real_null_i[1]),
+            builder.select(is_dummy_i, dummy_null_i[2], real_null_i[2]),
+            builder.select(is_dummy_i, dummy_null_i[3], real_null_i[3]),
         ]);
     }
 
@@ -327,6 +328,16 @@ fn build_layer0_wrapper_constraints(
     debug_assert_eq!(aggregated_output::BLOCK_NUMBER_OFFSET, 7);
 }
 
+fn hash_dummy_nullifier_pre_image(
+    builder: &mut CircuitBuilder<F, D>,
+    pre_image: [Target; 4],
+) -> [Target; 4] {
+    let inner_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(pre_image.to_vec());
+    builder
+        .hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(inner_hash.elements.to_vec())
+        .elements
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -334,6 +345,7 @@ mod tests {
     use anyhow::Result;
     use plonky2::field::types::{Field, PrimeField64};
     use plonky2::{
+        hash::poseidon2::Poseidon2Hash,
         iop::{
             target::Target,
             witness::{PartialWitness, WitnessWrite},
@@ -344,6 +356,7 @@ mod tests {
                 CircuitConfig, CircuitData, CommonCircuitData, VerifierCircuitData,
                 VerifierOnlyCircuitData,
             },
+            config::Hasher,
             proof::ProofWithPublicInputs,
         },
     };
@@ -422,14 +435,14 @@ mod tests {
         leaf_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
         leaf_common: CommonCircuitData<F, D>,
         leaf_verifier_only: VerifierOnlyCircuitData<C, D>,
-        dummy_nullifiers: Vec<[F; 4]>,
+        dummy_nullifier_pre_images: Vec<[F; 4]>,
     ) -> Result<(ProofWithPublicInputs<F, C, D>, VerifierCircuitData<F, C, D>)> {
         let n_leaf = leaf_proofs.len();
         assert!(n_leaf > 0, "need at least one leaf proof");
         assert_eq!(
-            dummy_nullifiers.len(),
+            dummy_nullifier_pre_images.len(),
             n_leaf,
-            "dummy_nullifiers must have one entry per leaf slot"
+            "dummy_nullifier_pre_images must have one entry per leaf slot"
         );
 
         let agg_config = CircuitConfig::standard_recursion_zk_config();
@@ -444,7 +457,7 @@ mod tests {
             &targets,
             &leaf_verifier_only,
             &leaf_proofs,
-            &dummy_nullifiers,
+            &dummy_nullifier_pre_images,
         )?;
 
         let agg_proof = prover_data.prove(pw)?;
@@ -456,7 +469,7 @@ mod tests {
         Ok((agg_proof, verifier_data))
     }
 
-    fn deterministic_dummy_nullifiers(n: usize) -> Vec<[F; 4]> {
+    fn deterministic_dummy_nullifier_pre_images(n: usize) -> Vec<[F; 4]> {
         let mut rng = StdRng::from_seed([77u8; 32]);
         (0..n)
             .map(|_| {
@@ -468,6 +481,11 @@ mod tests {
                 ]
             })
             .collect()
+    }
+
+    fn hash_dummy_nullifier_pre_image_native(pre_image: [F; 4]) -> [F; 4] {
+        let inner_hash = Poseidon2Hash::hash_no_pad(&pre_image).elements;
+        Poseidon2Hash::hash_no_pad(&inner_hash).elements
     }
 
     // ---------------- Packing helpers ----------------
@@ -714,11 +732,15 @@ mod tests {
             .map(|(proof, _)| proof)
             .collect::<Vec<_>>();
 
-        let dummy_nullifiers = deterministic_dummy_nullifiers(proofs.len());
+        let dummy_nullifier_pre_images = deterministic_dummy_nullifier_pre_images(proofs.len());
 
-        let (root_proof, root_verifier) =
-            aggregate_proofs_layer0(proofs, leaf_common, leaf_verifier_only, dummy_nullifiers)
-                .unwrap();
+        let (root_proof, root_verifier) = aggregate_proofs_layer0(
+            proofs,
+            leaf_common,
+            leaf_verifier_only,
+            dummy_nullifier_pre_images,
+        )
+        .unwrap();
 
         // ---------------------------
         // Reference aggregation OFF-CIRCUIT
@@ -881,10 +903,14 @@ mod tests {
             .into_iter()
             .map(|(proof, _)| proof)
             .collect::<Vec<_>>();
-        let dummy_nullifiers = deterministic_dummy_nullifiers(proofs.len());
+        let dummy_nullifier_pre_images = deterministic_dummy_nullifier_pre_images(proofs.len());
 
-        let res =
-            aggregate_proofs_layer0(proofs, leaf_common, leaf_verifier_only, dummy_nullifiers);
+        let res = aggregate_proofs_layer0(
+            proofs,
+            leaf_common,
+            leaf_verifier_only,
+            dummy_nullifier_pre_images,
+        );
 
         assert!(
             res.is_err(),
@@ -932,10 +958,14 @@ mod tests {
             .into_iter()
             .map(|(proof, _)| proof)
             .collect::<Vec<_>>();
-        let dummy_nullifiers = deterministic_dummy_nullifiers(proofs.len());
+        let dummy_nullifier_pre_images = deterministic_dummy_nullifier_pre_images(proofs.len());
 
-        let res =
-            aggregate_proofs_layer0(proofs, leaf_common, leaf_verifier_only, dummy_nullifiers);
+        let res = aggregate_proofs_layer0(
+            proofs,
+            leaf_common,
+            leaf_verifier_only,
+            dummy_nullifier_pre_images,
+        );
 
         assert!(res.is_err(), "expected failure due to mismatched asset IDs");
     }
@@ -988,7 +1018,7 @@ mod tests {
                 F::ZERO,
                 F::ZERO,
                 volume_fee_bps,
-                *nullifier, // layer-0 may replace dummy nullifiers with provided dummy-nullifier slots
+                *nullifier, // layer-0 replaces dummy nullifiers with hashes of provided preimages
                 dummy_exit,
                 dummy_exit,
                 dummy_block_hash,
@@ -1008,11 +1038,15 @@ mod tests {
             .map(|(proof, _)| proof)
             .collect::<Vec<_>>();
 
-        let dummy_nullifiers = deterministic_dummy_nullifiers(proofs.len());
+        let dummy_nullifier_pre_images = deterministic_dummy_nullifier_pre_images(proofs.len());
 
-        let (root_proof, root_verifier) =
-            aggregate_proofs_layer0(proofs, leaf_common, leaf_verifier_only, dummy_nullifiers)
-                .unwrap();
+        let (root_proof, root_verifier) = aggregate_proofs_layer0(
+            proofs,
+            leaf_common,
+            leaf_verifier_only,
+            dummy_nullifier_pre_images.clone(),
+        )
+        .unwrap();
 
         root_verifier.verify(root_proof.clone()).unwrap();
 
@@ -1029,6 +1063,23 @@ mod tests {
 
         let block_num_circuit = pis[ROOT_BLOCK_NUMBER_IDX];
         assert_eq!(block_num_circuit, common_block_number);
+
+        let nullifier_region_start = ROOT_HEADER_LEN + (pis_list.len() * 2 * 5);
+       for (i, nullifier) in nullifiers_felts.iter().enumerate().take(num_real_proofs) {
+            let idx = nullifier_region_start + i * 4;
+            let got = [pis[idx], pis[idx + 1], pis[idx + 2], pis[idx + 3]];
+            assert_eq!(
+                got, *nullifier,
+                "real nullifier mismatch at leaf {i}"
+            );
+        }
+
+        for (i, pre_image) in dummy_nullifier_pre_images.iter().enumerate().take(pis_list.len()).skip(num_real_proofs) {
+            let idx = nullifier_region_start + i * 4;
+            let got = [pis[idx], pis[idx + 1], pis[idx + 2], pis[idx + 3]];
+            let expected = hash_dummy_nullifier_pre_image_native(*pre_image);
+            assert_eq!(got, expected, "dummy nullifier hash mismatch at leaf {i}");
+        }
 
         println!(
             "Successfully aggregated {} real proofs + {} dummy proofs!",

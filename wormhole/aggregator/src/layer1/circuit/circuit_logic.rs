@@ -132,7 +132,6 @@ fn build_layer1_wrapper_constraints(
     n_inner: usize,
     layer0_num_leaves: usize,
 ) {
-    let zero = builder.zero();
     let one = builder.one();
 
     let l0_pi_len = l1c::l0_pi_len(layer0_num_leaves);
@@ -157,10 +156,6 @@ fn build_layer1_wrapper_constraints(
     output_pis.extend_from_slice(&targets.aggregator_address.elements);
 
     // 2) Reference values from proof 0
-    //
-    // NOTE: For layer-0, you kept a real proof in slot 0 via shuffling.
-    // For layer-1, the prover should follow the same pattern: keep a real layer-0 proof
-    // in slot 0 if any exist. If all are dummies, slot 0 is dummy and this still works.
     let asset_ref = l0_pi_targets[0][l1c::L0_ASSET_ID_OFFSET];
     let fee_ref = l0_pi_targets[0][l1c::L0_VOLUME_FEE_BPS_OFFSET];
     output_pis.push(asset_ref);
@@ -170,24 +165,19 @@ fn build_layer1_wrapper_constraints(
         core::array::from_fn(|j| l0_pi_targets[0][l1c::L0_BLOCK_HASH_OFFSET + j]);
     let block_number_ref = l0_pi_targets[0][l1c::L0_BLOCK_NUMBER_OFFSET];
 
-    // Dummy sentinel at layer-1: layer-0 block_hash == [0;4]
-    let dummy_block = [zero; 4];
-
-    // 3) Enforce asset/fee consistency and block consistency (or dummy) across all layer-0 proofs
+    // 3) Enforce asset/fee consistency and block consistency across all layer-0 proofs
     for pis_i in l0_pi_targets.iter().take(n_inner) {
         // asset_id and volume_fee_bps must match
         builder.connect(pis_i[l1c::L0_ASSET_ID_OFFSET], asset_ref);
         builder.connect(pis_i[l1c::L0_VOLUME_FEE_BPS_OFFSET], fee_ref);
 
-        // block hash must match ref unless dummy
+        // block hash must match ref
         let block_i: [Target; 4] = core::array::from_fn(|j| pis_i[l1c::L0_BLOCK_HASH_OFFSET + j]);
-        let is_dummy_i = bytes_digest_eq(builder, block_i, dummy_block);
         let matches_ref = bytes_digest_eq(builder, block_i, block_ref);
-        let ok = builder.or(is_dummy_i, matches_ref);
-        builder.connect(ok.target, one);
+        builder.connect(matches_ref.target, one);
     }
 
-    // Output block reference + number (all-dummy => zeros, fine)
+    // Output block reference + number
     output_pis.extend_from_slice(&block_ref);
     output_pis.push(block_number_ref);
 
@@ -330,8 +320,8 @@ mod tests {
             pw.set_proof_with_pis_target(pt, proof).unwrap();
         }
 
-        // Dummy nullifiers: can be anything for non-dummy leaves (is_dummy=false), but must be filled.
-        for (i, limbs) in l0_targets.dummy_nullifiers.iter().enumerate() {
+        // Dummy nullifier preimages: can be anything for non-dummy leaves (is_dummy=false), but must be filled.
+        for (i, limbs) in l0_targets.dummy_nullifier_pre_images.iter().enumerate() {
             for (j, t) in limbs.iter().enumerate() {
                 let v = F::from_canonical_u64(1000 + (i as u64) * 10 + (j as u64));
                 pw.set_target(*t, v).unwrap();
