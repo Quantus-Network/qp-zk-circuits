@@ -1,137 +1,192 @@
 \relax 
 \providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyperFirstAtBeginDocument{\AtBeginDocument}
+\HyperFirstAtBeginDocument{\ifx\hyper@anchor\@undefined
+\global\let\oldnewlabel\newlabel
+\gdef\newlabel#1#2{\newlabelxx{#1}#2}
+\gdef\newlabelxx#1#2#3#4#5#6{\oldnewlabel{#1}{{#2}{#3}}}
+\AtEndDocument{\ifx\hyper@anchor\@undefined
+\let\newlabel\oldnewlabel
+\fi}
+\fi}
+\global\let\hyper@last\relax 
+\gdef\HyperFirstAtBeginDocument#1{#1}
 \providecommand\HyField@AuxAddToFields[1]{}
 \providecommand\HyField@AuxAddToCoFields[2]{}
 \citation{shor}
 \citation{mldsa}
-\citation{eip7503}
 \@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {1.1}Our Contribution}{1}{subsection.1.1}\protected@file@percent }
-\citation{plonky2}
-\citation{fri}
-\@writefile{toc}{\contentsline {subsection}{\numberline {1.2}Technical Overview}{2}{subsection.1.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {1.3}Paper Organization}{2}{subsection.1.3}\protected@file@percent }
+\citation{eip7503}
+\citation{quantusrepo}
+\citation{qip5}
+\@writefile{toc}{\contentsline {paragraph}{Contributions.}{2}{section*.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Scope note.}{2}{section*.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2}Background and Design Goals}{2}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}From post-quantum signatures to proof-based settlement}{2}{subsection.2.1}\protected@file@percent }
+\citation{eip7503}
+\citation{eip7503,privacypools,zcash,tornadocash}
+\citation{plonky2,fri}
 \citation{poseidon2}
-\citation{plonky2}
-\citation{fri}
-\@writefile{toc}{\contentsline {section}{\numberline {2}Preliminaries}{3}{section.2}\protected@file@percent }
-\newlabel{sec:prelim}{{2}{3}{Preliminaries}{section.2}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Notation}{3}{subsection.2.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Hash Functions}{3}{subsection.2.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Zero-Knowledge Proof Systems}{3}{subsection.2.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.4}Plonky2 and FRI}{4}{subsection.2.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.5}Merkle-Patricia Tries}{4}{subsection.2.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {3}Security Model}{4}{section.3}\protected@file@percent }
-\newlabel{sec:security}{{3}{4}{Security Model}{section.3}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}System Model}{4}{subsection.3.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Security Definitions}{5}{subsection.3.2}\protected@file@percent }
-\newlabel{def:unspendable}{{2}{5}{Unspendability}{definition.2}{}}
-\newlabel{def:doublespend}{{3}{5}{Double-Spend Resistance}{definition.3}{}}
-\newlabel{def:soundness}{{4}{5}{Withdrawal Soundness}{definition.4}{}}
-\newlabel{def:privacy}{{5}{5}{Transaction Privacy}{definition.5}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Adversarial Model}{5}{subsection.3.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}Trust Assumptions}{6}{subsection.3.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {4}The Wormhole Protocol}{6}{section.4}\protected@file@percent }
-\newlabel{sec:protocol}{{4}{6}{The Wormhole Protocol}{section.4}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Wormhole Address Derivation}{6}{subsection.4.1}\protected@file@percent }
-\newlabel{eq:wormhole-addr}{{1}{6}{Wormhole Address Derivation}{equation.1}{}}
-\newlabel{lem:unspendable}{{1}{6}{}{theorem.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Nullifier Derivation}{6}{subsection.4.2}\protected@file@percent }
-\newlabel{eq:nullifier}{{2}{6}{Nullifier Derivation}{equation.2}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}The Wormhole Circuit}{7}{subsection.4.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Public Inputs $\mathbf  {x}$:}{7}{section*.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Private Inputs $\mathbf  {w}$:}{7}{section*.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Circuit Constraints:}{7}{section*.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Dummy Proof Handling:}{8}{section*.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}Transaction Flow}{8}{subsection.4.4}\protected@file@percent }
-\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces Wormhole Deposit}}{8}{algorithm.1}\protected@file@percent }
-\newlabel{alg:deposit}{{1}{8}{Transaction Flow}{algorithm.1}{}}
-\@writefile{loa}{\contentsline {algorithm}{\numberline {2}{\ignorespaces Wormhole Withdrawal}}{8}{algorithm.2}\protected@file@percent }
-\newlabel{alg:withdraw}{{2}{8}{Transaction Flow}{algorithm.2}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.5}Recursive Proof Aggregation}{8}{subsection.4.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.5.1}Layer 0: Client-Local Aggregation}{8}{subsubsection.4.5.1}\protected@file@percent }
-\@writefile{loa}{\contentsline {algorithm}{\numberline {3}{\ignorespaces On-Chain Verification}}{9}{algorithm.3}\protected@file@percent }
-\newlabel{alg:verify}{{3}{9}{Transaction Flow}{algorithm.3}{}}
-\@writefile{loa}{\contentsline {algorithm}{\numberline {4}{\ignorespaces Layer-0 Aggregation}}{9}{algorithm.4}\protected@file@percent }
-\newlabel{alg:layer0}{{4}{9}{Layer 0: Client-Local Aggregation}{algorithm.4}{}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.5.2}Layer 1: Delegated Aggregation}{9}{subsubsection.4.5.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.5.3}Aggregation Tree Properties}{9}{subsubsection.4.5.3}\protected@file@percent }
-\@writefile{loa}{\contentsline {algorithm}{\numberline {5}{\ignorespaces Layer-1 Aggregation}}{10}{algorithm.5}\protected@file@percent }
-\newlabel{alg:layer1}{{5}{10}{Layer 1: Delegated Aggregation}{algorithm.5}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.6}Two-Output Model}{10}{subsection.4.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {5}Security Analysis}{10}{section.5}\protected@file@percent }
-\newlabel{sec:analysis}{{5}{10}{Security Analysis}{section.5}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Double-Spend Resistance}{10}{subsection.5.1}\protected@file@percent }
-\newlabel{thm:doublespend}{{2}{10}{Double-Spend Resistance}{theorem.2}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Unspendability}{11}{subsection.5.2}\protected@file@percent }
-\newlabel{thm:unspendable}{{3}{11}{Unspendability}{theorem.3}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Withdrawal Soundness}{11}{subsection.5.3}\protected@file@percent }
-\newlabel{thm:soundness}{{4}{11}{Withdrawal Soundness}{theorem.4}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}Privacy Analysis}{12}{subsection.5.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Privacy Analysis.}{12}{section*.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.5}Dummy Proof Indistinguishability}{12}{subsection.5.5}\protected@file@percent }
-\newlabel{lem:dummy}{{5}{12}{Dummy Indistinguishability}{theorem.5}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.6}Attack Mitigations}{13}{subsection.5.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Timing Correlation:}{13}{section*.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Amount Fingerprinting:}{13}{section*.7}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Graph Analysis:}{13}{section*.8}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {6}Privacy Score Heuristic}{13}{section.6}\protected@file@percent }
-\newlabel{sec:privacy}{{6}{13}{Privacy Score Heuristic}{section.6}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Anonymity Set Estimation}{13}{subsection.6.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}CLT-Based Approximation}{13}{subsection.6.2}\protected@file@percent }
-\citation{substrate}
-\citation{plonky2}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Relationship to wormholes and privacy pools}{3}{subsection.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Why transparent recursion}{3}{subsection.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.4}Design goals}{3}{subsection.2.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}System, Adversary, and Trust Model}{3}{section.3}\protected@file@percent }
+\newlabel{sec:model}{{3}{3}{System, Adversary, and Trust Model}{section.3}{}}
+\newlabel{sec:model@cref}{{[section][3][]3}{[1][3][]3}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Roles}{3}{subsection.3.1}\protected@file@percent }
 \citation{poseidon2}
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Score Interpretation}{14}{subsection.6.3}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Privacy score interpretation guide.}}{14}{table.1}\protected@file@percent }
-\newlabel{tab:scores}{{1}{14}{Privacy score interpretation guide}{table.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.4}Improving Privacy Scores}{14}{subsection.6.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.5}Limitations}{14}{subsection.6.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {7}Implementation and Evaluation}{15}{section.7}\protected@file@percent }
-\newlabel{sec:impl}{{7}{15}{Implementation and Evaluation}{section.7}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {7.1}Performance Characteristics}{15}{subsection.7.1}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Expected performance characteristics (benchmarks TBD).}}{15}{table.2}\protected@file@percent }
-\newlabel{tab:perf}{{2}{15}{Expected performance characteristics (benchmarks TBD)}{table.2}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {7.2}Throughput Analysis}{15}{subsection.7.2}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Throughput comparison for 5MB blocks.}}{15}{table.3}\protected@file@percent }
-\newlabel{tab:throughput}{{3}{15}{Throughput comparison for 5MB blocks}{table.3}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {7.3}Deployment Status}{15}{subsection.7.3}\protected@file@percent }
+\citation{plonky2,fri}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}State objects}{4}{subsection.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Adversarial capabilities}{4}{subsection.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}Trust assumptions}{4}{subsection.3.4}\protected@file@percent }
+\citation{quantusrepo}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces High-level withdrawal pipeline}}{5}{algorithm.1}\protected@file@percent }
+\newlabel{alg:pipeline}{{1}{5}{5. Settlement}{algorithm.1}{}}
+\newlabel{alg:pipeline@cref}{{[algorithm][1][]1}{[1][5][]5}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Protocol Overview}{5}{section.4}\protected@file@percent }
+\newlabel{sec:overview}{{4}{5}{Protocol Overview}{section.4}{}}
+\newlabel{sec:overview@cref}{{[section][4][]4}{[1][4][]5}}
+\@writefile{toc}{\contentsline {paragraph}{1. Secret generation and deposit.}{5}{section*.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{2. Witness acquisition.}{5}{section*.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{3. Leaf proof generation.}{5}{section*.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{4. First-layer aggregation.}{5}{section*.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{5. Settlement.}{5}{section*.7}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Logical leaf public inputs. In the current implementation this logical interface occupies 21 field elements.}}{6}{table.1}\protected@file@percent }
+\newlabel{tab:leafpi}{{1}{6}{Logical leaf public inputs. In the current implementation this logical interface occupies 21 field elements}{table.1}{}}
+\newlabel{tab:leafpi@cref}{{[table][1][]1}{[1][6][]6}}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Private witness components used by the leaf proof.}}{6}{table.2}\protected@file@percent }
+\newlabel{tab:leafwitness}{{2}{6}{Private witness components used by the leaf proof}{table.2}{}}
+\newlabel{tab:leafwitness@cref}{{[table][2][]2}{[1][6][]6}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Formal Specification and Interfaces}{6}{section.5}\protected@file@percent }
+\newlabel{sec:formal}{{5}{6}{Formal Specification and Interfaces}{section.5}{}}
+\newlabel{sec:formal@cref}{{[section][5][]5}{[1][5][]6}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Leaf public inputs}{6}{subsection.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Leaf private witness}{6}{subsection.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Leaf relation}{6}{subsection.5.3}\protected@file@percent }
+\citation{quantusrepo}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}Runtime interface}{7}{subsection.5.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Leaf Circuit Design}{7}{section.6}\protected@file@percent }
+\newlabel{sec:leaf}{{6}{7}{Leaf Circuit Design}{section.6}{}}
+\newlabel{sec:leaf@cref}{{[section][6][]6}{[1][7][]7}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Nullifier circuit}{7}{subsection.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Unspendable-account circuit}{7}{subsection.6.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Storage-proof circuit}{7}{subsection.6.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.4}Dual-exit circuit}{8}{subsection.6.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.5}Block-header circuit}{8}{subsection.6.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.6}Dummy-leaf semantics}{8}{subsection.6.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7}Recursive Aggregation Architecture}{8}{section.7}\protected@file@percent }
+\newlabel{sec:aggregation}{{7}{8}{Recursive Aggregation Architecture}{section.7}{}}
+\newlabel{sec:aggregation@cref}{{[section][7][]7}{[1][8][]8}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.1}Leaf layout and wrapper output layout}{8}{subsection.7.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.2}Normative first-layer policy}{8}{subsection.7.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.3}Wrapper logic}{9}{subsection.7.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.4}Higher-layer aggregation}{9}{subsection.7.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8}Security and Privacy Analysis}{9}{section.8}\protected@file@percent }
+\newlabel{sec:security}{{8}{9}{Security and Privacy Analysis}{section.8}{}}
+\newlabel{sec:security@cref}{{[section][8][]8}{[1][9][]9}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.1}Authenticated deposit records}{9}{subsection.8.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Where the security argument relies on runtime or chain-interface assumptions beyond circuit correctness.}}{10}{table.3}\protected@file@percent }
+\newlabel{tab:security-assumptions}{{3}{10}{Where the security argument relies on runtime or chain-interface assumptions beyond circuit correctness}{table.3}{}}
+\newlabel{tab:security-assumptions@cref}{{[table][3][]3}{[1][9][]10}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.2}Completeness}{10}{subsection.8.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.3}Leaf soundness and deposit binding}{10}{subsection.8.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.4}First-layer wrapper soundness}{11}{subsection.8.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.5}One-time withdrawal and double-spend resistance}{12}{subsection.8.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.6}Operational unspendability and spend-path exclusivity}{12}{subsection.8.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.7}Value conservation}{13}{subsection.8.7}\protected@file@percent }
+\citation{quantusrepo}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Repository-level implementation split.}}{14}{table.4}\protected@file@percent }
+\newlabel{tab:crates}{{4}{14}{Repository-level implementation split}{table.4}{}}
+\newlabel{tab:crates@cref}{{[table][4][]4}{[1][14][]14}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.8}Privacy boundary and leakage model}{14}{subsection.8.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {9}Implementation}{14}{section.9}\protected@file@percent }
+\newlabel{sec:implementation}{{9}{14}{Implementation}{section.9}{}}
+\newlabel{sec:implementation@cref}{{[section][9][]9}{[1][14][]14}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.1}Commit-then-prove API}{14}{subsection.9.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.2}Prebuilt binaries and verifier path}{14}{subsection.9.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.3}Testing and benchmark hooks}{15}{subsection.9.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {10}Evaluation}{15}{section.10}\protected@file@percent }
+\newlabel{sec:evaluation}{{10}{15}{Evaluation}{section.10}{}}
+\newlabel{sec:evaluation@cref}{{[section][10][]10}{[1][15][]15}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.1}Methodology}{15}{subsection.10.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.2}First-layer aggregation results}{15}{subsection.10.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.3}Second-layer aggregation results}{15}{subsection.10.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Measured wall-clock times for the implemented first recursive aggregation layer. All runs use same-\texttt  {block\_hash} dummy leaf proofs and report the current refactored implementation only.}}{16}{table.5}\protected@file@percent }
+\newlabel{tab:layer0-results}{{5}{16}{Measured wall-clock times for the implemented first recursive aggregation layer. All runs use same-\texttt {block\_hash} dummy leaf proofs and report the current refactored implementation only}{table.5}{}}
+\newlabel{tab:layer0-results@cref}{{[table][5][]5}{[1][15][]16}}
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces Measured wall-clock times for the current second-layer aggregation interface. These measurements are head-only because the explicit public layer-1 surface is introduced by the refactor.}}{16}{table.6}\protected@file@percent }
+\newlabel{tab:layer1-results}{{6}{16}{Measured wall-clock times for the current second-layer aggregation interface. These measurements are head-only because the explicit public layer-1 surface is introduced by the refactor}{table.6}{}}
+\newlabel{tab:layer1-results@cref}{{[table][6][]6}{[1][15][]16}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.4}Forwarded payload and comparison basis}{16}{subsection.10.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {11}Discussion and Limitations}{16}{section.11}\protected@file@percent }
+\newlabel{sec:discussion}{{11}{16}{Discussion and Limitations}{section.11}{}}
+\newlabel{sec:discussion@cref}{{[section][11][]11}{[1][16][]16}}
+\@writefile{toc}{\contentsline {paragraph}{Same-block scoping.}{16}{section*.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Two-output limit.}{16}{section*.9}\protected@file@percent }
 \citation{eip7503}
 \citation{privacypools}
-\citation{zcash}
-\citation{tornadocash}
+\citation{zcash,tornadocash}
+\citation{halo,plonky2}
 \citation{mldsa}
-\citation{dilithium}
-\citation{ziggy}
-\citation{halo}
-\citation{plonky2}
-\citation{fri}
-\citation{stark}
-\@writefile{toc}{\contentsline {section}{\numberline {8}Related Work}{16}{section.8}\protected@file@percent }
-\newlabel{sec:related}{{8}{16}{Related Work}{section.8}{}}
-\@writefile{toc}{\contentsline {paragraph}{Zero-Knowledge Wormholes (EIP-7503).}{16}{section*.9}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Privacy-Preserving Cryptocurrencies.}{16}{section*.10}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Post-Quantum Blockchain Signatures.}{16}{section*.11}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{ZK-Based Signature Compression.}{16}{section*.12}\protected@file@percent }
-\bibstyle{plain}
-\bibdata{references}
-\bibcite{fri}{1}
-\bibcite{stark}{2}
-\bibcite{halo}{3}
-\@writefile{toc}{\contentsline {paragraph}{Recursive SNARKs.}{17}{section*.13}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Anonymity Set Analysis.}{17}{section*.14}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {9}Conclusion}{17}{section.9}\protected@file@percent }
-\newlabel{sec:conclusion}{{9}{17}{Conclusion}{section.9}{}}
-\@writefile{toc}{\contentsline {paragraph}{Future Work.}{17}{section*.15}\protected@file@percent }
-\bibcite{privacypools}{4}
-\bibcite{dilithium}{5}
-\bibcite{poseidon2}{6}
-\bibcite{zcash}{7}
-\bibcite{eip7503}{8}
-\bibcite{mldsa}{9}
-\bibcite{tornadocash}{10}
-\bibcite{shor}{11}
-\bibcite{ziggy}{12}
-\bibcite{plonky2}{13}
-\bibcite{substrate}{14}
-\gdef \@abspage@last{18}
+\@writefile{toc}{\contentsline {paragraph}{Amount quantization.}{17}{section*.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Privacy leakage.}{17}{section*.11}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Benchmark provenance.}{17}{section*.12}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Proof granularity.}{17}{section*.13}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {12}Related Work}{17}{section.12}\protected@file@percent }
+\newlabel{sec:related}{{12}{17}{Related Work}{section.12}{}}
+\newlabel{sec:related@cref}{{[section][12][]12}{[1][17][]17}}
+\@writefile{toc}{\contentsline {paragraph}{Wormholes and privacy pools.}{17}{section*.14}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Shielded and mixer-style systems.}{17}{section*.15}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Recursive proof systems.}{17}{section*.16}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Post-quantum blockchain engineering.}{17}{section*.17}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {13}Conclusion}{17}{section.13}\protected@file@percent }
+\newlabel{sec:conclusion}{{13}{17}{Conclusion}{section.13}{}}
+\newlabel{sec:conclusion@cref}{{[section][13][]13}{[1][17][]17}}
+\@writefile{toc}{\contentsline {section}{\numberline {A}Expanded proof details and code linkage}{18}{appendix.A}\protected@file@percent }
+\newlabel{app:proofs}{{A}{18}{Expanded proof details and code linkage}{appendix.A}{}}
+\newlabel{app:proofs@cref}{{[appendix][1][2147483647]A}{[1][18][]18}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.1}Dummy-template assumptions and their implementation loci}{18}{subsection.A.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.2}Detailed reduction for authenticated-deposit binding}{18}{subsection.A.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces Code-level loci behind the security assumptions used in the appendix reductions.}}{19}{table.7}\protected@file@percent }
+\newlabel{tab:code-linkage}{{7}{19}{Code-level loci behind the security assumptions used in the appendix reductions}{table.7}{}}
+\newlabel{tab:code-linkage@cref}{{[table][7][2147483647]7}{[1][18][]19}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.3}Detailed reduction for first-layer wrapper soundness}{19}{subsection.A.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.4}Detailed reduction for dummy-padding safety}{20}{subsection.A.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.5}Detailed reduction for one-time withdrawal}{21}{subsection.A.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.6}Detailed reduction for global value conservation}{21}{subsection.A.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {B}Artifact manifest and integrity boundary}{21}{appendix.B}\protected@file@percent }
+\newlabel{app:artifacts}{{B}{21}{Artifact manifest and integrity boundary}{appendix.B}{}}
+\newlabel{app:artifacts@cref}{{[appendix][2][2147483647]B}{[1][21][]21}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {B.1}Manifest fields for an artifact release}{22}{subsection.B.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {B.2}Proof-size measurement boundary}{22}{subsection.B.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {C}Benchmark reproducibility details}{22}{appendix.C}\protected@file@percent }
+\newlabel{app:repro}{{C}{22}{Benchmark reproducibility details}{appendix.C}{}}
+\newlabel{app:repro@cref}{{[appendix][3][2147483647]C}{[1][22][]22}}
+\bibcite{fri}{{1}{2018}{{Ben-Sasson et~al.}}{{Ben-Sasson, Bentov, Horesh, and Riabzev}}}
+\bibcite{halo}{{2}{2019}{{Bowe et~al.}}{{Bowe, Grigg, and Hopwood}}}
+\bibcite{privacypools}{{3}{2023}{{Buterin et~al.}}{{Buterin, Illum, Nadler, Sch{"a}r, and Soleimani}}}
+\bibcite{poseidon2}{{4}{2023}{{Grassi et~al.}}{{Grassi, Khovratovich, and Schofnegger}}}
+\bibcite{zcash}{{5}{2023}{{Hopwood et~al.}}{{Hopwood, Bowe, Hornby, and Wilcox}}}
+\bibcite{eip7503}{{6}{2023}{{Kambakhsh et~al.}}{{Kambakhsh, Bateni, Kahoori, and Nobitex Labs}}}
+\bibcite{mldsa}{{7}{2024}{{National Institute of Standards and Technology}}{{}}}
+\@writefile{toc}{\contentsline {section}{\numberline {D}Privacy-score heuristic}{23}{appendix.D}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {E}Exact public-input tables}{23}{appendix.E}\protected@file@percent }
+\bibcite{substrate}{{8}{2023}{{Parity Technologies}}{{}}}
+\bibcite{plonky2}{{9}{2022}{{Polygon Zero Team}}{{}}}
+\bibcite{tornadocash}{{10}{2019}{{Pertsev et~al.}}{{Pertsev, Semenov, and Storm}}}
+\bibcite{quantusrepo}{{11}{2026}{{Quantus Network}}{{}}}
+\bibcite{shor}{{12}{1997}{{Shor}}{{}}}
+\bibcite{qip5}{{13}{2025}{{Smith}}{{}}}
+\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces Concrete artifact names used by the refactored prover / verifier / aggregator stack.}}{25}{table.8}\protected@file@percent }
+\newlabel{tab:artifact-manifest}{{8}{25}{Concrete artifact names used by the refactored prover / verifier / aggregator stack}{table.8}{}}
+\newlabel{tab:artifact-manifest@cref}{{[table][8][2147483647]8}{[1][21][]25}}
+\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces Benchmark provenance for the timing tables reported in \cref  {sec:evaluation}.}}{26}{table.9}\protected@file@percent }
+\newlabel{tab:benchmark-provenance}{{9}{26}{Benchmark provenance for the timing tables reported in \cref {sec:evaluation}}{table.9}{}}
+\newlabel{tab:benchmark-provenance@cref}{{[table][9][2147483647]9}{[1][22][]26}}
+\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces Leaf public-input layout (21 felts total).}}{26}{table.10}\protected@file@percent }
+\newlabel{tab:leaf-layout}{{10}{26}{Leaf public-input layout (21 felts total)}{table.10}{}}
+\newlabel{tab:leaf-layout@cref}{{[table][10][2147483647]10}{[1][23][]26}}
+\@writefile{lot}{\contentsline {table}{\numberline {11}{\ignorespaces First-layer aggregate public-input layout.}}{26}{table.11}\protected@file@percent }
+\newlabel{tab:agg-layout}{{11}{26}{First-layer aggregate public-input layout}{table.11}{}}
+\newlabel{tab:agg-layout@cref}{{[table][11][2147483647]11}{[1][23][]26}}
+\gdef \@abspage@last{26}
