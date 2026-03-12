@@ -68,7 +68,7 @@ impl Layer1AggregationProver {
     // Constructors (fresh build path)
     // -------------------------------------------------------------------------
 
-    /// Build a fresh layer-0 aggregation prover from circuit definitions.
+    /// Build a fresh layer-1 aggregation prover from circuit definitions.
     ///
     /// This is the "dev/fallback" path. In production, prefer `new_from_binaries_dir(...)`
     /// or `new_from_files(...)` so the aggregation circuit is prebuilt and loaded to reduce overhead.
@@ -108,7 +108,6 @@ impl Layer1AggregationProver {
     /// Expected bytes:
     /// - `layer1_prover_only_bytes`
     /// - `layer1_common_bytes`
-    /// - `layer1_targets_bytes` (serialized Layer1TargetsLayoutD)
     /// - `layer0_common_bytes`
     /// - `layer0_verifier_only_bytes`
     /// - `config` tuple: (num_leaf_proofs, num_layer0_proofs)
@@ -205,7 +204,6 @@ impl Layer1AggregationProver {
     /// Expected files:
     /// - `layer1_prover.bin`
     /// - `layer1_common.bin`
-    /// - `layer1_targets.json`
     /// - `aggregated_common.bin`      (layer-0 common)
     /// - `aggregated_verifier.bin`    (layer-0 verifier-only)
     /// - `config.json`

@@ -27,10 +27,10 @@ pub fn fill_layer1_aggregation_witness(
         );
     }
 
-    let _ = pw.set_hash_target(
+    pw.set_hash_target(
         targets.aggregator_address,
         felts_to_hashout(&aggregator_address),
-    );
+    )?;
     pw.set_verifier_data_target(&targets.layer0_verifier_data, layer0_verifier_only)?;
 
     for (proof_t, proof) in targets.layer0_proofs.iter().zip(layer0_proofs.iter()) {

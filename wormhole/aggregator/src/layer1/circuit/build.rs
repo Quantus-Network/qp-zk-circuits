@@ -4,7 +4,6 @@
 //! - `layer1_common.bin`
 //! - `layer1_verifier.bin`
 //! - `layer1_prover.bin` (optional)
-//! - `layer1_targets.json`
 //!
 //! Expects layer-0 artifacts to already exist in `output_dir`:
 //! - `aggregated_common.bin`

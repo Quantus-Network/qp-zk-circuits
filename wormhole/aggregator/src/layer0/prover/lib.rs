@@ -227,8 +227,12 @@ impl Layer0AggregationProver {
     ///
     #[cfg(feature = "std")]
     pub fn new_from_binaries_dir(bins_dir: &Path, verify: bool) -> Result<Self> {
-        let bins_config = crate::config::CircuitBinsConfig::load(bins_dir)
-            .expect("Failed to load config.json for circuit binary integrity verification");
+        let bins_config = crate::config::CircuitBinsConfig::load(bins_dir).with_context(|| {
+            format!(
+                "Failed to load config.json for circuit binary integrity verification from {}",
+                bins_dir.display()
+            )
+        })?;
         if verify {
             bins_config.verify_hashes(bins_dir)?;
         }

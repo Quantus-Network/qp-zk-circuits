@@ -15,7 +15,7 @@ struct Args {
     num_leaf_proofs: usize,
 
     /// Number of inner layer0 proofs aggregated into a single layer-1 proof
-    /// Set to none if you only need the layer-0 aggregation circui.
+    /// Omit this flag to only generate layer-0 artifacts.
     #[arg(short, long)]
     num_layer0_proofs: Option<usize>,
 

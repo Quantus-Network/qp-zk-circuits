@@ -24,9 +24,6 @@ use zk_circuits_common::{
 use super::constants as l1c;
 
 /// Runtime targets for the prebuilt layer-1 aggregation circuit.
-///
-/// These can be serialized into `layer1_targets.json` so the prover can
-/// reconstruct and fill them later without rebuilding the circuit.
 #[derive(Debug, Clone)]
 pub struct Layer1AggregationCircuitTargets {
     /// Verifier target for the layer-0 aggregation circuit.

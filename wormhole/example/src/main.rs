@@ -274,7 +274,7 @@ fn aggregate_proofs(proof_files: Vec<String>, output_file: &str) -> anyhow::Resu
     let prover = WormholeProver::new(config.clone());
     let common_data = &prover.circuit_data.common;
 
-    let mut aggregator = Layer0Aggregator::new(BINS_DIR).unwrap();
+    let mut aggregator = Layer0Aggregator::new(BINS_DIR)?;
 
     println!(
         "Aggregator configured for {} leaf proofs",
@@ -350,7 +350,7 @@ fn aggregate_and_save(mut aggregator: Layer0Aggregator, output_file: &str) -> an
     println!("\nVerifying aggregated proof...");
     aggregator
         .verify(aggregated_proof.clone())
-        .expect("Aggregated proof verification failed");
+        .with_context(|| "Aggregated proof verification failed")?;
     println!("Aggregated proof verified successfully!");
 
     // Save aggregated proof

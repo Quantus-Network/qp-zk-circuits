@@ -17,7 +17,6 @@ use plonky2::util::serialization::DefaultGateSerializer;
 use qp_wormhole_inputs::BytesDigest;
 use std::path::{Path, PathBuf};
 
-#[cfg(feature = "std")]
 use std::fs;
 
 use zk_circuits_common::circuit::{C, D, F};
