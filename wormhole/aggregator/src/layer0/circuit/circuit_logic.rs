@@ -1065,16 +1065,18 @@ mod tests {
         assert_eq!(block_num_circuit, common_block_number);
 
         let nullifier_region_start = ROOT_HEADER_LEN + (pis_list.len() * 2 * 5);
-       for (i, nullifier) in nullifiers_felts.iter().enumerate().take(num_real_proofs) {
+        for (i, nullifier) in nullifiers_felts.iter().enumerate().take(num_real_proofs) {
             let idx = nullifier_region_start + i * 4;
             let got = [pis[idx], pis[idx + 1], pis[idx + 2], pis[idx + 3]];
-            assert_eq!(
-                got, *nullifier,
-                "real nullifier mismatch at leaf {i}"
-            );
+            assert_eq!(got, *nullifier, "real nullifier mismatch at leaf {i}");
         }
 
-        for (i, pre_image) in dummy_nullifier_pre_images.iter().enumerate().take(pis_list.len()).skip(num_real_proofs) {
+        for (i, pre_image) in dummy_nullifier_pre_images
+            .iter()
+            .enumerate()
+            .take(pis_list.len())
+            .skip(num_real_proofs)
+        {
             let idx = nullifier_region_start + i * 4;
             let got = [pis[idx], pis[idx + 1], pis[idx + 2], pis[idx + 3]];
             let expected = hash_dummy_nullifier_pre_image_native(*pre_image);
