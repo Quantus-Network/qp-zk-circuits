@@ -35,7 +35,7 @@
 \maketitle
 
 \begin{abstract}
-Post-quantum blockchains face a basic tension: signature schemes that are believed to resist quantum attacks typically impose much larger public keys and signatures than classical elliptic-curve systems, while direct on-chain authorization also leaks transaction structure to every observer. We describe \emph{Quantus Wormhole}, also referred to as \emph{entangled addresses}, a private settlement mechanism that shifts authorization off-chain into recursive zero-knowledge proofs. A user deterministically derives an unspendable deposit address from a secret, funds that address through an ordinary transfer, and later proves in zero knowledge that (i) the funded record exists in authenticated chain state, (ii) the block-header commitment is valid, (iii) the corresponding nullifier is fresh, and (iv) the disclosed exits satisfy the protocol fee rule. The implementation uses Plonky2 recursion with Poseidon2-based hashing and a circuit split across nullifier, unspendable-account, storage-proof, dual-exit, and block-header fragments. The implemented first aggregation layer batches leaf proofs that share the same public \texttt{block\_hash}; its wrapper forwards nullifiers, groups exit accounts, and hides batch occupancy with dummy padding and shuffling. This paper formalizes the leaf relation, separates proof-level and runtime-level security claims for deposit binding, one-time withdrawal, and value conservation, aligns the presentation with the implemented same-block aggregation model, and reports build, prove, and verification times for the refactored aggregation flow. On an Apple M2 Max running Rust 1.90.0, same-block first-layer batches of 2--49 leaves required 7.46--30.93~s to build, 3.72--32.42~s to prove, and 4.50--19.58~ms to verify; second-layer batches over 2--32 first-layer proofs with eight leaves each required 5.54--25.78~s to build, 3.52--21.32~s to prove, and 5.18--6.88~ms to verify.
+Post-quantum blockchains face a basic tension: signature schemes that are believed to resist quantum attacks typically impose much larger public keys and signatures than classical elliptic-curve systems, while direct on-chain authorization also leaks transaction structure to every observer. We describe \emph{Quantus Wormhole}, also referred to as \emph{entangled addresses}, a private settlement mechanism that shifts authorization off-chain into recursive zero-knowledge proofs. A user deterministically derives an unspendable deposit address from a secret, funds that address through an ordinary transfer, and later proves in zero knowledge that (i) the funded record exists in authenticated chain state, (ii) the block-header commitment is valid, (iii) the corresponding nullifier is fresh, and (iv) the disclosed exits satisfy the protocol fee rule. The implementation uses a \texttt{qp-plonky2} fork of Plonky2 with Poseidon2-based hashing and a circuit split across nullifier, unspendable-account, storage-proof, dual-exit, and block-header fragments; at the time this stack was engineered, it provided the recursive FRI pathway Wormhole needed while allowing us to integrate Poseidon2 into the deployed recursive pipeline. The implemented first aggregation layer batches leaf proofs that share the same public \texttt{block\_hash}; its wrapper forwards nullifiers, groups exit accounts, and hides the client's pre-wrapper leaf set behind client-local dummy padding and shuffling. This paper formalizes the leaf relation, explains why the public chain commitment is a commitment to the full structured block header rather than to the state root alone, gives a combinatorial privacy analysis of layer-0 showing how local padding, hidden batch order, and grouped exits enlarge the balance-linking explanation class seen by downstream observers, separates proof-level and runtime-level security claims for deposit binding, one-time withdrawal, and value conservation, aligns the presentation with the implemented same-block aggregation model, and reports build, prove, and verification times for the refactored aggregation flow. On an Apple M2 Max running Rust 1.90.0, same-block first-layer batches of 2--49 leaves required 7.46--30.93~s to build, 3.72--32.42~s to prove, and 4.50--19.58~ms to verify; second-layer batches over 2--32 first-layer proofs with eight leaves each required 5.54--25.78~s to build, 3.52--21.32~s to prove, and 5.18--6.88~ms to verify.
 \end{abstract}
 
 \section{Introduction}
@@ -53,8 +53,10 @@ We make the following contributions.
 \begin{enumerate}[leftmargin=1.5em]
     \item We formalize the \emph{entangled-address} spending model for Quantus: deposits flow to deterministic unspendable addresses derived from a secret, and withdrawals are authorized by proving knowledge of that secret together with authenticated state inclusion.
     \item We specify the implemented leaf relation in terms of public outputs, private witnesses, and sub-circuit constraints for nullifier derivation, unspendable-account derivation, storage-proof verification, fee-constrained dual exits, and block-header commitment.
-    \item We describe the implemented recursive aggregation architecture, emphasizing the normative behavior of the first aggregation layer: leaf proofs in a first-layer batch share the same public \texttt{block\_hash}, are padded with dummy leaves when necessary, and are wrapped by a circuit that forwards nullifiers and grouped exits.
-    \item We translate the repository implementation into an academic-paper structure and report measured build, prove, and verify times for the refactored aggregation flow across first-layer batch sizes 2--49 and second-layer fan-ins 2--32.
+    \item We describe the implemented recursive aggregation architecture, emphasizing the normative behavior of the first aggregation layer: leaf proofs in a first-layer batch share the same public \texttt{block\_hash}, are padded with dummy leaves when necessary, are shuffled client-locally, and are wrapped by a circuit that forwards nullifiers and grouped exits.
+    \item We give a formal combinatorial privacy analysis of the client-local first aggregation layer, showing how dummy padding, hidden batch order, and grouped exits enlarge the explanation class available to balance-linking adversaries relative to delegated layer-0 aggregation.
+    \item We explain why the public chain commitment is a commitment to the full structured block header rather than to the state root alone, thereby letting the runtime validate that the privately witnessed state root belongs to canonical chain history.
+    \item We document the implementation choice of \texttt{qp-plonky2}, including the Poseidon2 recursion engineering required by Wormhole, and report measured build, prove, and verify times for the refactored aggregation flow across first-layer batch sizes 2--49 and second-layer fan-ins 2--32.
     \item We tighten the security argument by separating proof-level and runtime-level assumptions and by stating explicit claims for authenticated-deposit binding, first-layer wrapper soundness, one-time withdrawal per deposit record, spend-path exclusivity under the chain's address discipline, and global value conservation.
 \end{enumerate}
 
@@ -75,7 +77,7 @@ The closest conceptual neighbors are therefore wormholes, privacy pools, and shi
 
 \subsection{Why transparent recursion}
 
-The implementation uses Plonky2, which combines a PLONK-style arithmetization with FRI-based commitments and supports recursive proof verification without a trusted setup \citep{plonky2,fri}. This makes it a natural fit for a system that wants both recursive aggregation and a post-quantum-oriented security story. Poseidon2 is used for in-circuit hashing because it is efficient over prime fields and avoids the bit-decomposition cost of conventional hash designs inside arithmetic circuits \citep{poseidon2}.
+The implementation uses Plonky2, specifically our \texttt{qp-plonky2} fork, which combines a PLONK-style arithmetization with FRI-based commitments and supports recursive proof verification without a trusted setup \citep{plonky2,fri,qpplonky2}. This makes it a natural fit for a system that wants both recursive aggregation and a post-quantum-oriented security story. Poseidon2 is used for in-circuit hashing because it is efficient over prime fields and avoids the bit-decomposition cost of conventional hash designs inside arithmetic circuits \citep{poseidon2}.
 
 \subsection{Design goals}
 
@@ -144,6 +146,8 @@ The user then funds this address through an ordinary transfer on Quantus. The de
 
 \paragraph{2. Witness acquisition.}
 To withdraw, the user gathers the transfer record, a processed storage proof, the state root to which that proof authenticates, and the structured block-header fields needed to recompute the public block commitment. These data form the private witness except for the public block fields that will be exposed by the proof.
+
+A subtlety is that the protocol does \emph{not} expose the state root directly as its public chain anchor. An earlier design considered doing exactly that, but a bare public state root is insufficient for runtime validation: seeing only a root does not tell the verifier whether that root belongs to any valid canonical block. The implemented design therefore witnesses the structured header privately and exposes a public Poseidon2 commitment to that full header together with the public block number. The runtime validates the committed header against chain history, while the circuit binds the privately used state root in the storage proof to that same committed header.
 
 \paragraph{3. Leaf proof generation.}
 The user chooses up to two exit outputs, computes a nullifier
@@ -279,6 +283,8 @@ The dual-exit fragment models a two-output withdrawal with Bitcoin-like ``spend 
 
 Instead of taking an opaque serialized header as a monolithic input, the circuit receives structured header components and recomputes a public commitment from them. This improves specification clarity and makes it easier to state exactly what the proof binds to.
 
+This design also closes an authentication gap that appears if one tries to expose only the state root publicly. A bare public state root is not enough for the runtime to validate provenance, because the runtime must connect the proof to an actual canonical block rather than to an arbitrary root supplied by the prover. By privately witnessing the full structured header and publicly exposing its Poseidon2 commitment together with the block number, the leaf proof lets the runtime check that the committed header corresponds to a real block, while the circuit guarantees that the same header contains the state root used by the storage proof. The result is a cryptographic link from the private transaction witness back to authenticated blockchain state.
+
 \subsection{Dummy-leaf semantics}
 
 Dummy leaves are used to pad partially filled batches. The current implementation identifies a dummy by the sentinel condition \texttt{block\_hash = 0\string^32}. Constraints tied to real deposits, such as nullifier consistency or block-header correctness, are conditionally disabled for dummies; however, the wrapper later replaces dummy nullifiers with fresh random values so that dummy leaves cannot collide on-chain. Dummy padding is therefore not merely an engineering convenience; it is part of the privacy story because it obscures batch occupancy.
@@ -308,7 +314,7 @@ The first aggregation layer is the privacy-sensitive layer and the only aggregat
     \item All nullifiers are forwarded, with dummy nullifiers replaced by fresh random values.
 \end{enumerate}
 
-We state this same-block rule explicitly to avoid ambiguity with the older contiguous-block wording in earlier proposal text.
+We state this same-block rule explicitly to avoid ambiguity with the older contiguous-block wording in earlier proposal text. Because the padding and shuffle are part of the privacy mechanism, layer-0 should be executed locally by the wallet whenever possible; a delegated layer-0 service would observe the client's raw child proofs before they are hidden inside the wrapper and would therefore collapse much of the ambiguity quantified in \cref{sec:layer0privacy}.
 
 \subsection{Wrapper logic}
 
@@ -322,7 +328,8 @@ At a high level, the wrapper circuit performs four tasks.
 
 \subsection{Higher-layer aggregation}
 
-Higher recursive layers operate over already aggregated proofs rather than raw leaf witnesses. This separation is important: the privacy-critical shuffle and dummy-handling logic stays local to the first layer, while later layers can 
+Higher recursive layers operate over already aggregated proofs rather than raw leaf witnesses. This separation is important: the privacy-critical shuffle and dummy-handling logic stays local to the first layer, while later layers can be delegated because they receive opaque layer-0 aggregates rather than the client's raw proof set. In particular, a layer-1 aggregator learns only the public output of layer-0 and therefore does not observe the client's internal real-versus-dummy placement or pre-grouped exit set.
+
 \section{Security and Privacy Analysis}
 \label{sec:security}
 
@@ -506,13 +513,57 @@ Then the total value settled by any accepted first-layer aggregate proof is at m
 By first-layer wrapper soundness, an accepted aggregate expands to a multiset of real child leaves and dummy padding. By dummy-padding safety, dummies contribute no settled value. By authenticated-deposit binding and the per-leaf fee bound, each real child contributes at most its authenticated deposit amount net of fees. By wrapper amount preservation, the sum of forwarded exit amounts equals the sum of the real child exit amounts. Finally, one-time withdrawal per authenticated deposit record rules out counting the same authenticated record twice via multiple accepted nullifiers. Hence settled value never exceeds the aggregate authenticated input value net of fees.
 \end{proof}
 
+
+\subsection{Layer-0 explanation classes and balance-linking difficulty}
+\label{sec:layer0privacy}
+
+The first aggregation layer does not hide the final exits or their amounts, but it does make leaf-level linkage more ambiguous. The key point is that the layer-0 wrapper is many-to-one: multiple ordered batches of real and dummy leaves can induce the same public aggregate once dummy nullifiers are replaced and duplicate exits are grouped.
+
+\begin{definition}[Layer-0 explanation class]
+Fix a first-layer public output \(Y\). The \emph{explanation class} \(\mathcal{E}(Y)\) is the set of ordered batches of real leaves and dummy leaves, together with per-leaf two-output assignments, that are consistent with the leaf fee rule and that produce \(Y\) under the implemented layer-0 padding, shuffle, grouping, and dummy-nullifier-substitution logic.
+\end{definition}
+
+A balance-linking adversary who sees only \(Y\) must distinguish among the elements of \(\mathcal{E}(Y)\). By contrast, a delegated layer-0 aggregator that receives the client's raw leaf proofs before padding and shuffling learns one concrete preimage of \(Y\) and therefore collapses this ambiguity. This is the formal reason that layer-0 is privacy-sensitive and should be client-local.
+
+\begin{proposition}[Client-local layer-0 dominates delegated layer-0 for linkage privacy]
+Fix any first-layer public output \(Y\). A downstream observer when layer-0 is performed client-locally receives only \(Y\), whereas a delegated layer-0 aggregator receives both \(Y\) and one specific preimage \(B \in \mathcal{E}(Y)\). Under a uniform prior over \(\mathcal{E}(Y)\), the optimal exact leaf-to-output linkage success probability is \(1/|\mathcal{E}(Y)|\) for the former view and \(1\) for the latter.
+\end{proposition}
+
+\begin{proof}
+The downstream observer receives only \(Y\), so any exact linkage guess is a guess of which element of \(\mathcal{E}(Y)\) generated the aggregate. Under the stated prior, the optimal strategy succeeds with probability \(1/|\mathcal{E}(Y)|\). A delegated layer-0 aggregator, however, observes the raw child proofs before padding and shuffling, so it knows the realized preimage \(B\) directly.
+\end{proof}
+
+The size of \(\mathcal{E}(Y)\) grows combinatorially whenever multiple hidden child outputs collapse into one grouped exit.
+
+\begin{proposition}[Combinatorial lower bound from grouped exits]
+Let \(\Delta = 0.01\) be the circuit quantization unit. Fix a grouped exit account \(a\) in \(Y\) whose public forwarded amount is \(S_a \in \Delta \mathbb{Z}_{>0}\). If that total arose from \(r_a \ge 1\) positive real child outputs to the same account, then the number of positive quantized decompositions of \(S_a\) into \(r_a\) hidden child contributions is
+\[
+\binom{S_a/\Delta - 1}{r_a - 1}.
+\]
+Consequently, if \(A^+\) denotes the set of grouped exit accounts that received contributions from more than one real child output, then
+\[
+|\mathcal{E}(Y)| \ge \prod_{a \in A^+} \binom{S_a/\Delta - 1}{r_a - 1},
+\]
+with additional multiplicative ambiguity coming from hidden dummy placement, private batch order, and the assignment of at most two outputs to each real leaf.
+\end{proposition}
+
+\begin{proof}
+For a fixed account \(a\), write \(S_a = m_a \Delta\) with \(m_a \in \mathbb{Z}_{>0}\). Counting positive integer solutions to
+\[
+x_1 + \cdots + x_{r_a} = m_a
+\]
+gives the classical stars-and-bars count \(\binom{m_a - 1}{r_a - 1}\). Each such solution corresponds to a distinct quantized decomposition of the grouped amount into hidden child outputs. Independent grouped accounts multiply, yielding the stated lower bound. Any uncertainty about which leaves were dummy, how the client ordered the batch before wrapping, or which of a leaf's two output positions carried a given contribution can only enlarge the explanation class.
+\end{proof}
+
+The current implementation preserves one real child in slot~0 whenever a batch contains any real child. This reduces, but does not remove, the occupancy ambiguity created by local shuffling on the remaining positions. The important privacy boundary is therefore not ``perfect hiding of every slot'' but rather the preservation of a nontrivial explanation class for downstream observers who do not see the client's raw leaf set.
+
 \subsection{Privacy boundary and leakage model}
 
 The security arguments above are intentionally narrower than a full anonymity theorem. There are two distinct privacy questions.
 
 First, there is \emph{proof-level witness hiding}: secrets, funding accounts, storage-path details, and raw header components are not exposed as public inputs, so any leakage about them must come from the proof system itself or from side channels. This paper treats that as a property inherited from the concrete proving-system configuration rather than as a standalone contribution.
 
-Second, there is \emph{system-level transaction privacy}. Here the public interface is deliberately revealing: output amounts, exit accounts, fee basis points, nullifiers, \texttt{block\_hash}, and \texttt{block\_number} are all public. Dummy padding helps hide batch occupancy, and exit grouping weakens direct child-to-output correspondence, but amount leakage, address reuse, timing correlation, and small anonymity sets remain important limitations. Accordingly, the security claim is limited to hiding witness fields that are not deliberately re-exposed; the protocol does \emph{not} provide a full simulation-based unlinkability guarantee over all candidate deposits.
+Second, there is \emph{system-level transaction privacy}. Here the public interface is deliberately revealing: output amounts, exit accounts, fee basis points, nullifiers, \texttt{block\_hash}, and \texttt{block\_number} are all public. The layer-0 analysis above quantifies how dummy padding, hidden batch order, and exit grouping enlarge the explanation class available to a downstream observer, but amount leakage, address reuse, timing correlation, and small anonymity sets remain important limitations. Accordingly, the security claim is limited to hiding witness fields that are not deliberately re-exposed and to preserving this explanation-class ambiguity at layer-0; the protocol does \emph{not} provide a full simulation-based unlinkability guarantee over all candidate deposits.
 
 \section{Implementation}
 \label{sec:implementation}
@@ -537,6 +588,13 @@ Crate & Role \\
 \caption{Repository-level implementation split.}
 \label{tab:crates}
 \end{table}
+
+
+\subsection{qp-plonky2 and recursive Poseidon2 support}
+
+The Wormhole stack is implemented on top of \texttt{qp-plonky2}, our fork of Plonky2 \citep{qpplonky2}. Within that fork we implemented, to the best of our knowledge, the first Poseidon2 gadget integrated into a recursive FRI-based proof pipeline. This mattered operationally because Wormhole uses Poseidon2 throughout its leaf logic yet also depends on recursive proof verification for aggregation.
+
+The choice of stack was historical as well as technical. When this engineering work began, Plonky3 already exposed Poseidon2-oriented primitives, but it did not yet provide the recursion surface required by the Wormhole prover / verifier path \citep{plonky3}. Accordingly, the project extended the mature recursive Plonky2 line rather than porting Wormhole to Plonky3. Since then, the Plonky3 ecosystem has added a separate recursion codebase \citep{plonky3recursion}; the implementation, artifacts, and measurements reported in this paper remain those of the deployed \texttt{qp-plonky2}-based stack.
 
 \subsection{Commit-then-prove API}
 
@@ -634,7 +692,7 @@ The leaf interface supports at most two explicit exits. This is expressive enoug
 Amounts are quantized to 0.01-unit resolution in the circuit interface. This is an implementation-conscious tradeoff between circuit cost and exact arithmetic, and deployments must specify how the runtime reconstructs native precision and which edge cases this quantization excludes.
 
 \paragraph{Privacy leakage.}
-The system does not hide output amounts, exit addresses, or timing. It therefore offers a privacy boundary closer to plausible-deniability settlement than to a fully shielded ledger.
+The system does not hide output amounts, exit addresses, or timing. The layer-0 wrapper nevertheless enlarges the space of leaf-level explanations available to downstream observers, as formalized in \cref{sec:layer0privacy}; the resulting privacy boundary is therefore closer to plausible-deniability settlement than to a fully shielded ledger.
 
 \paragraph{Benchmark provenance.}
 This paper reports measured wall-clock timings for the refactored aggregation implementation and records the corresponding artifact names, integrity checks, run identifier, and raw-output naming convention in \cref{app:artifacts,app:repro}. A companion artifact release can extend this record with serialized proof-byte counts for the layer-0 and layer-1 benchmark outputs.
@@ -652,7 +710,7 @@ The conceptual starting point is EIP-7503, which proposes private proof-of-burn 
 Zcash provides strong privacy through shielded notes and zero-knowledge proofs, while Tornado Cash popularized mixer-style privacy on Ethereum \citep{zcash,tornadocash}. Quantus does not attempt to duplicate the full expressiveness of shielded notes; instead it offers a lighter-weight private-settlement interface anchored directly in native chain state.
 
 \paragraph{Recursive proof systems.}
-Recursive composition is now a standard ingredient in scalable proof systems, with Halo and Plonky2 among the most visible examples \citep{halo,plonky2}. The Quantus contribution is not a new recursion theorem, but a concrete application of recursive composition to post-quantum-minded private settlement.
+Recursive composition is now a standard ingredient in scalable proof systems, with Halo and Plonky2 among the most visible examples \citep{halo,plonky2}. Plonky3 provides Poseidon2-oriented proving primitives and now also has a separate recursion track \citep{plonky3,plonky3recursion}. The Quantus contribution is not a new recursion theorem, but a concrete application of recursive composition to post-quantum-minded private settlement together with the engineering needed to bring Poseidon2 into the recursive \texttt{qp-plonky2} stack.
 
 \paragraph{Post-quantum blockchain engineering.}
 The adoption of ML-DSA and related schemes raises not only cryptographic questions but also execution-layer questions about transaction size, verification bottlenecks, and state growth \citep{mldsa}. The Quantus design explores one systems answer: compress authorization into zero-knowledge proofs rather than publishing every post-quantum authentication event directly on-chain.
@@ -662,7 +720,7 @@ The adoption of ML-DSA and related schemes raises not only cryptographic questio
 
 Quantus Wormhole, or entangled addresses, shows how a post-quantum blockchain can move authorization off-chain without abandoning authenticated settlement. A user deposits value to an address derived from a private secret, later proves in zero knowledge that the deposit exists in authenticated state and has not been spent before, and reveals only the settlement outputs needed by the runtime. Recursive aggregation then amortizes on-chain verification over many such withdrawals.
 
-The resulting picture is deliberately concrete. The paper matches the implemented first-layer same-block aggregation model, includes measured timing data for the refactored aggregation flow, expands the security reductions into appendix-level arguments tied to the current dummy-template code paths, and records the artifact boundary needed for a reproducible release. Together these elements position Quantus Wormhole as a practical private-settlement architecture for post-quantum blockchains.
+The resulting picture is deliberately concrete. The paper matches the implemented first-layer same-block aggregation model, explains why authenticated settlement requires a public commitment to the full structured block header rather than to the state root alone, formalizes the layer-0 privacy gain from client-local dummy padding, shuffling, and grouped exits, includes measured timing data for the refactored aggregation flow, expands the security reductions into appendix-level arguments tied to the current dummy-template code paths, and records the artifact boundary needed for a reproducible release. Together these elements position Quantus Wormhole as a practical private-settlement architecture for post-quantum blockchains.
 
 
 \appendix
@@ -742,6 +800,29 @@ The dummy-padding safety lemma in the main text is a composition of three code-l
     \item The wrapper groups exits by account and zeros duplicates. Since every dummy child contributes zero amounts to the all-zero exit account, grouping or deduplicating dummy exits cannot increase the sum of any forwarded exit amount.
 \end{enumerate}
 The only remaining effect of dummies is on the nullifier region. There the wrapper uses a fresh externally supplied filler for each dummy slot. This substitution is value-neutral: it affects only whether a candidate aggregate might be rejected because a filler accidentally collides with an already-used nullifier. That is a liveness concern, not a soundness concern.
+
+\subsection{Detailed reduction for layer-0 balance-linking ambiguity}
+
+Fix a public first-layer output \(Y\) and recall the explanation class \(\mathcal{E}(Y)\) from \cref{sec:layer0privacy}. A delegated layer-0 aggregator that receives the raw leaf proofs before padding and shuffling trivially learns one concrete preimage \(B \in \mathcal{E}(Y)\). By contrast, a layer-1 aggregator or external observer receives only \(Y\) and must reason over the whole class \(\mathcal{E}(Y)\).
+
+The non-injective part of the wrapper map comes from three sources.
+\begin{enumerate}[leftmargin=1.9em]
+    \item Grouping identical exit accounts replaces several child outputs by one public total.
+    \item Dummy substitution removes the public real/dummy indicator from the nullifier region and replaces it with pseudorandom-looking fillers.
+    \item The client-local shuffle keeps the pre-wrapper order of real and dummy children private from downstream observers.
+\end{enumerate}
+
+For grouped exits, fix an account \(a\) with public total \(S_a = m_a \Delta\) and hidden multiplicity \(r_a\), where \(\Delta = 0.01\). Every composition
+\[
+m_a = x_1 + \cdots + x_{r_a}
+\]
+into positive integers yields a distinct hidden set of quantized child contributions
+\[
+(x_1 \Delta,\ldots,x_{r_a} \Delta)
+\]
+that the wrapper would map to the same grouped public amount for \(a\). The number of such compositions is \(\binom{m_a - 1}{r_a - 1}\), which is exactly the stars-and-bars count used in the main text. Multiplying over grouped accounts gives the lower bound on \(|\mathcal{E}(Y)|\).
+
+The dummy-padding and shuffle steps contribute additional ambiguity not captured by that product. In the current implementation, if at least one real child exists, slot~0 is forced to hold a real child by \path{shuffle_proofs_preserving_first_real_layer0}. This reduces, but does not remove, the hidden occupancy on the remaining positions. A delegated layer-0 aggregator observes that private arrangement directly; a layer-1 aggregator does not. Hence delegating only from layer~1 upward preserves the explanation-class enlargement created at layer~0.
 
 \subsection{Detailed reduction for one-time withdrawal}
 
@@ -878,7 +959,7 @@ The repository also includes Criterion entry points for leaf proving, leaf verif
 
 \section{Privacy-score heuristic}
 
-This appendix records a user-facing privacy-score heuristic intended to estimate how many deposit subsets might plausibly explain an observed withdrawal. It is a wallet-side heuristic and should not be interpreted as a formal privacy guarantee.
+This appendix records a user-facing privacy-score heuristic intended to estimate how many deposit subsets might plausibly explain an observed withdrawal. It is distinct from the formal explanation-class analysis in \cref{sec:layer0privacy}: this appendix is a wallet-side heuristic and should not be interpreted as a formal privacy guarantee.
 
 Let \(\mathcal{D}\) denote the candidate deposit multiset, let \(V\) denote the observed effective withdrawal amount after fees, and let \(f\) denote the fee basis points. A heuristic score can be defined as the base-2 logarithm of the number of subsets whose fee-adjusted sum falls into a tolerance window around \(V\):
 \[
@@ -986,9 +1067,24 @@ Alexey Pertsev, Roman Semenov, and Roman Storm.
 \newblock Tornado Cash Privacy Solution.
 \newblock Project documentation, 2019.
 
+\bibitem[Plonky3 Contributors(2026a)]{plonky3}
+Plonky3 Contributors.
+\newblock Plonky3.
+\newblock Software repository, 2026.
+
+\bibitem[Plonky3 Contributors(2026b)]{plonky3recursion}
+Plonky3 Contributors.
+\newblock Plonky3-recursion.
+\newblock Software repository, 2026.
+
 \bibitem[Quantus Network(2026)]{quantusrepo}
 Quantus Network.
 \newblock qp-zk-circuits.
+\newblock Software repository, 2026.
+
+\bibitem[Quantus Network, qp-plonky2(2026)]{qpplonky2}
+Quantus Network.
+\newblock qp-plonky2.
 \newblock Software repository, 2026.
 
 \bibitem[Shor(1997)]{shor}

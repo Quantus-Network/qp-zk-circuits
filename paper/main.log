@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023) (preloaded format=pdflatex 2024.2.19)  12 MAR 2026 20:17
+This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023) (preloaded format=pdflatex 2024.2.19)  13 MAR 2026 17:23
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -714,17 +714,17 @@ Package microtype Info: Loading generic protrusion settings for font family
  [1
 
 {/usr/local/texlive/2023/texmf-var/fonts/map/pdftex/updmap/pdftex.map}{/usr/loc
-al/texlive/2023/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc}] [2]
+al/texlive/2023/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc}] [2] [3]
 LaTeX Font Info:    Trying to load font information for TS1+lmr on input line 9
-7.
+9.
 
 (/usr/local/texlive/2023/texmf-dist/tex/latex/lm/ts1lmr.fd
 File: ts1lmr.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
-) [3{/usr/local/texlive/2023/texmf-dist/fonts/enc/dvips/lm/lm-ts1.enc}]
+)
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <10.95> on input line 106.
+(Font)              <10.95> on input line 108.
 LaTeX Font Info:    Trying to load font information for OT1+lmss on input line 
-113.
+115.
 
 (/usr/local/texlive/2023/texmf-dist/tex/latex/lm/ot1lmss.fd
 File: ot1lmss.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
@@ -733,166 +733,168 @@ Package microtype Info: Loading generic protrusion settings for font family
 (microtype)             `lmss' (encoding: OT1).
 (microtype)             For optimal results, create family-specific settings.
 (microtype)             See the microtype manual for details.
- [4{/usr/local/texlive/2023/texmf-dist/fonts/enc/dvips/lm/lm-mathsy.enc}{/usr/l
-ocal/texlive/2023/texmf-dist/fonts/enc/dvips/lm/lm-mathit.enc}{/usr/local/texli
-ve/2023/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc}]
+ [4{/usr/local/texlive/2023/texmf-dist/fonts/enc/dvips/lm/lm-ts1.enc}{/usr/loca
+l/texlive/2023/texmf-dist/fonts/enc/dvips/lm/lm-mathsy.enc}{/usr/local/texlive/
+2023/texmf-dist/fonts/enc/dvips/lm/lm-mathit.enc}{/usr/local/texlive/2023/texmf
+-dist/fonts/enc/dvips/lm/lm-rm.enc}] [5]
 Package hyperref Info: bookmark level for unknown algorithm defaults to 0 on in
-put line 162.
+put line 166.
 Package microtype Info: Character `029' is missing
 (microtype)             in font `T1/lmr/m/sc/10.95'.
 (microtype)             Ignoring protrusion settings for this character.
- [5] [6] [7] [8]
-Underfull \hbox (badness 10000) in paragraph at lines 345--345
+ [6] [7] [8] [9]
+Underfull \hbox (badness 10000) in paragraph at lines 352--352
 []|\T1/lmr/m/n/10 (+20) Runtime val-i-dates that the pub-lic
  []
 
-[9] [10] [11] [12] [13] [14] [15] [16] [17]
-Underfull \hbox (badness 10000) in alignment at lines 696--696
+[10] [11] [12] [13] [14] [15{/usr/local/texlive/2023/texmf-dist/fonts/enc/dvips
+/lm/lm-mathex.enc}] [16] [17] [18] [19] [20]
+Underfull \hbox (badness 10000) in alignment at lines 754--754
 [][][] 
  []
 
-[18] [19] [20]
-Underfull \hbox (badness 10000) in paragraph at lines 799--799
+[21] [22] [23] [24]
+Underfull \hbox (badness 10000) in paragraph at lines 880--880
 []|\T1/lmr/m/n/10 (+20) leaf ver-i-fier
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 799--799
+Underfull \hbox (badness 10000) in paragraph at lines 880--880
 []|\T1/lmr/m/n/10 (+20) leaf ver-i-fier
  []
 
 
-Underfull \hbox (badness 2376) in paragraph at lines 799--799
+Underfull \hbox (badness 2376) in paragraph at lines 880--880
 \T1/lmr/m/n/10 (+20) loader, layer-0
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 799--799
+Underfull \hbox (badness 10000) in paragraph at lines 880--880
 []|\T1/lmr/m/n/10 (+20) leaf prover
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 799--799
+Underfull \hbox (badness 10000) in paragraph at lines 880--880
 []|\T1/lmr/m/n/10 (+20) layer-0 prover
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 799--799
+Underfull \hbox (badness 10000) in paragraph at lines 880--880
 \T1/lmr/m/n/10 (+20) loader; batch
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 799--799
+Underfull \hbox (badness 10000) in paragraph at lines 880--880
 \T1/lmr/m/n/10 (+20) padding tem-
  []
 
 
-Underfull \hbox (badness 3281) in paragraph at lines 799--799
+Underfull \hbox (badness 3281) in paragraph at lines 880--880
 []|\T1/lmr/m/n/10 (+20) layer-0 ver-i-fier
  []
 
 
-Underfull \hbox (badness 3386) in paragraph at lines 799--799
+Underfull \hbox (badness 3386) in paragraph at lines 880--880
 \T1/lmr/m/n/10 (+20) loader, layer-1
  []
 
 
-Underfull \hbox (badness 3281) in paragraph at lines 799--799
+Underfull \hbox (badness 3281) in paragraph at lines 880--880
 []|\T1/lmr/m/n/10 (+20) layer-0 ver-i-fier
  []
 
 
-Underfull \hbox (badness 3386) in paragraph at lines 799--799
+Underfull \hbox (badness 3386) in paragraph at lines 880--880
 \T1/lmr/m/n/10 (+20) loader, layer-1
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 799--799
+Underfull \hbox (badness 10000) in paragraph at lines 880--880
 []|\T1/lmr/m/n/10 (+20) layer-0 prover
  []
 
 
-Underfull \hbox (badness 3281) in paragraph at lines 799--799
+Underfull \hbox (badness 3281) in paragraph at lines 880--880
 []|\T1/lmr/m/n/10 (+20) layer-1 ver-i-fier
  []
 
 
-Underfull \hbox (badness 3386) in paragraph at lines 799--799
+Underfull \hbox (badness 3386) in paragraph at lines 880--880
 \T1/lmr/m/n/10 (+20) loader, layer-1
  []
 
 
-Underfull \hbox (badness 3281) in paragraph at lines 799--799
+Underfull \hbox (badness 3281) in paragraph at lines 880--880
 []|\T1/lmr/m/n/10 (+20) layer-1 ver-i-fier
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 799--799
+Underfull \hbox (badness 10000) in paragraph at lines 880--880
 []|\T1/lmr/m/n/10 (+20) layer-1 prover
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 799--799
+Underfull \hbox (badness 10000) in paragraph at lines 880--880
 []|\T1/lmr/m/n/10 (+20) layer-0 and
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 799--799
+Underfull \hbox (badness 10000) in paragraph at lines 880--880
 \T1/lmr/m/n/10 (+20) hash ver-i-fi-
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 799--799
+Underfull \hbox (badness 10000) in paragraph at lines 880--880
 \T1/lmr/m/n/10 (+20) ca-tion and
  []
 
-[21]
-Underfull \hbox (badness 4353) in paragraph at lines 849--849
+[25]
+Underfull \hbox (badness 4353) in paragraph at lines 930--930
 []|\T1/lmr/m/n/10 (+20) refactor branch head se-lected for the bench-mark cam-p
 aign
  []
 
-[22]
 
 LaTeX Warning: `h' float specifier changed to `ht'.
 
 
 LaTeX Warning: `h' float specifier changed to `ht'.
 
-[23{/usr/local/texlive/2023/texmf-dist/fonts/enc/dvips/lm/lm-mathex.enc}]
-[24] [25] [26] (./main.aux)
+[26] [27] [28] [29] (./main.aux)
 Package rerunfilecheck Info: File `main.out' has not changed.
-(rerunfilecheck)             Checksum: A0175477A81327BD17837879D8D4FBDD;12537.
+(rerunfilecheck)             Checksum: A61A2615DBAB7F7CD2E4C06677246C27;13534.
  ) 
 Here is how much of TeX's memory you used:
- 17691 strings out of 476025
- 290598 string characters out of 5790017
+ 17742 strings out of 476025
+ 291254 string characters out of 5790017
  1870388 words of memory out of 5000000
- 37339 multiletter control sequences out of 15000+600000
- 628264 words of font info for 256 fonts, out of 8000000 for 9000
+ 37353 multiletter control sequences out of 15000+600000
+ 629235 words of font info for 266 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 75i,12n,76p,2017b,724s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,12n,76p,2563b,724s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2023/texmf-dist/fonts/type1/public/lm/lmbx10.pfb></usr/lo
 cal/texlive/2023/texmf-dist/fonts/type1/public/lm/lmbx12.pfb></usr/local/texliv
 e/2023/texmf-dist/fonts/type1/public/lm/lmcsc10.pfb></usr/local/texlive/2023/te
 xmf-dist/fonts/type1/public/lm/lmex10.pfb></usr/local/texlive/2023/texmf-dist/f
 onts/type1/public/lm/lmmi10.pfb></usr/local/texlive/2023/texmf-dist/fonts/type1
-/public/lm/lmmi8.pfb></usr/local/texlive/2023/texmf-dist/fonts/type1/public/lm/
-lmr10.pfb></usr/local/texlive/2023/texmf-dist/fonts/type1/public/lm/lmr12.pfb><
-/usr/local/texlive/2023/texmf-dist/fonts/type1/public/lm/lmr17.pfb></usr/local/
-texlive/2023/texmf-dist/fonts/type1/public/lm/lmr6.pfb></usr/local/texlive/2023
-/texmf-dist/fonts/type1/public/lm/lmr8.pfb></usr/local/texlive/2023/texmf-dist/
-fonts/type1/public/lm/lmr9.pfb></usr/local/texlive/2023/texmf-dist/fonts/type1/
-public/lm/lmri10.pfb></usr/local/texlive/2023/texmf-dist/fonts/type1/public/lm/
-lmss10.pfb></usr/local/texlive/2023/texmf-dist/fonts/type1/public/lm/lmsy10.pfb
-></usr/local/texlive/2023/texmf-dist/fonts/type1/public/lm/lmsy8.pfb></usr/loca
-l/texlive/2023/texmf-dist/fonts/type1/public/lm/lmtt10.pfb></usr/local/texlive/
-2023/texmf-dist/fonts/type1/public/lm/lmtt9.pfb></usr/local/texlive/2023/texmf-
-dist/fonts/type1/public/lm/lmtti10.pfb>
-Output written on main.pdf (26 pages, 492847 bytes).
+/public/lm/lmmi6.pfb></usr/local/texlive/2023/texmf-dist/fonts/type1/public/lm/
+lmmi8.pfb></usr/local/texlive/2023/texmf-dist/fonts/type1/public/lm/lmr10.pfb><
+/usr/local/texlive/2023/texmf-dist/fonts/type1/public/lm/lmr12.pfb></usr/local/
+texlive/2023/texmf-dist/fonts/type1/public/lm/lmr17.pfb></usr/local/texlive/202
+3/texmf-dist/fonts/type1/public/lm/lmr6.pfb></usr/local/texlive/2023/texmf-dist
+/fonts/type1/public/lm/lmr8.pfb></usr/local/texlive/2023/texmf-dist/fonts/type1
+/public/lm/lmr9.pfb></usr/local/texlive/2023/texmf-dist/fonts/type1/public/lm/l
+mri10.pfb></usr/local/texlive/2023/texmf-dist/fonts/type1/public/lm/lmss10.pfb>
+</usr/local/texlive/2023/texmf-dist/fonts/type1/public/lm/lmsy10.pfb></usr/loca
+l/texlive/2023/texmf-dist/fonts/type1/public/lm/lmsy8.pfb></usr/local/texlive/2
+023/texmf-dist/fonts/type1/public/lm/lmtt10.pfb></usr/local/texlive/2023/texmf-
+dist/fonts/type1/public/lm/lmtt9.pfb></usr/local/texlive/2023/texmf-dist/fonts/
+type1/public/lm/lmtti10.pfb></usr/local/texlive/2023/texmf-dist/fonts/type1/pub
+lic/amsfonts/symbols/msbm10.pfb>
+Output written on main.pdf (29 pages, 518637 bytes).
 PDF statistics:
- 713 PDF objects out of 1000 (max. 8388607)
- 637 compressed objects within 7 object streams
- 225 named destinations out of 1000 (max. 500000)
- 67065 words of extra memory for PDF output out of 74296 (max. 10000000)
+ 771 PDF objects out of 1000 (max. 8388607)
+ 688 compressed objects within 7 object streams
+ 242 named destinations out of 1000 (max. 500000)
+ 67089 words of extra memory for PDF output out of 74296 (max. 10000000)
 
