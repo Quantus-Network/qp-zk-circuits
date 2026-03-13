@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.3.10)  13 MAR 2026 18:04
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.3.10)  13 MAR 2026 18:22
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -707,15 +707,15 @@ Package microtype Info: Loading generic protrusion settings for font family
 {/usr/local/texlive/2026basic/texmf-var/fonts/map/pdftex/updmap/pdftex.map}{/us
 r/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc}] [2] [3]
 LaTeX Font Info:    Trying to load font information for TS1+lmr on input line 9
-9.
+6.
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/ts1lmr.fd
 File: ts1lmr.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <10.95> on input line 108.
+(Font)              <10.95> on input line 105.
 LaTeX Font Info:    Trying to load font information for OT1+lmss on input line 
-115.
+112.
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/ot1lmss.fd
 File: ot1lmss.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
@@ -729,122 +729,123 @@ Package microtype Info: Loading generic protrusion settings for font family
 l/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-mathit.enc}{/usr/local/tex
 live/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc}] [5]
 Package hyperref Info: bookmark level for unknown algorithm defaults to 0 on in
-put line 166.
+put line 163.
 Package microtype Info: Character `029' is missing
 (microtype)             in font `T1/lmr/m/sc/10.95'.
 (microtype)             Ignoring protrusion settings for this character.
  [6] [7] [8] [9]
-Underfull \hbox (badness 10000) in paragraph at lines 352--352
+Underfull \hbox (badness 10000) in paragraph at lines 349--349
 []|\T1/lmr/m/n/10 (+20) Runtime val-i-dates that the pub-lic
  []
 
 [10] [11] [12] [13] [14] [15{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/
 dvips/lm/lm-mathex.enc}] [16] [17] [18] [19] [20]
-Underfull \hbox (badness 10000) in alignment at lines 754--754
+Underfull \hbox (badness 10000) in alignment at lines 751--751
 [][][] 
  []
 
-[21] [22] [23] [24]
-Underfull \hbox (badness 10000) in paragraph at lines 880--880
+[21] [22] [23]
+Underfull \hbox (badness 10000) in paragraph at lines 877--877
 []|\T1/lmr/m/n/10 (+20) leaf ver-i-fier
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 880--880
+Underfull \hbox (badness 10000) in paragraph at lines 877--877
 []|\T1/lmr/m/n/10 (+20) leaf ver-i-fier
  []
 
 
-Underfull \hbox (badness 2376) in paragraph at lines 880--880
+Underfull \hbox (badness 2376) in paragraph at lines 877--877
 \T1/lmr/m/n/10 (+20) loader, layer-0
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 880--880
+Underfull \hbox (badness 10000) in paragraph at lines 877--877
 []|\T1/lmr/m/n/10 (+20) leaf prover
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 880--880
+Underfull \hbox (badness 10000) in paragraph at lines 877--877
 []|\T1/lmr/m/n/10 (+20) layer-0 prover
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 880--880
+Underfull \hbox (badness 10000) in paragraph at lines 877--877
 \T1/lmr/m/n/10 (+20) loader; batch
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 880--880
+Underfull \hbox (badness 10000) in paragraph at lines 877--877
 \T1/lmr/m/n/10 (+20) padding tem-
  []
 
 
-Underfull \hbox (badness 3281) in paragraph at lines 880--880
+Underfull \hbox (badness 3281) in paragraph at lines 877--877
 []|\T1/lmr/m/n/10 (+20) layer-0 ver-i-fier
  []
 
 
-Underfull \hbox (badness 3386) in paragraph at lines 880--880
+Underfull \hbox (badness 3386) in paragraph at lines 877--877
 \T1/lmr/m/n/10 (+20) loader, layer-1
  []
 
 
-Underfull \hbox (badness 3281) in paragraph at lines 880--880
+Underfull \hbox (badness 3281) in paragraph at lines 877--877
 []|\T1/lmr/m/n/10 (+20) layer-0 ver-i-fier
  []
 
 
-Underfull \hbox (badness 3386) in paragraph at lines 880--880
+Underfull \hbox (badness 3386) in paragraph at lines 877--877
 \T1/lmr/m/n/10 (+20) loader, layer-1
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 880--880
+Underfull \hbox (badness 10000) in paragraph at lines 877--877
 []|\T1/lmr/m/n/10 (+20) layer-0 prover
  []
 
 
-Underfull \hbox (badness 3281) in paragraph at lines 880--880
+Underfull \hbox (badness 3281) in paragraph at lines 877--877
 []|\T1/lmr/m/n/10 (+20) layer-1 ver-i-fier
  []
 
 
-Underfull \hbox (badness 3386) in paragraph at lines 880--880
+Underfull \hbox (badness 3386) in paragraph at lines 877--877
 \T1/lmr/m/n/10 (+20) loader, layer-1
  []
 
 
-Underfull \hbox (badness 3281) in paragraph at lines 880--880
+Underfull \hbox (badness 3281) in paragraph at lines 877--877
 []|\T1/lmr/m/n/10 (+20) layer-1 ver-i-fier
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 880--880
+Underfull \hbox (badness 10000) in paragraph at lines 877--877
 []|\T1/lmr/m/n/10 (+20) layer-1 prover
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 880--880
+Underfull \hbox (badness 10000) in paragraph at lines 877--877
 []|\T1/lmr/m/n/10 (+20) layer-0 and
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 880--880
+Underfull \hbox (badness 10000) in paragraph at lines 877--877
 \T1/lmr/m/n/10 (+20) hash ver-i-fi-
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 880--880
+Underfull \hbox (badness 10000) in paragraph at lines 877--877
 \T1/lmr/m/n/10 (+20) ca-tion and
  []
 
-[25]
-Underfull \hbox (badness 4353) in paragraph at lines 930--930
+[24]
+Underfull \hbox (badness 4353) in paragraph at lines 927--927
 []|\T1/lmr/m/n/10 (+20) refactor branch head se-lected for the bench-mark cam-p
 aign
  []
 
+[25]
 
 LaTeX Warning: `h' float specifier changed to `ht'.
 
@@ -856,21 +857,17 @@ LaTeX Warning: `h' float specifier changed to `ht'.
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
  ***********
-
-
-LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.
-
 Package rerunfilecheck Info: File `main.out' has not changed.
 (rerunfilecheck)             Checksum: A61A2615DBAB7F7CD2E4C06677246C27;13534.
  ) 
 Here is how much of TeX's memory you used:
- 17749 strings out of 469006
- 288937 string characters out of 5454813
+ 17748 strings out of 469006
+ 288926 string characters out of 5454813
  763648 words of memory out of 5000000
  45625 multiletter control sequences out of 15000+600000
  744669 words of font info for 274 fonts, out of 8000000 for 9000
  319 hyphenation exceptions out of 8191
- 75i,12n,79p,2559b,735s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,12n,79p,2559b,737s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmbx10.pfb></u
 sr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmbx12.pfb></usr/lo
 cal/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmcsc10.pfb></usr/local/
@@ -891,10 +888,10 @@ live/2026basic/texmf-dist/fonts/type1/public/lm/lmtt10.pfb></usr/local/texlive/
 2026basic/texmf-dist/fonts/type1/public/lm/lmtt9.pfb></usr/local/texlive/2026ba
 sic/texmf-dist/fonts/type1/public/lm/lmtti10.pfb></usr/local/texlive/2026basic/
 texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb>
-Output written on main.pdf (29 pages, 516343 bytes).
+Output written on main.pdf (29 pages, 515894 bytes).
 PDF statistics:
- 771 PDF objects out of 1000 (max. 8388607)
- 688 compressed objects within 7 object streams
- 242 named destinations out of 1000 (max. 500000)
+ 769 PDF objects out of 1000 (max. 8388607)
+ 686 compressed objects within 7 object streams
+ 241 named destinations out of 1000 (max. 500000)
  67089 words of extra memory for PDF output out of 74296 (max. 10000000)
 

@@ -60,9 +60,6 @@ We make the following contributions.
     \item We tighten the security argument by separating proof-level and runtime-level assumptions and by stating explicit claims for authenticated-deposit binding, first-layer wrapper soundness, one-time withdrawal per deposit record, spend-path exclusivity under the chain's address discipline, and global value conservation.
 \end{enumerate}
 
-\paragraph{Scope note.}
-Earlier proposal material described contiguous-block aggregation as a design direction \citep{qip5}. This paper does \emph{not} treat that behavior as implemented protocol logic. The normative design described here is the implemented same-\texttt{block\_hash} first aggregation layer; older contiguous-block wording is retained only as historical context or future work.
-
 \section{Background and Design Goals}
 
 \subsection{From post-quantum signatures to proof-based settlement}
@@ -314,7 +311,7 @@ The first aggregation layer is the privacy-sensitive layer and the only aggregat
     \item All nullifiers are forwarded, with dummy nullifiers replaced by fresh random values.
 \end{enumerate}
 
-We state this same-block rule explicitly to avoid ambiguity with the older contiguous-block wording in earlier proposal text. Because the padding and shuffle are part of the privacy mechanism, layer-0 should be executed locally by the wallet whenever possible; a delegated layer-0 service would observe the client's raw child proofs before they are hidden inside the wrapper and would therefore collapse much of the ambiguity quantified in \cref{sec:layer0privacy}.
+Because the padding and shuffle are part of the privacy mechanism, layer-0 should be executed locally by the wallet whenever possible; a delegated layer-0 service would observe the client's raw child proofs before they are hidden inside the wrapper and would therefore collapse much of the ambiguity quantified in \cref{sec:layer0privacy}.
 
 \subsection{Wrapper logic}
 
