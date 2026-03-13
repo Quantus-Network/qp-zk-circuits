@@ -599,7 +599,7 @@ The prover follows a two-step interface: a \texttt{commit} stage fills the witne
 
 \subsection{Prebuilt binaries and verifier path}
 
-The repository includes a path that loads prebuilt circuit binaries and a path that reconstructs circuits in memory. For deployment, the prebuilt path is preferable because it gives the runtime and the standalone verifier a stable artifact boundary. \Cref{app:artifacts,app:repro} record that boundary explicitly: the generated filenames, the loader paths that consume them, the \texttt{config.json} integrity check, the benchmark run identifier, and the scratch-local execution environment used for the measurements reported here.
+The repository includes a path that loads prebuilt circuit binaries and a path that reconstructs circuits in memory. For deployment, the prebuilt path is preferable because it gives the runtime and the standalone verifier a stable artifact boundary.
 
 \subsection{Testing and benchmark hooks}
 
@@ -672,7 +672,7 @@ For second-layer aggregation with eight leaves per input layer-0 proof, build ti
 
 The wrapper-level public-output accounting is unchanged by the refactor. For a first-layer batch of size \(N\), the forwarded semantic payload remains \(14 + 8/N\) field elements per settled leaf, excluding zero padding in the wrapper's fixed-width public-input layout. This remains the correct accounting basis for any later throughput comparison against direct post-quantum signatures.
 
-The current timing data establish the wall-clock behavior of the refactored aggregation flow. \Cref{app:artifacts,app:repro} record the artifact manifest, integrity boundary, and benchmark reproduction recipe. The March~12 timing run did not persist serialized layer-0 or layer-1 proof-byte counts in the pasted CSV, so we record the exact measurement hook---serializing representative proofs with \texttt{ProofWithPublicInputs::to\_bytes()} and storing the resulting lengths alongside the raw JSON outputs---rather than inventing values that were not captured.
+The current timing data establish the wall-clock behavior of the refactored aggregation flow.
 
 \section{Discussion and Limitations}
 \label{sec:discussion}
@@ -692,7 +692,7 @@ Amounts are quantized to 0.01-unit resolution in the circuit interface. This is 
 The system does not hide output amounts, exit addresses, or timing. The layer-0 wrapper nevertheless enlarges the space of leaf-level explanations available to downstream observers, as formalized in \cref{sec:layer0privacy}; the resulting privacy boundary is therefore closer to plausible-deniability settlement than to a fully shielded ledger.
 
 \paragraph{Benchmark provenance.}
-This paper reports measured wall-clock timings for the refactored aggregation implementation and records the corresponding artifact names, integrity checks, run identifier, and raw-output naming convention in \cref{app:artifacts,app:repro}. A companion artifact release can extend this record with serialized proof-byte counts for the layer-0 and layer-1 benchmark outputs.
+This paper reports measured wall-clock timings for the refactored aggregation implementation. Benchmark methodology and artifact manifests are maintained in the repository.
 
 \paragraph{Proof granularity.}
 The security section now states explicit main-text theorems for deposit binding, wrapper soundness, one-time withdrawal, spend-path exclusivity, and value conservation, and \cref{app:proofs} expands those sketches into appendix-level reductions tied to the exact verifier APIs and dummy-template invariants used in the current code paths.
@@ -849,110 +849,6 @@ Take any accepted first-layer aggregate.
     \item By one-time withdrawal per authenticated deposit record and by runtime nullifier freshness, no authenticated record can be counted twice across accepted aggregates.
 \end{enumerate}
 Therefore the total value settled by any collection of accepted first-layer aggregates is upper bounded by the total net value of the distinct authenticated deposit records that underlie their real children.
-
-\section{Artifact manifest and integrity boundary}
-\label{app:artifacts}
-
-The implementation uses a prebuilt-artifact boundary rather than reconstructing circuits in memory at every runtime entry point. This appendix records the concrete filenames and the loader paths that consume them so that the eventual artifact bundle can be audited against the code.
-
-\begin{table}[t]
-\centering
-\small
-\begin{tabularx}{\textwidth}{@{}l l X@{}}
-\toprule
-Artifact & Produced by & Consumed by \\
-\midrule
-\texttt{common.bin} & \texttt{generate\_circuit\_binaries} & leaf verifier benchmark, leaf prover / verifier loaders, layer-0 builder \\
-\texttt{verifier.bin} & \texttt{generate\_circuit\_binaries} & leaf verifier loader, layer-0 prover loader \\
-\texttt{prover.bin} & \texttt{generate\_circuit\_binaries} & leaf prover loader \\
-\texttt{dummy\_proof.bin} & \texttt{generate\_dummy\_proof} via \texttt{generate\_circuit\_binaries} & layer-0 prover loader; batch padding template \\
-\texttt{aggregated\_common.bin} & \texttt{generate\_layer0\_circuit\_binaries} & layer-0 verifier loader, layer-1 builder, layer-1 prover loader \\
-\texttt{aggregated\_verifier.bin} & \texttt{generate\_layer0\_circuit\_binaries} & layer-0 verifier loader, layer-1 prover loader \\
-\texttt{aggregated\_prover.bin} & \texttt{generate\_layer0\_circuit\_binaries} & layer-0 prover loader \\
-\texttt{layer1\_common.bin} & \texttt{generate\_layer1\_circuit\_binaries} & layer-1 verifier loader, layer-1 prover loader \\
-\texttt{layer1\_verifier.bin} & \texttt{generate\_layer1\_circuit\_binaries} & layer-1 verifier loader \\
-\texttt{layer1\_prover.bin} & \texttt{generate\_layer1\_circuit\_binaries} & layer-1 prover loader \\
-\texttt{config.json} & \texttt{CircuitBinsConfig::save} & layer-0 and layer-1 loaders; hash verification and batch-size metadata \\
-\bottomrule
-\end{tabularx}
-\caption{Concrete artifact names used by the refactored prover / verifier / aggregator stack.}
-\label{tab:artifact-manifest}
-\end{table}
-
-The integrity boundary is encoded in \texttt{config.json}. Besides the batch-size parameters for the layer-0 and layer-1 fan-in, the config stores SHA-256 hashes for every artifact present in the directory. Both \texttt{Layer0Aggregator::new} and \texttt{Layer1Aggregator::new} load this file and verify those hashes before accepting the binaries as trustworthy inputs. This prevents a mixed-artifact configuration in which, for example, a layer-0 prover is loaded against stale or mismatched common data.
-
-\subsection{Manifest fields for an artifact release}
-
-A release-quality artifact bundle should ship a machine-readable manifest alongside the binaries. At minimum it should include:
-\begin{enumerate}[leftmargin=1.9em]
-    \item repository commit hash and branch name;
-    \item benchmark run identifier;
-    \item host information (CPU model, RAM, OS version, Rust toolchain);
-    \item the full batch-shape parameters \((N, M)\) used for each reported run;
-    \item one record per artifact file containing filename, SHA-256 hash, and byte length; and
-    \item one record per representative proof containing proof family (\emph{leaf}, \emph{layer-0}, or \emph{layer-1}), batch shape, serialized byte length, and public-input length.
-\end{enumerate}
-
-\subsection{Proof-size measurement boundary}
-
-Proof sizes should be measured from the exact serialized proof objects that are already produced during benchmarking, using the same serialization boundary that the runtime consumes, namely \texttt{ProofWithPublicInputs::to\_bytes()}. The leaf verifier benchmark already demonstrates this boundary through the committed \texttt{wormhole/bench-data/proof.bin} artifact. The March~12 timing campaign whose wall-clock results appear in \cref{sec:evaluation} did not persist serialized layer-0 or layer-1 proof-byte counts in the pasted CSV, so we record the measurement procedure and required manifest fields rather than reporting unobserved numbers.
-
-\section{Benchmark reproducibility details}
-\label{app:repro}
-
-The benchmark tables in \cref{sec:evaluation} are derived from a scratch-local campaign identified by the run directory
-\[
-\texttt{/tmp/quantus-bench-20260312-133708}.
-\]
-The reported numbers intentionally use only the \texttt{head\_ms} columns of that campaign, because the paper characterizes the refactored implementation itself rather than foregrounding a pre-refactor delta.
-
-\begin{table}[t]
-\centering
-\small
-\begin{tabularx}{\textwidth}{@{}l X@{}}
-\toprule
-Field & Value \\
-\midrule
-Implementation under test & refactor branch head selected for the benchmark campaign (\texttt{f52e5c917352a0a056c78e7ab39b94b0a367b40c}) \\
-Machine & Apple M2 Max, 12 CPU cores, 32~GB RAM \\
-OS & macOS 26.3.1 \\
-Toolchain & \texttt{rustc 1.90.0}, \texttt{cargo 1.90.0} \\
-Scratch execution root & \texttt{/tmp/quantus-bench-20260312-133708} \\
-Scratch-local environment variables & \texttt{HOME}, \texttt{CARGO\_HOME}, \texttt{TMPDIR}, and \texttt{CARGO\_TARGET\_DIR} were rooted under the scratch directory; \texttt{RUSTUP\_HOME} remained host-global \\
-Layer-0 matrix & \(N \in \{2,4,8,9,16,25,32,36,49\}\) leaf proofs \\
-Layer-1 matrix & eight leaves per layer-0 proof and \(M \in \{2,4,8,16,32\}\) input layer-0 proofs \\
-Workload model & repeated identical dummy leaf proofs for layer~0; repeated dummy-derived layer-0 proofs for layer~1 \\
-Comparison policy & report \texttt{head\_ms} only; ignore baseline and ratio fields in the paper narrative \\
-\bottomrule
-\end{tabularx}
-\caption{Benchmark provenance for the timing tables reported in \cref{sec:evaluation}.}
-\label{tab:benchmark-provenance}
-\end{table}
-
-The raw-result filenames should also be preserved because they encode the batch shape. The head-only timing files follow the conventions:
-\begin{quote}\ttfamily
-results/raw/head/layer0-build-n\textless N\textgreater.json\\
-results/raw/head/layer0-prove-verify-n\textless N\textgreater.json\\
-results/raw/head/layer1-build-l0leaves8-n\textless M\textgreater.json\\
-results/raw/head/layer1-prove-verify-l0leaves8-n\textless M\textgreater.json
-\end{quote}
-A release-quality artifact bundle should include these raw JSON files verbatim together with the normalized CSV used to typeset the tables.
-
-At the command level, circuit artifacts are generated by the builder CLI. For layer~0 only, the relevant invocation is
-\begin{quote}
-\small\ttfamily\raggedright
-cargo run --release -p\\
-qp-wormhole-circuit-builder -- --output wormhole/generated-bins\\
---num-leaf-proofs <N>
-\end{quote}
-and for runs that also build the explicit layer-1 surface,
-\begin{quote}
-\small\ttfamily\raggedright
-cargo run --release -p\\
-qp-wormhole-circuit-builder -- --output wormhole/generated-bins\\
---num-leaf-proofs 8 --num-layer0-proofs <M>
-\end{quote}
-The repository also includes Criterion entry points for leaf proving, leaf verification, and aggregation under the crates \texttt{qp-wormhole-prover}, \texttt{qp-wormhole-verifier}, and \texttt{qp-wormhole-aggregator}. The March~12 campaign used custom scratch harnesses rather than only the stock Criterion macros, which is why the paper records the output schema and environment explicitly here.
 
 \section{Privacy-score heuristic}
 
