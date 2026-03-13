@@ -1,14 +1,11 @@
 LATEX = /Library/TeX/texbin/pdflatex
-BIBTEX = /Library/TeX/texbin/bibtex
 MAIN = main
 
 .PHONY: all clean view
 
 all: $(MAIN).pdf
 
-$(MAIN).pdf: $(MAIN).tex references.bib
-	$(LATEX) $(MAIN)
-	$(BIBTEX) $(MAIN)
+$(MAIN).pdf: $(MAIN).tex
 	$(LATEX) $(MAIN)
 	$(LATEX) $(MAIN)
 
