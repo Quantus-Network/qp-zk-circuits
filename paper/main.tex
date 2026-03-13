@@ -22,12 +22,12 @@
 \newtheorem{corollary}[theorem]{Corollary}
 \newtheorem{proposition}[theorem]{Proposition}
 
-\newcommand{\EA}{\mathsf{EA}}
+\newcommand{\WA}{\mathsf{WA}}
 \newcommand{\Null}{\mathsf{Null}}
 \newcommand{\BlockHash}{\mathsf{BH}}
 \newcommand{\pkset}{\mathcal{PK}_\Sigma}
 
-\title{Entangled Addresses: Recursive Zero-Knowledge Private Settlement for Post-Quantum Blockchains}
+\title{Wormhole Addresses: Recursive Zero-Knowledge Private Settlement for Post-Quantum Blockchains}
 \author{Christopher Smith \and Ethan Cemer}
 \date{March 2026}
 
@@ -35,7 +35,7 @@
 \maketitle
 
 \begin{abstract}
-Post-quantum blockchains face a basic tension: signature schemes that are believed to resist quantum attacks typically impose much larger public keys and signatures than classical elliptic-curve systems, while direct on-chain authorization also leaks transaction structure to every observer. We describe \emph{Quantus Wormhole}, also referred to as \emph{entangled addresses}, a private settlement mechanism that shifts authorization off-chain into recursive zero-knowledge proofs. A user deterministically derives an unspendable deposit address from a secret, funds that address through an ordinary transfer, and later proves in zero knowledge that (i) the funded record exists in authenticated chain state, (ii) the block-header commitment is valid, (iii) the corresponding nullifier is fresh, and (iv) the disclosed exits satisfy the protocol fee rule. The implementation uses a \texttt{qp-plonky2} fork of Plonky2 with Poseidon2-based hashing and a circuit split across nullifier, unspendable-account, storage-proof, dual-exit, and block-header fragments; at the time this stack was engineered, it provided the recursive FRI pathway Wormhole needed while allowing us to integrate Poseidon2 into the deployed recursive pipeline. The implemented first aggregation layer batches leaf proofs that share the same public \texttt{block\_hash}; its wrapper forwards nullifiers, groups exit accounts, and hides the client's pre-wrapper leaf set behind client-local dummy padding and shuffling. This paper formalizes the leaf relation, explains why the public chain commitment is a commitment to the full structured block header rather than to the state root alone, gives a combinatorial privacy analysis of layer-0 showing how local padding, hidden batch order, and grouped exits enlarge the balance-linking explanation class seen by downstream observers, separates proof-level and runtime-level security claims for deposit binding, one-time withdrawal, and value conservation, aligns the presentation with the implemented same-block aggregation model, and reports build, prove, and verification times for the refactored aggregation flow. On an Apple M2 Max running Rust 1.90.0, same-block first-layer batches of 2--49 leaves required 7.46--30.93~s to build, 3.72--32.42~s to prove, and 4.50--19.58~ms to verify; second-layer batches over 2--32 first-layer proofs with eight leaves each required 5.54--25.78~s to build, 3.52--21.32~s to prove, and 5.18--6.88~ms to verify.
+Post-quantum blockchains face a basic tension: signature schemes that are believed to resist quantum attacks typically impose much larger public keys and signatures than classical elliptic-curve systems, while direct on-chain authorization also leaks transaction structure to every observer. We describe \emph{Quantus Wormhole}, also referred to as \emph{wormhole addresses}, a private settlement mechanism that shifts authorization off-chain into recursive zero-knowledge proofs. A user deterministically derives an unspendable deposit address from a secret, funds that address through an ordinary transfer, and later proves in zero knowledge that (i) the funded record exists in authenticated chain state, (ii) the block-header commitment is valid, (iii) the corresponding nullifier is fresh, and (iv) the disclosed exits satisfy the protocol fee rule. The implementation uses a \texttt{qp-plonky2} fork of Plonky2 with Poseidon2-based hashing and a circuit split across nullifier, unspendable-account, storage-proof, dual-exit, and block-header fragments; at the time this stack was engineered, it provided the recursive FRI pathway Wormhole needed while allowing us to integrate Poseidon2 into the deployed recursive pipeline. The implemented first aggregation layer batches leaf proofs that share the same public \texttt{block\_hash}; its wrapper forwards nullifiers, groups exit accounts, and hides the client's pre-wrapper leaf set behind client-local dummy padding and shuffling. This paper formalizes the leaf relation, explains why the public chain commitment is a commitment to the full structured block header rather than to the state root alone, gives a combinatorial privacy analysis of layer-0 showing how local padding, hidden batch order, and grouped exits enlarge the balance-linking explanation class seen by downstream observers, separates proof-level and runtime-level security claims for deposit binding, one-time withdrawal, and value conservation, aligns the presentation with the implemented same-block aggregation model, and reports build, prove, and verification times for the refactored aggregation flow. On an Apple M2 Max running Rust 1.90.0, same-block first-layer batches of 2--49 leaves required 7.46--30.93~s to build, 3.72--32.42~s to prove, and 4.50--19.58~ms to verify; second-layer batches over 2--32 first-layer proofs with eight leaves each required 5.54--25.78~s to build, 3.52--21.32~s to prove, and 5.18--6.88~ms to verify.
 \end{abstract}
 
 \section{Introduction}
@@ -51,7 +51,7 @@ The Quantus design builds on the wormhole concept proposed in EIP-7503 \citep{ei
 \paragraph{Contributions.}
 We make the following contributions.
 \begin{enumerate}[leftmargin=1.5em]
-    \item We formalize the \emph{entangled-address} spending model for Quantus: deposits flow to deterministic unspendable addresses derived from a secret, and withdrawals are authorized by proving knowledge of that secret together with authenticated state inclusion.
+    \item We formalize the \emph{wormhole-address} spending model for Quantus: deposits flow to deterministic unspendable addresses derived from a secret, and withdrawals are authorized by proving knowledge of that secret together with authenticated state inclusion.
     \item We specify the implemented leaf relation in terms of public outputs, private witnesses, and sub-circuit constraints for nullifier derivation, unspendable-account derivation, storage-proof verification, fee-constrained dual exits, and block-header commitment.
     \item We describe the implemented recursive aggregation architecture, emphasizing the normative behavior of the first aggregation layer: leaf proofs in a first-layer batch share the same public \texttt{block\_hash}, are padded with dummy leaves when necessary, are shuffled client-locally, and are wrapped by a circuit that forwards nullifiers and grouped exits.
     \item We give a formal combinatorial privacy analysis of the client-local first aggregation layer, showing how dummy padding, hidden batch order, and grouped exits enlarge the explanation class available to balance-linking adversaries relative to delegated layer-0 aggregation.
@@ -93,7 +93,7 @@ The protocol aims to satisfy four simultaneous goals:
 
 The system comprises the following roles.
 \begin{itemize}[leftmargin=1.5em]
-    \item \textbf{User / wallet.} Generates a secret, derives an entangled address, funds it, collects the witness data for withdrawal, and may optionally perform first-layer aggregation locally.
+    \item \textbf{User / wallet.} Generates a secret, derives an wormhole address, funds it, collects the witness data for withdrawal, and may optionally perform first-layer aggregation locally.
     \item \textbf{Proof source or indexer.} Supplies the user with the relevant transfer record, block-header data, and storage proof needed to construct a witness. This role is not trusted for correctness because incorrect data causes proof failure.
     \item \textbf{First-layer aggregator.} A privacy-sensitive local actor that fills a batch with real and dummy leaf proofs, shuffles them, and produces the first recursive wrapper.
     \item \textbf{Higher-layer aggregator.} A potentially delegated actor that composes already aggregated proofs and forwards their public outputs.
@@ -135,9 +135,9 @@ The protocol relies on the following assumptions.
 The protocol consists of five stages.
 
 \paragraph{1. Secret generation and deposit.}
-The user samples a secret \(s\) and derives an entangled address
+The user samples a secret \(s\) and derives an wormhole address
 \[
-\EA(s) = H(H(\mathsf{``wormhole''} \parallel s)).
+\WA(s) = H(H(\mathsf{``wormhole''} \parallel s)).
 \]
 The user then funds this address through an ordinary transfer on Quantus. The deposit is accompanied by a chain record that can later be authenticated inside the circuit.
 
@@ -164,7 +164,7 @@ The runtime verifies the aggregate proof, checks that the public \texttt{block\_
 \label{alg:pipeline}
 \begin{algorithmic}[1]
 \Procedure{WithdrawAndSettle}{$s,c,\alpha_1,\alpha_2,v_1,v_2$}
-    \State derive \(\alpha_{\mathrm{wh}} \gets \EA(s)\)
+    \State derive \(\alpha_{\mathrm{wh}} \gets \WA(s)\)
     \State fetch transfer record, block-header fields, and storage proof for counter \(c\)
     \State compute \(n \gets \Null(s,c)\)
     \State form public inputs \(x = (a,v_1,v_2,f,n,\alpha_1,\alpha_2,h_B,b)\)
@@ -216,10 +216,10 @@ The witness consists of the user's secret, the transfer counter, the funding acc
 \toprule
 Field & Type & Meaning \\
 \midrule
-\texttt{secret} & 32 bytes & User secret from which both nullifier and entangled address are derived. \\
+\texttt{secret} & 32 bytes & User secret from which both nullifier and wormhole address are derived. \\
 \texttt{transfer\_count} & \texttt{u64} & Per-transfer counter used in nullifier derivation. \\
 \texttt{funding\_account} & 4 felts & Source account associated with the transfer record. \\
-\texttt{unspendable\_account} & 4 felts & Derived entangled address \(\EA(s)\). \\
+\texttt{unspendable\_account} & 4 felts & Derived wormhole address \(\WA(s)\). \\
 \texttt{storage\_proof} & structured witness & Processed inclusion proof for the transfer record under the state root. \\
 \texttt{state\_root} & 4 felts & Root authenticating the storage proof. \\
 \texttt{parent\_hash} & 4 felts & Parent block hash used in header recomputation. \\
@@ -237,8 +237,8 @@ Field & Type & Meaning \\
 Let \(x = (a, v_1, v_2, f, n, \alpha_1, \alpha_2, h_B, b)\) denote the public input tuple and let \(w\) denote the witness described above. The leaf relation \(\mathcal{R}_{\mathrm{leaf}}\) holds when there exists a witness \(w\) such that:
 \begin{enumerate}[label=(C\arabic*),leftmargin=1.9em]
     \item \textbf{Nullifier correctness.} \(n = \Null(s,c)\).
-    \item \textbf{Entangled-address correctness.} \(\alpha_{\mathrm{wh}} = \EA(s)\).
-    \item \textbf{Authenticated inclusion.} The processed storage proof verifies that a transfer record keyed by the relevant funding account, entangled account, and counter exists under \(\mathsf{rt}\).
+    \item \textbf{Entangled-address correctness.} \(\alpha_{\mathrm{wh}} = \WA(s)\).
+    \item \textbf{Authenticated inclusion.} The processed storage proof verifies that a transfer record keyed by the relevant funding account, wormhole account, and counter exists under \(\mathsf{rt}\).
     \item \textbf{Header binding.} The structured block-header fields hash to the public commitment \(h_B\), and the public block number equals the header's block number.
     \item \textbf{Fee constraint.} The disclosed exits satisfy
     \[
@@ -343,7 +343,7 @@ Claim & Additional assumptions outside the circuit relation \\
 Leaf-to-deposit binding & Runtime validates that the public \texttt{block\_hash}/\texttt{block\_number} pair denotes a real block and that the processed storage proof format matches the authenticated state representation. \\
 First-layer wrapper soundness & The recursive verifier gadgets correctly enforce child-proof validity, and the wrapper implementation matches its stated grouping and forwarding logic. \\
 One-time withdrawal per authenticated deposit record & Runtime rejects reused nullifiers, including duplicates within one aggregate submission; the authenticated transfer record fixes the transfer counter used in nullifier derivation. \\
-Spend-path exclusivity for entangled addresses & The surrounding chain only admits direct spends from addresses backed by valid external credentials, and no efficient adversary can manufacture such credentials for an entangled address. \\
+Spend-path exclusivity for wormhole addresses & The surrounding chain only admits direct spends from addresses backed by valid external credentials, and no efficient adversary can manufacture such credentials for an wormhole address. \\
 Global value conservation & Runtime settles exactly the forwarded public outputs and records the associated nullifiers. \\
 \bottomrule
 \end{tabularx}
@@ -372,7 +372,7 @@ If an honest prover holds witness data \(w\) for which \((x,w)\in \mathcal{R}_{\
 \end{theorem}
 
 \begin{proof}[Proof sketch]
-Completeness follows from the correctness of the individual circuit fragments and of the proving system. Each fragment enforces a deterministic relation between its witness variables and public outputs. When the nullifier, entangled address, storage proof, header commitment, fee inequality, and range constraints are all satisfied, the assembled witness satisfies \(\mathcal{R}_{\mathrm{leaf}}\), so the prover can produce an accepting proof.
+Completeness follows from the correctness of the individual circuit fragments and of the proving system. Each fragment enforces a deterministic relation between its witness variables and public outputs. When the nullifier, wormhole address, storage proof, header commitment, fee inequality, and range constraints are all satisfied, the assembled witness satisfies \(\mathcal{R}_{\mathrm{leaf}}\), so the prover can produce an accepting proof.
 \end{proof}
 
 \begin{theorem}[Wrapper completeness]
@@ -390,7 +390,7 @@ Assume the leaf proof system is knowledge sound. For every accepted leaf proof \
 \end{theorem}
 
 \begin{proof}[Proof sketch]
-This is the standard consequence of knowledge soundness for the leaf relation. The extractor outputs values for the secret, counter, funding account, entangled account, storage-proof witness, header fields, and input amount that satisfy conditions (C1)--(C6) from \cref{sec:formal}. No further claim is made here about whether the committed block actually exists in canonical chain history; that is deferred to the runtime check on the public \texttt{block\_hash}/\texttt{block\_number} pair.
+This is the standard consequence of knowledge soundness for the leaf relation. The extractor outputs values for the secret, counter, funding account, wormhole account, storage-proof witness, header fields, and input amount that satisfy conditions (C1)--(C6) from \cref{sec:formal}. No further claim is made here about whether the committed block actually exists in canonical chain history; that is deferred to the runtime check on the public \texttt{block\_hash}/\texttt{block\_number} pair.
 \end{proof}
 
 \begin{corollary}[Authenticated-deposit binding]
@@ -437,7 +437,7 @@ Assume:
 \begin{enumerate}[label=(D\arabic*),leftmargin=1.9em]
     \item the runtime rejects reused nullifiers, including duplicates within one candidate aggregate submission;
     \item the authenticated transfer record fixes the transfer counter \(c\) used in nullifier derivation; and
-    \item the hash function used in \(\EA(\cdot)\) and \(\Null(\cdot,\cdot)\) is collision resistant and second-preimage resistant for the relevant domain-separated inputs.
+    \item the hash function used in \(\WA(\cdot)\) and \(\Null(\cdot,\cdot)\) is collision resistant and second-preimage resistant for the relevant domain-separated inputs.
 \end{enumerate}
 Then no probabilistic polynomial-time adversary can obtain two accepted real withdrawals from the same authenticated deposit record except with negligible probability.
 \end{theorem}
@@ -447,11 +447,11 @@ Suppose two accepted real withdrawals correspond to the same authenticated depos
 \[
 (a,v_{\mathrm{in}},c,\alpha_{\mathrm{fund}},\alpha_{\mathrm{wh}},h_B,b).
 \]
-Because the record fixes the counter, we have \(c=c'\). Because the record also fixes the entangled address, both witnesses satisfy
+Because the record fixes the counter, we have \(c=c'\). Because the record also fixes the wormhole address, both witnesses satisfy
 \[
-\EA(s)=\alpha_{\mathrm{wh}}=\EA(s').
+\WA(s)=\alpha_{\mathrm{wh}}=\WA(s').
 \]
-If \(s\neq s'\), the adversary has found a collision or second preimage for the entangled-address derivation. Therefore \(s=s'\) except with negligible probability. But then
+If \(s\neq s'\), the adversary has found a collision or second preimage for the wormhole-address derivation. Therefore \(s=s'\) except with negligible probability. But then
 \[
 \Null(s,c)=\Null(s',c'),
 \]
@@ -462,19 +462,19 @@ The theorem above is intentionally phrased in terms of an \emph{authenticated de
 
 \subsection{Operational unspendability and spend-path exclusivity}
 
-The protocol needs one assumption that is partly external to the circuit: funds sent to an entangled address should not also be directly spendable through an ordinary account-authentication path.
+The protocol needs one assumption that is partly external to the circuit: funds sent to an wormhole address should not also be directly spendable through an ordinary account-authentication path.
 
 \begin{proposition}[Spend-path exclusivity under the chain's address discipline]
 Let \(\mathsf{Addr}:\pkset\rightarrow\{0,1\}^{256}\) denote the chain's ordinary address derivation from externally controlled public keys. Suppose:
 \begin{enumerate}[label=(U\arabic*),leftmargin=1.9em]
     \item every direct spend accepted by the base chain must be authorized by a valid public key \(pk\in\pkset\) whose address is \(\mathsf{Addr}(pk)\); and
-    \item no efficient adversary can find \(pk\in\pkset\) such that \(\mathsf{Addr}(pk)=\EA(s)\) for a target entangled address, except by breaking the collision or preimage resistance of the derivation.
+    \item no efficient adversary can find \(pk\in\pkset\) such that \(\mathsf{Addr}(pk)=\WA(s)\) for a target wormhole address, except by breaking the collision or preimage resistance of the derivation.
 \end{enumerate}
-Then value sent to \(\EA(s)\) can leave the system only through the proof-authorized settlement path.
+Then value sent to \(\WA(s)\) can leave the system only through the proof-authorized settlement path.
 \end{proposition}
 
 \begin{proof}[Proof sketch]
-Any direct spend must use some valid external credential \(pk\) by assumption (U1). If such a spend exists from \(\EA(s)\), then \(\mathsf{Addr}(pk)=\EA(s)\), contradicting (U2) except with negligible probability. Therefore the only remaining spend path is the proof-authorized one. We treat spend-path exclusivity as a system assumption about the surrounding chain interface rather than as a theorem of the circuit in isolation.
+Any direct spend must use some valid external credential \(pk\) by assumption (U1). If such a spend exists from \(\WA(s)\), then \(\mathsf{Addr}(pk)=\WA(s)\), contradicting (U2) except with negligible probability. Therefore the only remaining spend path is the proof-authorized one. We treat spend-path exclusivity as a system assumption about the surrounding chain interface rather than as a theorem of the circuit in isolation.
 \end{proof}
 
 \subsection{Value conservation}
@@ -715,7 +715,7 @@ The adoption of ML-DSA and related schemes raises not only cryptographic questio
 \section{Conclusion}
 \label{sec:conclusion}
 
-Quantus Wormhole, or entangled addresses, shows how a post-quantum blockchain can move authorization off-chain without abandoning authenticated settlement. A user deposits value to an address derived from a private secret, later proves in zero knowledge that the deposit exists in authenticated state and has not been spent before, and reveals only the settlement outputs needed by the runtime. Recursive aggregation then amortizes on-chain verification over many such withdrawals.
+Quantus Wormhole, or wormhole addresses, shows how a post-quantum blockchain can move authorization off-chain without abandoning authenticated settlement. A user deposits value to an address derived from a private secret, later proves in zero knowledge that the deposit exists in authenticated state and has not been spent before, and reveals only the settlement outputs needed by the runtime. Recursive aggregation then amortizes on-chain verification over many such withdrawals.
 
 The resulting picture is deliberately concrete. The paper matches the implemented first-layer same-block aggregation model, explains why authenticated settlement requires a public commitment to the full structured block header rather than to the state root alone, formalizes the layer-0 privacy gain from client-local dummy padding, shuffling, and grouped exits, includes measured timing data for the refactored aggregation flow, expands the security reductions into appendix-level arguments tied to the current dummy-template code paths, and records the artifact boundary needed for a reproducible release. Together these elements position Quantus Wormhole as a practical private-settlement architecture for post-quantum blockchains.
 
@@ -827,11 +827,11 @@ Suppose, for contradiction, that an adversary obtains two accepted \emph{real} w
 \[
 d=(a,v_{\mathrm{in}},c,\alpha_{\mathrm{fund}},\alpha_{\mathrm{wh}},h_B,b).
 \]
-Because the authenticated record fixes the transfer counter, we have \(c=c'\). Because the same record also fixes the entangled address, both extracted witnesses satisfy
+Because the authenticated record fixes the transfer counter, we have \(c=c'\). Because the same record also fixes the wormhole address, both extracted witnesses satisfy
 \[
-\EA(s)=\alpha_{\mathrm{wh}}=\EA(s').
+\WA(s)=\alpha_{\mathrm{wh}}=\WA(s').
 \]
-If \(s\neq s'\), the adversary has found a collision or second preimage for the entangled-address derivation. Therefore \(s=s'\) except with negligible probability. Substituting back into the nullifier derivation gives
+If \(s\neq s'\), the adversary has found a collision or second preimage for the wormhole-address derivation. Therefore \(s=s'\) except with negligible probability. Substituting back into the nullifier derivation gives
 \[
 \Null(s,c)=\Null(s',c').
 \]
