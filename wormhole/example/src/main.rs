@@ -12,7 +12,7 @@ use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_poseidon::PoseidonHasher;
 use qp_wormhole_inputs::{AggregatedPublicCircuitInputs, PublicCircuitInputs};
 use quantus_cli::chain::quantus_subxt::api as quantus_node;
-use quantus_cli::chain::quantus_subxt::api::runtime_types::pallet_wormhole::pallet::Call as WormholeCall;
+use quantus_cli::chain::quantus_subxt::api::runtime_types::pallet_balances::pallet::Call as BalancesCall;
 use quantus_cli::chain::quantus_subxt::api::runtime_types::quantus_runtime::RuntimeCall;
 use quantus_cli::chain::quantus_subxt::api::wormhole;
 use quantus_cli::cli::common::{submit_transaction, ExecutionMode};
@@ -29,7 +29,7 @@ use subxt::ext::jsonrpsee::core::client::ClientT;
 use subxt::ext::jsonrpsee::rpc_params;
 use subxt::utils::{to_hex, AccountId32 as SubxtAccountId};
 use subxt::OnlineClient;
-use wormhole_aggregator::aggregator::WormholeProofAggregator;
+use wormhole_aggregator::aggregator::{AggregationBackend, Layer0Aggregator};
 use wormhole_circuit::inputs::{
     CircuitInputs, ParseAggregatedPublicInputs, ParsePublicInputs, PrivateCircuitInputs,
 };
@@ -43,6 +43,7 @@ use zk_circuits_common::utils::{digest_felts_to_bytes, BytesDigest, Digest};
 const DEBUG_FILE: &str = "proof_debug.json";
 const SCALE_DOWN_FACTOR: u128 = 10_000_000_000u128; // 10^10
 const VOLUME_FEE_BPS: u32 = 10; // 0.1% = 10 basis points
+const BINS_DIR: &str = "../../generated-bins";
 
 /// Compute output amount after fee deduction
 /// output = input * (10000 - fee_bps) / 10000
@@ -264,11 +265,7 @@ fn load_proof(
 }
 
 /// Aggregate multiple proofs from files
-fn aggregate_proofs(
-    proof_files: Vec<String>,
-    output_file: &str,
-    aggregation_config: AggregationConfig,
-) -> anyhow::Result<()> {
+fn aggregate_proofs(proof_files: Vec<String>, output_file: &str) -> anyhow::Result<()> {
     println!("\n=== Starting Proof Aggregation ===");
     println!("Loading {} proof files...", proof_files.len());
 
@@ -277,18 +274,18 @@ fn aggregate_proofs(
     let prover = WormholeProver::new(config.clone());
     let common_data = &prover.circuit_data.common;
 
-    let mut aggregator = WormholeProofAggregator::from_circuit_config(config, aggregation_config);
+    let mut aggregator = Layer0Aggregator::new(BINS_DIR)?;
 
     println!(
         "Aggregator configured for {} leaf proofs",
-        aggregator.config.num_leaf_proofs,
+        aggregator.batch_size(),
     );
 
-    if proof_files.len() > aggregator.config.num_leaf_proofs {
+    if proof_files.len() > aggregator.batch_size() {
         anyhow::bail!(
             "Too many proof files provided: {} (max: {})",
             proof_files.len(),
-            aggregator.config.num_leaf_proofs
+            aggregator.batch_size()
         );
     }
 
@@ -311,26 +308,22 @@ fn aggregate_proofs(
 fn aggregate_proofs_direct(
     proofs: Vec<ProofWithPublicInputs<F, C, D>>,
     output_file: &str,
-    aggregation_config: AggregationConfig,
 ) -> anyhow::Result<()> {
     println!("\n=== Starting Proof Aggregation ===");
     println!("Aggregating {} proofs...", proofs.len());
 
-    // Build the wormhole aggregator from circuit config
-    let config = CircuitConfig::standard_recursion_zk_config();
-
-    let mut aggregator = WormholeProofAggregator::from_circuit_config(config, aggregation_config);
+    let mut aggregator = Layer0Aggregator::new(BINS_DIR)?;
 
     println!(
         "Aggregator configured for {} leaf proofs",
-        aggregator.config.num_leaf_proofs,
+        aggregator.batch_size(),
     );
 
-    if proofs.len() > aggregator.config.num_leaf_proofs {
+    if proofs.len() > aggregator.batch_size() {
         anyhow::bail!(
             "Too many proofs provided: {} (max: {})",
             proofs.len(),
-            aggregator.config.num_leaf_proofs
+            aggregator.batch_size()
         );
     }
 
@@ -343,29 +336,25 @@ fn aggregate_proofs_direct(
 }
 
 /// Common aggregation logic - aggregate and save
-fn aggregate_and_save(
-    mut aggregator: WormholeProofAggregator,
-    output_file: &str,
-) -> anyhow::Result<()> {
+fn aggregate_and_save(mut aggregator: Layer0Aggregator, output_file: &str) -> anyhow::Result<()> {
     println!("\nRunning aggregation...");
     let aggregated_proof = aggregator.aggregate()?;
 
     // Parse and display aggregated public inputs
-    let aggregated_public_inputs = AggregatedPublicCircuitInputs::try_from_felts(
-        aggregated_proof.proof.public_inputs.as_slice(),
-    )?;
+    let aggregated_public_inputs =
+        AggregatedPublicCircuitInputs::try_from_felts(aggregated_proof.public_inputs.as_slice())?;
     println!("\n=== Aggregated Public Inputs ===");
     println!("{:#?}", aggregated_public_inputs);
 
     // Verify the aggregated proof
     println!("\nVerifying aggregated proof...");
-    aggregated_proof
-        .circuit_data
-        .verify(aggregated_proof.proof.clone())?;
+    aggregator
+        .verify(aggregated_proof.clone())
+        .with_context(|| "Aggregated proof verification failed")?;
     println!("Aggregated proof verified successfully!");
 
     // Save aggregated proof
-    save_proof(&aggregated_proof.proof, output_file)?;
+    save_proof(&aggregated_proof, output_file)?;
     println!("\n=== Aggregation Complete ===");
     println!("Aggregated proof saved to: {}", output_file);
 
@@ -432,9 +421,9 @@ async fn perform_batched_transfers(
         );
 
         // Create transfer call
-        let call = RuntimeCall::Wormhole(WormholeCall::transfer_native {
+        let call = RuntimeCall::Balances(BalancesCall::transfer_allow_death {
             dest: subxt::ext::subxt_core::utils::MultiAddress::Id(unspendable_account_id.clone()),
-            amount: funding_amount,
+            value: funding_amount,
         });
 
         secrets.push(secret);
@@ -620,10 +609,10 @@ async fn perform_transfer_and_get_inputs(
     println!("\n=== Transfer {} ===", proof_index + 1);
     println!("Unspendable account: {:?}", &unspendable_account_id);
 
-    // Make the transfer TO the unspendable account using wormhole pallet
+    // Make the transfer TO the unspendable account using balances pallet
     let transfer_tx = quantus_cli::chain::quantus_subxt::api::tx()
-        .wormhole()
-        .transfer_native(
+        .balances()
+        .transfer_allow_death(
             subxt::ext::subxt_core::utils::MultiAddress::Id(unspendable_account_id.clone()),
             funding_amount,
         );
@@ -819,9 +808,13 @@ struct Cli {
     #[arg(long)]
     generate_and_aggregate: bool,
 
-    /// Number of leaf proofs for aggregation (required for aggregation modes)
+    /// Number of leaf proofs for first layer of aggregation (required for aggregation modes)
     #[arg(long)]
     num_leaf_proofs: Option<usize>,
+
+    /// Number of leaf proofs for first layer of aggregation (required for aggregation modes)
+    #[arg(long)]
+    num_layer0_proofs: Option<usize>,
 
     /// Number of proofs to generate (for --generate-and-aggregate mode)
     /// Defaults to num_leaf_proofs from aggregation config
@@ -857,7 +850,8 @@ async fn main() -> anyhow::Result<()> {
         let num_leaf_proofs = cli
             .num_leaf_proofs
             .context("--num-leaf-proofs is required for aggregation modes")?;
-        Ok(AggregationConfig::new(num_leaf_proofs))
+        let num_layer0_proofs = cli.num_layer0_proofs;
+        Ok(AggregationConfig::new(num_leaf_proofs, num_layer0_proofs))
     };
 
     // Aggregation-only mode (from files)
@@ -865,12 +859,7 @@ async fn main() -> anyhow::Result<()> {
         let proof_files = cli
             .proof_files
             .context("Missing proof files for aggregation")?;
-        let aggregation_config = get_aggregation_config()?;
-        return aggregate_proofs(
-            proof_files,
-            &cli.aggregated_proof_output,
-            aggregation_config,
-        );
+        return aggregate_proofs(proof_files, &cli.aggregated_proof_output);
     }
 
     // Offline debug mode
@@ -993,7 +982,7 @@ async fn main() -> anyhow::Result<()> {
             "Using aggregation config: num_leaf_proofs={}",
             config.num_leaf_proofs
         );
-        aggregate_proofs_direct(proofs, &cli.aggregated_proof_output, config)?;
+        aggregate_proofs_direct(proofs, &cli.aggregated_proof_output)?;
     }
 
     Ok(())

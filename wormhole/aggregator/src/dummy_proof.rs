@@ -64,7 +64,8 @@ const DEFAULT_VOLUME_FEE_BPS: u32 = 10;
 const DEFAULT_PARENT_HASH: [u8; 32] = [0u8; 32];
 const DEFAULT_BLOCK_NUMBER: u32 = 0;
 
-// Nullifier is all zeroes as well. During aggregation, we replace the dummy nullifier targets with random nullifiers to prevent deduplication of dummy proofs.
+// Nullifier is all zeroes as well. During aggregation, we replace the dummy nullifier targets
+// with hashes of random preimages to prevent deduplication of dummy proofs.
 const DEFAULT_NULLIFIER: [u8; 32] = [0u8; 32];
 
 // These values are from the original hardcoded dummy proof.
