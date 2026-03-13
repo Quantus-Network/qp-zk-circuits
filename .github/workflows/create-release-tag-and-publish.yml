@@ -173,6 +173,10 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Example is not published; excluding it avoids pulling quantus-cli (version conflict with qp-wormhole-inputs)
+          sed -i.bak '/"wormhole\/example"/d' Cargo.toml
+          trap 'mv Cargo.toml.bak Cargo.toml' EXIT
+
           echo "Publishing qp-wormhole-inputs"
           (cd wormhole/inputs && cargo publish --token "$CARGO_REGISTRY_TOKEN" --allow-dirty)
 
