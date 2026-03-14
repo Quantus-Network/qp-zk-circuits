@@ -25,8 +25,8 @@ use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerial
 
 use zk_circuits_common::circuit::{C, D, F};
 
+use crate::common::utils::l0_num_leaves_from_padded_pi_len;
 use crate::layer1::circuit::circuit_logic::Layer1AggregationCircuit;
-use crate::layer1::circuit::constants::l0_num_leaves_from_pi_len;
 
 /// Build and write all layer-1 artifacts into `output_dir`.
 ///
@@ -46,7 +46,7 @@ pub fn generate_layer1_circuit_binaries<P: AsRef<Path>>(
     let layer0_common = load_layer0_common_from_bins(output_dir)
         .context("Failed to load layer-0 common circuit data from bins dir. Make sure the dependent layer-0 artifacts are present in the output directory")?;
 
-    let layer0_num_leaves = l0_num_leaves_from_pi_len(layer0_common.num_public_inputs);
+    let layer0_num_leaves = l0_num_leaves_from_padded_pi_len(layer0_common.num_public_inputs)?;
     // -------------------------------------------------------------------------
     // 2) Build layer-1 circuit + targets layout
     // -------------------------------------------------------------------------

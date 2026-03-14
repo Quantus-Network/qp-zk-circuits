@@ -23,6 +23,7 @@ use zk_circuits_common::circuit::{C, D, F};
 
 use crate::layer1::prover::{Layer1AggregationInputs, Layer1AggregationProver};
 use crate::{
+    common::utils::{ensure_proof_public_input_len, leaf_proof_asset_id},
     layer0::prover::{Layer0AggregationInputs, Layer0AggregationProver},
     CircuitBinsConfig,
 };
@@ -162,6 +163,7 @@ pub struct Layer1Aggregator {
     bins_dir: PathBuf,
     aggregator_address: BytesDigest,
     buf: ProofBuffer,
+    expected_layer0_pi_len: usize,
 }
 
 impl Layer1Aggregator {
@@ -174,11 +176,14 @@ impl Layer1Aggregator {
         let num_layer0_proofs = config
             .num_layer0_proofs
             .ok_or_else(|| anyhow!("config is missing num_layer0_proofs. Please regenerate the binaries and set \"num_layer0_proofs\""))?;
+        let expected_layer0_pi_len =
+            load_common_from_bins(&bins_dir, "aggregated_common.bin")?.num_public_inputs;
 
         Ok(Self {
             bins_dir,
             aggregator_address,
             buf: ProofBuffer::new(num_layer0_proofs),
+            expected_layer0_pi_len,
         })
     }
 
@@ -189,6 +194,11 @@ impl Layer1Aggregator {
 
 impl AggregationBackend for Layer1Aggregator {
     fn push_proof(&mut self, proof: Proof) -> Result<()> {
+        ensure_proof_public_input_len(
+            &proof,
+            self.expected_layer0_pi_len,
+            "layer-0 aggregated proof",
+        )?;
         self.buf.push(proof)
     }
 
@@ -247,6 +257,7 @@ impl AggregationBackend for Layer1Aggregator {
 pub struct Layer0Aggregator {
     bins_dir: PathBuf,
     buf: ProofBuffer,
+    expected_leaf_pi_len: usize,
 }
 
 impl Layer0Aggregator {
@@ -255,10 +266,13 @@ impl Layer0Aggregator {
 
         // Verify binaries and return config
         let config = verify_hashes(&bins_dir)?;
+        let expected_leaf_pi_len =
+            load_common_from_bins(&bins_dir, "common.bin")?.num_public_inputs;
 
         Ok(Self {
             bins_dir,
             buf: ProofBuffer::new(config.num_leaf_proofs),
+            expected_leaf_pi_len,
         })
     }
 
@@ -279,6 +293,7 @@ impl Layer0Aggregator {
 
 impl AggregationBackend for Layer0Aggregator {
     fn push_proof(&mut self, proof: Proof) -> Result<()> {
+        ensure_proof_public_input_len(&proof, self.expected_leaf_pi_len, "leaf proof")?;
         self.buf.push(proof)
     }
 
@@ -296,8 +311,22 @@ impl AggregationBackend for Layer0Aggregator {
         }
 
         // Layer-0 prover commit does padding/shuffling/dummy-nullifier-preimage handling,
-        // so we can pass any non-empty batch.
+        // so we can pass any non-empty batch. The wrapper's same-block / same-asset invariants are
+        // intentional protocol rules and remain enforced in-circuit; this preflight only rejects
+        // malformed or dummy-padding-incompatible inputs earlier.
         let proofs = self.buf.take_all();
+        if proofs.len() < self.batch_size() {
+            for (idx, proof) in proofs.iter().enumerate() {
+                let asset_id = leaf_proof_asset_id(proof)?;
+                if asset_id != 0 {
+                    bail!(
+                        "proof {} has asset_id={}, but layer-0 dummy padding requires all real proofs to use asset_id=0",
+                        idx,
+                        asset_id
+                    );
+                }
+            }
+        }
 
         let prover = self.build_prover()?;
         let prover = prover

@@ -43,7 +43,8 @@ use zk_circuits_common::utils::{digest_felts_to_bytes, BytesDigest};
 pub const DUMMY_BLOCK_HASH: [u8; 32] = [0u8; 32];
 
 /// Exit account used by dummy proofs (all zeros).
-/// Dummies form their own exit account group but contribute 0 to the sum.
+/// Dummies form their own exit-account group but contribute 0 to the sum; this batching
+/// constraint is intentional so padding cannot influence any real payout bucket.
 pub const DUMMY_EXIT_ACCOUNT: [u8; 32] = [0u8; 32];
 
 // ============================================================================
@@ -184,10 +185,13 @@ pub fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
 /// Generate a random 32-byte nullifier for dummy proofs.
 pub fn generate_random_nullifier() -> BytesDigest {
     let mut rng = rand::thread_rng();
-    let mut nullifier = [0u8; 32];
-    rng.fill(&mut nullifier);
-    // If the bytes digest conversion fails (extremely unlikely), just regenerate until we get a valid one.
-    BytesDigest::try_from(nullifier).unwrap_or_else(|_| generate_random_nullifier())
+    loop {
+        let mut nullifier = [0u8; 32];
+        rng.fill(&mut nullifier);
+        if let Ok(digest) = BytesDigest::try_from(nullifier) {
+            return digest;
+        }
+    }
 }
 
 fn build_storage_proof() -> Result<ProcessedStorageProof> {

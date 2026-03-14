@@ -11,7 +11,6 @@
 //! config.json file (`config.json`) which contains the aggregation config (number of leaf/layer0 proofs) and binary hashes for integrity verification.
 use anyhow::{anyhow, bail, Context, Result};
 use plonky2::{
-    field::types::{Field, PrimeField64},
     iop::witness::PartialWitness,
     plonk::{
         circuit_data::{
@@ -34,7 +33,10 @@ use zk_circuits_common::{
 };
 
 use crate::{
-    common::utils::load_verifier_data_from_bytes,
+    common::utils::{
+        ensure_proof_public_input_len, is_dummy_leaf_proof, leaf_proof_asset_id,
+        load_verifier_data_from_bytes,
+    },
     dummy_proof::{generate_random_nullifier, load_dummy_proof},
     layer0::{
         circuit::circuit_logic::{AggregationCircuitTargets, Layer0AggregationCircuit},
@@ -329,27 +331,16 @@ impl Layer0AggregationProver {
 // Helpers
 // -----------------------------------------------------------------------------
 
-/// Leaf proof PI layout constants (wormhole leaf circuit).
-/// We only need these for quick checks (asset_id and dummy sentinel).
-const LEAF_ASSET_ID_PI_INDEX: usize = 0;
-const LEAF_BLOCK_HASH_START: usize = 16;
-
-/// Dummy proofs use `block_hash == [0,0,0,0]` as the sentinel in the layer-0 wrapper.
-fn is_dummy_leaf_proof(proof: &ProofWithPublicInputs<F, C, D>) -> bool {
-    proof
-        .public_inputs
-        .get(LEAF_BLOCK_HASH_START..LEAF_BLOCK_HASH_START + 4)
-        .map(|slice| slice.iter().all(|f| f.is_zero()))
-        .unwrap_or(false)
-}
-
 /// Shuffle proofs while ensuring a real proof remains in slot 0 (if any real proof exists).
 ///
 /// This mirrors the behavior of `shuffle_proofs_preserving_first_real(...)` but avoids needing
 /// a full `AggregationWrapper` impl just for the prover path.
 fn shuffle_proofs_preserving_first_real_layer0(proofs: &mut [ProofWithPublicInputs<F, C, D>]) {
     // Find the first real proof
-    if let Some(first_real_idx) = proofs.iter().position(|p| !is_dummy_leaf_proof(p)) {
+    if let Some(first_real_idx) = proofs
+        .iter()
+        .position(|p| !is_dummy_leaf_proof(p).unwrap_or(false))
+    {
         proofs.swap(0, first_real_idx);
     }
 
@@ -365,26 +356,19 @@ fn shuffle_proofs_preserving_first_real_layer0(proofs: &mut [ProofWithPublicInpu
 fn assert_dummy_padding_asset_id_compatible(
     proofs: &[ProofWithPublicInputs<F, C, D>],
 ) -> Result<()> {
-    if let Some(first_real) = proofs.first() {
-        let asset_id_f = first_real
-            .public_inputs
-            .get(LEAF_ASSET_ID_PI_INDEX)
-            .ok_or_else(|| {
-                anyhow!(
-                    "missing asset_id public input at index {}",
-                    LEAF_ASSET_ID_PI_INDEX
-                )
-            })?;
-
-        let real_asset_id: u32 = asset_id_f
-            .to_canonical_u64()
-            .try_into()
-            .context("asset_id in first proof exceeds u32 range")?;
+    for (idx, proof) in proofs.iter().enumerate() {
+        ensure_proof_public_input_len(
+            proof,
+            crate::layer0::circuit::constants::LEAF_PI_LEN,
+            "leaf proof",
+        )?;
+        let real_asset_id = leaf_proof_asset_id(proof)?;
 
         if real_asset_id != 0 {
             bail!(
-                "Real proofs have asset_id={}, but dummy proofs use asset_id=0. \
-                 All proofs must have the same asset_id for aggregation.",
+                "real proof {} has asset_id={}, but dummy proofs use asset_id=0. \
+                 All proofs must have the same asset_id for aggregation when padding is required.",
+                idx,
                 real_asset_id
             );
         }

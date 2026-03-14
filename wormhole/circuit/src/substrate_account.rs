@@ -27,7 +27,9 @@ impl ByteCodec for SubstrateAccount {
     }
 
     fn from_bytes(slice: &[u8]) -> anyhow::Result<Self> {
-        let bytes = BytesDigest::try_from(slice).unwrap();
+        let bytes = BytesDigest::try_from(slice).map_err(|e| {
+            anyhow::anyhow!("failed to deserialize SubstrateAccount from bytes: {}", e)
+        })?;
         let address = digest_bytes_to_felts(bytes);
         Ok(SubstrateAccount(address))
     }

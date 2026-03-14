@@ -139,7 +139,7 @@ impl CircuitFragment for StorageProof {
         builder: &mut CircuitBuilder<F, D>,
     ) {
         use plonky2::hash::poseidon2::Poseidon2Hash;
-        use zk_circuits_common::gadgets::is_const_less_than;
+        use zk_circuits_common::gadgets::{enforce_target_less_than_const, is_const_less_than};
 
         let leaf_targets_32_bit = leaf_inputs.collect_32_bit_targets();
         // Range constrain the 32-bit targets (transfer_count, input_amount, output_amount, volume_fee_bps)
@@ -179,6 +179,10 @@ impl CircuitFragment for StorageProof {
         // The first node should be the root node so we initialize `prev_hash` to the provided `root_hash`.
         let mut prev_hash = root_hash;
         let n_log = (usize::BITS - (MAX_PROOF_LEN - 1).leading_zeros()) as usize;
+        // Keep the leaf-binding check inside the loop by enforcing proof_len < MAX_PROOF_LEN.
+        // This prevents witnesses from placing the "leaf step" just beyond the fixed iteration
+        // window and thereby skipping the final binding check.
+        enforce_target_less_than_const(builder, proof_len, MAX_PROOF_LEN, n_log);
         for i in 0..MAX_PROOF_LEN {
             let node = &proof_data[i];
 
@@ -232,8 +236,8 @@ impl CircuitFragment for StorageProof {
                 builder.range_check(*felt, 32);
             }
 
-            // For the leaf node, the value is the hash of the leaf inputs. We don't check the full hash
-            // here, only the last 3 felts b/c zk trie's length prefix overwrites the 8 bytes of the hash.
+            // For the leaf node, the value is the hash of the leaf inputs. We intentionally check only
+            // limbs 1..=3 because the zk-trie encoding overwrites limb 0 with the in-node length prefix.
             // Only enforce for non-dummy proofs.
             let should_validate_leaf = builder.mul(is_leaf_node.target, is_not_dummy.target);
             for y in 1..4 {
@@ -260,9 +264,9 @@ impl CircuitFragment for StorageProof {
         // Set is_not_dummy for dummy proof detection logic
         pw.set_bool_target(targets.is_not_dummy, self.is_not_dummy)?;
         // bail if proof is too long
-        if self.proof.len() > MAX_PROOF_LEN {
+        if self.proof.len() >= MAX_PROOF_LEN {
             bail!(
-                "proof length exceeds maximum allowed length: {} > {}",
+                "proof length exceeds maximum allowed length: {} >= {}",
                 self.proof.len(),
                 MAX_PROOF_LEN
             );

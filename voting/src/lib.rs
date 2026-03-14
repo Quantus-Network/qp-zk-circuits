@@ -10,13 +10,13 @@ use plonky2::{
 
 use anyhow::bail;
 use zk_circuits_common::circuit::{CircuitFragment, D, F};
-use zk_circuits_common::gadgets::is_const_less_than;
+use zk_circuits_common::gadgets::{enforce_target_less_than_const, is_const_less_than};
 use zk_circuits_common::utils::{
     felts_to_hashout, Digest, PrivateKey, DIGEST_NUM_FIELD_ELEMENTS, ZERO_DIGEST,
 };
 
-/// Maximum depth of the Merkle tree for eligible voters.
-/// This allows for up to 2^32 eligible voters.
+/// Maximum Merkle path length supported by the circuit.
+/// A depth of 32 allows membership proofs in trees with up to 2^32 leaves.
 pub const MAX_MERKLE_DEPTH: usize = 32;
 
 /// Public inputs for the vote circuit.
@@ -128,7 +128,13 @@ impl CircuitFragment for VoteCircuitData {
             );
         let mut current_hash_targets = leaf_hash_targets;
 
-        let n_log = (usize::BITS - (MAX_MERKLE_DEPTH - 1).leading_zeros()) as usize;
+        let n_log = (usize::BITS - MAX_MERKLE_DEPTH.leading_zeros()) as usize;
+        enforce_target_less_than_const(
+            builder,
+            targets.actual_merkle_depth,
+            MAX_MERKLE_DEPTH + 1,
+            n_log,
+        );
         for i in 0..MAX_MERKLE_DEPTH {
             let is_active_level =
                 is_const_less_than(builder, i, targets.actual_merkle_depth, n_log);
@@ -218,6 +224,22 @@ impl CircuitFragment for VoteCircuitData {
                 "Merkle proof length mismatch: {} siblings vs {} path indices",
                 self.private_inputs.merkle_siblings.len(),
                 self.private_inputs.path_indices.len()
+            );
+        }
+
+        if self.private_inputs.merkle_siblings.len() < self.private_inputs.actual_merkle_depth {
+            bail!(
+                "Merkle proof is shorter than actual_merkle_depth: {} siblings for depth {}",
+                self.private_inputs.merkle_siblings.len(),
+                self.private_inputs.actual_merkle_depth
+            );
+        }
+
+        if self.private_inputs.path_indices.len() < self.private_inputs.actual_merkle_depth {
+            bail!(
+                "Merkle proof is shorter than actual_merkle_depth: {} path indices for depth {}",
+                self.private_inputs.path_indices.len(),
+                self.private_inputs.actual_merkle_depth
             );
         }
 
@@ -344,6 +366,41 @@ mod voting_tests {
         VoteCircuitData::new(public_inputs, private_inputs)
     }
 
+    fn create_max_depth_inputs() -> VoteCircuitData {
+        let private_key = digest_bytes_to_felts(BytesDigest::try_from([9u8; 32]).unwrap());
+        let proposal_id = digest_bytes_to_felts(BytesDigest::try_from([7u8; 32]).unwrap());
+        let vote = true;
+
+        let mut current = Poseidon2Hash::hash_no_pad(&private_key).elements;
+        let zero_digest = ZERO_DIGEST;
+        let mut merkle_siblings = Vec::with_capacity(MAX_MERKLE_DEPTH);
+        let mut path_indices = Vec::with_capacity(MAX_MERKLE_DEPTH);
+        for _ in 0..MAX_MERKLE_DEPTH {
+            merkle_siblings.push(zero_digest);
+            path_indices.push(false);
+
+            let mut combined = [F::ZERO; 8];
+            combined[..4].copy_from_slice(&current);
+            combined[4..].copy_from_slice(&zero_digest);
+            current = Poseidon2Hash::hash_no_pad(&combined).elements;
+        }
+
+        let public_inputs = VotePublicInputs {
+            proposal_id,
+            merkle_root: current,
+            vote,
+            nullifier: compute_nullifier(&private_key, &proposal_id),
+        };
+        let private_inputs = VotePrivateInputs {
+            private_key,
+            merkle_siblings,
+            path_indices,
+            actual_merkle_depth: MAX_MERKLE_DEPTH,
+        };
+
+        VoteCircuitData::new(public_inputs, private_inputs)
+    }
+
     #[test]
     fn test_vote_circuit_end_to_end() -> anyhow::Result<()> {
         let vote_circuit_data = create_test_inputs();
@@ -383,6 +440,37 @@ mod voting_tests {
         let result = inputs.fill_targets(&mut PartialWitness::new(), targets);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("length mismatch"));
+    }
+
+    #[test]
+    fn test_short_merkle_proof_vectors_return_error() {
+        let mut inputs = create_test_inputs();
+        inputs.private_inputs.merkle_siblings.pop();
+        inputs.private_inputs.path_indices.pop();
+        let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+        let targets = VoteTargets::new(&mut builder);
+        let result = inputs.fill_targets(&mut PartialWitness::new(), targets);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("shorter than actual_merkle_depth"));
+    }
+
+    #[test]
+    fn test_max_merkle_depth_is_supported() -> anyhow::Result<()> {
+        let vote_circuit_data = create_max_depth_inputs();
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let targets = VoteTargets::new(&mut builder);
+        VoteCircuitData::circuit(&targets, &mut builder);
+        let mut pw = PartialWitness::new();
+        vote_circuit_data.fill_targets(&mut pw, targets.clone())?;
+
+        let circuit_built_data = builder.build::<C>();
+        let proof = circuit_built_data.prove(pw)?;
+        circuit_built_data.verify(proof)?;
+        Ok(())
     }
 
     #[test]

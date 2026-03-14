@@ -190,6 +190,9 @@ pub struct BlockData {
 /// Aggregated public inputs from multiple wormhole proofs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AggregatedPublicCircuitInputs {
+    /// Number of unique exit-account groups reported by the wrapper circuit.
+    /// This is informational only; semantic validation remains the circuit's responsibility.
+    pub num_unique_exits: u32,
     /// The asset ID of the set (0 for native token).
     pub asset_id: u32,
     /// Volume fee rate in basis points (1 basis point = 0.01%).
@@ -280,7 +283,8 @@ impl AggregatedPublicCircuitInputs {
         //  nullifiers(4) * N, padding...]
         //
         // IMPORTANT: With 2 outputs per leaf, we have 2*N exit slots.
-        // The num_unique_exits is informational only.
+        // The parser validates shape/layout only. Circuit-level semantic constraints such as
+        // same-block and same-asset consistency remain enforced by the proving circuit.
 
         if pis.len() < 8 {
             bail!(
@@ -289,6 +293,19 @@ impl AggregatedPublicCircuitInputs {
             );
         }
 
+        let payload_len = pis.len() - 8;
+        if !payload_len.is_multiple_of(PUBLIC_INPUTS_FELTS_LEN) {
+            bail!(
+                "AggregatedPI: malformed length {} - expected 8 + N*{} felts for the padded aggregated layout",
+                pis.len(),
+                PUBLIC_INPUTS_FELTS_LEN
+            );
+        }
+
+        let num_unique_exits: u32 = pis[0]
+            .try_into()
+            .context("AggregatedPI: num_unique_exits at index 0 exceeds u32 range")?;
+
         let asset_id: u32 = pis[1]
             .try_into()
             .context("AggregatedPI: asset_id at index 1 exceeds u32 range")?;
@@ -296,8 +313,8 @@ impl AggregatedPublicCircuitInputs {
             .try_into()
             .context("AggregatedPI: volume_fee_bps at index 2 exceeds u32 range")?;
 
-        // Number of leaf proofs (N) is derived from the total PI length.
-        let n_leaf = pis.len() / PUBLIC_INPUTS_FELTS_LEN;
+        // Number of leaf proofs (N) is derived from the padded total PI length.
+        let n_leaf = payload_len / PUBLIC_INPUTS_FELTS_LEN;
 
         if n_leaf == 0 {
             bail!(
@@ -399,11 +416,38 @@ impl AggregatedPublicCircuitInputs {
         }
 
         Ok(AggregatedPublicCircuitInputs {
+            num_unique_exits,
             asset_id,
             volume_fee_bps,
             block_data,
             account_data,
             nullifiers,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AggregatedPublicCircuitInputs, PUBLIC_INPUTS_FELTS_LEN};
+
+    #[test]
+    fn aggregated_public_inputs_reject_malformed_padded_length() {
+        let err = AggregatedPublicCircuitInputs::try_from_u64_slice(&[0u64; 9]).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("malformed length 9 - expected 8 + N*21 felts"));
+    }
+
+    #[test]
+    fn aggregated_public_inputs_parse_num_unique_exits() {
+        let mut pis = vec![0u64; 8 + PUBLIC_INPUTS_FELTS_LEN];
+        pis[0] = 1; // num_unique_exits
+        pis[7] = 42; // block_number
+
+        let parsed = AggregatedPublicCircuitInputs::try_from_u64_slice(&pis).unwrap();
+        assert_eq!(parsed.num_unique_exits, 1);
+        assert_eq!(parsed.block_data.block_number, 42);
+        assert_eq!(parsed.account_data.len(), 2);
+        assert_eq!(parsed.nullifiers.len(), 1);
     }
 }

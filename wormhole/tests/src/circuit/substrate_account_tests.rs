@@ -2,9 +2,11 @@ use plonky2::{
     field::types::{Field, Field64},
     plonk::proof::ProofWithPublicInputs,
 };
+use std::panic;
 use wormhole_circuit::substrate_account::{ExitAccountTargets, SubstrateAccount};
 use zk_circuits_common::circuit::{CircuitFragment, C, D, F};
 use zk_circuits_common::{
+    codec::ByteCodec,
     codec::FieldElementCodec,
     utils::{digest_felts_to_bytes, ZERO_DIGEST},
 };
@@ -194,4 +196,18 @@ fn codec_different_byte_patterns() {
     let field_elements_varied = account_varied.to_field_elements();
     let recovered_varied = SubstrateAccount::from_field_elements(&field_elements_varied).unwrap();
     assert_eq!(account_varied, recovered_varied);
+}
+
+#[test]
+fn from_bytes_rejects_malformed_external_bytes_without_panicking() {
+    let mut invalid = [0u8; 32];
+    invalid[..8].copy_from_slice(&[1, 0, 0, 0, 255, 255, 255, 255]);
+
+    let result = panic::catch_unwind(|| SubstrateAccount::from_bytes(&invalid));
+    let err = result
+        .expect("malformed bytes should not panic")
+        .unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("failed to deserialize SubstrateAccount from bytes"));
 }
