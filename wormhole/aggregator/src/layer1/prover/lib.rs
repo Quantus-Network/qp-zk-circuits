@@ -215,12 +215,12 @@ impl Layer1AggregationProver {
             bins_config.verify_hashes(bins_dir)?;
         }
 
-        let config = (
-            bins_config.num_leaf_proofs,
-            bins_config.num_layer0_proofs.expect(
-                "config should have num_layer0_proofs since it's required for layer-1 prover. Regenerate binaries with num_layer0_proofs set to get this field populated.",
-            ),
-        );
+        let num_layer0_proofs = bins_config.num_layer0_proofs.ok_or_else(|| {
+            anyhow!(
+                "config is missing num_layer0_proofs. Regenerate binaries with num_layer0_proofs set."
+            )
+        })?;
+        let config = (bins_config.num_leaf_proofs, num_layer0_proofs);
 
         Self::new_from_files(
             &bins_dir.join("layer1_prover.bin"),

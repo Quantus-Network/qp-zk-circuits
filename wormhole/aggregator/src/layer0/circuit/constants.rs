@@ -61,6 +61,11 @@ pub mod aggregated_output {
         num_leaves * 2
     }
 
+    /// Number of nullifiers for N leaves (one per leaf proof).
+    pub const fn nullifiers_count(num_leaves: usize) -> usize {
+        num_leaves
+    }
+
     /// Offset where exit-slot region starts.
     pub const fn exit_slots_start() -> usize {
         HEADER_LEN

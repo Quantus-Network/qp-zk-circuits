@@ -16,15 +16,18 @@ qp-poseidon-core = { workspace = true, default-features = false, features = [
 	"p3",
 ] }
 qp-wormhole-inputs = { version = "1.1.1", path = "../wormhole/inputs", default-features = false }
-rand = "0.8"
+rand = { version = "0.8", default-features = false, features = ["alloc"], optional = true }
 serde = { workspace = true }
 
 [features]
 default = ["std"]
 std = [
 	"anyhow/std",
+	"dep:rand",
 	"qp-plonky2/std",
 	"qp-poseidon-core/std",
 	"qp-wormhole-inputs/std",
+	"rand/std",
+	"rand/std_rng",
 	"serde/std",
 ]

@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use circuit_builder::generate_all_circuit_binaries;
+use plonky2::field::types::Field;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_inputs::PublicCircuitInputs;
 use std::path::Path;
@@ -82,6 +83,19 @@ fn push_proof_to_full_buffer() {
 }
 
 #[test]
+fn push_proof_rejects_malformed_public_input_length() {
+    setup_test_binaries();
+    let mut proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
+    proof.public_inputs.pop();
+
+    let mut aggregator = make_aggregator();
+    let err = aggregator.push_proof(proof).unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("leaf proof public input length mismatch"));
+}
+
+#[test]
 fn aggregate_single_proof() {
     setup_test_binaries();
     let proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
@@ -136,6 +150,21 @@ fn aggregate_half_full_proof_array_into_tree() {
     aggregator
         .verify(aggregated)
         .expect("Aggregated proof should verify");
+}
+
+#[test]
+fn aggregate_rejects_nonzero_asset_id_when_dummy_padding_is_needed() {
+    setup_test_binaries();
+    let mut proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
+    proof.public_inputs[0] = F::from_canonical_u64(1);
+
+    let mut aggregator = make_aggregator();
+    aggregator.push_proof(proof).unwrap();
+
+    let err = aggregator.aggregate().unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("dummy padding requires all real proofs to use asset_id=0"));
 }
 
 /// This simulates a CLI-ish flow without prebuilt binaries:

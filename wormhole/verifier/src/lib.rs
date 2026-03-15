@@ -33,6 +33,7 @@ use alloc::vec::Vec;
 use std::vec::Vec;
 
 use anyhow::anyhow;
+use sha2::{Digest, Sha256};
 #[cfg(feature = "std")]
 use std::path::Path;
 
@@ -82,10 +83,40 @@ pub struct WormholeVerifier {
     pub circuit_data: VerifierCircuitData<F, C, D>,
 }
 
+/// Stable identity pins for a verifier/common artifact pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifierCircuitIdentity {
+    pub verifier_sha256: [u8; 32],
+    pub common_sha256: [u8; 32],
+}
+
+impl VerifierCircuitIdentity {
+    pub fn from_bytes(verifier_bytes: &[u8], common_bytes: &[u8]) -> Self {
+        Self {
+            verifier_sha256: Sha256::digest(verifier_bytes).into(),
+            common_sha256: Sha256::digest(common_bytes).into(),
+        }
+    }
+
+    pub fn from_circuit_data(circuit_data: &VerifierCircuitData<F, C, D>) -> anyhow::Result<Self> {
+        let common_bytes = circuit_data
+            .common
+            .to_bytes(&DefaultGateSerializer)
+            .map_err(|e| anyhow!("failed to serialize common circuit data: {}", e))?;
+        let verifier_bytes = circuit_data
+            .verifier_only
+            .to_bytes()
+            .map_err(|e| anyhow!("failed to serialize verifier-only circuit data: {}", e))?;
+        Ok(Self::from_bytes(&verifier_bytes, &common_bytes))
+    }
+}
+
 impl WormholeVerifier {
     /// Creates a new [`WormholeVerifier`] from verifier and common data bytes.
     ///
-    /// This is the primary constructor for no_std environments like on-chain verification.
+    /// This is a low-level trusting constructor. Prefer
+    /// [`WormholeVerifier::new_from_bytes_checked`] when you have an expected verifier/common
+    /// identity to pin against.
     pub fn new_from_bytes(
         verifier_bytes: &[u8],
         common_bytes: &[u8],
@@ -104,9 +135,24 @@ impl WormholeVerifier {
         Ok(Self { circuit_data })
     }
 
+    /// Creates a new verifier and rejects artifact bytes that do not match the expected identity.
+    pub fn new_from_bytes_checked(
+        verifier_bytes: &[u8],
+        common_bytes: &[u8],
+        expected_identity: &VerifierCircuitIdentity,
+    ) -> anyhow::Result<Self> {
+        let actual_identity = VerifierCircuitIdentity::from_bytes(verifier_bytes, common_bytes);
+        if &actual_identity != expected_identity {
+            return Err(anyhow!("verifier/common artifact identity mismatch"));
+        }
+
+        Self::new_from_bytes(verifier_bytes, common_bytes).map_err(|e| anyhow!("{}", e))
+    }
+
     /// Creates a new [`WormholeVerifier`] from a verifier and common data files.
     ///
-    /// This is a convenience method for std environments.
+    /// This is a low-level trusting constructor. Prefer
+    /// [`WormholeVerifier::new_from_files_checked`] when loading production artifacts from disk.
     #[cfg(feature = "std")]
     pub fn new_from_files(
         verifier_data_path: &Path,
@@ -140,14 +186,40 @@ impl WormholeVerifier {
         Ok(Self { circuit_data })
     }
 
+    /// Creates a new verifier from files and rejects artifacts whose identity does not match the
+    /// expected pinned verifier/common bytes.
+    #[cfg(feature = "std")]
+    pub fn new_from_files_checked(
+        verifier_data_path: &Path,
+        common_data_path: &Path,
+        expected_identity: &VerifierCircuitIdentity,
+    ) -> anyhow::Result<Self> {
+        let verifier_bytes = std::fs::read(verifier_data_path)?;
+        let common_bytes = std::fs::read(common_data_path)?;
+        Self::new_from_bytes_checked(&verifier_bytes, &common_bytes, expected_identity)
+    }
+
+    pub fn identity(&self) -> anyhow::Result<VerifierCircuitIdentity> {
+        VerifierCircuitIdentity::from_circuit_data(&self.circuit_data)
+    }
+
+    /// Verify a [`ProofWithPublicInputs`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the proof is not valid.
+    pub fn verify_ref(&self, proof: &ProofWithPublicInputs<F, C, D>) -> anyhow::Result<()> {
+        self.circuit_data
+            .verify(proof.clone())
+            .map_err(|e| anyhow!("proof verification failed: {}", e))
+    }
+
     /// Verify a [`ProofWithPublicInputs`].
     ///
     /// # Errors
     ///
     /// Returns an error if the proof is not valid.
     pub fn verify(&self, proof: ProofWithPublicInputs<F, C, D>) -> anyhow::Result<()> {
-        self.circuit_data
-            .verify(proof)
-            .map_err(|e| anyhow!("proof verification failed: {}", e))
+        self.verify_ref(&proof)
     }
 }

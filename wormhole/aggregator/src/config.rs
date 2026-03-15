@@ -165,13 +165,91 @@ impl CircuitBinsConfig {
         Ok(())
     }
 
+    /// Ensure the config includes hashes for every artifact produced by the safe builder flow.
+    pub fn ensure_generated_artifact_hashes_present(&self, include_prover: bool) -> Result<()> {
+        let Some(ref hashes) = self.hashes else {
+            return Err(anyhow!(
+                "config is missing integrity hashes for generated artifacts"
+            ));
+        };
+
+        let mut missing = Vec::new();
+
+        if hashes.common.is_none() {
+            missing.push("common.bin");
+        }
+        if hashes.verifier.is_none() {
+            missing.push("verifier.bin");
+        }
+        if hashes.dummy_proof.is_none() {
+            missing.push("dummy_proof.bin");
+        }
+        if hashes.aggregated_common.is_none() {
+            missing.push("aggregated_common.bin");
+        }
+        if hashes.aggregated_verifier.is_none() {
+            missing.push("aggregated_verifier.bin");
+        }
+
+        if include_prover {
+            if hashes.prover.is_none() {
+                missing.push("prover.bin");
+            }
+            if hashes.aggregated_prover.is_none() {
+                missing.push("aggregated_prover.bin");
+            }
+        }
+
+        if self.num_layer0_proofs.is_some() {
+            if hashes.layer1_common.is_none() {
+                missing.push("layer1_common.bin");
+            }
+            if hashes.layer1_verifier.is_none() {
+                missing.push("layer1_verifier.bin");
+            }
+            if include_prover && hashes.layer1_prover.is_none() {
+                missing.push("layer1_prover.bin");
+            }
+        }
+
+        if missing.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "config is missing integrity hashes for generated artifacts: {}",
+                missing.join(", ")
+            ))
+        }
+    }
+
     /// Verify that the artifact files in a directory match the stored hashes.
     ///
     /// Returns Ok(()) if all present hashes match.
     /// Returns Err if any hash mismatches or if config has hashes but a file is missing.
-    /// If no hashes are stored in config, verification is skipped.
+    /// Missing metadata is rejected by default. Use
+    /// [`CircuitBinsConfig::verify_hashes_allow_missing_metadata`] only for explicit legacy
+    /// compatibility flows.
     pub fn verify_hashes<P: AsRef<Path>>(&self, bins_dir: P) -> Result<()> {
+        self.verify_hashes_inner(bins_dir, true)
+    }
+
+    /// Legacy escape hatch that verifies any hashes that are present but does not fail closed when
+    /// metadata is missing.
+    pub fn verify_hashes_allow_missing_metadata<P: AsRef<Path>>(&self, bins_dir: P) -> Result<()> {
+        self.verify_hashes_inner(bins_dir, false)
+    }
+
+    fn verify_hashes_inner<P: AsRef<Path>>(
+        &self,
+        bins_dir: P,
+        require_metadata: bool,
+    ) -> Result<()> {
         let Some(ref stored_hashes) = self.hashes else {
+            if require_metadata {
+                return Err(anyhow!(
+                    "config is missing integrity hashes; refusing to load artifacts without metadata"
+                ));
+            }
             return Ok(());
         };
 
@@ -183,6 +261,7 @@ impl CircuitBinsConfig {
         for (filename, get, _set) in ARTIFACTS {
             let stored = get(stored_hashes);
             let current = get(&current_hashes);
+            let file_exists = dir.join(filename).is_file();
 
             match (stored, current) {
                 (Some(s), Some(c)) if s != c => {
@@ -196,6 +275,12 @@ impl CircuitBinsConfig {
                 (Some(_), None) => {
                     mismatches.push(format!(
                         "{}: hash in config but file not found or unreadable",
+                        filename
+                    ));
+                }
+                (None, Some(_)) if require_metadata || file_exists => {
+                    mismatches.push(format!(
+                        "{}: file exists but config is missing its hash",
                         filename
                     ));
                 }
@@ -213,5 +298,61 @@ impl CircuitBinsConfig {
                 mismatches.join("\n  ")
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BinaryHashes, CircuitBinsConfig};
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("qp-wormhole-config-{name}-{suffix}"));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn verify_hashes_fails_closed_without_metadata() {
+        let dir = temp_dir("missing-metadata");
+        fs::write(dir.join("common.bin"), b"common").unwrap();
+        let config = CircuitBinsConfig {
+            num_leaf_proofs: 2,
+            num_layer0_proofs: None,
+            hashes: None,
+        };
+
+        let err = config.verify_hashes(&dir).unwrap_err();
+        assert!(err.to_string().contains("missing integrity hashes"));
+        assert!(config.verify_hashes_allow_missing_metadata(&dir).is_ok());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn verify_hashes_rejects_tampered_artifacts() {
+        let dir = temp_dir("tampered");
+        fs::write(dir.join("common.bin"), b"original").unwrap();
+
+        let config = CircuitBinsConfig {
+            num_leaf_proofs: 2,
+            num_layer0_proofs: None,
+            hashes: Some(BinaryHashes::from_directory(&dir).unwrap()),
+        };
+
+        fs::write(dir.join("common.bin"), b"tampered").unwrap();
+
+        let err = config.verify_hashes(&dir).unwrap_err();
+        assert!(err.to_string().contains("Binary hash verification failed"));
+
+        fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -54,6 +54,11 @@ pub struct Layer0AggregationCircuit {
     targets: AggregationCircuitTargets,
 }
 
+fn final_sum_range_bits(num_exit_slots: usize) -> usize {
+    assert!(num_exit_slots > 0, "num_exit_slots must be > 0");
+    32 + (usize::BITS - (num_exit_slots - 1).leading_zeros()) as usize
+}
+
 impl Layer0AggregationCircuit {
     /// Build a monolithic layer-0 aggregation circuit that verifies `n_leaf` wormhole leaf proofs.
     ///
@@ -235,6 +240,7 @@ fn build_layer0_wrapper_constraints(
         (exit, amount)
     };
 
+    let final_sum_bits = final_sum_range_bits(num_exit_slots);
     for slot in 0..num_exit_slots {
         let proof_idx = slot / 2;
         let output_idx = slot % 2;
@@ -272,8 +278,8 @@ fn build_layer0_wrapper_constraints(
             builder.select(is_duplicate, zero, exit_slot[3]),
         ];
 
-        // Range check sum (expected u32-safe quantized amount)
-        builder.range_check(final_sum, 32);
+        // A deduped slot can sum up to `num_exit_slots` distinct 32-bit output amounts.
+        builder.range_check(final_sum, final_sum_bits);
 
         output_pis.push(final_sum);
         output_pis.extend_from_slice(&final_exit);
@@ -390,6 +396,13 @@ mod tests {
     const ROOT_HEADER_LEN: usize = 8;
 
     // ---------------- Circuit helpers ----------------
+
+    #[test]
+    fn final_sum_range_bits_grows_with_fan_in() {
+        assert_eq!(super::final_sum_range_bits(1), 32);
+        assert_eq!(super::final_sum_range_bits(2), 33);
+        assert_eq!(super::final_sum_range_bits(8), 35);
+    }
 
     /// Dummy leaf circuit with the Wormhole leaf PI layout only.
     ///

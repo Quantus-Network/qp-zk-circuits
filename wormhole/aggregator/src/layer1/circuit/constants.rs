@@ -1,6 +1,6 @@
 //! Constants and layout helpers for the layer-1 aggregation circuit.
 
-use crate::layer0::circuit::constants::LEAF_PI_LEN as L0_LEAF_PI_LEN;
+use crate::layer0::circuit::constants::aggregated_output;
 
 // -----------------------------------------------------------------------------
 // Layer-0 aggregated proof PI layout (input to layer-1)
@@ -19,23 +19,23 @@ use crate::layer0::circuit::constants::LEAF_PI_LEN as L0_LEAF_PI_LEN;
 // Total length = layer0_num_leaves * LEAF_PI_LEN + 8
 // -----------------------------------------------------------------------------
 
-pub const L0_NUM_EXIT_SLOTS_OFFSET: usize = 0;
-pub const L0_ASSET_ID_OFFSET: usize = 1;
-pub const L0_VOLUME_FEE_BPS_OFFSET: usize = 2;
-pub const L0_BLOCK_HASH_OFFSET: usize = 3;
-pub const L0_BLOCK_NUMBER_OFFSET: usize = 7;
+pub const L0_NUM_EXIT_SLOTS_OFFSET: usize = aggregated_output::NUM_EXIT_SLOTS_OFFSET;
+pub const L0_ASSET_ID_OFFSET: usize = aggregated_output::ASSET_ID_OFFSET;
+pub const L0_VOLUME_FEE_BPS_OFFSET: usize = aggregated_output::VOLUME_FEE_BPS_OFFSET;
+pub const L0_BLOCK_HASH_OFFSET: usize = aggregated_output::BLOCK_HASH_OFFSET;
+pub const L0_BLOCK_NUMBER_OFFSET: usize = aggregated_output::BLOCK_NUMBER_OFFSET;
 
-pub const L0_HEADER_LEN: usize = 8;
-pub const L0_EXIT_SLOT_LEN: usize = 5; // [sum(1), exit(4)]
+pub const L0_HEADER_LEN: usize = aggregated_output::HEADER_LEN;
+pub const L0_EXIT_SLOT_LEN: usize = aggregated_output::EXIT_SLOT_LEN; // [sum(1), exit(4)]
 
 #[inline]
 pub const fn l0_exit_slots_count(layer0_num_leaves: usize) -> usize {
-    layer0_num_leaves * 2
+    aggregated_output::exit_slots_count(layer0_num_leaves)
 }
 
 #[inline]
 pub const fn l0_nullifiers_count(layer0_num_leaves: usize) -> usize {
-    layer0_num_leaves
+    aggregated_output::nullifiers_count(layer0_num_leaves)
 }
 
 #[inline]
@@ -50,14 +50,7 @@ pub const fn l0_nullifiers_start(layer0_num_leaves: usize) -> usize {
 
 #[inline]
 pub const fn l0_pi_len(layer0_num_leaves: usize) -> usize {
-    // Layer-0 output uses fixed length = n_leaf * leaf_pi_len + header
-    layer0_num_leaves * L0_LEAF_PI_LEN + L0_HEADER_LEN
-}
-
-#[inline]
-pub const fn l0_num_leaves_from_pi_len(pi_len: usize) -> usize {
-    // Inverse of l0_pi_len: given total PI length, extract layer0_num_leaves
-    (pi_len - L0_HEADER_LEN) / L0_LEAF_PI_LEN
+    aggregated_output::pi_len(layer0_num_leaves)
 }
 
 // -----------------------------------------------------------------------------
