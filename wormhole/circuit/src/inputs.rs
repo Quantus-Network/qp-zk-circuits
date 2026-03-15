@@ -163,7 +163,6 @@ impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
         // IMPORTANT: With 2 outputs per leaf, we have 2*N exit slots.
         // The num_unique_exits is informational only.
         // Slots with matching exit accounts will have their amounts summed.
-        let _num_unique_exits = pis[0].to_canonical_u64() as usize;
         let num_unique_exits: u32 = pis[0]
             .to_canonical_u64()
             .try_into()
