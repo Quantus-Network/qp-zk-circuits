@@ -83,7 +83,7 @@ use wormhole_circuit::{
 };
 use wormhole_circuit::{
     inputs::CircuitInputs,
-    storage_proof::MAX_PROOF_LEN,
+    storage_proof::MAX_SUPPORTED_PROOF_LEN,
     substrate_account::{DualExitAccount, SubstrateAccount},
 };
 use wormhole_circuit::{storage_proof::StorageProof, unspendable_account::UnspendableAccount};
@@ -290,11 +290,11 @@ pub fn fill_witness(
     targets: &CircuitTargets,
 ) -> anyhow::Result<()> {
     let proof_len = circuit_inputs.private.storage_proof.proof.len();
-    if proof_len >= MAX_PROOF_LEN {
+    if proof_len > MAX_SUPPORTED_PROOF_LEN {
         bail!(
             "storage proof length {} exceeds maximum supported length {}",
             proof_len,
-            MAX_PROOF_LEN - 1
+            MAX_SUPPORTED_PROOF_LEN
         );
     }
 

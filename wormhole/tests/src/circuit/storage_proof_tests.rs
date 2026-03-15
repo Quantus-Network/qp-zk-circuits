@@ -148,7 +148,7 @@ fn host_rejects_proof_len_at_maximum() {
     let err = storage_proof.fill_targets(&mut pw, targets).unwrap_err();
     assert!(err
         .to_string()
-        .contains("proof length exceeds maximum allowed length"));
+        .contains("proof length exceeds maximum allowed length: 20 > 19"));
 }
 
 #[test]

@@ -12,6 +12,15 @@ use alloc::vec;
 use alloc::vec::Vec;
 use anyhow::bail;
 
+/// Maximum number of trie nodes that an actual Wormhole storage proof may contain.
+///
+/// The circuit reserves one extra witness slot to keep the leaf-binding check in-circuit, so the
+/// fixed witness capacity is [`STORAGE_PROOF_WITNESS_CAPACITY`].
+pub const MAX_STORAGE_PROOF_NODES: usize = 19;
+
+/// Fixed number of proof-node witness slots allocated by the Wormhole circuit.
+pub const STORAGE_PROOF_WITNESS_CAPACITY: usize = MAX_STORAGE_PROOF_NODES + 1;
+
 /// A storage proof along with an array of indices where the hash child nodes are placed.
 #[derive(Debug, Clone)]
 pub struct ProcessedStorageProof {
@@ -133,6 +142,14 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
         }
     }
 
+    if ordered_nodes.len() > MAX_STORAGE_PROOF_NODES {
+        bail!(
+            "storage proof length {} exceeds maximum supported length {}",
+            ordered_nodes.len(),
+            MAX_STORAGE_PROOF_NODES
+        );
+    }
+
     // Now compute the indices - where child hashes appear within parent nodes
     let mut indices = Vec::<usize>::new();
 
@@ -166,4 +183,51 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
     }
 
     ProcessedStorageProof::new(ordered_nodes, indices)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        hash_node_with_poseidon_padded, prepare_proof_for_circuit, MAX_STORAGE_PROOF_NODES,
+    };
+
+    fn synthetic_proof(node_count: usize, leaf_hash: [u8; 32]) -> (Vec<Vec<u8>>, String) {
+        const HASH_LENGTH_PREFIX: [u8; 8] = 32u64.to_le_bytes();
+
+        let mut nodes = Vec::with_capacity(node_count);
+
+        let mut leaf_node = vec![0u8; 48];
+        leaf_node[..8].fill(1);
+        leaf_node[8..40].copy_from_slice(&leaf_hash);
+        leaf_node[40..].fill(17);
+        let mut child_hash = hash_node_with_poseidon_padded(&leaf_node);
+        nodes.push(leaf_node);
+
+        for i in 1..node_count {
+            let mut node = vec![0u8; 56];
+            node[..8].fill((i as u8).wrapping_add(1));
+            node[8..16].copy_from_slice(&HASH_LENGTH_PREFIX);
+            node[16..48].copy_from_slice(&child_hash);
+            node[48..].fill((i as u8).wrapping_add(17));
+            child_hash = hash_node_with_poseidon_padded(&node);
+            nodes.push(node);
+        }
+
+        nodes.reverse();
+        (nodes, hex::encode(child_hash))
+    }
+
+    #[test]
+    fn prepare_proof_for_circuit_rejects_oversized_proof() {
+        let leaf_hash = core::array::from_fn(|i| i as u8);
+        let (proof, state_root) = synthetic_proof(MAX_STORAGE_PROOF_NODES + 1, leaf_hash);
+
+        let err = prepare_proof_for_circuit(proof, state_root, leaf_hash).unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("storage proof length")
+                && err_msg.contains("maximum supported length 19"),
+            "unexpected error: {err_msg}"
+        );
+    }
 }
