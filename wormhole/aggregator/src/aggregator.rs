@@ -4,7 +4,6 @@
 //! - Layer1Aggregator: delegated aggregation ( expects full batches of layer-0 proofs).
 //!
 //! Shared utilities:
-//! - optional hash verification via config.json
 //! - verifier loading from {common.bin, verifier.bin}
 //! - bounded proof buffers
 
@@ -60,12 +59,6 @@ pub trait AggregationBackend: Send + Sync {
 // ============================================================================
 // Shared helpers
 // ============================================================================
-
-fn verify_hashes(bins_dir: &Path) -> Result<CircuitBinsConfig> {
-    let bins_config = crate::config::CircuitBinsConfig::load(bins_dir)?;
-    bins_config.verify_hashes(bins_dir)?;
-    Ok(bins_config)
-}
 
 fn load_common_from_bins<P: AsRef<Path>>(
     bins_dir: P,
@@ -170,8 +163,8 @@ impl Layer1Aggregator {
     pub fn new<P: AsRef<Path>>(bins_dir: P, aggregator_address: BytesDigest) -> Result<Self> {
         let bins_dir = bins_dir.as_ref().to_path_buf();
 
-        // Verify binaries and return config
-        let config = verify_hashes(&bins_dir)?;
+        // Load config
+        let config = CircuitBinsConfig::load(&bins_dir)?;
 
         let num_layer0_proofs = config
             .num_layer0_proofs
@@ -219,8 +212,8 @@ impl AggregationBackend for Layer1Aggregator {
             .drain_exact(cap)
             .with_context(|| "No dummy padding for layer-1: need a full batch of layer-0 proofs")?;
 
-        // Load the layer-1 prover, skipping hash verification since it was already done in the aggregator constructor.
-        let prover = Layer1AggregationProver::new_from_binaries_dir(&self.bins_dir, false)
+        // Load the layer-1 prover
+        let prover = Layer1AggregationProver::new_from_binaries_dir(&self.bins_dir)
             .context("failed to load prebuilt layer-1 prover")?;
 
         let prover = prover
@@ -264,8 +257,8 @@ impl Layer0Aggregator {
     pub fn new<P: AsRef<Path>>(bins_dir: P) -> Result<Self> {
         let bins_dir = bins_dir.as_ref().to_path_buf();
 
-        // Verify binaries and return config
-        let config = verify_hashes(&bins_dir)?;
+        // Load config
+        let config = CircuitBinsConfig::load(&bins_dir)?;
         let expected_leaf_pi_len =
             load_common_from_bins(&bins_dir, "common.bin")?.num_public_inputs;
 
@@ -277,8 +270,7 @@ impl Layer0Aggregator {
     }
 
     fn build_prover(&self) -> Result<Layer0AggregationProver> {
-        // We don't have to verify hashes again here since the aggregation backend constructor already verifies them.
-        Layer0AggregationProver::new_from_binaries_dir(&self.bins_dir, false)
+        Layer0AggregationProver::new_from_binaries_dir(&self.bins_dir)
             .context("failed to load prebuilt layer-0 prover from binaries dir")
     }
 

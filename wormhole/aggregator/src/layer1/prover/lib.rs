@@ -197,9 +197,6 @@ impl Layer1AggregationProver {
     }
 
     /// Convenience constructor from a generated binaries directory.
-    /// We pass the `verify` flag to optionally verify binary integrity using the hashes in `config.json`.
-    /// We expose this option because while integrity verification is critical in production, it can add overhead during development when binaries are frequently rebuilt.
-    ///
     ///
     /// Expected files:
     /// - `layer1_prover.bin`
@@ -209,11 +206,8 @@ impl Layer1AggregationProver {
     /// - `config.json`
     ///
     #[cfg(feature = "std")]
-    pub fn new_from_binaries_dir(bins_dir: &Path, verify: bool) -> Result<Self> {
+    pub fn new_from_binaries_dir(bins_dir: &Path) -> Result<Self> {
         let bins_config = crate::config::CircuitBinsConfig::load(bins_dir)?;
-        if verify {
-            bins_config.verify_hashes(bins_dir)?;
-        }
 
         let num_layer0_proofs = bins_config.num_layer0_proofs.ok_or_else(|| {
             anyhow!(

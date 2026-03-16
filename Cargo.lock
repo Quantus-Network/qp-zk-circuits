@@ -3994,7 +3994,6 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "test-helpers",
 ]
 
@@ -4097,7 +4096,6 @@ dependencies = [
  "qp-plonky2-verifier",
  "qp-wormhole-inputs 1.1.1",
  "qp-wormhole-prover 1.1.1",
- "sha2 0.10.9",
 ]
 
 [[package]]

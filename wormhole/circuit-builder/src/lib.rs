@@ -15,8 +15,8 @@ pub use wormhole_aggregator::CircuitBinsConfig;
 
 /// Generate only the leaf wormhole circuit binaries.
 ///
-/// This is a low-level helper for partial artifact generation. For the safe default flow that also
-/// emits `config.json` integrity metadata, use [`generate_all_circuit_binaries`].
+/// This is a low-level helper for partial artifact generation. For the full flow that also
+/// emits `config.json`, use [`generate_all_circuit_binaries`].
 pub fn generate_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
     include_prover: bool,
@@ -112,31 +112,9 @@ pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
         generate_layer1_circuit_binaries(output_path, num_layer0_proofs, include_prover)?;
     }
 
-    // Save config file alongside binaries (with hashes for integrity verification).
-    // This is the safe default artifact-generation path for downstream loaders.
-    let config = CircuitBinsConfig::new(output_path, num_leaf_proofs, num_layer0_proofs)?;
-    config.ensure_generated_artifact_hashes_present(include_prover)?;
+    // Save config file alongside binaries
+    let config = CircuitBinsConfig::new(num_leaf_proofs, num_layer0_proofs);
     config.save(output_path)?;
-
-    // Print hashes for reference
-    if let Some(ref hashes) = config.hashes {
-        println!("Binary hashes:");
-        if let Some(ref h) = hashes.common {
-            println!("  common.bin: {}", h);
-        }
-        if let Some(ref h) = hashes.verifier {
-            println!("  verifier.bin: {}", h);
-        }
-        if let Some(ref h) = hashes.prover {
-            println!("  prover.bin: {}", h);
-        }
-        if let Some(ref h) = hashes.aggregated_common {
-            println!("  aggregated_common.bin: {}", h);
-        }
-        if let Some(ref h) = hashes.aggregated_verifier {
-            println!("  aggregated_verifier.bin: {}", h);
-        }
-    }
 
     Ok(())
 }
