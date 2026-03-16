@@ -23,7 +23,7 @@ use zk_circuits_common::circuit::{C, D, F};
 use crate::layer1::prover::{Layer1AggregationInputs, Layer1AggregationProver};
 use crate::{
     common::utils::{ensure_proof_public_input_len, leaf_proof_asset_id},
-    layer0::prover::{Layer0AggregationInputs, Layer0AggregationProver},
+    layer0::prover::Layer0AggregationProver,
     CircuitBinsConfig,
 };
 
@@ -322,7 +322,7 @@ impl AggregationBackend for Layer0Aggregator {
 
         let prover = self.build_prover()?;
         let prover = prover
-            .commit(Layer0AggregationInputs { proofs })
+            .commit(proofs)
             .context("failed to commit leaf proofs to layer-0 aggregation prover")?;
 
         prover.prove().context("layer-0 proving failed")

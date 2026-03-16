@@ -45,13 +45,6 @@ use crate::{
 };
 
 /// Public inputs for the layer-0 aggregation prover.
-///
-/// We take ownership of proofs to avoid an expensive clone in `commit(...)`.
-#[derive(Debug)]
-pub struct Layer0AggregationInputs {
-    pub proofs: Vec<ProofWithPublicInputs<F, C, D>>,
-}
-
 #[derive(Debug)]
 pub struct Layer0AggregationProver {
     /// Prebuilt layer-0 aggregation prover circuit data.
@@ -263,12 +256,10 @@ impl Layer0AggregationProver {
     /// - too many proofs are provided
     /// - prover has already committed once
     /// - padded aggregation would mix non-zero `asset_id` real proofs with dummy proofs (`asset_id=0`)
-    pub fn commit(mut self, inputs: Layer0AggregationInputs) -> Result<Self> {
+    pub fn commit(mut self, mut proofs: Vec<ProofWithPublicInputs<F, C, D>>) -> Result<Self> {
         let Some(targets) = self.targets.take() else {
             bail!("layer-0 aggregation prover has already committed to inputs");
         };
-
-        let mut proofs = inputs.proofs;
 
         if proofs.len() > self.num_leaf_proofs {
             bail!(
