@@ -19,14 +19,14 @@ use crate::layer0::circuit::constants::aggregated_output;
 // Total length = layer0_num_leaves * LEAF_PI_LEN + 8
 // -----------------------------------------------------------------------------
 
-pub const L0_NUM_EXIT_SLOTS_OFFSET: usize = aggregated_output::NUM_EXIT_SLOTS_OFFSET;
-pub const L0_ASSET_ID_OFFSET: usize = aggregated_output::ASSET_ID_OFFSET;
-pub const L0_VOLUME_FEE_BPS_OFFSET: usize = aggregated_output::VOLUME_FEE_BPS_OFFSET;
-pub const L0_BLOCK_HASH_OFFSET: usize = aggregated_output::BLOCK_HASH_OFFSET;
-pub const L0_BLOCK_NUMBER_OFFSET: usize = aggregated_output::BLOCK_NUMBER_OFFSET;
-
-pub const L0_HEADER_LEN: usize = aggregated_output::HEADER_LEN;
-pub const L0_EXIT_SLOT_LEN: usize = aggregated_output::EXIT_SLOT_LEN; // [sum(1), exit(4)]
+// Re-export layer-0 aggregated output constants for use in layer-1 circuit.
+// These describe the layout of each layer-0 proof's public inputs.
+pub use aggregated_output::{
+    ASSET_ID_OFFSET as L0_ASSET_ID_OFFSET, BLOCK_HASH_OFFSET as L0_BLOCK_HASH_OFFSET,
+    BLOCK_NUMBER_OFFSET as L0_BLOCK_NUMBER_OFFSET, EXIT_SLOT_LEN as L0_EXIT_SLOT_LEN,
+    HEADER_LEN as L0_HEADER_LEN, NUM_EXIT_SLOTS_OFFSET as L0_NUM_EXIT_SLOTS_OFFSET,
+    VOLUME_FEE_BPS_OFFSET as L0_VOLUME_FEE_BPS_OFFSET,
+};
 
 #[inline]
 pub const fn l0_exit_slots_count(layer0_num_leaves: usize) -> usize {

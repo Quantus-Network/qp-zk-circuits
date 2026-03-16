@@ -37,7 +37,7 @@ use crate::{
         ensure_proof_public_input_len, is_dummy_leaf_proof, leaf_proof_asset_id,
         load_verifier_data_from_bytes,
     },
-    dummy_proof::{generate_random_nullifier, load_dummy_proof},
+    dummy_proof::{generate_random_nullifier_preimage, load_dummy_proof},
     layer0::{
         circuit::circuit_logic::{AggregationCircuitTargets, Layer0AggregationCircuit},
         prover::witness::fill_layer0_aggregation_witness,
@@ -374,6 +374,6 @@ fn assert_dummy_padding_asset_id_compatible(
 /// for real slots via conditional select.
 fn generate_dummy_nullifier_pre_images_for_slots(n_slots: usize) -> Vec<[F; 4]> {
     (0..n_slots)
-        .map(|_| digest_bytes_to_felts(generate_random_nullifier()))
+        .map(|_| digest_bytes_to_felts(generate_random_nullifier_preimage()))
         .collect()
 }

@@ -182,8 +182,9 @@ pub fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
 // Internal implementation
 // ============================================================================
 
-/// Generate a random 32-byte nullifier for dummy proofs.
-pub fn generate_random_nullifier() -> BytesDigest {
+/// Generate a random 32-byte nullifier preimage for dummy proofs.
+/// The circuit will hash this to produce the actual nullifier.
+pub fn generate_random_nullifier_preimage() -> BytesDigest {
     let mut rng = rand::thread_rng();
     loop {
         let mut nullifier = [0u8; 32];
