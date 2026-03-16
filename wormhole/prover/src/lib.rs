@@ -71,6 +71,7 @@ use plonky2::{
     },
     util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer},
 };
+use std::panic::{self, AssertUnwindSafe};
 #[cfg(feature = "std")]
 use std::{fs, path::Path};
 
@@ -82,6 +83,7 @@ use wormhole_circuit::{
 };
 use wormhole_circuit::{
     inputs::CircuitInputs,
+    storage_proof::MAX_SUPPORTED_PROOF_LEN,
     substrate_account::{DualExitAccount, SubstrateAccount},
 };
 use wormhole_circuit::{storage_proof::StorageProof, unspendable_account::UnspendableAccount};
@@ -118,31 +120,64 @@ impl Default for WormholeProver {
 }
 
 impl WormholeProver {
+    fn deserialize_no_panic<T, E, F>(label: &str, f: F) -> anyhow::Result<T>
+    where
+        E: core::fmt::Display,
+        F: FnOnce() -> Result<T, E>,
+    {
+        panic::catch_unwind(AssertUnwindSafe(f))
+            .map_err(|_| anyhow!("failed to deserialize {label}: deserializer panicked"))?
+            .map_err(|e| anyhow!("failed to deserialize {label}: {}", e))
+    }
+
+    fn ensure_loaded_common_matches_canonical(
+        common_data: &CommonCircuitData<F, D>,
+    ) -> anyhow::Result<()> {
+        let gate_serializer = DefaultGateSerializer;
+        let loaded_bytes = common_data
+            .to_bytes(&gate_serializer)
+            .map_err(|e| anyhow!("failed to serialize loaded common circuit data: {}", e))?;
+        let canonical_common = WormholeCircuit::new(common_data.config.clone())
+            .build_verifier()
+            .common;
+        let canonical_bytes = canonical_common
+            .to_bytes(&gate_serializer)
+            .map_err(|e| anyhow!("failed to serialize canonical Wormhole common data: {}", e))?;
+
+        if loaded_bytes != canonical_bytes {
+            bail!(
+                "loaded common circuit data does not match the canonical Wormhole circuit for this config"
+            );
+        }
+
+        Ok(())
+    }
+
     /// Creates a new [`WormholeProver`] from prover and common data bytes.
-    pub fn new_from_bytes(
-        prover_only_bytes: &[u8],
-        common_bytes: &[u8],
-    ) -> Result<Self, &'static str> {
+    pub fn new_from_bytes(prover_only_bytes: &[u8], common_bytes: &[u8]) -> anyhow::Result<Self> {
         let gate_serializer = DefaultGateSerializer;
         let generator_serializer = DefaultGeneratorSerializer::<PoseidonGoldilocksConfig, D> {
             _phantom: Default::default(),
         };
 
-        let common_data = CommonCircuitData::from_bytes(common_bytes.to_vec(), &gate_serializer)
-            .map_err(|_| "Failed to deserialize common circuit data")?;
+        let common_data = Self::deserialize_no_panic("common circuit data from bytes", || {
+            CommonCircuitData::from_bytes(common_bytes.to_vec(), &gate_serializer)
+        })?;
+        Self::ensure_loaded_common_matches_canonical(&common_data)?;
 
-        let prover_only_data = ProverOnlyCircuitData::from_bytes(
-            prover_only_bytes,
-            &generator_serializer,
-            &common_data,
-        )
-        .map_err(|e| anyhow!("Failed to deserialize prover only data: {}", e));
+        let prover_only_data = Self::deserialize_no_panic("prover-only data from bytes", || {
+            ProverOnlyCircuitData::from_bytes(
+                prover_only_bytes,
+                &generator_serializer,
+                &common_data,
+            )
+        })?;
 
         let wormhole_circuit = WormholeCircuit::new(common_data.config.clone());
         let targets = Some(wormhole_circuit.targets());
 
         let circuit_data = ProverCircuitData {
-            prover_only: prover_only_data.unwrap(),
+            prover_only: prover_only_data,
             common: common_data,
         };
 
@@ -165,28 +200,23 @@ impl WormholeProver {
         };
 
         let common_bytes = fs::read(common_data_path)?;
-        let common_data =
-            CommonCircuitData::from_bytes(common_bytes, &gate_serializer).map_err(|e| {
-                anyhow!(
-                    "Failed to deserialize common circuit data from {:?}: {}",
-                    common_data_path,
-                    e
-                )
-            })?;
+        let common_data = Self::deserialize_no_panic(
+            &format!("common circuit data from {:?}", common_data_path),
+            || CommonCircuitData::from_bytes(common_bytes, &gate_serializer),
+        )?;
+        Self::ensure_loaded_common_matches_canonical(&common_data)?;
 
         let prover_only_bytes = fs::read(prover_data_path)?;
-        let prover_only_data = ProverOnlyCircuitData::from_bytes(
-            &prover_only_bytes,
-            &generator_serializer,
-            &common_data,
-        )
-        .map_err(|e| {
-            anyhow!(
-                "Failed to deserialize prover only data from {:?}: {}",
-                prover_data_path,
-                e
-            )
-        })?;
+        let prover_only_data = Self::deserialize_no_panic(
+            &format!("prover only data from {:?}", prover_data_path),
+            || {
+                ProverOnlyCircuitData::from_bytes(
+                    &prover_only_bytes,
+                    &generator_serializer,
+                    &common_data,
+                )
+            },
+        )?;
 
         let wormhole_circuit = WormholeCircuit::new(common_data.config.clone());
         let targets = Some(wormhole_circuit.targets());
@@ -259,6 +289,15 @@ pub fn fill_witness(
     circuit_inputs: &CircuitInputs,
     targets: &CircuitTargets,
 ) -> anyhow::Result<()> {
+    let proof_len = circuit_inputs.private.storage_proof.proof.len();
+    if proof_len > MAX_SUPPORTED_PROOF_LEN {
+        bail!(
+            "storage proof length {} exceeds maximum supported length {}",
+            proof_len,
+            MAX_SUPPORTED_PROOF_LEN
+        );
+    }
+
     let nullifier = Nullifier::from(circuit_inputs);
     let storage_proof = StorageProof::try_from(circuit_inputs)?;
     let unspendable_account = UnspendableAccount::from(circuit_inputs);

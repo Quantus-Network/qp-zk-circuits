@@ -11,7 +11,6 @@
 //! config.json file (`config.json`) which contains the aggregation config (number of leaf/layer0 proofs) and binary hashes for integrity verification.
 use anyhow::{anyhow, bail, Context, Result};
 use plonky2::{
-    field::types::{Field, PrimeField64},
     iop::witness::PartialWitness,
     plonk::{
         circuit_data::{
@@ -34,8 +33,11 @@ use zk_circuits_common::{
 };
 
 use crate::{
-    common::utils::load_verifier_data_from_bytes,
-    dummy_proof::{generate_random_nullifier, load_dummy_proof},
+    common::utils::{
+        ensure_proof_public_input_len, is_dummy_leaf_proof, leaf_proof_asset_id,
+        load_verifier_data_from_bytes,
+    },
+    dummy_proof::{generate_random_nullifier_preimage, load_dummy_proof},
     layer0::{
         circuit::circuit_logic::{AggregationCircuitTargets, Layer0AggregationCircuit},
         prover::witness::fill_layer0_aggregation_witness,
@@ -43,13 +45,6 @@ use crate::{
 };
 
 /// Public inputs for the layer-0 aggregation prover.
-///
-/// We take ownership of proofs to avoid an expensive clone in `commit(...)`.
-#[derive(Debug)]
-pub struct Layer0AggregationInputs {
-    pub proofs: Vec<ProofWithPublicInputs<F, C, D>>,
-}
-
 #[derive(Debug)]
 pub struct Layer0AggregationProver {
     /// Prebuilt layer-0 aggregation prover circuit data.
@@ -214,8 +209,6 @@ impl Layer0AggregationProver {
     }
 
     /// Convenience constructor that loads everything from a generated binaries directory.
-    /// We pass the `verify` flag to optionally verify binary integrity using the hashes in `config.json`.
-    /// We expose this option because while integrity verification is critical in production, it can add overhead during development when binaries are frequently rebuilt.
     ///
     /// Expected files:
     /// - `aggregated_prover.bin`
@@ -226,16 +219,9 @@ impl Layer0AggregationProver {
     /// - `config.json`
     ///
     #[cfg(feature = "std")]
-    pub fn new_from_binaries_dir(bins_dir: &Path, verify: bool) -> Result<Self> {
-        let bins_config = crate::config::CircuitBinsConfig::load(bins_dir).with_context(|| {
-            format!(
-                "Failed to load config.json for circuit binary integrity verification from {}",
-                bins_dir.display()
-            )
-        })?;
-        if verify {
-            bins_config.verify_hashes(bins_dir)?;
-        }
+    pub fn new_from_binaries_dir(bins_dir: &Path) -> Result<Self> {
+        let bins_config = crate::config::CircuitBinsConfig::load(bins_dir)
+            .with_context(|| format!("Failed to load config.json from {}", bins_dir.display()))?;
         let num_leaf_proofs = bins_config.num_leaf_proofs;
 
         Self::new_from_files(
@@ -270,12 +256,10 @@ impl Layer0AggregationProver {
     /// - too many proofs are provided
     /// - prover has already committed once
     /// - padded aggregation would mix non-zero `asset_id` real proofs with dummy proofs (`asset_id=0`)
-    pub fn commit(mut self, inputs: Layer0AggregationInputs) -> Result<Self> {
+    pub fn commit(mut self, mut proofs: Vec<ProofWithPublicInputs<F, C, D>>) -> Result<Self> {
         let Some(targets) = self.targets.take() else {
             bail!("layer-0 aggregation prover has already committed to inputs");
         };
-
-        let mut proofs = inputs.proofs;
 
         if proofs.len() > self.num_leaf_proofs {
             bail!(
@@ -329,27 +313,16 @@ impl Layer0AggregationProver {
 // Helpers
 // -----------------------------------------------------------------------------
 
-/// Leaf proof PI layout constants (wormhole leaf circuit).
-/// We only need these for quick checks (asset_id and dummy sentinel).
-const LEAF_ASSET_ID_PI_INDEX: usize = 0;
-const LEAF_BLOCK_HASH_START: usize = 16;
-
-/// Dummy proofs use `block_hash == [0,0,0,0]` as the sentinel in the layer-0 wrapper.
-fn is_dummy_leaf_proof(proof: &ProofWithPublicInputs<F, C, D>) -> bool {
-    proof
-        .public_inputs
-        .get(LEAF_BLOCK_HASH_START..LEAF_BLOCK_HASH_START + 4)
-        .map(|slice| slice.iter().all(|f| f.is_zero()))
-        .unwrap_or(false)
-}
-
 /// Shuffle proofs while ensuring a real proof remains in slot 0 (if any real proof exists).
 ///
 /// This mirrors the behavior of `shuffle_proofs_preserving_first_real(...)` but avoids needing
 /// a full `AggregationWrapper` impl just for the prover path.
 fn shuffle_proofs_preserving_first_real_layer0(proofs: &mut [ProofWithPublicInputs<F, C, D>]) {
     // Find the first real proof
-    if let Some(first_real_idx) = proofs.iter().position(|p| !is_dummy_leaf_proof(p)) {
+    if let Some(first_real_idx) = proofs
+        .iter()
+        .position(|p| !is_dummy_leaf_proof(p).unwrap_or(false))
+    {
         proofs.swap(0, first_real_idx);
     }
 
@@ -365,26 +338,19 @@ fn shuffle_proofs_preserving_first_real_layer0(proofs: &mut [ProofWithPublicInpu
 fn assert_dummy_padding_asset_id_compatible(
     proofs: &[ProofWithPublicInputs<F, C, D>],
 ) -> Result<()> {
-    if let Some(first_real) = proofs.first() {
-        let asset_id_f = first_real
-            .public_inputs
-            .get(LEAF_ASSET_ID_PI_INDEX)
-            .ok_or_else(|| {
-                anyhow!(
-                    "missing asset_id public input at index {}",
-                    LEAF_ASSET_ID_PI_INDEX
-                )
-            })?;
-
-        let real_asset_id: u32 = asset_id_f
-            .to_canonical_u64()
-            .try_into()
-            .context("asset_id in first proof exceeds u32 range")?;
+    for (idx, proof) in proofs.iter().enumerate() {
+        ensure_proof_public_input_len(
+            proof,
+            crate::layer0::circuit::constants::LEAF_PI_LEN,
+            "leaf proof",
+        )?;
+        let real_asset_id = leaf_proof_asset_id(proof)?;
 
         if real_asset_id != 0 {
             bail!(
-                "Real proofs have asset_id={}, but dummy proofs use asset_id=0. \
-                 All proofs must have the same asset_id for aggregation.",
+                "real proof {} has asset_id={}, but dummy proofs use asset_id=0. \
+                 All proofs must have the same asset_id for aggregation when padding is required.",
+                idx,
                 real_asset_id
             );
         }
@@ -399,6 +365,6 @@ fn assert_dummy_padding_asset_id_compatible(
 /// for real slots via conditional select.
 fn generate_dummy_nullifier_pre_images_for_slots(n_slots: usize) -> Vec<[F; 4]> {
     (0..n_slots)
-        .map(|_| digest_bytes_to_felts(generate_random_nullifier()))
+        .map(|_| digest_bytes_to_felts(generate_random_nullifier_preimage()))
         .collect()
 }

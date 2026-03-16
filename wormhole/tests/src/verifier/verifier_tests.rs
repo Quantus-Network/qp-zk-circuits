@@ -6,6 +6,7 @@ use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use wormhole_circuit::inputs::CircuitInputs;
 use wormhole_circuit::substrate_account::SubstrateAccount;
 use wormhole_prover::WormholeProver;
+use wormhole_verifier::WormholeVerifier;
 use zk_circuits_common::codec::FieldElementCodec;
 
 #[cfg(test)]
@@ -21,6 +22,16 @@ fn build_test_verifier() -> plonky2::plonk::circuit_data::VerifierCircuitData<
     WormholeCircuit::new(CIRCUIT_CONFIG).build_verifier()
 }
 
+fn build_verifier_bytes(config: CircuitConfig) -> (Vec<u8>, Vec<u8>) {
+    let verifier_data = WormholeCircuit::new(config).build_verifier();
+    let common_bytes = verifier_data
+        .common
+        .to_bytes(&plonky2::util::serialization::DefaultGateSerializer)
+        .unwrap();
+    let verifier_bytes = verifier_data.verifier_only.to_bytes().unwrap();
+    (verifier_bytes, common_bytes)
+}
+
 #[test]
 fn verify_simple_proof() {
     let prover = WormholeProver::new(CIRCUIT_CONFIG);
@@ -30,6 +41,24 @@ fn verify_simple_proof() {
 
     let verifier_data = build_test_verifier();
     verifier_data.verify(proof).unwrap();
+}
+
+#[test]
+fn borrowed_verify_keeps_proof_available() {
+    let prover = WormholeProver::new(CIRCUIT_CONFIG);
+    let inputs = CircuitInputs::test_inputs_0();
+    let proof = prover.commit(&inputs).unwrap().prove().unwrap();
+
+    let (verifier_bytes, common_bytes) = build_verifier_bytes(CIRCUIT_CONFIG);
+    let verifier = WormholeVerifier::new_from_bytes(&verifier_bytes, &common_bytes).unwrap();
+    let verifier_proof = wormhole_verifier::ProofWithPublicInputs::from_bytes(
+        proof.to_bytes(),
+        &verifier.circuit_data.common,
+    )
+    .unwrap();
+    verifier.verify_ref(&verifier_proof).unwrap();
+
+    assert_eq!(proof.public_inputs.len(), 21);
 }
 
 #[test]

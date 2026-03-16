@@ -12,6 +12,15 @@ use alloc::vec;
 use alloc::vec::Vec;
 use anyhow::bail;
 
+/// Maximum number of trie nodes that an actual Wormhole storage proof may contain.
+///
+/// The circuit reserves one extra witness slot to keep the leaf-binding check in-circuit, so the
+/// fixed witness capacity is [`STORAGE_PROOF_WITNESS_CAPACITY`].
+pub const MAX_STORAGE_PROOF_NODES: usize = 19;
+
+/// Fixed number of proof-node witness slots allocated by the Wormhole circuit.
+pub const STORAGE_PROOF_WITNESS_CAPACITY: usize = MAX_STORAGE_PROOF_NODES + 1;
+
 /// A storage proof along with an array of indices where the hash child nodes are placed.
 #[derive(Debug, Clone)]
 pub struct ProcessedStorageProof {
@@ -97,15 +106,9 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
     let state_root_hex = state_root.trim_start_matches("0x").to_string();
 
     // Check if any node's hash equals the state root
-    let root_hash = if node_map.contains_key(&state_root_hex) {
-        state_root_hex.clone()
-    } else {
-        bail!("No node hashes to state root!");
-    };
-
     let root_entry = node_map
-        .get(&root_hash)
-        .ok_or_else(|| anyhow::anyhow!("Failed to get root entry from map"))?;
+        .get(&state_root_hex)
+        .ok_or_else(|| anyhow::anyhow!("No node hashes to state root"))?;
 
     let mut ordered_nodes = vec![root_entry.1.clone()];
     let mut current_node_hex = root_entry.2.clone();
@@ -118,25 +121,33 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
     loop {
         // Try to find which node's hash appears in the current node
         // Child hashes are prefixed with their length (32 bytes = 0x2000000000000000 in little-endian)
-        let mut found_child = None;
+        let mut next_child_bytes = None;
         for (child_hash, (_, child_bytes, _)) in &node_map {
             let hash_with_prefix = format!("{}{}", HASH_LENGTH_PREFIX, child_hash);
             if current_node_hex.contains(&hash_with_prefix) {
                 // Make sure we haven't already added this node
                 if !ordered_nodes.iter().any(|n| n == child_bytes) {
-                    found_child = Some(child_bytes.clone());
+                    next_child_bytes = Some(child_bytes.clone());
                     break;
                 }
             }
         }
 
-        if let Some(child_bytes) = found_child {
+        if let Some(child_bytes) = next_child_bytes {
             ordered_nodes.push(child_bytes.clone());
             current_node_hex = hex::encode(ordered_nodes.last().unwrap());
         } else {
             // No more children found - we've reached the end of the proof path
             break;
         }
+    }
+
+    if ordered_nodes.len() > MAX_STORAGE_PROOF_NODES {
+        bail!(
+            "storage proof length {} exceeds maximum supported length {}",
+            ordered_nodes.len(),
+            MAX_STORAGE_PROOF_NODES
+        );
     }
 
     // Now compute the indices - where child hashes appear within parent nodes
@@ -155,8 +166,8 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
         }
     }
 
-    let (found, last_idx) = check_leaf(&leaf_hash, ordered_nodes.last().unwrap());
-    if !found {
+    let (leaf_suffix_found, last_idx) = check_leaf(&leaf_hash, ordered_nodes.last().unwrap());
+    if !leaf_suffix_found {
         bail!("Leaf hash suffix not found in leaf node!");
     }
 
@@ -172,4 +183,51 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
     }
 
     ProcessedStorageProof::new(ordered_nodes, indices)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        hash_node_with_poseidon_padded, prepare_proof_for_circuit, MAX_STORAGE_PROOF_NODES,
+    };
+
+    fn synthetic_proof(node_count: usize, leaf_hash: [u8; 32]) -> (Vec<Vec<u8>>, String) {
+        const HASH_LENGTH_PREFIX: [u8; 8] = 32u64.to_le_bytes();
+
+        let mut nodes = Vec::with_capacity(node_count);
+
+        let mut leaf_node = vec![0u8; 48];
+        leaf_node[..8].fill(1);
+        leaf_node[8..40].copy_from_slice(&leaf_hash);
+        leaf_node[40..].fill(17);
+        let mut child_hash = hash_node_with_poseidon_padded(&leaf_node);
+        nodes.push(leaf_node);
+
+        for i in 1..node_count {
+            let mut node = vec![0u8; 56];
+            node[..8].fill((i as u8).wrapping_add(1));
+            node[8..16].copy_from_slice(&HASH_LENGTH_PREFIX);
+            node[16..48].copy_from_slice(&child_hash);
+            node[48..].fill((i as u8).wrapping_add(17));
+            child_hash = hash_node_with_poseidon_padded(&node);
+            nodes.push(node);
+        }
+
+        nodes.reverse();
+        (nodes, hex::encode(child_hash))
+    }
+
+    #[test]
+    fn prepare_proof_for_circuit_rejects_oversized_proof() {
+        let leaf_hash = core::array::from_fn(|i| i as u8);
+        let (proof, state_root) = synthetic_proof(MAX_STORAGE_PROOF_NODES + 1, leaf_hash);
+
+        let err = prepare_proof_for_circuit(proof, state_root, leaf_hash).unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("storage proof length")
+                && err_msg.contains("maximum supported length 19"),
+            "unexpected error: {err_msg}"
+        );
+    }
 }

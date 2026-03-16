@@ -4,7 +4,6 @@
 //! - Layer1Aggregator: delegated aggregation ( expects full batches of layer-0 proofs).
 //!
 //! Shared utilities:
-//! - optional hash verification via config.json
 //! - verifier loading from {common.bin, verifier.bin}
 //! - bounded proof buffers
 
@@ -23,7 +22,8 @@ use zk_circuits_common::circuit::{C, D, F};
 
 use crate::layer1::prover::{Layer1AggregationInputs, Layer1AggregationProver};
 use crate::{
-    layer0::prover::{Layer0AggregationInputs, Layer0AggregationProver},
+    common::utils::{ensure_proof_public_input_len, leaf_proof_asset_id},
+    layer0::prover::Layer0AggregationProver,
     CircuitBinsConfig,
 };
 
@@ -59,12 +59,6 @@ pub trait AggregationBackend: Send + Sync {
 // ============================================================================
 // Shared helpers
 // ============================================================================
-
-fn verify_hashes(bins_dir: &Path) -> Result<CircuitBinsConfig> {
-    let bins_config = crate::config::CircuitBinsConfig::load(bins_dir)?;
-    bins_config.verify_hashes(bins_dir)?;
-    Ok(bins_config)
-}
 
 fn load_common_from_bins<P: AsRef<Path>>(
     bins_dir: P,
@@ -162,23 +156,27 @@ pub struct Layer1Aggregator {
     bins_dir: PathBuf,
     aggregator_address: BytesDigest,
     buf: ProofBuffer,
+    expected_layer0_pi_len: usize,
 }
 
 impl Layer1Aggregator {
     pub fn new<P: AsRef<Path>>(bins_dir: P, aggregator_address: BytesDigest) -> Result<Self> {
         let bins_dir = bins_dir.as_ref().to_path_buf();
 
-        // Verify binaries and return config
-        let config = verify_hashes(&bins_dir)?;
+        // Load config
+        let config = CircuitBinsConfig::load(&bins_dir)?;
 
         let num_layer0_proofs = config
             .num_layer0_proofs
             .ok_or_else(|| anyhow!("config is missing num_layer0_proofs. Please regenerate the binaries and set \"num_layer0_proofs\""))?;
+        let expected_layer0_pi_len =
+            load_common_from_bins(&bins_dir, "aggregated_common.bin")?.num_public_inputs;
 
         Ok(Self {
             bins_dir,
             aggregator_address,
             buf: ProofBuffer::new(num_layer0_proofs),
+            expected_layer0_pi_len,
         })
     }
 
@@ -189,6 +187,11 @@ impl Layer1Aggregator {
 
 impl AggregationBackend for Layer1Aggregator {
     fn push_proof(&mut self, proof: Proof) -> Result<()> {
+        ensure_proof_public_input_len(
+            &proof,
+            self.expected_layer0_pi_len,
+            "layer-0 aggregated proof",
+        )?;
         self.buf.push(proof)
     }
 
@@ -209,8 +212,8 @@ impl AggregationBackend for Layer1Aggregator {
             .drain_exact(cap)
             .with_context(|| "No dummy padding for layer-1: need a full batch of layer-0 proofs")?;
 
-        // Load the layer-1 prover, skipping hash verification since it was already done in the aggregator constructor.
-        let prover = Layer1AggregationProver::new_from_binaries_dir(&self.bins_dir, false)
+        // Load the layer-1 prover
+        let prover = Layer1AggregationProver::new_from_binaries_dir(&self.bins_dir)
             .context("failed to load prebuilt layer-1 prover")?;
 
         let prover = prover
@@ -247,24 +250,27 @@ impl AggregationBackend for Layer1Aggregator {
 pub struct Layer0Aggregator {
     bins_dir: PathBuf,
     buf: ProofBuffer,
+    expected_leaf_pi_len: usize,
 }
 
 impl Layer0Aggregator {
     pub fn new<P: AsRef<Path>>(bins_dir: P) -> Result<Self> {
         let bins_dir = bins_dir.as_ref().to_path_buf();
 
-        // Verify binaries and return config
-        let config = verify_hashes(&bins_dir)?;
+        // Load config
+        let config = CircuitBinsConfig::load(&bins_dir)?;
+        let expected_leaf_pi_len =
+            load_common_from_bins(&bins_dir, "common.bin")?.num_public_inputs;
 
         Ok(Self {
             bins_dir,
             buf: ProofBuffer::new(config.num_leaf_proofs),
+            expected_leaf_pi_len,
         })
     }
 
     fn build_prover(&self) -> Result<Layer0AggregationProver> {
-        // We don't have to verify hashes again here since the aggregation backend constructor already verifies them.
-        Layer0AggregationProver::new_from_binaries_dir(&self.bins_dir, false)
+        Layer0AggregationProver::new_from_binaries_dir(&self.bins_dir)
             .context("failed to load prebuilt layer-0 prover from binaries dir")
     }
 
@@ -279,6 +285,7 @@ impl Layer0Aggregator {
 
 impl AggregationBackend for Layer0Aggregator {
     fn push_proof(&mut self, proof: Proof) -> Result<()> {
+        ensure_proof_public_input_len(&proof, self.expected_leaf_pi_len, "leaf proof")?;
         self.buf.push(proof)
     }
 
@@ -296,12 +303,26 @@ impl AggregationBackend for Layer0Aggregator {
         }
 
         // Layer-0 prover commit does padding/shuffling/dummy-nullifier-preimage handling,
-        // so we can pass any non-empty batch.
+        // so we can pass any non-empty batch. The wrapper's same-block / same-asset invariants are
+        // intentional protocol rules and remain enforced in-circuit; this preflight only rejects
+        // malformed or dummy-padding-incompatible inputs earlier.
         let proofs = self.buf.take_all();
+        if proofs.len() < self.batch_size() {
+            for (idx, proof) in proofs.iter().enumerate() {
+                let asset_id = leaf_proof_asset_id(proof)?;
+                if asset_id != 0 {
+                    bail!(
+                        "proof {} has asset_id={}, but layer-0 dummy padding requires all real proofs to use asset_id=0",
+                        idx,
+                        asset_id
+                    );
+                }
+            }
+        }
 
         let prover = self.build_prover()?;
         let prover = prover
-            .commit(Layer0AggregationInputs { proofs })
+            .commit(proofs)
             .context("failed to commit leaf proofs to layer-0 aggregation prover")?;
 
         prover.prove().context("layer-0 proving failed")

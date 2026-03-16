@@ -21,10 +21,18 @@ pub use zk_circuits_common::storage_proof::ProcessedStorageProof;
 
 pub mod leaf;
 
-pub const MAX_PROOF_LEN: usize = 20;
+/// Maximum number of proof nodes supported by the fixed witness layout.
+///
+/// This includes one extra slot beyond the maximum real proof length so the circuit can keep the
+/// leaf-binding check inside the fixed loop.
+pub const MAX_PROOF_LEN: usize = zk_circuits_common::storage_proof::STORAGE_PROOF_WITNESS_CAPACITY;
+/// Maximum number of actual trie nodes allowed in a Wormhole storage proof.
+pub const MAX_SUPPORTED_PROOF_LEN: usize =
+    zk_circuits_common::storage_proof::MAX_STORAGE_PROOF_NODES;
 pub const PROOF_NODE_MAX_SIZE_F: usize = 189; // Should match the felt preimage max set on poseidon-resonance crate.
 pub const PROOF_NODE_MAX_SIZE_B: usize = 256;
 pub const FELTS_PER_AMOUNT: usize = 2;
+const EMPTY_PROOF_NODE: [F; PROOF_NODE_MAX_SIZE_F] = [F::ZERO; PROOF_NODE_MAX_SIZE_F];
 
 #[derive(Debug, Clone)]
 pub struct StorageProofTargets {
@@ -139,7 +147,8 @@ impl CircuitFragment for StorageProof {
         builder: &mut CircuitBuilder<F, D>,
     ) {
         use plonky2::hash::poseidon2::Poseidon2Hash;
-        use zk_circuits_common::gadgets::is_const_less_than;
+        use plonky2::plonk::config::Hasher;
+        use zk_circuits_common::gadgets::{bytes_digest_eq, enforce_target_less_than_const};
 
         let leaf_targets_32_bit = leaf_inputs.collect_32_bit_targets();
         // Range constrain the 32-bit targets (transfer_count, input_amount, output_amount, volume_fee_bps)
@@ -175,24 +184,36 @@ impl CircuitFragment for StorageProof {
         let two_pow_32 = builder.constant(F::from_canonical_u64(1u64 << 32));
 
         let zero = builder.zero();
+        let empty_proof_node_hash =
+            builder.constant_hash(Poseidon2Hash::hash_no_pad(&EMPTY_PROOF_NODE));
 
         // The first node should be the root node so we initialize `prev_hash` to the provided `root_hash`.
         let mut prev_hash = root_hash;
         let n_log = (usize::BITS - (MAX_PROOF_LEN - 1).leading_zeros()) as usize;
+        // Keep the leaf-binding check inside the loop by enforcing proof_len < MAX_PROOF_LEN.
+        // This prevents witnesses from placing the "leaf step" just beyond the fixed iteration
+        // window and thereby skipping the final binding check.
+        enforce_target_less_than_const(builder, proof_len, MAX_PROOF_LEN, n_log);
         for i in 0..MAX_PROOF_LEN {
             let node = &proof_data[i];
-
-            // Check if this is a valid proof node or a dummy one.
-            let is_proof_node = is_const_less_than(builder, i, proof_len, n_log);
 
             // Check if this is a leaf node.
             let i_t = builder.constant(F::from_canonical_usize(i));
             let is_leaf_node = builder.is_equal(i_t, proof_len);
 
             // Compute the hash of this node and compare it against the previous hash.
+            // Treat zero-filled witness slots as padding by comparing their hash against the
+            // circuit-constant hash of the empty proof node.
+            let computed_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(node.clone());
+            let is_empty_proof_node = bytes_digest_eq(
+                builder,
+                computed_hash.elements,
+                empty_proof_node_hash.elements,
+            );
+            let is_proof_node = builder.not(is_empty_proof_node);
+
             // Only enforce validation for non-dummy proofs (output_amount > 0).
             let should_validate_node = builder.mul(is_proof_node.target, is_not_dummy.target);
-            let computed_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(node.clone());
             for y in 0..4 {
                 let diff = builder.sub(computed_hash.elements[y], prev_hash.elements[y]);
                 let result = builder.mul(diff, should_validate_node);
@@ -232,8 +253,8 @@ impl CircuitFragment for StorageProof {
                 builder.range_check(*felt, 32);
             }
 
-            // For the leaf node, the value is the hash of the leaf inputs. We don't check the full hash
-            // here, only the last 3 felts b/c zk trie's length prefix overwrites the 8 bytes of the hash.
+            // For the leaf node, the value is the hash of the leaf inputs. We intentionally check only
+            // limbs 1..=3 because the zk-trie encoding overwrites limb 0 with the in-node length prefix.
             // Only enforce for non-dummy proofs.
             let should_validate_leaf = builder.mul(is_leaf_node.target, is_not_dummy.target);
             for y in 1..4 {
@@ -254,17 +275,15 @@ impl CircuitFragment for StorageProof {
         use plonky2::iop::witness::WitnessWrite;
         use zk_circuits_common::utils::felts_to_hashout;
 
-        const EMPTY_PROOF_NODE: [F; PROOF_NODE_MAX_SIZE_F] = [F::ZERO; PROOF_NODE_MAX_SIZE_F];
-
         pw.set_hash_target(targets.root_hash, bytes_32_to_hashout(self.root_hash))?;
         // Set is_not_dummy for dummy proof detection logic
         pw.set_bool_target(targets.is_not_dummy, self.is_not_dummy)?;
         // bail if proof is too long
-        if self.proof.len() > MAX_PROOF_LEN {
+        if self.proof.len() > MAX_SUPPORTED_PROOF_LEN {
             bail!(
                 "proof length exceeds maximum allowed length: {} > {}",
                 self.proof.len(),
-                MAX_PROOF_LEN
+                MAX_SUPPORTED_PROOF_LEN
             );
         }
         pw.set_target(targets.proof_len, F::from_canonical_usize(self.proof.len()))?;

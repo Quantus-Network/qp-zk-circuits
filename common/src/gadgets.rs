@@ -6,8 +6,26 @@ use plonky2::{
     plonk::circuit_builder::CircuitBuilder,
 };
 
+fn assert_comparison_width(left: usize, n_log: usize) {
+    assert!(n_log > 0, "comparison bit width must be greater than zero");
+
+    let exclusive_upper_bound = if n_log >= usize::BITS as usize {
+        usize::MAX
+    } else {
+        1usize << n_log
+    };
+
+    assert!(
+        left < exclusive_upper_bound,
+        "left constant {left} does not fit in comparison width {n_log} bits"
+    );
+}
+
 /// Compares a constant integer `left` with a variable `right` in a circuit, and returns whether
 /// or not `left < right`.
+///
+/// `n_log` must be wide enough to represent `left`, and it also range-constrains `right` to
+/// `n_log` bits via `split_le`.
 ///
 /// # Returns
 /// - `BoolTarget`: True if `left < right`, false otherwise.
@@ -17,6 +35,8 @@ pub fn is_const_less_than<F: RichField + Extendable<D>, const D: usize>(
     right: Target,
     n_log: usize,
 ) -> BoolTarget {
+    assert_comparison_width(left, n_log);
+
     let right_bits = builder.split_le(right, n_log);
     let left_bits: Vec<bool> = (0..n_log).map(|i| ((left >> i) & 1) != 0).collect();
 
@@ -38,6 +58,26 @@ pub fn is_const_less_than<F: RichField + Extendable<D>, const D: usize>(
     }
 
     lt
+}
+
+/// Enforce `target < upper_bound_exclusive`.
+///
+/// This helper also constrains `target` to the minimum bit width implied by `n_log`.
+pub fn enforce_target_less_than_const<F: RichField + Extendable<D>, const D: usize>(
+    builder: &mut CircuitBuilder<F, D>,
+    target: Target,
+    upper_bound_exclusive: usize,
+    n_log: usize,
+) {
+    assert!(
+        upper_bound_exclusive > 0,
+        "exclusive upper bound must be greater than zero"
+    );
+    assert_comparison_width(upper_bound_exclusive - 1, n_log);
+
+    let overflow = is_const_less_than(builder, upper_bound_exclusive - 1, target, n_log);
+    let zero = builder.zero();
+    builder.connect(overflow.target, zero);
 }
 
 /// Computes the XOR of two boolean values in a circuit.
@@ -108,8 +148,8 @@ pub fn limb1_at_offset<const LEAF_PI_LEN: usize, const KEY_OFFSET: usize>(
 
 /// Count unique 4x32-bit keys (big-endian limbs) among N leaves each of LEAF_PI_LEN:
 /// KEY_OFFSET is the offset of the 4x32-bit key within each leaf's public inputs.
-/// For each i, flag[i] = 1 if key[i] != key[j] for all j<i, else 0.
-/// Returns sum(flag) as a Target.
+/// For each `i`, `flag[i] = 1` if `key[i] != key[j]` for all `j < i`, else `0`.
+/// Returns `sum(flag)` as a `Target`.
 pub fn count_unique_4x32_keys<
     F: RichField + Extendable<D>,
     const D: usize,

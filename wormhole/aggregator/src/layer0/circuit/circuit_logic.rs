@@ -272,7 +272,7 @@ fn build_layer0_wrapper_constraints(
             builder.select(is_duplicate, zero, exit_slot[3]),
         ];
 
-        // Range check sum (expected u32-safe quantized amount)
+        // Range check final sum to 32 bits (u32::MAX > the max possible sum on our chain)
         builder.range_check(final_sum, 32);
 
         output_pis.push(final_sum);
