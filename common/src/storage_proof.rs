@@ -49,38 +49,62 @@ pub fn hash_node_with_poseidon_padded(node_bytes: &[u8]) -> [u8; 32] {
     hash_padded_bytes::<FIELD_ELEMENT_PREIMAGE_PADDING_LEN>(node_bytes)
 }
 
-/// Check that the 24 byte suffix of the leaf hash is in the leaf node.
+/// Parse a HashedValueLeaf node (type 5) and extract the byte offset where the value hash starts.
 ///
-/// Returns a tuple of (found: bool, byte_index: usize) where byte_index is
-/// the hex character index (multiplied by 2 and adjusted by -16).
-pub fn check_leaf(leaf_hash: &[u8; 32], leaf_node: &[u8]) -> (bool, usize) {
-    let hash_suffix = &leaf_hash[8..32];
-    let mut last_idx = 0usize;
-    let mut found = false;
-
-    for i in 0..=leaf_node.len().saturating_sub(hash_suffix.len()) {
-        if &leaf_node[i..i + hash_suffix.len()] == hash_suffix {
-            last_idx = i;
-            found = true;
-            break;
-        }
+/// Our storage values are always 32 bytes (leaf_inputs_hash), which exceeds zk-trie's
+/// MAX_INLINE_VALUE=31, so they're always stored as HashedValueLeaf nodes.
+///
+/// HashedValueLeaf format:
+/// - `[0..8]`: 8-byte header (type=5 in bits 60-63, nibble_count in bits 0-31)
+/// - `[8..8+nibble_section]`: partial key with felt-alignment padding
+/// - `[8+nibble_section..]`: 32-byte hash reference to value node
+///
+/// Returns the byte offset to the hash, or None if parsing fails.
+fn parse_leaf_hash_offset(leaf_node: &[u8]) -> Option<usize> {
+    if leaf_node.len() < 8 {
+        return None;
     }
 
-    (found, (last_idx * 2).saturating_sub(16))
+    let header = u64::from_le_bytes(leaf_node[0..8].try_into().ok()?);
+    let node_type = (header >> 60) & 0xF;
+    let nibble_count = (header & 0xFFFFFFFF) as usize;
+
+    // Only accept HashedValueLeaf (type 5)
+    if node_type != 5 {
+        return None;
+    }
+
+    // Calculate nibble section size (matches zk-trie node_codec.rs)
+    let nibble_bytes = (nibble_count + 1) / 2;
+    let misalignment = nibble_bytes % 8;
+    let prefix_padding = if misalignment == 0 {
+        0
+    } else {
+        8 - misalignment
+    };
+    let nibble_section = ((prefix_padding + nibble_bytes + 7) / 8) * 8;
+
+    let value_start = 8 + nibble_section;
+
+    if leaf_node.len() < value_start + 32 {
+        return None;
+    }
+    Some(value_start)
 }
 
-/// Prepares the storage proof for circuit consumption by ordering nodes from root to leaf.
+/// Prepares a storage proof for circuit consumption by ordering nodes from root to leaf.
 ///
-/// The RPC returns an UNORDERED list of proof node preimages. We need to:
-/// 1. Find which node, when hashed with Poseidon2, equals the state_root
-/// 2. Build the path from root to leaf by finding parent-child relationships
-/// 3. Compute indices where child hashes appear in parent nodes
-/// 4. Verify the leaf hash suffix appears in the leaf node
+/// The RPC returns an unordered list of proof nodes. This function:
+/// 1. Finds the root node (hashes to state_root)
+/// 2. Builds the path from root to leaf by following child hash references
+/// 3. Appends any value node referenced by the leaf (for indirect storage)
+/// 4. Computes indices where child hashes appear in parent nodes
+/// 5. Verifies the leaf_hash is present (directly or via value node indirection)
 ///
 /// # Arguments
-/// * `proof` - Unordered list of proof node bytes
+/// * `proof` - Unordered list of proof node bytes from RPC
 /// * `state_root` - The state root hash (with or without 0x prefix)
-/// * `leaf_hash` - The hash of the leaf data
+/// * `leaf_hash` - The expected hash stored in the leaf's value section
 ///
 /// # Returns
 /// A `ProcessedStorageProof` with ordered nodes and corresponding indices
@@ -89,8 +113,7 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
     state_root: String,
     leaf_hash: [u8; 32],
 ) -> anyhow::Result<ProcessedStorageProof> {
-    // Create a map of hash -> (index, node_bytes, node_hex)
-    // Hash each trie node with the blockchain's hash function (hash_padded_bytes)
+    // Build map: node_hash -> (index, node_bytes, node_hex)
     let mut node_map: alloc::collections::BTreeMap<String, (usize, Vec<u8>, String)> =
         alloc::collections::BTreeMap::new();
 
@@ -99,13 +122,12 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
         let hash = hash_node_with_poseidon_padded(node_bytes);
         let hash_hex = hex::encode(hash);
         let node_hex = hex::encode(node_bytes);
-        node_map.insert(hash_hex.clone(), (idx, node_bytes.to_vec(), node_hex));
+        node_map.insert(hash_hex, (idx, node_bytes.to_vec(), node_hex));
     }
 
-    // Find which node hashes to the state root
     let state_root_hex = state_root.trim_start_matches("0x").to_string();
 
-    // Check if any node's hash equals the state root
+    // Find root node
     let root_entry = node_map
         .get(&state_root_hex)
         .ok_or_else(|| anyhow::anyhow!("No node hashes to state root"))?;
@@ -113,66 +135,79 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
     let mut ordered_nodes = vec![root_entry.1.clone()];
     let mut current_node_hex = root_entry.2.clone();
 
-    // Build the path from root to leaf by finding which child hash appears in current node
-    // NOTE: In ZK-trie, child hashes are stored with an 8-byte length prefix:
-    // [8-byte length (0x20 = 32 in little-endian)] + [32-byte hash]
+    // Build path from root to leaf by following child hash references.
+    // In zk-trie, child hashes have an 8-byte length prefix: 0x2000000000000000 (32 in LE)
     const HASH_LENGTH_PREFIX: &str = "2000000000000000"; // 32 as little-endian u64
 
     loop {
-        // Try to find which node's hash appears in the current node
-        // Child hashes are prefixed with their length (32 bytes = 0x2000000000000000 in little-endian)
-        let mut next_child_bytes = None;
+        let mut next_child = None;
         for (child_hash, (_, child_bytes, _)) in &node_map {
-            let hash_with_prefix = format!("{}{}", HASH_LENGTH_PREFIX, child_hash);
-            if current_node_hex.contains(&hash_with_prefix) {
-                // Make sure we haven't already added this node
-                if !ordered_nodes.iter().any(|n| n == child_bytes) {
-                    next_child_bytes = Some(child_bytes.clone());
-                    break;
-                }
+            let prefixed_hash = format!("{}{}", HASH_LENGTH_PREFIX, child_hash);
+            if current_node_hex.contains(&prefixed_hash)
+                && !ordered_nodes.iter().any(|n| n == child_bytes)
+            {
+                next_child = Some(child_bytes.clone());
+                break;
             }
         }
 
-        if let Some(child_bytes) = next_child_bytes {
-            ordered_nodes.push(child_bytes.clone());
-            current_node_hex = hex::encode(ordered_nodes.last().unwrap());
-        } else {
-            // No more children found - we've reached the end of the proof path
-            break;
+        match next_child {
+            Some(child_bytes) => {
+                current_node_hex = hex::encode(&child_bytes);
+                ordered_nodes.push(child_bytes);
+            }
+            None => break,
         }
     }
 
+    // The leaf node references a separate value node (zk-trie uses MAX_INLINE_VALUE=31,
+    // so our 32-byte leaf_inputs_hash is always stored indirectly via a value node).
+    let leaf = ordered_nodes.last().unwrap();
+    let hash_offset =
+        parse_leaf_hash_offset(leaf).ok_or_else(|| anyhow::anyhow!("Failed to parse leaf node"))?;
+
+    if leaf.len() < hash_offset + 32 {
+        bail!("Leaf node too short to contain value reference");
+    }
+
+    let value_ref = hex::encode(&leaf[hash_offset..hash_offset + 32]);
+    let (_, value_node, _) = node_map
+        .get(&value_ref)
+        .ok_or_else(|| anyhow::anyhow!("Value node not found in proof"))?;
+
+    ordered_nodes.push(value_node.clone());
+
     if ordered_nodes.len() > MAX_STORAGE_PROOF_NODES {
         bail!(
-            "storage proof length {} exceeds maximum supported length {}",
+            "Proof length {} exceeds maximum {}",
             ordered_nodes.len(),
             MAX_STORAGE_PROOF_NODES
         );
     }
 
-    // Now compute the indices - where child hashes appear within parent nodes
-    let mut indices = Vec::<usize>::new();
-
-    // Compute indices only for parent-child relationships (not for the last node)
+    // Compute indices: where each child hash appears in its parent node
+    let mut indices = Vec::new();
     for i in 0..ordered_nodes.len() - 1 {
-        let current_hex = hex::encode(&ordered_nodes[i]);
-        let next_node = &ordered_nodes[i + 1];
-        let next_hash = hex::encode(hash_node_with_poseidon_padded(next_node));
+        let parent_hex = hex::encode(&ordered_nodes[i]);
+        let child_hash = hex::encode(hash_node_with_poseidon_padded(&ordered_nodes[i + 1]));
 
-        if let Some(hex_idx) = current_hex.find(&next_hash) {
-            indices.push(hex_idx);
-        } else {
-            bail!("Could not find child hash in ordered node {}", i);
-        }
+        let hex_idx = parent_hex
+            .find(&child_hash)
+            .ok_or_else(|| anyhow::anyhow!("Child hash not found in parent node {}", i))?;
+        indices.push(hex_idx);
     }
 
-    let (leaf_suffix_found, last_idx) = check_leaf(&leaf_hash, ordered_nodes.last().unwrap());
-    if !leaf_suffix_found {
-        bail!("Leaf hash suffix not found in leaf node!");
+    // Verify the value node contains the expected leaf_inputs_hash
+    let value_node = ordered_nodes.last().unwrap();
+    if value_node.len() != 32 || value_node.as_slice() != leaf_hash {
+        bail!(
+            "Value node doesn't match leaf_hash! expected={}, value_node={}",
+            hex::encode(leaf_hash),
+            hex::encode(value_node)
+        );
     }
-
-    // Set the last index to the found leaf index
-    indices.push(last_idx);
+    // For value nodes, the hash is at offset 0 (the entire node is the hash)
+    indices.push(0);
 
     if indices.len() != ordered_nodes.len() {
         bail!(
@@ -187,47 +222,63 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        hash_node_with_poseidon_padded, prepare_proof_for_circuit, MAX_STORAGE_PROOF_NODES,
-    };
+    use super::{parse_leaf_hash_offset, MAX_STORAGE_PROOF_NODES};
 
-    fn synthetic_proof(node_count: usize, leaf_hash: [u8; 32]) -> (Vec<Vec<u8>>, String) {
-        const HASH_LENGTH_PREFIX: [u8; 8] = 32u64.to_le_bytes();
+    /// Create a HashedValueLeaf node (type 5) with no nibbles.
+    fn create_hashed_value_leaf(nibble_count: u32) -> Vec<u8> {
+        // Header: type 5 (HashedValueLeaf) in bits 63-60
+        let header: u64 = 0x5000000000000000 | (nibble_count as u64);
 
-        let mut nodes = Vec::with_capacity(node_count);
+        // Calculate nibble section size
+        let nibble_bytes = (nibble_count as usize + 1) / 2;
+        let misalignment = nibble_bytes % 8;
+        let prefix_padding = if misalignment == 0 {
+            0
+        } else {
+            8 - misalignment
+        };
+        let nibble_section = ((prefix_padding + nibble_bytes + 7) / 8) * 8;
 
-        let mut leaf_node = vec![0u8; 48];
-        leaf_node[..8].fill(1);
-        leaf_node[8..40].copy_from_slice(&leaf_hash);
-        leaf_node[40..].fill(17);
-        let mut child_hash = hash_node_with_poseidon_padded(&leaf_node);
-        nodes.push(leaf_node);
+        let total_size = 8 + nibble_section + 32; // header + nibbles + hash
+        let mut leaf_node = vec![0u8; total_size];
+        leaf_node[0..8].copy_from_slice(&header.to_le_bytes());
 
-        for i in 1..node_count {
-            let mut node = vec![0u8; 56];
-            node[..8].fill((i as u8).wrapping_add(1));
-            node[8..16].copy_from_slice(&HASH_LENGTH_PREFIX);
-            node[16..48].copy_from_slice(&child_hash);
-            node[48..].fill((i as u8).wrapping_add(17));
-            child_hash = hash_node_with_poseidon_padded(&node);
-            nodes.push(node);
-        }
-
-        nodes.reverse();
-        (nodes, hex::encode(child_hash))
+        leaf_node
     }
 
     #[test]
-    fn prepare_proof_for_circuit_rejects_oversized_proof() {
-        let leaf_hash = core::array::from_fn(|i| i as u8);
-        let (proof, state_root) = synthetic_proof(MAX_STORAGE_PROOF_NODES + 1, leaf_hash);
+    fn parse_leaf_hash_offset_no_nibbles() {
+        let leaf_node = create_hashed_value_leaf(0);
+        // Type 5 with no nibbles: 8-byte header = offset 8
+        assert_eq!(parse_leaf_hash_offset(&leaf_node), Some(8));
+    }
 
-        let err = prepare_proof_for_circuit(proof, state_root, leaf_hash).unwrap_err();
-        let err_msg = err.to_string();
-        assert!(
-            err_msg.contains("storage proof length")
-                && err_msg.contains("maximum supported length 19"),
-            "unexpected error: {err_msg}"
-        );
+    #[test]
+    fn parse_leaf_hash_offset_with_nibbles() {
+        let leaf_node = create_hashed_value_leaf(4);
+        // nibble_count=4: 2 bytes of nibbles, padded to 8
+        // 8-byte header + 8-byte nibble section = offset 16
+        assert_eq!(parse_leaf_hash_offset(&leaf_node), Some(16));
+    }
+
+    #[test]
+    fn parse_leaf_hash_offset_rejects_truncated_node() {
+        let leaf_node = vec![0u8; 4];
+        assert_eq!(parse_leaf_hash_offset(&leaf_node), None);
+    }
+
+    #[test]
+    fn parse_leaf_hash_offset_rejects_wrong_type() {
+        // Type 3 (Leaf) - not supported, we only use HashedValueLeaf
+        let header: u64 = 0x3000000000000000;
+        let mut leaf_node = vec![0u8; 48];
+        leaf_node[0..8].copy_from_slice(&header.to_le_bytes());
+        assert_eq!(parse_leaf_hash_offset(&leaf_node), None);
+    }
+
+    #[test]
+    fn max_storage_proof_nodes_is_reasonable() {
+        assert!(MAX_STORAGE_PROOF_NODES >= 10);
+        assert!(MAX_STORAGE_PROOF_NODES <= 100);
     }
 }

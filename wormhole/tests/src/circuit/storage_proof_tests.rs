@@ -26,32 +26,70 @@ fn run_test(storage_proof: &StorageProof) -> anyhow::Result<ProofWithPublicInput
     crate::circuit_helpers::build_and_prove_test(builder, pw)
 }
 
+/// Create a synthetic leaf node with the hash stored in the value section.
+///
+/// Leaf node format:
+/// - [0..8]: header (type 3 = Leaf, nibble_count = 0)
+/// - [8..16]: value length prefix (32 as u64 LE)
+/// - [16..48]: leaf_hash (32 bytes)
+/// - [48..56]: padding to felt boundary
+fn create_synthetic_leaf_node(leaf_hash: &[u8; 32]) -> Vec<u8> {
+    // Header: type 3 (Leaf) in bits 63-60, nibble_count = 0
+    let header: u64 = 0x3000000000000000;
+    let value_length: u64 = 32;
+
+    let mut leaf_node = vec![0u8; 56];
+    leaf_node[0..8].copy_from_slice(&header.to_le_bytes());
+    // No nibble section since nibble_count = 0
+    // Value section starts at byte 8
+    leaf_node[8..16].copy_from_slice(&value_length.to_le_bytes());
+    leaf_node[16..48].copy_from_slice(leaf_hash);
+    // Padding bytes 48-55 are already zero
+
+    leaf_node
+}
+
 fn synthetic_storage_proof(node_count: usize, bind_leaf: bool) -> StorageProof {
-    const CHILD_HASH_OFFSET_BYTES: usize = 4;
+    const CHILD_HASH_OFFSET_BYTES: usize = 8; // After 8-byte length prefix in branch nodes
     const CHILD_HASH_OFFSET_HEX: usize = CHILD_HASH_OFFSET_BYTES * 2;
-    const NODE_LEN_BYTES: usize = 40;
+    const BRANCH_NODE_LEN_BYTES: usize = 48;
+    const HASH_LENGTH_PREFIX: [u8; 8] = 32u64.to_le_bytes();
+
+    // Leaf hash index: hash starts at byte 16 (after 8-byte header + 8-byte value length)
+    const LEAF_HASH_OFFSET_HEX: usize = 16 * 2; // = 32
 
     let leaf_inputs = LeafInputs::test_inputs_0();
-    let mut child_hash = if bind_leaf {
+    let leaf_hash = if bind_leaf {
         leaf_inputs.leaf_hash()
     } else {
         [0x5a; 32]
     };
-    let mut nodes = Vec::with_capacity(node_count);
 
-    for i in 0..node_count {
-        let mut node = vec![0u8; NODE_LEN_BYTES];
-        node[..CHILD_HASH_OFFSET_BYTES].fill((i as u8).wrapping_add(1));
-        node[CHILD_HASH_OFFSET_BYTES..CHILD_HASH_OFFSET_BYTES + 32].copy_from_slice(&child_hash);
-        node[CHILD_HASH_OFFSET_BYTES + 32..].fill((i as u8).wrapping_add(17));
+    let mut nodes = Vec::with_capacity(node_count);
+    let mut indices = Vec::with_capacity(node_count);
+
+    // First node is the leaf with hash in value section
+    let leaf_node = create_synthetic_leaf_node(&leaf_hash);
+    let mut child_hash = hash_node_with_poseidon_padded(&leaf_node);
+    nodes.push(leaf_node);
+    indices.push(LEAF_HASH_OFFSET_HEX);
+
+    // Remaining nodes are branch nodes
+    for i in 1..node_count {
+        let mut node = vec![0u8; BRANCH_NODE_LEN_BYTES];
+        node[..8].copy_from_slice(&HASH_LENGTH_PREFIX);
+        node[8..40].copy_from_slice(&child_hash);
+        node[40..].fill((i as u8).wrapping_add(17));
         child_hash = hash_node_with_poseidon_padded(&node);
         nodes.push(node);
+        indices.push(CHILD_HASH_OFFSET_HEX);
     }
 
     nodes.reverse();
+    indices.reverse();
 
-    let processed = ProcessedStorageProof::new(nodes, vec![CHILD_HASH_OFFSET_HEX; node_count])
-        .expect("synthetic proof should be well formed");
+    let processed =
+        ProcessedStorageProof::new(nodes, indices).expect("synthetic proof should be well formed");
     StorageProof::new(&processed, child_hash, leaf_inputs, true)
 }
 
