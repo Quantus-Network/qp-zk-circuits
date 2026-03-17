@@ -75,14 +75,14 @@ fn parse_leaf_hash_offset(leaf_node: &[u8]) -> Option<usize> {
     }
 
     // Calculate nibble section size (matches zk-trie node_codec.rs)
-    let nibble_bytes = (nibble_count + 1) / 2;
+    let nibble_bytes = nibble_count.div_ceil(2);
     let misalignment = nibble_bytes % 8;
     let prefix_padding = if misalignment == 0 {
         0
     } else {
         8 - misalignment
     };
-    let nibble_section = ((prefix_padding + nibble_bytes + 7) / 8) * 8;
+    let nibble_section = (prefix_padding + nibble_bytes).div_ceil(8) * 8;
 
     let value_start = 8 + nibble_section;
 
@@ -222,22 +222,22 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_leaf_hash_offset, MAX_STORAGE_PROOF_NODES};
+    use super::parse_leaf_hash_offset;
 
-    /// Create a HashedValueLeaf node (type 5) with no nibbles.
+    /// Create a HashedValueLeaf node (type 5).
     fn create_hashed_value_leaf(nibble_count: u32) -> Vec<u8> {
         // Header: type 5 (HashedValueLeaf) in bits 63-60
         let header: u64 = 0x5000000000000000 | (nibble_count as u64);
 
         // Calculate nibble section size
-        let nibble_bytes = (nibble_count as usize + 1) / 2;
+        let nibble_bytes = (nibble_count as usize).div_ceil(2);
         let misalignment = nibble_bytes % 8;
         let prefix_padding = if misalignment == 0 {
             0
         } else {
             8 - misalignment
         };
-        let nibble_section = ((prefix_padding + nibble_bytes + 7) / 8) * 8;
+        let nibble_section = (prefix_padding + nibble_bytes).div_ceil(8) * 8;
 
         let total_size = 8 + nibble_section + 32; // header + nibbles + hash
         let mut leaf_node = vec![0u8; total_size];
@@ -274,11 +274,5 @@ mod tests {
         let mut leaf_node = vec![0u8; 48];
         leaf_node[0..8].copy_from_slice(&header.to_le_bytes());
         assert_eq!(parse_leaf_hash_offset(&leaf_node), None);
-    }
-
-    #[test]
-    fn max_storage_proof_nodes_is_reasonable() {
-        assert!(MAX_STORAGE_PROOF_NODES >= 10);
-        assert!(MAX_STORAGE_PROOF_NODES <= 100);
     }
 }
