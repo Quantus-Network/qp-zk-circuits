@@ -29,10 +29,10 @@ fn run_test(storage_proof: &StorageProof) -> anyhow::Result<ProofWithPublicInput
 /// Create a synthetic leaf node with the hash stored in the value section.
 ///
 /// Leaf node format:
-/// - [0..8]: header (type 3 = Leaf, nibble_count = 0)
-/// - [8..16]: value length prefix (32 as u64 LE)
-/// - [16..48]: leaf_hash (32 bytes)
-/// - [48..56]: padding to felt boundary
+/// - `[0..8]`: header (type 3 = Leaf, nibble_count = 0)
+/// - `[8..16]`: value length prefix (32 as u64 LE)
+/// - `[16..48]`: leaf_hash (32 bytes)
+/// - `[48..56]`: padding to felt boundary
 fn create_synthetic_leaf_node(leaf_hash: &[u8; 32]) -> Vec<u8> {
     // Header: type 3 (Leaf) in bits 63-60, nibble_count = 0
     let header: u64 = 0x3000000000000000;
