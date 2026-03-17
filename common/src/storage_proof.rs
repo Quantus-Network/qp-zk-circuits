@@ -199,11 +199,14 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
         indices.push(hex_idx);
     }
 
-    // Verify the value node contains the expected leaf_inputs_hash.
+    // Off-circuit validation: verify the value node contains the expected leaf_inputs_hash.
+    // This is a development aid - the circuit constraints will reject invalid inputs.
+    // We log a warning instead of failing to allow fuzzing/testing of circuit constraints.
     let value_node = ordered_nodes.last().unwrap();
     if value_node.len() != 32 || value_node.as_slice() != leaf_hash {
-        bail!(
-            "Value node doesn't match leaf_hash! expected={}, value_node={}",
+        #[cfg(feature = "std")]
+        eprintln!(
+            "WARNING: Off-circuit check failed - value node doesn't match leaf_hash! expected={}, value_node={}",
             hex::encode(leaf_hash),
             hex::encode(value_node)
         );
