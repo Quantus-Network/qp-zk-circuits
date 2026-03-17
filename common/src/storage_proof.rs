@@ -21,7 +21,7 @@ pub const MAX_STORAGE_PROOF_NODES: usize = 19;
 /// Fixed number of proof-node witness slots allocated by the Wormhole circuit.
 pub const STORAGE_PROOF_WITNESS_CAPACITY: usize = MAX_STORAGE_PROOF_NODES + 1;
 
-/// A storage proof along with an array of indices where child hashes are placed.
+/// A storage proof along with child-hash indices for each non-terminal proof node.
 ///
 /// The proof contains N nodes: [root, ..., leaf, value_node]
 /// The indices array has N-1 entries, one for each parent-child relationship.
@@ -35,10 +35,10 @@ pub struct ProcessedStorageProof {
 
 impl ProcessedStorageProof {
     pub fn new(proof: Vec<Vec<u8>>, indices: Vec<usize>) -> anyhow::Result<Self> {
-        // indices has one less entry than proof (no index needed for value node)
-        if proof.len() != indices.len() + 1 {
+        let expected_indices_len = proof.len().saturating_sub(1);
+        if indices.len() != expected_indices_len {
             bail!(
-                "indices length must be proof length - 1, actual lengths: proof={}, indices={}",
+                "indices length must be one less than proof length, actual lengths: {}, {}",
                 proof.len(),
                 indices.len()
             );
@@ -104,8 +104,8 @@ fn parse_leaf_hash_offset(leaf_node: &[u8]) -> Option<usize> {
 /// 1. Finds the root node (hashes to state_root)
 /// 2. Builds the path from root to leaf by following child hash references
 /// 3. Appends any value node referenced by the leaf (for indirect storage)
-/// 4. Computes indices where child hashes appear in parent nodes
-/// 5. Verifies the leaf_hash is present (directly or via value node indirection)
+/// 4. Computes indices where child hashes appear in non-terminal parent nodes
+/// 5. Verifies the terminal value node contains the expected leaf_hash
 ///
 /// # Arguments
 /// * `proof` - Unordered list of proof node bytes from RPC
@@ -199,7 +199,7 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
         indices.push(hex_idx);
     }
 
-    // Verify the value node contains the expected leaf_inputs_hash
+    // Verify the value node contains the expected leaf_inputs_hash.
     let value_node = ordered_nodes.last().unwrap();
     if value_node.len() != 32 || value_node.as_slice() != leaf_hash {
         bail!(
@@ -208,8 +208,14 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
             hex::encode(value_node)
         );
     }
-    // No index needed for the value node - it's always 32 bytes with hash at offset 0.
-    // The circuit hardcodes index 0 for the last node.
+
+    if indices.len() != ordered_nodes.len().saturating_sub(1) {
+        bail!(
+            "Indices length mismatch: indices.len() = {}, ordered_nodes.len() - 1 = {}",
+            indices.len(),
+            ordered_nodes.len().saturating_sub(1)
+        );
+    }
 
     ProcessedStorageProof::new(ordered_nodes, indices)
 }
