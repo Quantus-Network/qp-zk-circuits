@@ -21,7 +21,12 @@ pub const MAX_STORAGE_PROOF_NODES: usize = 19;
 /// Fixed number of proof-node witness slots allocated by the Wormhole circuit.
 pub const STORAGE_PROOF_WITNESS_CAPACITY: usize = MAX_STORAGE_PROOF_NODES + 1;
 
-/// A storage proof along with an array of indices where the hash child nodes are placed.
+/// A storage proof along with an array of indices where child hashes are placed.
+///
+/// The proof contains N nodes: [root, ..., leaf, value_node]
+/// The indices array has N-1 entries, one for each parent-child relationship.
+/// The last node (value_node) doesn't need an index since it's always 32 bytes
+/// with the hash at offset 0.
 #[derive(Debug, Clone)]
 pub struct ProcessedStorageProof {
     pub proof: Vec<Vec<u8>>,
@@ -30,9 +35,10 @@ pub struct ProcessedStorageProof {
 
 impl ProcessedStorageProof {
     pub fn new(proof: Vec<Vec<u8>>, indices: Vec<usize>) -> anyhow::Result<Self> {
-        if proof.len() != indices.len() {
+        // indices has one less entry than proof (no index needed for value node)
+        if proof.len() != indices.len() + 1 {
             bail!(
-                "indices length must be equal to proof length, actual lengths: {}, {}",
+                "indices length must be proof length - 1, actual lengths: proof={}, indices={}",
                 proof.len(),
                 indices.len()
             );
@@ -166,10 +172,6 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
     let hash_offset =
         parse_leaf_hash_offset(leaf).ok_or_else(|| anyhow::anyhow!("Failed to parse leaf node"))?;
 
-    if leaf.len() < hash_offset + 32 {
-        bail!("Leaf node too short to contain value reference");
-    }
-
     let value_ref = hex::encode(&leaf[hash_offset..hash_offset + 32]);
     let (_, value_node, _) = node_map
         .get(&value_ref)
@@ -206,16 +208,8 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
             hex::encode(value_node)
         );
     }
-    // For value nodes, the hash is at offset 0 (the entire node is the hash)
-    indices.push(0);
-
-    if indices.len() != ordered_nodes.len() {
-        bail!(
-            "Indices length mismatch: indices.len() = {}, ordered_nodes.len() = {}",
-            indices.len(),
-            ordered_nodes.len()
-        );
-    }
+    // No index needed for the value node - it's always 32 bytes with hash at offset 0.
+    // The circuit hardcodes index 0 for the last node.
 
     ProcessedStorageProof::new(ordered_nodes, indices)
 }

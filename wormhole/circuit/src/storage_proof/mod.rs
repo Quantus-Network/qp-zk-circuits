@@ -253,9 +253,10 @@ impl CircuitFragment for StorageProof {
                 builder.range_check(*felt, 32);
             }
 
-            // For the leaf node, verify that the value section contains the full leaf_inputs_hash.
-            // The index now points directly to the 32-byte hash in the leaf node's value section
-            // (after the 8-byte length prefix), so we can verify all 256 bits.
+            // Verify that the value node contains the expected leaf_inputs_hash.
+            // This check happens at i == proof_len (the first padding iteration), when prev_hash
+            // contains the content extracted from the value node (the last real node at i == proof_len - 1).
+            // The value node is always 32 bytes with index 0, containing the full leaf_inputs_hash.
             // Only enforce for non-dummy proofs.
             let should_validate_leaf = builder.mul(is_leaf_node.target, is_not_dummy.target);
             for y in 0..4 {

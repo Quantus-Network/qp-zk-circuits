@@ -94,7 +94,8 @@ const DEFAULT_STORAGE_PROOF: [&str; 7] = [
     "3e000000000000306e6d19d641a854b008e6634d9cabf8403cdd67f227f58fc4515d259e8f8bc6d00000000000000000",
 ];
 
-const DEFAULT_STORAGE_PROOF_INDICES: [usize; 7] = [768, 48, 240, 48, 160, 128, 16];
+// Indices for the first N-1 nodes (the last node is the value node, always index 0)
+const DEFAULT_STORAGE_PROOF_INDICES: [usize; 6] = [768, 48, 240, 48, 160, 128];
 
 // ============================================================================
 // Public API
