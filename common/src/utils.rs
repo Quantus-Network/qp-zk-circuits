@@ -9,6 +9,7 @@ use plonky2::hash::hash_types::HashOut;
 pub use qp_wormhole_inputs::{BytesDigest, DigestError, DIGEST_BYTES_LEN};
 
 pub const INJECTIVE_BYTES_LIMB: usize = 4;
+pub const NON_INJECTIVE_BYTES_LIMB: usize = 8;
 pub const DIGEST_BYTES_PER_ELEMENT: usize = 8;
 pub const FELTS_PER_U128: usize = 4;
 pub const FELTS_PER_U64: usize = 2;
@@ -46,9 +47,17 @@ pub fn injective_string_to_felt(input: &str) -> Vec<F> {
     qp_poseidon_core::serialization::injective_string_to_felts::<F>(input)
 }
 
-/// Converts a given slice into its field element representation.
+/// Converts a given slice into its field element representation (injective encoding).
+/// Uses 4 bytes per felt with a terminator marker for collision resistance.
 pub fn injective_bytes_to_felts(input: &[u8]) -> Vec<F> {
     qp_poseidon_core::serialization::injective_bytes_to_felts::<F>(input)
+}
+
+/// Converts a given slice into its field element representation (non-injective encoding).
+/// Uses 8 bytes per felt without a terminator - more compact but not collision-resistant
+/// for variable-length inputs. Safe for self-describing structures like trie nodes.
+pub fn non_injective_bytes_to_felts(input: &[u8]) -> Vec<F> {
+    qp_poseidon_core::serialization::non_injective_bytes_to_felts::<F>(input)
 }
 
 /// Converts a given field element slice into its byte representation.

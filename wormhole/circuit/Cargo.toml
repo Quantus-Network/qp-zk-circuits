@@ -22,6 +22,10 @@ std = [
 	"qp-wormhole-inputs/std",
 	"zk-circuits-common/std",
 ]
+profile = ["std", "qp-plonky2/timing", "qp-plonky2/rand"]
+
+[dev-dependencies]
+env_logger = "0.9"
 
 [lints]
 workspace = true

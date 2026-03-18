@@ -22,6 +22,7 @@ zk-circuits-common = { package = "qp-zk-circuits-common", version = "1.1.1", pat
 
 [dev-dependencies]
 criterion = { workspace = true }
+env_logger = "0.9"
 test-helpers = { path = "../tests/test-helpers", default-features = false }
 
 [features]
@@ -35,6 +36,7 @@ std = [
 	"wormhole-prover/std",
 	"zk-circuits-common/std",
 ]
+profile = ["std", "qp-plonky2/timing", "qp-plonky2/rand"]
 
 [lints]
 workspace = true

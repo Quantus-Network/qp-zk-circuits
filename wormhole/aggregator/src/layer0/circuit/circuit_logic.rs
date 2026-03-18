@@ -116,6 +116,19 @@ impl Layer0AggregationCircuit {
     pub fn build_verifier(self) -> VerifierCircuitData<F, C, D> {
         self.builder.build_verifier()
     }
+
+    /// Build circuit with profiling output. Prints gate counts before building.
+    #[cfg(feature = "profile")]
+    pub fn build_circuit_profiled(self) -> CircuitData<F, C, D> {
+        println!("\n=== Layer-0 Gate Instance Counts ===");
+        self.builder.print_gate_counts(0);
+        self.builder.build()
+    }
+
+    /// Returns the current number of gates in the circuit (before building).
+    pub fn num_gates(&self) -> usize {
+        self.builder.num_gates()
+    }
 }
 
 fn build_layer0_wrapper_constraints(

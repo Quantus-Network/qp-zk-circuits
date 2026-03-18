@@ -64,6 +64,37 @@ pub mod circuit_logic {
                 block_header: BlockHeaderTargets::new(builder),
             }
         }
+
+        #[cfg(feature = "profile")]
+        pub fn new_profiled(builder: &mut CircuitBuilder<F, D>) -> Self {
+            use crate::profile::GateProfiler;
+            let mut profiler = GateProfiler::new();
+
+            println!("\n=== Target Creation Gates ===");
+
+            let storage_proof = StorageProofTargets::new(builder);
+            profiler.checkpoint("StorageProofTargets::new", builder.num_gates());
+
+            let nullifier = NullifierTargets::new(builder);
+            profiler.checkpoint("NullifierTargets::new", builder.num_gates());
+
+            let unspendable_account = UnspendableAccountTargets::new(builder);
+            profiler.checkpoint("UnspendableAccountTargets::new", builder.num_gates());
+
+            let exit_accounts = DualExitAccountTargets::new(builder);
+            profiler.checkpoint("DualExitAccountTargets::new", builder.num_gates());
+
+            let block_header = BlockHeaderTargets::new(builder);
+            profiler.checkpoint("BlockHeaderTargets::new", builder.num_gates());
+
+            Self {
+                nullifier,
+                unspendable_account,
+                storage_proof,
+                exit_accounts,
+                block_header,
+            }
+        }
     }
 
     pub struct WormholeCircuit {
@@ -80,6 +111,15 @@ pub mod circuit_logic {
 
     impl WormholeCircuit {
         pub fn new(config: CircuitConfig) -> Self {
+            #[cfg(feature = "profile")]
+            return Self::new_profiled(config);
+
+            #[cfg(not(feature = "profile"))]
+            Self::new_internal(config)
+        }
+
+        #[cfg(not(feature = "profile"))]
+        fn new_internal(config: CircuitConfig) -> Self {
             let mut builder = CircuitBuilder::<F, D>::new(config);
 
             // Setup targets
@@ -99,6 +139,53 @@ pub mod circuit_logic {
             Self { builder, targets }
         }
 
+        #[cfg(feature = "profile")]
+        fn new_profiled(config: CircuitConfig) -> Self {
+            use crate::profile::GateProfiler;
+            let mut profiler = GateProfiler::new();
+
+            let mut builder = CircuitBuilder::<F, D>::new(config);
+
+            // Setup targets with profiling
+            let targets = CircuitTargets::new_profiled(&mut builder);
+
+            println!("\n=== Circuit Fragment Gates ===");
+            let gates_after_targets = builder.num_gates();
+
+            // Setup circuits with profiling
+            use crate::block_header::BlockHeader;
+
+            Nullifier::circuit(&targets.nullifier, &mut builder);
+            profiler.checkpoint("Nullifier::circuit", builder.num_gates());
+
+            UnspendableAccount::circuit(&targets.unspendable_account, &mut builder);
+            profiler.checkpoint("UnspendableAccount::circuit", builder.num_gates());
+
+            StorageProof::circuit(&targets.storage_proof, &mut builder);
+            profiler.checkpoint("StorageProof::circuit", builder.num_gates());
+
+            DualExitAccount::circuit(&targets.exit_accounts, &mut builder);
+            profiler.checkpoint("DualExitAccount::circuit", builder.num_gates());
+
+            BlockHeader::circuit(&targets.block_header, &mut builder);
+            profiler.checkpoint("BlockHeader::circuit", builder.num_gates());
+
+            // Ensure that shared inputs to each fragment are the same.
+            connect_shared_targets(&targets, &mut builder);
+            profiler.checkpoint("connect_shared_targets", builder.num_gates());
+
+            profiler.print_summary();
+
+            println!(
+                "\nTotal gates before build: {} (targets: {}, fragments: {})",
+                builder.num_gates(),
+                gates_after_targets,
+                builder.num_gates() - gates_after_targets
+            );
+
+            Self { builder, targets }
+        }
+
         pub fn targets(&self) -> CircuitTargets {
             self.targets.clone()
         }
@@ -113,6 +200,20 @@ pub mod circuit_logic {
 
         pub fn build_verifier(self) -> VerifierCircuitData<F, C, D> {
             self.builder.build_verifier()
+        }
+
+        /// Build circuit with profiling output. Prints gate instance counts before building.
+        /// Requires RUST_LOG=debug to see per-gate-type counts.
+        #[cfg(feature = "profile")]
+        pub fn build_circuit_profiled(self) -> CircuitData<F, C, D> {
+            println!("\n=== Gate Instance Counts ===");
+            self.builder.print_gate_counts(0);
+            self.builder.build()
+        }
+
+        /// Returns the current number of gates in the circuit (before building).
+        pub fn num_gates(&self) -> usize {
+            self.builder.num_gates()
         }
     }
 

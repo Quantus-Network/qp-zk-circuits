@@ -13,8 +13,7 @@ use crate::{
 };
 use zk_circuits_common::{
     circuit::{CircuitFragment, D, F},
-    gadgets::digest4_from_le32x8,
-    utils::{digest_bytes_to_felts, injective_bytes_to_felts, INJECTIVE_BYTES_LIMB},
+    utils::{digest_bytes_to_felts, non_injective_bytes_to_felts, NON_INJECTIVE_BYTES_LIMB},
 };
 // Re-export ProcessedStorageProof for convenience
 pub use zk_circuits_common::storage_proof::ProcessedStorageProof;
@@ -29,7 +28,7 @@ pub const MAX_PROOF_LEN: usize = zk_circuits_common::storage_proof::STORAGE_PROO
 /// Maximum number of actual trie nodes allowed in a Wormhole storage proof.
 pub const MAX_SUPPORTED_PROOF_LEN: usize =
     zk_circuits_common::storage_proof::MAX_STORAGE_PROOF_NODES;
-pub const PROOF_NODE_MAX_SIZE_F: usize = 189; // Should match the felt preimage max set on poseidon-resonance crate.
+pub const PROOF_NODE_MAX_SIZE_F: usize = 256; // Should match the felt preimage max set on qp-poseidon-core crate.
 pub const PROOF_NODE_MAX_SIZE_B: usize = 256;
 pub const FELTS_PER_AMOUNT: usize = 2;
 const EMPTY_PROOF_NODE: [F; PROOF_NODE_MAX_SIZE_F] = [F::ZERO; PROOF_NODE_MAX_SIZE_F];
@@ -88,18 +87,21 @@ impl StorageProof {
         leaf_inputs: LeafInputs,
         is_not_dummy: bool,
     ) -> Self {
+        // Use non-injective encoding (8 bytes per felt) for compactness.
+        // This is safe because trie nodes are self-describing with length-prefixed fields.
         let proof: Vec<Vec<F>> = processed_proof
             .proof
             .iter()
-            .map(|node| injective_bytes_to_felts(node))
+            .map(|node| non_injective_bytes_to_felts(node))
             .collect();
 
         let indices = processed_proof
             .indices
             .iter()
             .map(|&i| {
-                // Divide by 8 to get the field element index instead of the hex index.
-                let i = i / (INJECTIVE_BYTES_LIMB * 2);
+                // Divide by 16 to get the field element index instead of the hex index.
+                // (hex index / 2 = byte index, byte index / 8 = felt index with non-injective encoding)
+                let i = i / (NON_INJECTIVE_BYTES_LIMB * 2);
                 F::from_canonical_usize(i)
             })
             .collect();
@@ -180,9 +182,6 @@ impl CircuitFragment for StorageProof {
         let leaf_inputs_hash =
             builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(leaf_inputs.collect_to_vec());
 
-        // constant 2^32 for (lo + hi * 2^32) reconstruction
-        let two_pow_32 = builder.constant(F::from_canonical_u64(1u64 << 32));
-
         let zero = builder.zero();
         let empty_proof_node_hash =
             builder.constant_hash(Poseidon2Hash::hash_no_pad(&EMPTY_PROOF_NODE));
@@ -221,7 +220,10 @@ impl CircuitFragment for StorageProof {
             }
 
             // Update `prev_hash` to the hash of the child that's stored within this node.
-            // We first find the hash using the commited index.
+            // We first find the hash using the committed index.
+            //
+            // With non-injective encoding (8 bytes per felt), a 32-byte hash is stored as
+            // 4 consecutive felts, so we can read them directly without combining pairs.
             let mut found_hash = vec![
                 builder.zero(),
                 builder.zero(),
@@ -229,28 +231,23 @@ impl CircuitFragment for StorageProof {
                 builder.zero(),
             ];
             let expected_hash_index = indices[i];
-            for (j, felt) in node.iter().enumerate().take(PROOF_NODE_MAX_SIZE_F - 8) {
-                // Range constrain each target in the node to be 32 bits.
-                builder.range_check(*felt, 32);
+            // Only iterate up to PROOF_NODE_MAX_SIZE_F - 4, since we read 4 consecutive felts
+            for (j, _felt) in node.iter().enumerate().take(PROOF_NODE_MAX_SIZE_F - 4) {
                 let felt_index = builder.constant(F::from_canonical_usize(j));
                 let is_start_of_hash = builder.is_equal(felt_index, expected_hash_index);
 
-                // If this is the start of the hash, set the next 4 felts of `found_hash`.
-                // Combine pairs (lo, hi) -> lo + hi * 2^32 (little-endian)
-                // Gather the 8 consecutive 32-bit felts into a small array first for clarity.
-                let limbs = node[j..j + 8].try_into().unwrap();
-                let [h0, h1, h2, h3] =
-                    digest4_from_le32x8::<F, D>(builder, limbs, Some(two_pow_32));
+                // With non-injective encoding, a hash is 4 consecutive felts (8 bytes each = 32 bytes total)
+                // Read them directly without any combining/packing.
+                let h0 = node[j];
+                let h1 = node[j + 1];
+                let h2 = node[j + 2];
+                let h3 = node[j + 3];
 
-                // If this is the start of the hash, set the 4 reconstructed felts into found_hash.
+                // If this is the start of the hash, set the 4 felts into found_hash.
                 found_hash[0] = builder.select(is_start_of_hash, h0, found_hash[0]);
                 found_hash[1] = builder.select(is_start_of_hash, h1, found_hash[1]);
                 found_hash[2] = builder.select(is_start_of_hash, h2, found_hash[2]);
                 found_hash[3] = builder.select(is_start_of_hash, h3, found_hash[3]);
-            }
-            // Range check the last 8 felts of the node to be 32 bits.
-            for felt in node.iter().skip(PROOF_NODE_MAX_SIZE_F - 8) {
-                builder.range_check(*felt, 32);
             }
 
             // Verify that the value node contains the expected leaf_inputs_hash.
