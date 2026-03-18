@@ -253,11 +253,13 @@ impl CircuitFragment for StorageProof {
                 builder.range_check(*felt, 32);
             }
 
-            // For the leaf node, the value is the hash of the leaf inputs. We intentionally check only
-            // limbs 1..=3 because the zk-trie encoding overwrites limb 0 with the in-node length prefix.
+            // Verify that the value node contains the expected leaf_inputs_hash.
+            // This check happens at i == proof_len (the first padding iteration), when prev_hash
+            // contains the content extracted from the value node (the last real node at i == proof_len - 1).
+            // The value node is always 32 bytes with index 0, containing the full leaf_inputs_hash.
             // Only enforce for non-dummy proofs.
             let should_validate_leaf = builder.mul(is_leaf_node.target, is_not_dummy.target);
-            for y in 1..4 {
+            for y in 0..4 {
                 let diff = builder.sub(leaf_inputs_hash.elements[y], prev_hash.elements[y]);
                 let result = builder.mul(diff, should_validate_leaf);
                 builder.connect(result, zero);
