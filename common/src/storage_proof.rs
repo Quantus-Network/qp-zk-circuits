@@ -5,7 +5,6 @@
 //! - Verifying leaf node placement in storage proofs
 //! - Computing indices for parent-child relationships in trie structures
 
-use alloc::format;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec;
@@ -123,37 +122,39 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
     state_root: String,
     leaf_hash: [u8; 32],
 ) -> anyhow::Result<ProcessedStorageProof> {
-    // Build map: node_hash -> (index, node_bytes, node_hex)
-    let mut node_map: alloc::collections::BTreeMap<String, (usize, Vec<u8>, String)> =
+    // Build map: node_hash_hex -> node_bytes
+    let mut node_map: alloc::collections::BTreeMap<String, Vec<u8>> =
         alloc::collections::BTreeMap::new();
 
-    for (idx, node) in proof.iter().enumerate() {
+    for node in proof.iter() {
         let node_bytes = node.as_ref();
-        let hash = hash_node_with_poseidon_padded(node_bytes);
-        let hash_hex = hex::encode(hash);
-        let node_hex = hex::encode(node_bytes);
-        node_map.insert(hash_hex, (idx, node_bytes.to_vec(), node_hex));
+        let hash_hex = hex::encode(hash_node_with_poseidon_padded(node_bytes));
+        node_map.insert(hash_hex, node_bytes.to_vec());
     }
 
     let state_root_hex = state_root.trim_start_matches("0x").to_string();
 
     // Find root node
-    let root_entry = node_map
+    let root_node = node_map
         .get(&state_root_hex)
         .ok_or_else(|| anyhow::anyhow!("No node hashes to state root"))?;
 
-    let mut ordered_nodes = vec![root_entry.1.clone()];
-    let mut current_node_hex = root_entry.2.clone();
+    let mut ordered_nodes = vec![root_node.clone()];
+    let mut current_node = root_node.clone();
 
-    // Build path from root to leaf by following child hash references.
-    // In zk-trie, child hashes have an 8-byte length prefix: 0x2000000000000000 (32 in LE)
-    const HASH_LENGTH_PREFIX: &str = "2000000000000000"; // 32 as little-endian u64
-
+    // Build path from root to leaf by following raw 32-byte child-hash references.
     loop {
         let mut next_child = None;
-        for (child_hash, (_, child_bytes, _)) in &node_map {
-            let prefixed_hash = format!("{}{}", HASH_LENGTH_PREFIX, child_hash);
-            if current_node_hex.contains(&prefixed_hash)
+        for child_bytes in node_map.values() {
+            // The terminal value node is 32 bytes. We append it after we locate the leaf.
+            if child_bytes.len() == 32 {
+                continue;
+            }
+
+            let child_hash = hash_node_with_poseidon_padded(child_bytes);
+            if current_node
+                .windows(child_hash.len())
+                .any(|w| w == child_hash.as_ref())
                 && !ordered_nodes.iter().any(|n| n == child_bytes)
             {
                 next_child = Some(child_bytes.clone());
@@ -163,7 +164,7 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
 
         match next_child {
             Some(child_bytes) => {
-                current_node_hex = hex::encode(&child_bytes);
+                current_node = child_bytes.clone();
                 ordered_nodes.push(child_bytes);
             }
             None => break,
@@ -177,7 +178,7 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
         parse_leaf_hash_offset(leaf).ok_or_else(|| anyhow::anyhow!("Failed to parse leaf node"))?;
 
     let value_ref = hex::encode(&leaf[hash_offset..hash_offset + 32]);
-    let (_, value_node, _) = node_map
+    let value_node = node_map
         .get(&value_ref)
         .ok_or_else(|| anyhow::anyhow!("Value node not found in proof"))?;
 
@@ -191,16 +192,30 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
         );
     }
 
-    // Compute indices: where each child hash appears in its parent node
+    // Compute indices: where each child hash appears in its parent node.
+    // The circuit expects a hex-character offset, so we convert byte offsets by *2.
     let mut indices = Vec::new();
     for i in 0..ordered_nodes.len() - 1 {
-        let parent_hex = hex::encode(&ordered_nodes[i]);
-        let child_hash = hex::encode(hash_node_with_poseidon_padded(&ordered_nodes[i + 1]));
+        let parent = &ordered_nodes[i];
+        let child_hash = hash_node_with_poseidon_padded(&ordered_nodes[i + 1]);
 
-        let hex_idx = parent_hex
-            .find(&child_hash)
-            .ok_or_else(|| anyhow::anyhow!("Child hash not found in parent node {}", i))?;
-        indices.push(hex_idx);
+        let matches: Vec<usize> = parent
+            .windows(child_hash.len())
+            .enumerate()
+            .filter_map(|(idx, window)| (window == child_hash.as_ref()).then_some(idx))
+            .collect();
+
+        let byte_idx = match matches.as_slice() {
+            [] => bail!("Child hash not found in parent node {}", i),
+            [idx] => *idx,
+            _ => bail!(
+                "Ambiguous child hash in parent node {} ({} matches)",
+                i,
+                matches.len()
+            ),
+        };
+
+        indices.push(byte_idx * 2);
     }
 
     // Off-circuit validation: verify the value node contains the expected leaf_inputs_hash.

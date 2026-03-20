@@ -77,47 +77,39 @@ mod tests {
     use crate::circuit::circuit_logic::WormholeCircuit;
     use plonky2::plonk::circuit_data::CircuitConfig;
 
+    /// Profile the wormhole circuit in both ZK and non-ZK configurations.
+    ///
+    /// Run with:
+    /// ```bash
+    /// RUST_LOG=debug cargo test -p qp-wormhole-circuit --features profile --release profile_ -- --nocapture
+    /// ```
     #[test]
     fn profile_wormhole_circuit() {
         // Initialize logger to see debug! output from print_gate_counts
         let _ = env_logger::builder().is_test(true).try_init();
 
+        // =====================================================================
+        // ZK Configuration
+        // =====================================================================
         println!("\n========================================");
         println!("   WORMHOLE CIRCUIT PROFILE (ZK)");
         println!("========================================\n");
 
-        // Build the circuit with ZK config (default)
         let config = CircuitConfig::standard_recursion_zk_config();
         let circuit = WormholeCircuit::new(config);
-
-        // Build with profiling (prints gate instance counts via debug!)
-        // Requires RUST_LOG=debug to see per-gate-type counts
         let data = circuit.build_circuit_profiled();
-
-        // Print final metrics
         print_circuit_metrics(&data.common);
 
-        println!("\n========================================\n");
-    }
-
-    #[test]
-    fn profile_wormhole_circuit_no_zk() {
-        // Initialize logger to see debug! output from print_gate_counts
-        let _ = env_logger::builder().is_test(true).try_init();
-
+        // =====================================================================
+        // Non-ZK Configuration
+        // =====================================================================
         println!("\n========================================");
         println!("   WORMHOLE CIRCUIT PROFILE (NO ZK)");
         println!("========================================\n");
 
-        // Build the circuit with non-ZK config
         let config = CircuitConfig::standard_recursion_config();
         let circuit = WormholeCircuit::new(config);
-
-        // Build with profiling (prints gate instance counts via debug!)
-        // Requires RUST_LOG=debug to see per-gate-type counts
         let data = circuit.build_circuit_profiled();
-
-        // Print final metrics
         print_circuit_metrics(&data.common);
 
         println!("\n========================================\n");
