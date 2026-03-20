@@ -20,7 +20,7 @@ use quantus_cli::qp_dilithium_crypto::DilithiumPair;
 use quantus_cli::wallet::QuantumKeyPair;
 use quantus_cli::{AccountId32, ChainConfig, QuantusClient};
 use serde::{Deserialize, Serialize};
-use sp_core::{Hasher, H256, Pair};
+use sp_core::{Hasher, Pair, H256};
 use std::str::FromStr;
 use subxt::backend::legacy::rpc_methods::{Bytes, ReadProof};
 use subxt::blocks::Block;
@@ -521,10 +521,9 @@ async fn perform_batched_transfers(
             )
                 .encode(),
         );
-        let proof_address = quantus_node::storage().wormhole().transfer_proof((
-            event.to.clone(),
-            event.transfer_count,
-        ));
+        let proof_address = quantus_node::storage()
+            .wormhole()
+            .transfer_proof((event.to.clone(), event.transfer_count));
         let mut final_key = proof_address.to_root_bytes();
         final_key.extend_from_slice(&leaf_hash);
 
@@ -660,10 +659,9 @@ async fn perform_transfer_and_get_inputs(
         )
             .encode(),
     );
-    let proof_address = quantus_node::storage().wormhole().transfer_proof((
-        event.to.clone(),
-        event.transfer_count,
-    ));
+    let proof_address = quantus_node::storage()
+        .wormhole()
+        .transfer_proof((event.to.clone(), event.transfer_count));
     let mut final_key = proof_address.to_root_bytes();
     final_key.extend_from_slice(&leaf_hash);
 
