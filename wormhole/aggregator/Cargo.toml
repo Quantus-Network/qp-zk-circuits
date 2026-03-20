@@ -29,6 +29,7 @@ test-helpers = { path = "../tests/test-helpers", default-features = false }
 default = ["multithread", "std"]
 multithread = ["rayon"]
 no_zk = []
+profile = ["qp-plonky2/rand", "qp-plonky2/timing", "std"]
 std = [
 	"anyhow/std",
 	"qp-plonky2/std",
@@ -36,7 +37,6 @@ std = [
 	"wormhole-prover/std",
 	"zk-circuits-common/std",
 ]
-profile = ["std", "qp-plonky2/timing", "qp-plonky2/rand"]
 
 [lints]
 workspace = true

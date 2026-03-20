@@ -5,13 +5,14 @@ members = [
 	"wormhole/aggregator",
 	"wormhole/circuit",
 	"wormhole/circuit-builder",
-	"wormhole/example",
 	"wormhole/inputs",
 	"wormhole/prover",
 	"wormhole/tests",
 	"wormhole/tests/test-helpers",
 	"wormhole/verifier",
 ]
+# Example excluded - depends on quantus-cli which is external
+exclude = ["wormhole/example"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -19,7 +20,7 @@ anyhow = { version = "1.0.98", default-features = false }
 criterion = { version = "0.5.1", default-features = false }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 qp-plonky2 = { version = "1.1.5", default-features = false, features = ["std"] }
-qp-poseidon-core = { path = "../qp-poseidon/core", default-features = false }
+qp-poseidon-core = { version = "1.1", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 
 [workspace.package]
@@ -35,12 +36,12 @@ version = "1.1.1"
 [workspace.lints.clippy]
 uninlined_format_args = "allow"
 
-# Force updated versions for security advisories
+# Git deps until updates are published to crates.io
 [patch.crates-io]
+qp-plonky2 = { git = "https://github.com/Quantus-Network/qp-plonky2.git", branch = "illuzen/new-rate" }
+qp-poseidon = { git = "https://github.com/Quantus-Network/qp-poseidon.git", branch = "illuzen/injectivity" }
+qp-poseidon-constants = { git = "https://github.com/Quantus-Network/qp-poseidon-constants.git", branch = "illuzen/consolidate-constants" }
+qp-poseidon-core = { git = "https://github.com/Quantus-Network/qp-poseidon.git", branch = "illuzen/injectivity" }
+qp-rusty-crystals-dilithium = { git = "https://github.com/Quantus-Network/qp-rusty-crystals.git", branch = "illuzen/bump-poseidon" }
+qp-rusty-crystals-hdwallet = { git = "https://github.com/Quantus-Network/qp-rusty-crystals.git", branch = "illuzen/bump-poseidon" }
 time = { git = "https://github.com/time-rs/time", tag = "v0.3.47" }
-qp-poseidon-core = { path = "../qp-poseidon/core" }
-qp-poseidon = { path = "../qp-poseidon/substrate" }
-qp-plonky2 = { path = "../qp-plonky2/plonky2" }
-qp-poseidon-constants = { path = "../qp-poseidon-constants" }
-qp-rusty-crystals-dilithium = { path = "../qp-rusty-crystals/dilithium" }
-qp-rusty-crystals-hdwallet = { path = "../qp-rusty-crystals/hdwallet" }

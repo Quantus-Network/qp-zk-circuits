@@ -28,7 +28,7 @@ use plonky2::{
 };
 
 use zk_circuits_common::{
-    circuit::{wormhole_circuit_config, C, D, F},
+    circuit::{C, D, F},
     gadgets::{bytes_digest_eq, limb1_at_offset, limbs4_at_offset},
 };
 
@@ -376,7 +376,7 @@ mod tests {
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
 
-    use zk_circuits_common::circuit::{C, D, F};
+    use zk_circuits_common::circuit::{wormhole_circuit_config, C, D, F};
 
     use crate::layer0::{
         circuit::{

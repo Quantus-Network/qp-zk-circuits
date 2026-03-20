@@ -4,8 +4,7 @@
 //! used for encoding data in ZK circuits.
 
 use alloc::{string::String, vec::Vec};
-use plonky2::field::goldilocks_field::GoldilocksField;
-use plonky2::field::types::{Field, Field64, PrimeField64};
+use plonky2::field::types::{Field, PrimeField64};
 
 use crate::circuit::F;
 
@@ -18,9 +17,6 @@ pub const FELTS_PER_U64: usize = 2;
 pub const AMOUNT_QUANTIZATION_FACTOR: u128 = 10_000_000_000u128; // 10^10
 
 const BIT_32_LIMB_MASK: u64 = 0xFFFF_FFFF;
-
-/// Goldilocks field order
-const ORDER_U64: u64 = GoldilocksField::ORDER;
 
 #[inline]
 fn from_u64(x: u64) -> F {
