@@ -3,7 +3,7 @@ use wormhole_circuit::unspendable_account::{UnspendableAccount, UnspendableAccou
 use zk_circuits_common::{
     circuit::{CircuitFragment, C, D, F},
     codec::FieldElementCodec,
-    utils::BytesDigest,
+    utils::{digest_felts_to_bytes, BytesDigest},
 };
 
 #[cfg(test)]
@@ -17,11 +17,11 @@ const SECRETS: [&str; 5] = [
 
 #[cfg(test)]
 const ADDRESSES: [&str; 5] = [
-    "4d38abc959eb7e11526fd632c73d47e8945972fa3d9ce3d62532d5f386353993",
-    "8213d62e0104abe36482ef26346e0d5cd1d7511b22e4b03c770ca2c687b0ed04",
-    "7c281f0265adab691f06195b30deb4d133477a363355c584143827210b19bb09",
-    "5511b416ec05918b6fbc78fbd61d2575be3bd9d5f931b0f2438f7f5f7d46ae6e",
-    "ae18069d04d3fb4b3eb1fb41d6b5bf51b1bad41ff95d067b65116a1f5a68ba09",
+    "de68c6fcb3e38d6736b79a010e4504b98c6321f1e4d11cd8484f67c187ca090e",
+    "2dcf4b944c13da31a748ed04a251557d9bfb8eed7c4a8af5593c59d6142642b7",
+    "e84689fa523459215ac1c5a930a7898ace511c7e201bdb7295b04fc87037988f",
+    "2a96bf97fb63467396ddd298ac931eb22add9a527d02764520040e5e32a31ad6",
+    "c6a587f78e270025b7e9517da47e07c7f614c21be9a1460b5214eee7ef33ac68",
 ];
 
 #[cfg(test)]
@@ -76,6 +76,18 @@ fn preimage_does_not_match_wrong_address() {
 
     let result = run_test(&unspendable_account);
     assert!(result.is_err());
+}
+
+#[test]
+#[ignore]
+fn print_expected_unspendable_addresses() {
+    for secret in SECRETS {
+        let decoded_secret: [u8; 32] = hex::decode(secret).unwrap().try_into().unwrap();
+        let unspendable_account =
+            UnspendableAccount::from_secret(decoded_secret.try_into().unwrap());
+        let as_bytes = digest_felts_to_bytes(unspendable_account.account_id);
+        println!("{}", hex::encode(as_bytes));
+    }
 }
 
 #[test]

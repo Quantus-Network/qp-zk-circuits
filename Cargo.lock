@@ -142,7 +142,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -153,7 +153,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1024,7 +1024,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1470,7 +1470,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1674,7 +1674,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2588,7 +2588,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi 0.5.2",
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3075,7 +3075,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3701,8 +3701,6 @@ dependencies = [
 [[package]]
 name = "qp-dilithium-crypto"
 version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1cbee2023e15bc2788fcefb124efd3c6a465c779cb442b92007e11db76f8e3eb"
 dependencies = [
  "log",
  "parity-scale-codec",
@@ -3955,7 +3953,7 @@ version = "1.1.1"
 dependencies = [
  "anyhow",
  "qp-plonky2",
- "qp-zk-circuits-common 1.1.1",
+ "qp-zk-circuits-common",
 ]
 
 [[package]]
@@ -3967,35 +3965,15 @@ dependencies = [
  "env_logger",
  "hex",
  "qp-plonky2",
- "qp-wormhole-circuit 1.1.1",
- "qp-wormhole-inputs 1.1.1",
- "qp-wormhole-prover 1.1.1",
- "qp-zk-circuits-common 1.1.1",
+ "qp-wormhole-circuit",
+ "qp-wormhole-inputs",
+ "qp-wormhole-prover",
+ "qp-zk-circuits-common",
  "rand 0.8.5",
  "rayon",
  "serde",
  "serde_json",
  "test-helpers",
-]
-
-[[package]]
-name = "qp-wormhole-aggregator"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b4332b2aab9a4a2c5ff93c7a61fae1aa31856eefc61da64a2238d4125a3d43e"
-dependencies = [
- "anyhow",
- "hex",
- "qp-plonky2",
- "qp-wormhole-circuit 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "qp-wormhole-inputs 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "qp-wormhole-prover 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "qp-zk-circuits-common 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "rand 0.8.5",
- "rayon",
- "serde",
- "serde_json",
- "sha2 0.10.9",
 ]
 
 [[package]]
@@ -4006,21 +3984,8 @@ dependencies = [
  "env_logger",
  "hex",
  "qp-plonky2",
- "qp-wormhole-inputs 1.1.1",
- "qp-zk-circuits-common 1.1.1",
-]
-
-[[package]]
-name = "qp-wormhole-circuit"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d74b5fd9fb76b57034ff9f9f2fd75a644abccb469531b8af3335cd12f964628a"
-dependencies = [
- "anyhow",
- "hex",
- "qp-plonky2",
- "qp-wormhole-inputs 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "qp-zk-circuits-common 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "qp-wormhole-inputs",
+ "qp-zk-circuits-common",
 ]
 
 [[package]]
@@ -4030,23 +3995,14 @@ dependencies = [
  "anyhow",
  "clap",
  "qp-plonky2",
- "qp-wormhole-aggregator 1.1.1",
- "qp-wormhole-circuit 1.1.1",
- "qp-zk-circuits-common 1.1.1",
+ "qp-wormhole-aggregator",
+ "qp-wormhole-circuit",
+ "qp-zk-circuits-common",
 ]
 
 [[package]]
 name = "qp-wormhole-inputs"
 version = "1.1.1"
-dependencies = [
- "anyhow",
-]
-
-[[package]]
-name = "qp-wormhole-inputs"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6806263ce00b6d76cfad058733d0d0a6b651f8048a4b92980f37909d0207b308"
 dependencies = [
  "anyhow",
 ]
@@ -4058,24 +4014,11 @@ dependencies = [
  "anyhow",
  "criterion",
  "qp-plonky2",
- "qp-wormhole-aggregator 1.1.1",
- "qp-wormhole-circuit 1.1.1",
- "qp-wormhole-inputs 1.1.1",
- "qp-zk-circuits-common 1.1.1",
+ "qp-wormhole-aggregator",
+ "qp-wormhole-circuit",
+ "qp-wormhole-inputs",
+ "qp-zk-circuits-common",
  "test-helpers",
-]
-
-[[package]]
-name = "qp-wormhole-prover"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5332d2843d82cbac0b70e4f47378853d8ae970b3557eb2199552e19c3a42c8f"
-dependencies = [
- "anyhow",
- "qp-plonky2",
- "qp-wormhole-circuit 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "qp-wormhole-inputs 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "qp-zk-circuits-common 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -4086,19 +4029,8 @@ dependencies = [
  "criterion",
  "qp-plonky2-field 1.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "qp-plonky2-verifier 1.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
- "qp-wormhole-inputs 1.1.1",
- "qp-wormhole-prover 1.1.1",
-]
-
-[[package]]
-name = "qp-wormhole-verifier"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99a469af8bac0c88dec22b8777556815aa7aa875d18fc5db7c05fcafe23f200b"
-dependencies = [
- "anyhow",
- "qp-plonky2-verifier 1.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
- "qp-wormhole-inputs 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "qp-wormhole-inputs",
+ "qp-wormhole-prover",
 ]
 
 [[package]]
@@ -4109,22 +4041,7 @@ dependencies = [
  "hex",
  "qp-plonky2",
  "qp-poseidon-core",
- "qp-wormhole-inputs 1.1.1",
- "rand 0.8.5",
- "serde",
-]
-
-[[package]]
-name = "qp-zk-circuits-common"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f4a3b691fdaba2a7ef4eee01e68693eef8d873721c9fb9e0e88be856a4dbdc1"
-dependencies = [
- "anyhow",
- "hex",
- "qp-plonky2",
- "qp-poseidon-core",
- "qp-wormhole-inputs 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "qp-wormhole-inputs",
  "rand 0.8.5",
  "serde",
 ]
@@ -4132,8 +4049,6 @@ dependencies = [
 [[package]]
 name = "quantus-cli"
 version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fdfd5b4383c9bbb1ae59e683031ccbfb3cf23643dc13526f43385f1546c7be2a"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -4153,12 +4068,13 @@ dependencies = [
  "qp-poseidon",
  "qp-rusty-crystals-dilithium",
  "qp-rusty-crystals-hdwallet",
- "qp-wormhole-aggregator 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "qp-wormhole-circuit 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "qp-wormhole-inputs 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "qp-wormhole-prover 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "qp-wormhole-verifier 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "qp-zk-circuits-common 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "qp-wormhole-aggregator",
+ "qp-wormhole-circuit",
+ "qp-wormhole-circuit-builder",
+ "qp-wormhole-inputs",
+ "qp-wormhole-prover",
+ "qp-wormhole-verifier",
+ "qp-zk-circuits-common",
  "quinn-proto",
  "rand 0.9.2",
  "reqwest",
@@ -4520,7 +4436,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5193,7 +5109,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5912,9 +5828,9 @@ dependencies = [
  "anyhow",
  "hex",
  "qp-plonky2",
- "qp-wormhole-circuit 1.1.1",
- "qp-wormhole-inputs 1.1.1",
- "qp-zk-circuits-common 1.1.1",
+ "qp-wormhole-circuit",
+ "qp-wormhole-inputs",
+ "qp-zk-circuits-common",
 ]
 
 [[package]]
@@ -5925,13 +5841,13 @@ dependencies = [
  "hex",
  "libc",
  "qp-plonky2",
- "qp-wormhole-aggregator 1.1.1",
- "qp-wormhole-circuit 1.1.1",
+ "qp-wormhole-aggregator",
+ "qp-wormhole-circuit",
  "qp-wormhole-circuit-builder",
- "qp-wormhole-inputs 1.1.1",
- "qp-wormhole-prover 1.1.1",
- "qp-wormhole-verifier 1.1.1",
- "qp-zk-circuits-common 1.1.1",
+ "qp-wormhole-inputs",
+ "qp-wormhole-prover",
+ "qp-wormhole-verifier",
+ "qp-zk-circuits-common",
  "rand 0.9.2",
  "serde",
  "serde_json",
@@ -6812,7 +6728,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7146,12 +7062,12 @@ dependencies = [
  "qp-plonky2",
  "qp-poseidon",
  "qp-poseidon-core",
- "qp-wormhole-aggregator 1.1.1",
- "qp-wormhole-circuit 1.1.1",
- "qp-wormhole-inputs 1.1.1",
- "qp-wormhole-prover 1.1.1",
- "qp-wormhole-verifier 1.1.1",
- "qp-zk-circuits-common 1.1.1",
+ "qp-wormhole-aggregator",
+ "qp-wormhole-circuit",
+ "qp-wormhole-inputs",
+ "qp-wormhole-prover",
+ "qp-wormhole-verifier",
+ "qp-zk-circuits-common",
  "quantus-cli",
  "serde",
  "serde_json",

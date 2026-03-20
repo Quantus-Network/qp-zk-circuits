@@ -20,7 +20,7 @@ use quantus_cli::qp_dilithium_crypto::DilithiumPair;
 use quantus_cli::wallet::QuantumKeyPair;
 use quantus_cli::{AccountId32, ChainConfig, QuantusClient};
 use serde::{Deserialize, Serialize};
-use sp_core::{Hasher, H256};
+use sp_core::{Hasher, H256, Pair};
 use std::str::FromStr;
 use subxt::backend::legacy::rpc_methods::{Bytes, ReadProof};
 use subxt::blocks::Block;
@@ -522,11 +522,8 @@ async fn perform_batched_transfers(
                 .encode(),
         );
         let proof_address = quantus_node::storage().wormhole().transfer_proof((
-            asset_id,
-            event.transfer_count,
-            event.from.clone(),
             event.to.clone(),
-            event.amount,
+            event.transfer_count,
         ));
         let mut final_key = proof_address.to_root_bytes();
         final_key.extend_from_slice(&leaf_hash);
@@ -664,11 +661,8 @@ async fn perform_transfer_and_get_inputs(
             .encode(),
     );
     let proof_address = quantus_node::storage().wormhole().transfer_proof((
-        asset_id,
-        event.transfer_count,
-        event.from.clone(),
         event.to.clone(),
-        event.amount,
+        event.transfer_count,
     ));
     let mut final_key = proof_address.to_root_bytes();
     final_key.extend_from_slice(&leaf_hash);
@@ -893,8 +887,8 @@ async fn main() -> anyhow::Result<()> {
         DilithiumPair::from_seed(&seed).expect("valid dev account seed for DilithiumPair");
 
     let quantum_keypair = QuantumKeyPair {
-        public_key: funding_pair.public().0.to_vec(),
-        private_key: funding_pair.secret.to_vec(),
+        public_key: funding_pair.public().as_ref().to_vec(),
+        private_key: funding_pair.secret_bytes().to_vec(),
     };
 
     let funding_account = AccountId32::new(PoseidonHasher::hash(funding_pair.public().as_ref()).0);

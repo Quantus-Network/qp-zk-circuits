@@ -28,7 +28,7 @@ pub const MAX_PROOF_LEN: usize = zk_circuits_common::storage_proof::STORAGE_PROO
 /// Maximum number of actual trie nodes allowed in a Wormhole storage proof.
 pub const MAX_SUPPORTED_PROOF_LEN: usize =
     zk_circuits_common::storage_proof::MAX_STORAGE_PROOF_NODES;
-pub const PROOF_NODE_MAX_SIZE_F: usize = 128; // Should match the felt preimage max set on qp-poseidon-core crate.
+pub const PROOF_NODE_MAX_SIZE_F: usize = 80; // Should match the felt preimage max set on qp-poseidon-core crate.
 pub const PROOF_NODE_MAX_SIZE_B: usize = 256;
 pub const FELTS_PER_AMOUNT: usize = 2;
 const EMPTY_PROOF_NODE: [F; PROOF_NODE_MAX_SIZE_F] = [F::ZERO; PROOF_NODE_MAX_SIZE_F];
