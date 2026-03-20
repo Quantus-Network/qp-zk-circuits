@@ -90,7 +90,7 @@ mod tests {
             // Build layer-0 aggregation circuit
             let start = std::time::Instant::now();
             let l0_circuit = Layer0AggregationCircuit::new(
-                CircuitConfig::standard_recursion_zk_config(),
+                wormhole_circuit_config(),
                 leaf_common,
                 num_leaves,
             );
@@ -133,7 +133,7 @@ mod tests {
 
         // Build layer-0 circuit to get its common data for layer1
         let l0_circuit = Layer0AggregationCircuit::new(
-            CircuitConfig::standard_recursion_zk_config(),
+            wormhole_circuit_config(),
             leaf_data.common.clone(),
             layer0_num_leaves,
         );
@@ -156,7 +156,7 @@ mod tests {
             // Build layer-1 aggregation circuit
             let start = std::time::Instant::now();
             let l1_circuit = Layer1AggregationCircuit::new(
-                CircuitConfig::standard_recursion_zk_config(),
+                wormhole_circuit_config(),
                 l0_common.clone(),
                 num_l0_proofs,
                 layer0_num_leaves,
@@ -212,7 +212,7 @@ mod tests {
 
         for num_leaves in [2, 4, 8, 16] {
             let l0_circuit = Layer0AggregationCircuit::new(
-                CircuitConfig::standard_recursion_zk_config(),
+                wormhole_circuit_config(),
                 leaf_common.clone(),
                 num_leaves,
             );

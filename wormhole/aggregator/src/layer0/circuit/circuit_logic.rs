@@ -28,7 +28,7 @@ use plonky2::{
 };
 
 use zk_circuits_common::{
-    circuit::{C, D, F},
+    circuit::{wormhole_circuit_config, C, D, F},
     gadgets::{bytes_digest_eq, limb1_at_offset, limbs4_at_offset},
 };
 
@@ -458,7 +458,7 @@ mod tests {
             "dummy_nullifier_pre_images must have one entry per leaf slot"
         );
 
-        let agg_config = CircuitConfig::standard_recursion_zk_config();
+        let agg_config = wormhole_circuit_config();
         let agg_circuit =
             Layer0AggregationCircuit::new(agg_config.clone(), leaf_common.clone(), n_leaf);
         let targets = agg_circuit.targets();

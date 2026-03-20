@@ -40,7 +40,7 @@ pub mod circuit_logic {
         plonk::circuit_data::{CircuitData, ProverCircuitData, VerifierCircuitData},
         plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig},
     };
-    use zk_circuits_common::circuit::{CircuitFragment, C, D, F};
+    use zk_circuits_common::circuit::{wormhole_circuit_config, CircuitFragment, C, D, F};
 
     #[derive(Debug, Clone)]
     pub struct CircuitTargets {
@@ -104,7 +104,7 @@ pub mod circuit_logic {
 
     impl Default for WormholeCircuit {
         fn default() -> Self {
-            let config = CircuitConfig::standard_recursion_zk_config();
+            let config = wormhole_circuit_config();
             Self::new(config)
         }
     }

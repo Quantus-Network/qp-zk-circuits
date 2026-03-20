@@ -8,7 +8,7 @@ use wormhole_aggregator::build_dummy_circuit_inputs;
 const MEASUREMENT_TIME_S: u64 = 88;
 
 fn create_proof_benchmark_zk(c: &mut Criterion) {
-    let config = CircuitConfig::standard_recursion_zk_config();
+    let config = wormhole_circuit_config();
     // Use dummy inputs which are generated fresh and compatible with current hash function
     let inputs = build_dummy_circuit_inputs().expect("Failed to build dummy circuit inputs");
 

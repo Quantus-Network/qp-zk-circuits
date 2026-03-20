@@ -9,7 +9,6 @@
 
 use anyhow::{anyhow, Context, Result};
 use plonky2::{
-    plonk::circuit_data::CircuitConfig,
     plonk::config::PoseidonGoldilocksConfig,
     util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer},
 };
@@ -17,6 +16,7 @@ use std::{
     fs::{create_dir_all, write},
     path::Path,
 };
+use zk_circuits_common::circuit::wormhole_circuit_config;
 
 use zk_circuits_common::circuit::{D, F};
 
@@ -54,11 +54,8 @@ pub fn generate_layer0_circuit_binaries<P: AsRef<Path>>(
     let leaf_common = load_leaf_common_data(&output_path.join("common.bin"))?;
 
     // Build monolithic layer-0 aggregation circuit
-    let agg_circuit = Layer0AggregationCircuit::new(
-        CircuitConfig::standard_recursion_zk_config(),
-        leaf_common,
-        num_leaf_proofs,
-    );
+    let agg_circuit =
+        Layer0AggregationCircuit::new(wormhole_circuit_config(), leaf_common, num_leaf_proofs);
 
     // Build full circuit so we can serialize verifier + prover + common
     let circuit_data = agg_circuit.build_circuit();

@@ -95,7 +95,7 @@ mod tests {
         println!("   WORMHOLE CIRCUIT PROFILE (ZK)");
         println!("========================================\n");
 
-        let config = CircuitConfig::standard_recursion_zk_config();
+        let config = wormhole_circuit_config();
         let circuit = WormholeCircuit::new(config);
         let data = circuit.build_circuit_profiled();
         print_circuit_metrics(&data.common);
