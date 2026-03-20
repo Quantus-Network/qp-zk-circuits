@@ -4,6 +4,7 @@ use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use plonky2::plonk::circuit_data::CircuitConfig;
 use qp_wormhole_prover::WormholeProver;
 use wormhole_aggregator::build_dummy_circuit_inputs;
+use zk_circuits_common::circuit::wormhole_circuit_config;
 
 const MEASUREMENT_TIME_S: u64 = 88;
 

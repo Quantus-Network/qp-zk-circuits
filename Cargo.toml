@@ -39,9 +39,6 @@ uninlined_format_args = "allow"
 # Git deps until updates are published to crates.io
 [patch.crates-io]
 qp-plonky2 = { git = "https://github.com/Quantus-Network/qp-plonky2.git", branch = "illuzen/new-rate" }
-qp-poseidon = { git = "https://github.com/Quantus-Network/qp-poseidon.git", branch = "illuzen/injectivity" }
-qp-poseidon-constants = { git = "https://github.com/Quantus-Network/qp-poseidon-constants.git", branch = "illuzen/consolidate-constants" }
 qp-poseidon-core = { git = "https://github.com/Quantus-Network/qp-poseidon.git", branch = "illuzen/injectivity" }
 qp-rusty-crystals-dilithium = { git = "https://github.com/Quantus-Network/qp-rusty-crystals.git", branch = "illuzen/bump-poseidon" }
 qp-rusty-crystals-hdwallet = { git = "https://github.com/Quantus-Network/qp-rusty-crystals.git", branch = "illuzen/bump-poseidon" }
-time = { git = "https://github.com/time-rs/time", tag = "v0.3.47" }
