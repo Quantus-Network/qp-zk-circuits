@@ -76,6 +76,7 @@ mod tests {
     use super::*;
     use crate::circuit::circuit_logic::WormholeCircuit;
     use plonky2::plonk::circuit_data::CircuitConfig;
+    use zk_circuits_common::circuit::wormhole_circuit_config;
 
     /// Profile the wormhole circuit in both ZK and non-ZK configurations.
     ///

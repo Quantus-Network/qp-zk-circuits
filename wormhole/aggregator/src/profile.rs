@@ -40,15 +40,14 @@ pub fn print_circuit_metrics(label: &str, common: &CommonCircuitData<F, D>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layer0::circuit::circuit_logic::Layer0AggregationCircuit;
+    use crate::layer1::circuit::circuit_logic::Layer1AggregationCircuit;
     use plonky2::plonk::{
         circuit_builder::CircuitBuilder,
         circuit_data::{CircuitConfig, CircuitData},
     };
     use qp_wormhole_inputs::PUBLIC_INPUTS_FELTS_LEN as LEAF_PI_LEN;
-    use zk_circuits_common::circuit::C;
-
-    use crate::layer0::circuit::circuit_logic::Layer0AggregationCircuit;
-    use crate::layer1::circuit::circuit_logic::Layer1AggregationCircuit;
+    use zk_circuits_common::circuit::{wormhole_circuit_config, C};
 
     /// Build a minimal fake leaf circuit that matches the Wormhole leaf PI layout.
     /// Used to get CommonCircuitData for layer0 circuit construction.
