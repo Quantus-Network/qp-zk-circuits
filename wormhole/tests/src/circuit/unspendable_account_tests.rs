@@ -17,11 +17,11 @@ const SECRETS: [&str; 5] = [
 
 #[cfg(test)]
 const ADDRESSES: [&str; 5] = [
-    "de68c6fcb3e38d6736b79a010e4504b98c6321f1e4d11cd8484f67c187ca090e",
-    "2dcf4b944c13da31a748ed04a251557d9bfb8eed7c4a8af5593c59d6142642b7",
-    "e84689fa523459215ac1c5a930a7898ace511c7e201bdb7295b04fc87037988f",
-    "2a96bf97fb63467396ddd298ac931eb22add9a527d02764520040e5e32a31ad6",
-    "c6a587f78e270025b7e9517da47e07c7f614c21be9a1460b5214eee7ef33ac68",
+    "84be59b389f320c62b7cf2e0401df30f9951af843016c86f2e3f068ff99e038d",
+    "0c8731478175cbab4a4efdb1a60b86d792f255f699522b608f42eee7bce34277",
+    "42a4e818d4aa28dc789f0ffa581151ee310d06c21d971f5b9e18de31fcf513bf",
+    "290ce05a950614aa4035bd9fbbb748aaac20b067248922a5bf286687fa8a26dc",
+    "85a121f44a25a00a77f44467f5788137712d8e8fd9a17bb8b3384b0c3cbd9e45",
 ];
 
 #[cfg(test)]
@@ -111,12 +111,16 @@ fn unspendable_account_codec() {
             F::from_noncanonical_u64(6),
             F::from_noncanonical_u64(7),
             F::from_noncanonical_u64(8),
+            F::from_noncanonical_u64(9),
+            F::from_noncanonical_u64(10),
+            F::from_noncanonical_u64(11),
+            F::from_noncanonical_u64(12),
         ],
     };
 
     // Encode the account as field elements and compare.
     let field_elements = account.to_field_elements();
-    assert_eq!(field_elements.len(), 8);
+    assert_eq!(field_elements.len(), 12); // 4 account_id + 8 secret
     assert_eq!(field_elements[0], F::from_noncanonical_u64(1));
     assert_eq!(field_elements[1], F::from_noncanonical_u64(2));
     assert_eq!(field_elements[2], F::from_noncanonical_u64(3));
@@ -125,6 +129,10 @@ fn unspendable_account_codec() {
     assert_eq!(field_elements[5], F::from_noncanonical_u64(6));
     assert_eq!(field_elements[6], F::from_noncanonical_u64(7));
     assert_eq!(field_elements[7], F::from_noncanonical_u64(8));
+    assert_eq!(field_elements[8], F::from_noncanonical_u64(9));
+    assert_eq!(field_elements[9], F::from_noncanonical_u64(10));
+    assert_eq!(field_elements[10], F::from_noncanonical_u64(11));
+    assert_eq!(field_elements[11], F::from_noncanonical_u64(12));
 
     // Decode the field elements back into an UnspendableAccount
     let recovered_account = UnspendableAccount::from_field_elements(&field_elements).unwrap();

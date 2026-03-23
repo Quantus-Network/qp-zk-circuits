@@ -1,22 +1,29 @@
 //! Field element serialization utilities for Plonky2's Goldilocks field.
 //!
-//! This module provides conversion functions between bytes and Plonky2 field elements,
-//! used for encoding data in ZK circuits.
+//! This module provides thin wrappers around the core u64-based serialization
+//! functions from `qp_poseidon_core`, converting to/from Plonky2's `GoldilocksField`.
 
 use alloc::{string::String, vec::Vec};
 use plonky2::field::types::{Field, PrimeField64};
+pub use qp_poseidon_constants::POSEIDON2_OUTPUT;
+use qp_poseidon_core::serialization::{
+    digest_u64s_to_bytes, injective_bytes_to_u64s, safe_digest_bytes_to_u64s,
+    safe_digest_u64s_to_bytes, try_injective_u64s_to_bytes, unsafe_digest_bytes_to_u64s,
+};
 
 use crate::circuit::F;
-
-// Re-export constants
-pub use qp_poseidon_constants::POSEIDON2_OUTPUT;
 
 pub const DIGEST_BYTES_PER_ELEMENT: usize = 8;
 pub const FELTS_PER_U128: usize = 4;
 pub const FELTS_PER_U64: usize = 2;
 pub const AMOUNT_QUANTIZATION_FACTOR: u128 = 10_000_000_000u128; // 10^10
+pub const SAFE_DIGEST_NUM_FELTS: usize = 8;
 
 const BIT_32_LIMB_MASK: u64 = 0xFFFF_FFFF;
+
+// ============================================================================
+// Internal helpers for Plonky2 GoldilocksField conversion
+// ============================================================================
 
 #[inline]
 fn from_u64(x: u64) -> F {
@@ -41,6 +48,10 @@ fn as_32_bit_limb(felt: F, index: usize) -> Result<u64, String> {
         ))
     }
 }
+
+// ============================================================================
+// Plonky2 GoldilocksField wrapper functions
+// ============================================================================
 
 pub fn u128_to_felts(num: u128) -> [F; FELTS_PER_U128] {
     let mut result = [from_u64(0); FELTS_PER_U128];
@@ -93,28 +104,10 @@ pub fn try_felts_to_u64(felts: [F; FELTS_PER_U64]) -> Result<u64, String> {
 
 /// Injective encoding: 4 bytes -> 1 felt, with terminator marker for collision resistance.
 pub fn injective_bytes_to_felts(input: &[u8]) -> Vec<F> {
-    const BYTES_PER_ELEMENT: usize = 4;
-
-    let input_len = input.len();
-    let len_with_marker = input_len + 1;
-    let padding_needed =
-        (BYTES_PER_ELEMENT - (len_with_marker % BYTES_PER_ELEMENT)) % BYTES_PER_ELEMENT;
-    let final_padded_size = len_with_marker + padding_needed;
-    let num_elements = final_padded_size / BYTES_PER_ELEMENT;
-
-    let mut padded_input = Vec::<u8>::with_capacity(final_padded_size);
-    let mut out = Vec::<F>::with_capacity(num_elements);
-
-    padded_input.extend_from_slice(input);
-    padded_input.push(1u8);
-    padded_input.resize(final_padded_size, 0u8);
-
-    for chunk in padded_input.chunks_exact(BYTES_PER_ELEMENT) {
-        let bytes = [chunk[0], chunk[1], chunk[2], chunk[3]];
-        out.push(from_u64(u32::from_le_bytes(bytes) as u64));
-    }
-
-    out
+    injective_bytes_to_u64s(input)
+        .into_iter()
+        .map(from_u64)
+        .collect()
 }
 
 /// Non-injective encoding: 8 bytes -> 1 felt, zero-padded.
@@ -144,72 +137,46 @@ pub fn non_injective_bytes_to_felts(input: &[u8]) -> Vec<F> {
 
 /// Convert 32-byte digest to 4 field elements. Assumes bytes fit within field order.
 pub fn unsafe_digest_bytes_to_felts(input: &[u8; 32]) -> [F; POSEIDON2_OUTPUT] {
-    const BYTES_PER_ELEMENT: usize = 8;
-    let mut out = [from_u64(0); POSEIDON2_OUTPUT];
-
-    for (chunk, out_elem) in input.chunks(BYTES_PER_ELEMENT).zip(out.iter_mut()) {
-        let mut bytes = [0u8; BYTES_PER_ELEMENT];
-        bytes[..chunk.len()].copy_from_slice(chunk);
-        *out_elem = from_u64(u64::from_le_bytes(bytes));
-    }
-    out
+    let u64s = unsafe_digest_bytes_to_u64s(input);
+    [
+        from_u64(u64s[0]),
+        from_u64(u64s[1]),
+        from_u64(u64s[2]),
+        from_u64(u64s[3]),
+    ]
 }
 
-/// Convert 4 field elements to 32-byte digest.
+/// Convert 32-byte digest to 8 field elements using safe 4-bytes-per-felt encoding.
+///
+/// Unlike `unsafe_digest_bytes_to_felts` (8 bytes/felt), this uses 4 bytes per felt,
+/// ensuring all values fit within u32 range with no modular reduction risk.
+/// Unlike `injective_bytes_to_felts`, this has no terminator since the length is fixed.
+pub fn safe_digest_bytes_to_felts(input: &[u8; 32]) -> [F; SAFE_DIGEST_NUM_FELTS] {
+    let u64s = safe_digest_bytes_to_u64s(input);
+    core::array::from_fn(|i| from_u64(u64s[i]))
+}
+
+/// Convert 4 field elements to 32-byte digest (inverse of `unsafe_digest_bytes_to_felts`).
 pub fn digest_felts_to_bytes(input: &[F; POSEIDON2_OUTPUT]) -> [u8; 32] {
-    let mut bytes = [0u8; 32];
-    for (i, v) in input.iter().enumerate().take(POSEIDON2_OUTPUT) {
-        let start = i * 8;
-        let end = start + 8;
-        bytes[start..end].copy_from_slice(&to_u64(*v).to_le_bytes());
-    }
-    bytes
+    let u64s = [
+        to_u64(input[0]),
+        to_u64(input[1]),
+        to_u64(input[2]),
+        to_u64(input[3]),
+    ];
+    digest_u64s_to_bytes(&u64s)
+}
+
+/// Convert 8 field elements to 32-byte digest (inverse of `safe_digest_bytes_to_felts`).
+pub fn safe_digest_felts_to_bytes(input: &[F; SAFE_DIGEST_NUM_FELTS]) -> [u8; 32] {
+    let u64s: [u64; SAFE_DIGEST_NUM_FELTS] = core::array::from_fn(|i| to_u64(input[i]));
+    safe_digest_u64s_to_bytes(&u64s)
 }
 
 /// Inverse of `injective_bytes_to_felts`.
 pub fn try_injective_felts_to_bytes(input: &[F]) -> Result<Vec<u8>, &'static str> {
-    if input.is_empty() {
-        return Err("Expected non-empty input");
-    }
-
-    const BYTES_PER_ELEMENT: usize = 4;
-    let mut words: Vec<[u8; BYTES_PER_ELEMENT]> = Vec::with_capacity(input.len());
-    for (i, felt) in input.iter().enumerate() {
-        let value = as_32_bit_limb(*felt, i).map_err(|_| "Felt value exceeds 32 bits")?;
-        words.push((value as u32).to_le_bytes());
-    }
-
-    let mut out = Vec::new();
-
-    // If original input was u32 aligned, drop the last word
-    if words.last() == Some(&[1, 0, 0, 0]) {
-        for w in &words[..words.len() - 1] {
-            out.extend_from_slice(w);
-        }
-        return Ok(out);
-    }
-
-    // The first n-1 words are normal
-    for w in &words[..words.len() - 1] {
-        out.extend_from_slice(w);
-    }
-
-    // The last word must remove the inline terminator
-    let last = words.last().unwrap();
-    let mut marker_idx = None;
-    for j in 0..BYTES_PER_ELEMENT {
-        if last[j] == 1 && last[j + 1..].iter().all(|&b| b == 0) {
-            marker_idx = Some(j);
-            break;
-        }
-    }
-    match marker_idx {
-        Some(j) => {
-            out.extend_from_slice(&last[..j]);
-            Ok(out)
-        }
-        None => Err("Malformed input: missing inline terminator in last felt"),
-    }
+    let u64s: Vec<u64> = input.iter().map(|f| to_u64(*f)).collect();
+    try_injective_u64s_to_bytes(&u64s)
 }
 
 /// Convert a string to field elements using injective encoding.
@@ -272,6 +239,14 @@ mod tests {
         let original = [42u8; 32];
         let felts = unsafe_digest_bytes_to_felts(&original);
         let reconstructed = digest_felts_to_bytes(&felts);
+        assert_eq!(original, reconstructed);
+    }
+
+    #[test]
+    fn test_safe_digest_round_trip() {
+        let original = [42u8; 32];
+        let felts = safe_digest_bytes_to_felts(&original);
+        let reconstructed = safe_digest_felts_to_bytes(&felts);
         assert_eq!(original, reconstructed);
     }
 }

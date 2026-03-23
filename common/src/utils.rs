@@ -68,9 +68,16 @@ pub fn injective_felts_to_bytes(input: &[F]) -> Result<Vec<u8>, String> {
     serialization::try_injective_felts_to_bytes(input).map_err(|e| e.to_string())
 }
 
-/// Convert BytesDigest to field elements
+/// Convert BytesDigest to 4 field elements (8 bytes/felt, non-injective).
+/// Use for hash outputs where collision risk from modular reduction is negligible.
 pub fn digest_bytes_to_felts(input: BytesDigest) -> Digest {
     serialization::unsafe_digest_bytes_to_felts(&input)
+}
+
+/// Convert BytesDigest to 8 field elements (4 bytes/felt, safe).
+/// Use for secrets/preimages where collision resistance matters.
+pub fn safe_digest_bytes_to_felts(input: BytesDigest) -> [F; serialization::SAFE_DIGEST_NUM_FELTS] {
+    serialization::safe_digest_bytes_to_felts(&input)
 }
 
 /// Try to convert a slice of field elements to BytesDigest
@@ -84,10 +91,16 @@ pub fn try_felts_slice_to_bytes_digest(value: &[F]) -> anyhow::Result<BytesDiges
     Ok(digest_felts_to_bytes(digest))
 }
 
-/// Convert field elements to BytesDigest
+/// Convert 4 field elements to BytesDigest (inverse of `digest_bytes_to_felts`)
 pub fn digest_felts_to_bytes(input: Digest) -> BytesDigest {
     let bytes: [u8; DIGEST_BYTES_LEN] = serialization::digest_felts_to_bytes(&input);
     // Field elements are always in valid range, so this won't fail
+    BytesDigest::try_from(bytes).expect("field elements are always in valid range")
+}
+
+/// Convert 8 field elements to BytesDigest (inverse of `safe_digest_bytes_to_felts`)
+pub fn safe_digest_felts_to_bytes(input: [F; serialization::SAFE_DIGEST_NUM_FELTS]) -> BytesDigest {
+    let bytes: [u8; DIGEST_BYTES_LEN] = serialization::safe_digest_felts_to_bytes(&input);
     BytesDigest::try_from(bytes).expect("field elements are always in valid range")
 }
 
