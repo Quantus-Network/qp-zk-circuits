@@ -20,7 +20,7 @@ anyhow = { version = "1.0.98", default-features = false }
 criterion = { version = "0.5.1", default-features = false }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 qp-plonky2 = { version = "1.1.5", default-features = false, features = ["std"] }
-qp-poseidon-core = { version = "1.1", default-features = false }
+qp-poseidon-core = { version = "1.2", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 
 [workspace.package]
@@ -38,6 +38,6 @@ uninlined_format_args = "allow"
 
 [patch.crates-io]
 qp-plonky2 = { git = "https://github.com/Quantus-Network/qp-plonky2.git", branch = "illuzen/new-rate" }
-qp-poseidon-core = { git = "https://github.com/Quantus-Network/qp-poseidon.git", branch = "illuzen/injectivity" }
+qp-poseidon-core = { git = "https://github.com/Quantus-Network/qp-poseidon.git", tag = "v1.2.0" }
 qp-rusty-crystals-dilithium = { git = "https://github.com/Quantus-Network/qp-rusty-crystals.git", branch = "illuzen/injective-wormhole" }
 qp-rusty-crystals-hdwallet = { git = "https://github.com/Quantus-Network/qp-rusty-crystals.git", branch = "illuzen/injective-wormhole" }
