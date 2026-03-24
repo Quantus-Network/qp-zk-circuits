@@ -111,7 +111,8 @@ pub fn injective_bytes_to_felts(input: &[u8]) -> Vec<F> {
 }
 
 /// Non-injective encoding: 8 bytes -> 1 felt, zero-padded.
-/// NOT collision-resistant for variable-length inputs. Safe for self-describing structures.
+/// 2 inputs that differ by the order of the Goldilocks field will hash to the same output.
+/// Use with care.
 pub fn non_injective_bytes_to_felts(input: &[u8]) -> Vec<F> {
     const BYTES_PER_ELEMENT: usize = 8;
 
