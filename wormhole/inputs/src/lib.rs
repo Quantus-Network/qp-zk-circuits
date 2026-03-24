@@ -51,6 +51,16 @@ pub const BLOCK_NUMBER_INDEX: usize = 28;
 #[derive(Hash, Default, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
 pub struct BytesDigest([u8; DIGEST_BYTES_LEN]);
 
+impl BytesDigest {
+    /// Create a BytesDigest without validation.
+    ///
+    /// Use this for the 4-bytes-per-felt encoding where each chunk is a u32
+    /// and doesn't need to fit in an 8-byte field element constraint.
+    pub const fn new_unchecked(bytes: [u8; DIGEST_BYTES_LEN]) -> Self {
+        BytesDigest(bytes)
+    }
+}
+
 impl fmt::Debug for BytesDigest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "BytesDigest(0x")?;

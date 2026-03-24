@@ -71,9 +71,12 @@ pub fn digest_to_felts(input: BytesDigest) -> [F; DIGEST_NUM_FELTS] {
 }
 
 /// Convert 8 field elements to BytesDigest (inverse of `digest_to_felts`).
+///
+/// Uses `new_unchecked` because the 4-bytes-per-felt encoding produces bytes
+/// that may not pass the 8-byte chunk validation (e.g., adjacent 0xFFFFFFFF values).
 pub fn felts_to_digest(input: [F; DIGEST_NUM_FELTS]) -> BytesDigest {
     let bytes: [u8; DIGEST_BYTES_LEN] = serialization::felts_to_digest(&input);
-    BytesDigest::try_from(bytes).expect("field elements are always in valid range")
+    BytesDigest::new_unchecked(bytes)
 }
 
 /// Convert BytesDigest to 4 field elements (digest format, 8 bytes/felt).
@@ -88,16 +91,30 @@ pub fn digest_to_bytes(input: Digest) -> BytesDigest {
     BytesDigest::try_from(bytes).expect("field elements are always in valid range")
 }
 
-/// Try to convert a slice of field elements to BytesDigest (assumes digest format).
-pub fn try_felts_slice_to_bytes_digest(value: &[F]) -> anyhow::Result<BytesDigest> {
+/// Try to convert a slice of 4 field elements to BytesDigest (8 bytes/felt).
+/// Use for hash outputs (nullifier, block_hash).
+pub fn try_4_felts_to_bytes(value: &[F]) -> anyhow::Result<BytesDigest> {
     let digest: Digest = value.try_into().map_err(|_| {
         anyhow!(
-            "failed to deserialize bytes digest from field elements. Expected length {}, got {}",
+            "failed to deserialize bytes from 4 field elements. Expected length {}, got {}",
             DIGEST_NUM_FIELD_ELEMENTS,
             value.len()
         )
     })?;
     Ok(digest_to_bytes(digest))
+}
+
+/// Try to convert a slice of 8 field elements to BytesDigest (4 bytes/felt).
+/// Use for account IDs and other 32-byte data that uses collision-resistant encoding.
+pub fn try_8_felts_to_bytes(value: &[F]) -> anyhow::Result<BytesDigest> {
+    let account: [F; DIGEST_NUM_FELTS] = value.try_into().map_err(|_| {
+        anyhow!(
+            "failed to deserialize bytes from 8 field elements. Expected length {}, got {}",
+            DIGEST_NUM_FELTS,
+            value.len()
+        )
+    })?;
+    Ok(felts_to_digest(account))
 }
 
 pub fn felts_to_hashout(felts: &[F; 4]) -> HashOut<F> {

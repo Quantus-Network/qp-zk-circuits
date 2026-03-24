@@ -72,7 +72,8 @@ fn preimage_does_not_match_wrong_address() {
         UnspendableAccount::from_secret(decoded_secret.try_into().unwrap());
 
     // Override the correct account_id with a wrong one (different bytes).
-    let wrong_address = BytesDigest::try_from([0xFFu8; 32]).unwrap();
+    // Use valid bytes that don't exceed field order (not all 0xFF which creates u64::MAX)
+    let wrong_address = BytesDigest::try_from([0x12u8; 32]).unwrap();
     let wrong_hash = digest_to_felts(wrong_address);
     unspendable_account.account_id = wrong_hash;
 

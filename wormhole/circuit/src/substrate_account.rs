@@ -28,10 +28,15 @@ impl ByteCodec for SubstrateAccount {
     }
 
     fn from_bytes(slice: &[u8]) -> anyhow::Result<Self> {
-        let bytes = BytesDigest::try_from(slice).map_err(|e| {
-            anyhow::anyhow!("failed to deserialize SubstrateAccount from bytes: {}", e)
+        // For 4-bytes-per-felt encoding, we don't need the 8-byte chunk validation
+        // that BytesDigest::try_from performs. Each u32 chunk is valid in Goldilocks.
+        let bytes: [u8; 32] = slice.try_into().map_err(|_| {
+            anyhow::anyhow!(
+                "SubstrateAccount requires exactly 32 bytes, got {}",
+                slice.len()
+            )
         })?;
-        let address = digest_to_felts(bytes);
+        let address = digest_to_felts(BytesDigest::new_unchecked(bytes));
         Ok(SubstrateAccount(address))
     }
 }

@@ -1,7 +1,6 @@
 use alloc::vec::Vec;
 
 use plonky2::{
-    field::types::Field,
     hash::poseidon2::Poseidon2Hash,
     iop::{
         target::Target,
@@ -102,16 +101,17 @@ impl ByteCodec for UnspendableAccount {
         }
 
         // Deserialize account_id (32 bytes -> 8 field elements)
-        let account_id_bytes: BytesDigest = slice[..account_id_size]
+        // Use new_unchecked because 4-bytes-per-felt encoding doesn't need 8-byte validation
+        let account_id_bytes: [u8; 32] = slice[..account_id_size]
             .try_into()
             .map_err(|_| anyhow::anyhow!("Failed to deserialize unspendable account id"))?;
-        let account_id = digest_to_felts(account_id_bytes);
+        let account_id = digest_to_felts(BytesDigest::new_unchecked(account_id_bytes));
 
         // Deserialize secret (32 bytes -> 8 field elements)
-        let secret_bytes: BytesDigest = slice[account_id_size..total_size]
+        let secret_bytes: [u8; 32] = slice[account_id_size..total_size]
             .try_into()
             .map_err(|_| anyhow::anyhow!("Failed to deserialize unspendable account secret"))?;
-        let secret = digest_to_felts(secret_bytes);
+        let secret = digest_to_felts(BytesDigest::new_unchecked(secret_bytes));
 
         Ok(Self { account_id, secret })
     }
@@ -207,24 +207,12 @@ impl CircuitFragment for UnspendableAccount {
 
         // Convert 4-felt hash to 8-felt account representation.
         // Each hash felt is up to 64 bits. We split it into two 32-bit felts.
-        // For felt f: low = f & 0xFFFFFFFF, high = f >> 32
-        let shift_32 = builder.constant(F::from_canonical_u64(1u64 << 32));
-
+        // Use split_low_high gadget which handles witness generation automatically.
         let mut generated_account = Vec::with_capacity(8);
         for hash_felt in outer_hash.elements.iter() {
-            // Split each 64-bit felt into two 32-bit felts
-            // We use the split_low_high gadget pattern
-            let low = builder.add_virtual_target();
-            let high = builder.add_virtual_target();
-
-            // Constrain: hash_felt = low + high * 2^32
-            let reconstructed = builder.mul_add(high, shift_32, low);
-            builder.connect(*hash_felt, reconstructed);
-
-            // Range check both parts to 32 bits
-            builder.range_check(low, 32);
-            builder.range_check(high, 32);
-
+            // Split each 64-bit felt into low (bits 0-31) and high (bits 32-63)
+            // The gadget adds a generator that computes witnesses from hash_felt
+            let (low, high) = builder.split_low_high(*hash_felt, 32, 64);
             generated_account.push(low);
             generated_account.push(high);
         }
