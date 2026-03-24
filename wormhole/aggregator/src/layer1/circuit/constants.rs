@@ -12,7 +12,7 @@ use crate::layer0::circuit::constants::aggregated_output;
 //   volume_fee_bps(1),
 //   block_hash(4),
 //   block_number(1),
-//   [sum(1), exit(4)] * (2 * layer0_num_leaves),
+//   [sum(1), exit(8)] * (2 * layer0_num_leaves),
 //   nullifier(4) * layer0_num_leaves,
 //   padding ... ]
 //
@@ -63,7 +63,7 @@ pub const fn l0_pi_len(layer0_num_leaves: usize) -> usize {
 //   block_hash(4),
 //   block_number(1),
 //   total_exit_slots(1),
-//   [sum(1), exit(4)] * (n_inner * 2 * layer0_num_leaves),
+//   [sum(1), exit(8)] * (n_inner * 2 * layer0_num_leaves),
 //   nullifier(4) * (n_inner * layer0_num_leaves)
 // ]
 // -----------------------------------------------------------------------------

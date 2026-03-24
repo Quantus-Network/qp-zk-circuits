@@ -8,14 +8,14 @@ use plonky2::{
 };
 use zk_circuits_common::{
     circuit::{D, F},
-    utils::{digest_bytes_to_felts, injective_bytes_to_felts, BytesDigest, Digest},
+    utils::{bytes_to_digest, bytes_to_felts, BytesDigest, Digest},
 };
 
 use crate::inputs::CircuitInputs;
 
 pub const DIGEST_LOGS_SIZE: usize = 110;
 
-/// 110 bytes, rounded to 23 felts ~= 112 bytes with 4 byte limbs per felt
+/// 110 bytes, rounded to 28 felts with injective encoding (4 bytes/felt + terminator)
 const DIGEST_LOGS_FELTS: usize = 28;
 
 #[derive(Debug, Clone)]
@@ -71,11 +71,11 @@ impl HeaderInputs {
         digest: &[u8; DIGEST_LOGS_SIZE],
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            parent_hash: digest_bytes_to_felts(parent_hash),
+            parent_hash: bytes_to_digest(parent_hash),
             block_number: F::from_noncanonical_u64(block_number as u64),
-            state_root: digest_bytes_to_felts(state_root),
-            extrinsics_root: digest_bytes_to_felts(extrinsics_root),
-            digest: injective_bytes_to_felts(digest).try_into().unwrap(),
+            state_root: bytes_to_digest(state_root),
+            extrinsics_root: bytes_to_digest(extrinsics_root),
+            digest: bytes_to_felts(digest).try_into().unwrap(),
         })
     }
     pub fn block_hash(&self) -> BytesDigest {

@@ -48,14 +48,12 @@ impl ProcessedStorageProof {
 }
 
 /// Hash a node preimage exactly as the blockchain does.
-/// Uses non-injective encoding (8 bytes per felt) for compactness.
 ///
-/// This is safe because zk-trie nodes are self-describing structures with
-/// length-prefixed fields, making the encoding unambiguous without an
-/// explicit terminator byte.
+/// Uses injective encoding (4 bytes per felt + terminator) to match
+/// the chain's `PoseidonHasher::hash` implementation.
 pub fn hash_node_with_poseidon_padded(node_bytes: &[u8]) -> [u8; 32] {
-    use qp_poseidon_core::{hash_padded_bytes_non_injective, FIELD_ELEMENT_PREIMAGE_PADDING_LEN};
-    hash_padded_bytes_non_injective::<FIELD_ELEMENT_PREIMAGE_PADDING_LEN>(node_bytes)
+    use qp_poseidon_core::{hash_for_circuit, FIELD_ELEMENT_PREIMAGE_PADDING_LEN};
+    hash_for_circuit::<FIELD_ELEMENT_PREIMAGE_PADDING_LEN>(node_bytes)
 }
 
 /// Parse a HashedValueLeaf node (type 5) and extract the byte offset where the value hash starts.

@@ -10,7 +10,7 @@ use wormhole_circuit::{
 use zk_circuits_common::{
     circuit::{CircuitFragment, C, D, F},
     storage_proof::hash_node_with_poseidon_padded,
-    utils::{digest_bytes_to_felts, felts_to_hashout, u64_to_felts},
+    utils::{bytes_to_digest, u64_to_felts},
 };
 
 use test_helpers::storage_proof::default_root_hash;
@@ -108,7 +108,7 @@ fn fill_targets_unchecked(
     const EMPTY_PROOF_NODE: [F; PROOF_NODE_MAX_SIZE_F] = [F::ZERO; PROOF_NODE_MAX_SIZE_F];
 
     let root_hash = HashOut {
-        elements: digest_bytes_to_felts(storage_proof.root_hash.try_into()?),
+        elements: bytes_to_digest(storage_proof.root_hash.try_into()?),
     };
     pw.set_hash_target(targets.root_hash, root_hash)?;
     pw.set_bool_target(targets.is_not_dummy, storage_proof.is_not_dummy)?;
@@ -141,13 +141,13 @@ fn fill_targets_unchecked(
         &targets.leaf_inputs.transfer_count,
         &storage_proof.leaf_inputs.transfer_count,
     )?;
-    pw.set_hash_target(
-        targets.leaf_inputs.funding_account,
-        felts_to_hashout(&storage_proof.leaf_inputs.funding_account.0),
+    pw.set_target_arr(
+        &targets.leaf_inputs.funding_account.elements,
+        &storage_proof.leaf_inputs.funding_account.0,
     )?;
-    pw.set_hash_target(
-        targets.leaf_inputs.to_account,
-        felts_to_hashout(&storage_proof.leaf_inputs.to_account.0),
+    pw.set_target_arr(
+        &targets.leaf_inputs.to_account.elements,
+        &storage_proof.leaf_inputs.to_account.0,
     )?;
     pw.set_target(
         targets.leaf_inputs.input_amount,

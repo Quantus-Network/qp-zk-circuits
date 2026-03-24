@@ -38,5 +38,9 @@ uninlined_format_args = "allow"
 
 [patch.crates-io]
 qp-plonky2 = { git = "https://github.com/Quantus-Network/qp-plonky2.git", branch = "illuzen/new-rate" }
-qp-rusty-crystals-dilithium = { git = "https://github.com/Quantus-Network/qp-rusty-crystals.git", branch = "illuzen/injective-wormhole" }
-qp-rusty-crystals-hdwallet = { git = "https://github.com/Quantus-Network/qp-rusty-crystals.git", branch = "illuzen/injective-wormhole" }
+qp-plonky2-field = { git = "https://github.com/Quantus-Network/qp-plonky2.git", branch = "illuzen/new-rate" }
+qp-plonky2-core = { git = "https://github.com/Quantus-Network/qp-plonky2.git", branch = "illuzen/new-rate" }
+qp-plonky2-verifier = { git = "https://github.com/Quantus-Network/qp-plonky2.git", branch = "illuzen/new-rate" }
+qp-rusty-crystals-dilithium = { git = "https://github.com/Quantus-Network/qp-rusty-crystals.git", branch = "illuzen/new-poseidon-api" }
+qp-rusty-crystals-hdwallet = { git = "https://github.com/Quantus-Network/qp-rusty-crystals.git", branch = "illuzen/new-poseidon-api" }
+qp-poseidon-core = { git = "https://github.com/Quantus-Network/qp-poseidon.git", branch = "illuzen/injective-to-felts" }

@@ -5,7 +5,7 @@ use plonky2::{
 };
 use zk_circuits_common::{
     circuit::{CircuitFragment, D, F},
-    utils::{digest_bytes_to_felts, BytesDigest, Digest},
+    utils::{bytes_to_digest, BytesDigest, Digest},
 };
 
 use crate::block_header::header::{HeaderInputs, HeaderTargets};
@@ -22,7 +22,7 @@ pub struct BlockHeader {
 impl BlockHeader {
     pub fn new(block_hash: BytesDigest, header: HeaderInputs) -> anyhow::Result<Self> {
         Ok(Self {
-            block_hash: digest_bytes_to_felts(block_hash),
+            block_hash: bytes_to_digest(block_hash),
             header,
         })
     }

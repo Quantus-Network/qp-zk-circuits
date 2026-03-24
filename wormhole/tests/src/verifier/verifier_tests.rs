@@ -58,7 +58,7 @@ fn borrowed_verify_keeps_proof_available() {
     .unwrap();
     verifier.verify_ref(&verifier_proof).unwrap();
 
-    assert_eq!(proof.public_inputs.len(), 21);
+    assert_eq!(proof.public_inputs.len(), 29);
 }
 
 #[test]

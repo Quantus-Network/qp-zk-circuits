@@ -1,19 +1,20 @@
 use alloc::vec::Vec;
 use core::ops::Deref;
+use plonky2::iop::target::Target;
 use plonky2::iop::witness::PartialWitness;
-use plonky2::{
-    hash::hash_types::HashOutTarget, iop::witness::WitnessWrite,
-    plonk::circuit_builder::CircuitBuilder,
-};
+use plonky2::iop::witness::WitnessWrite;
+use plonky2::plonk::circuit_builder::CircuitBuilder;
 use zk_circuits_common::circuit::CircuitFragment;
 use zk_circuits_common::circuit::{D, F};
 use zk_circuits_common::codec::{ByteCodec, FieldElementCodec};
 use zk_circuits_common::utils::{
-    digest_bytes_to_felts, digest_felts_to_bytes, BytesDigest, Digest,
+    digest_to_felts, felts_to_digest, AccountId, BytesDigest, DIGEST_NUM_FELTS,
 };
 
+/// A substrate account represented as 8 field elements (4 bytes per felt).
+/// This encoding ensures collision resistance for account addresses.
 #[derive(Debug, Default, Eq, PartialEq, Clone, Copy)]
-pub struct SubstrateAccount(pub Digest);
+pub struct SubstrateAccount(pub AccountId);
 
 impl SubstrateAccount {
     pub fn new(address: &[u8]) -> anyhow::Result<Self> {
@@ -23,14 +24,14 @@ impl SubstrateAccount {
 
 impl ByteCodec for SubstrateAccount {
     fn to_bytes(&self) -> Vec<u8> {
-        digest_felts_to_bytes(self.0).to_vec()
+        felts_to_digest(self.0).to_vec()
     }
 
     fn from_bytes(slice: &[u8]) -> anyhow::Result<Self> {
         let bytes = BytesDigest::try_from(slice).map_err(|e| {
             anyhow::anyhow!("failed to deserialize SubstrateAccount from bytes: {}", e)
         })?;
-        let address = digest_bytes_to_felts(bytes);
+        let address = digest_to_felts(bytes);
         Ok(SubstrateAccount(address))
     }
 }
@@ -41,21 +42,22 @@ impl FieldElementCodec for SubstrateAccount {
     }
 
     fn from_field_elements(elements: &[F]) -> anyhow::Result<Self> {
-        if elements.len() != 4 {
+        if elements.len() != DIGEST_NUM_FELTS {
             return Err(anyhow::anyhow!(
-                "Expected 4 field elements for SubstrateAccount, got: {}",
+                "Expected {} field elements for SubstrateAccount, got: {}",
+                DIGEST_NUM_FELTS,
                 elements.len()
             ));
         }
-        let account_id: [F; 4] = elements
+        let account_id: AccountId = elements
             .try_into()
-            .map_err(|_| anyhow::anyhow!("Failed to convert slice to [GoldilocksField; 4]"))?;
+            .map_err(|_| anyhow::anyhow!("Failed to convert slice to AccountId"))?;
         Ok(Self(account_id))
     }
 }
 
 impl Deref for SubstrateAccount {
-    type Target = Digest;
+    type Target = AccountId;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -64,21 +66,45 @@ impl Deref for SubstrateAccount {
 
 impl From<BytesDigest> for SubstrateAccount {
     fn from(value: BytesDigest) -> Self {
-        let felts = digest_bytes_to_felts(value);
+        let felts = digest_to_felts(value);
         SubstrateAccount(felts)
     }
 }
 
-/// Targets for a single exit account (used internally)
+/// Targets for a substrate account (8 field elements).
+#[derive(Debug, Clone, Copy)]
+pub struct AccountTargets {
+    pub elements: [Target; DIGEST_NUM_FELTS],
+}
+
+impl AccountTargets {
+    pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
+        Self {
+            elements: core::array::from_fn(|_| builder.add_virtual_target()),
+        }
+    }
+
+    pub fn new_public(builder: &mut CircuitBuilder<F, D>) -> Self {
+        Self {
+            elements: core::array::from_fn(|_| builder.add_virtual_public_input()),
+        }
+    }
+
+    pub fn to_vec(&self) -> Vec<Target> {
+        self.elements.to_vec()
+    }
+}
+
+/// Targets for a single exit account (used for public outputs)
 #[derive(Debug, Clone, Copy)]
 pub struct ExitAccountTargets {
-    pub address: HashOutTarget,
+    pub address: AccountTargets,
 }
 
 impl ExitAccountTargets {
     pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
         Self {
-            address: builder.add_virtual_hash_public_input(),
+            address: AccountTargets::new_public(builder),
         }
     }
 }
@@ -121,8 +147,14 @@ impl CircuitFragment for DualExitAccount {
         pw: &mut PartialWitness<F>,
         targets: Self::Targets,
     ) -> anyhow::Result<()> {
-        pw.set_hash_target(targets.exit_account_1.address, self.exit_account_1.0.into())?;
-        pw.set_hash_target(targets.exit_account_2.address, self.exit_account_2.0.into())
+        pw.set_target_arr(
+            &targets.exit_account_1.address.elements,
+            &self.exit_account_1.0,
+        )?;
+        pw.set_target_arr(
+            &targets.exit_account_2.address.elements,
+            &self.exit_account_2.0,
+        )
     }
 }
 
@@ -137,6 +169,6 @@ impl CircuitFragment for SubstrateAccount {
         pw: &mut PartialWitness<F>,
         targets: Self::Targets,
     ) -> anyhow::Result<()> {
-        pw.set_hash_target(targets.address, self.0.into())
+        pw.set_target_arr(&targets.address.elements, &self.0)
     }
 }

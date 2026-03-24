@@ -29,7 +29,7 @@ use plonky2::{
 
 use zk_circuits_common::{
     circuit::{C, D, F},
-    gadgets::{bytes_digest_eq, limb1_at_offset, limbs4_at_offset},
+    gadgets::{account_eq, bytes_digest_eq, limb1_at_offset, limbs4_at_offset, limbs8_at_offset},
 };
 
 use super::constants::{
@@ -230,13 +230,13 @@ fn build_layer0_wrapper_constraints(
 
     let num_exit_slots = n_leaf * 2;
 
-    let get_exit_and_amount = |proof_idx: usize, output_idx: usize| -> ([Target; 4], Target) {
+    let get_exit_and_amount = |proof_idx: usize, output_idx: usize| -> ([Target; 8], Target) {
         let pis = leaf_pi_targets[proof_idx];
 
         let exit = if output_idx == 0 {
-            limbs4_at_offset::<LEAF_PI_LEN, EXIT_1_START>(pis, 0)
+            limbs8_at_offset::<LEAF_PI_LEN, EXIT_1_START>(pis, 0)
         } else {
-            limbs4_at_offset::<LEAF_PI_LEN, EXIT_2_START>(pis, 0)
+            limbs8_at_offset::<LEAF_PI_LEN, EXIT_2_START>(pis, 0)
         };
 
         let amount = if output_idx == 0 {
@@ -260,7 +260,7 @@ fn build_layer0_wrapper_constraints(
             let earlier_output_idx = earlier % 2;
             let (exit_earlier, _) = get_exit_and_amount(earlier_proof_idx, earlier_output_idx);
 
-            let matches_earlier = bytes_digest_eq(builder, exit_earlier, exit_slot);
+            let matches_earlier = account_eq(builder, exit_earlier, exit_slot);
             is_duplicate = builder.or(is_duplicate, matches_earlier);
         }
 
@@ -271,7 +271,7 @@ fn build_layer0_wrapper_constraints(
             let j_output_idx = j % 2;
             let (exit_j, amount_j) = get_exit_and_amount(j_proof_idx, j_output_idx);
 
-            let matches = bytes_digest_eq(builder, exit_j, exit_slot);
+            let matches = account_eq(builder, exit_j, exit_slot);
             let conditional_amount = builder.select(matches, amount_j, zero);
             acc = builder.add(acc, conditional_amount);
         }
@@ -283,6 +283,10 @@ fn build_layer0_wrapper_constraints(
             builder.select(is_duplicate, zero, exit_slot[1]),
             builder.select(is_duplicate, zero, exit_slot[2]),
             builder.select(is_duplicate, zero, exit_slot[3]),
+            builder.select(is_duplicate, zero, exit_slot[4]),
+            builder.select(is_duplicate, zero, exit_slot[5]),
+            builder.select(is_duplicate, zero, exit_slot[6]),
+            builder.select(is_duplicate, zero, exit_slot[7]),
         ];
 
         // Range check final sum to 32 bits (u32::MAX > the max possible sum on our chain)
@@ -382,9 +386,9 @@ mod tests {
         circuit::{
             circuit_logic::Layer0AggregationCircuit,
             constants::{
-                ASSET_ID_START, BLOCK_HASH_START, BLOCK_NUMBER_START, EXIT_1_START, EXIT_2_START,
-                LEAF_PI_LEN, NULLIFIER_START, OUTPUT_AMOUNT_1_START, OUTPUT_AMOUNT_2_START,
-                VOLUME_FEE_BPS_START,
+                aggregated_output, ASSET_ID_START, BLOCK_HASH_START, BLOCK_NUMBER_START,
+                EXIT_1_START, EXIT_2_START, LEAF_PI_LEN, NULLIFIER_START, OUTPUT_AMOUNT_1_START,
+                OUTPUT_AMOUNT_2_START, VOLUME_FEE_BPS_START,
             },
         },
         prover::witness::fill_layer0_aggregation_witness,
@@ -504,13 +508,18 @@ mod tests {
     // ---------------- Packing helpers ----------------
 
     #[inline]
-    fn limbs_u64_to_felts_be(l: [u64; 4]) -> [F; 4] {
+    fn limbs4_u64_to_felts(l: [u64; 4]) -> [F; 4] {
         [
             F::from_canonical_u64(l[0]),
             F::from_canonical_u64(l[1]),
             F::from_canonical_u64(l[2]),
             F::from_canonical_u64(l[3]),
         ]
+    }
+
+    #[inline]
+    fn limbs8_u64_to_felts(l: [u64; 8]) -> [F; 8] {
+        core::array::from_fn(|i| F::from_canonical_u64(l[i]))
     }
 
     #[inline]
@@ -521,8 +530,8 @@ mod tests {
         output_amount_2: F,
         volume_fee_bps: F,
         nullifier: [F; 4],
-        exit_1: [F; 4],
-        exit_2: [F; 4],
+        exit_1: [F; 8],
+        exit_2: [F; 8],
         block_hash: [F; 4],
         block_number: F,
     ) -> [F; LEAF_PI_LEN] {
@@ -532,63 +541,96 @@ mod tests {
         out[OUTPUT_AMOUNT_2_START] = output_amount_2;
         out[VOLUME_FEE_BPS_START] = volume_fee_bps;
         out[NULLIFIER_START..NULLIFIER_START + 4].copy_from_slice(&nullifier);
-        out[EXIT_1_START..EXIT_1_START + 4].copy_from_slice(&exit_1);
-        out[EXIT_2_START..EXIT_2_START + 4].copy_from_slice(&exit_2);
+        out[EXIT_1_START..EXIT_1_START + 8].copy_from_slice(&exit_1);
+        out[EXIT_2_START..EXIT_2_START + 8].copy_from_slice(&exit_2);
         out[BLOCK_HASH_START..BLOCK_HASH_START + 4].copy_from_slice(&block_hash);
         out[BLOCK_NUMBER_START] = block_number;
         out
     }
 
     // ---------------- Hardcoded 64-bit-limb digests ----------------
+    // Exit accounts use 8 felts (32-bit values) for collision-resistant encoding
 
-    const EXIT_ACCOUNTS: [[u64; 4]; 8] = [
+    const EXIT_ACCOUNTS: [[u64; 8]; 8] = [
         [
-            0x1111_0001_0000_0001,
-            0x1111_0001_0000_0002,
-            0x1111_0001_0000_0003,
-            0x1111_0001_0000_0004,
+            0x1111_0001,
+            0x0000_0001,
+            0x1111_0002,
+            0x0000_0002,
+            0x1111_0003,
+            0x0000_0003,
+            0x1111_0004,
+            0x0000_0004,
         ],
         [
-            0x2222_0001_0000_0001,
-            0x2222_0001_0000_0002,
-            0x2222_0001_0000_0003,
-            0x2222_0001_0000_0004,
+            0x2222_0001,
+            0x0000_0001,
+            0x2222_0002,
+            0x0000_0002,
+            0x2222_0003,
+            0x0000_0003,
+            0x2222_0004,
+            0x0000_0004,
         ],
         [
-            0x3333_0001_0000_0001,
-            0x3333_0001_0000_0002,
-            0x3333_0001_0000_0003,
-            0x3333_0001_0000_0004,
+            0x3333_0001,
+            0x0000_0001,
+            0x3333_0002,
+            0x0000_0002,
+            0x3333_0003,
+            0x0000_0003,
+            0x3333_0004,
+            0x0000_0004,
         ],
         [
-            0x4444_0001_0000_0001,
-            0x4444_0001_0000_0002,
-            0x4444_0001_0000_0003,
-            0x4444_0001_0000_0004,
+            0x4444_0001,
+            0x0000_0001,
+            0x4444_0002,
+            0x0000_0002,
+            0x4444_0003,
+            0x0000_0003,
+            0x4444_0004,
+            0x0000_0004,
         ],
         [
-            0x5555_0001_0000_0001,
-            0x5555_0001_0000_0002,
-            0x5555_0001_0000_0003,
-            0x5555_0001_0000_0004,
+            0x5555_0001,
+            0x0000_0001,
+            0x5555_0002,
+            0x0000_0002,
+            0x5555_0003,
+            0x0000_0003,
+            0x5555_0004,
+            0x0000_0004,
         ],
         [
-            0x6666_0001_0000_0001,
-            0x6666_0001_0000_0002,
-            0x6666_0001_0000_0003,
-            0x6666_0001_0000_0004,
+            0x6666_0001,
+            0x0000_0001,
+            0x6666_0002,
+            0x0000_0002,
+            0x6666_0003,
+            0x0000_0003,
+            0x6666_0004,
+            0x0000_0004,
         ],
         [
-            0x7777_0001_0000_0001,
-            0x7777_0001_0000_0002,
-            0x7777_0001_0000_0003,
-            0x7777_0001_0000_0004,
+            0x7777_0001,
+            0x0000_0001,
+            0x7777_0002,
+            0x0000_0002,
+            0x7777_0003,
+            0x0000_0003,
+            0x7777_0004,
+            0x0000_0004,
         ],
         [
-            0x8888_0001_0000_0001,
-            0x8888_0001_0000_0002,
-            0x8888_0001_0000_0003,
-            0x8888_0001_0000_0004,
+            0x8888_0001,
+            0x0000_0001,
+            0x8888_0002,
+            0x0000_0002,
+            0x8888_0003,
+            0x0000_0003,
+            0x8888_0004,
+            0x0000_0004,
         ],
     ];
 
@@ -706,9 +748,9 @@ mod tests {
         let output2_felts: [F; 8] =
             core::array::from_fn(|i| F::from_canonical_u64(output2_vals_u32[i] as u64));
 
-        let exits_felts: [[F; 4]; 8] = EXIT_ACCOUNTS.map(limbs_u64_to_felts_be);
-        let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs_u64_to_felts_be);
-        let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs_u64_to_felts_be);
+        let exits_felts: [[F; 8]; 8] = EXIT_ACCOUNTS.map(limbs8_u64_to_felts);
+        let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs4_u64_to_felts);
+        let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs4_u64_to_felts);
 
         // All real proofs must be from the same block
         let common_block_hash = block_hashes_felts[0];
@@ -761,26 +803,16 @@ mod tests {
         let n_leaf = pis_list.len();
         assert_eq!(n_leaf, 8);
 
-        let mut exit_sums: BTreeMap<[F; 4], F> = BTreeMap::new();
+        let mut exit_sums: BTreeMap<[F; 8], F> = BTreeMap::new();
         for (i, pis) in pis_list.iter().enumerate() {
-            let exit_1 = [
-                pis[EXIT_1_START],
-                pis[EXIT_1_START + 1],
-                pis[EXIT_1_START + 2],
-                pis[EXIT_1_START + 3],
-            ];
+            let exit_1: [F; 8] = core::array::from_fn(|j| pis[EXIT_1_START + j]);
             let amount_1 = output1_felts[i];
             exit_sums
                 .entry(exit_1)
                 .and_modify(|s| *s += amount_1)
                 .or_insert(amount_1);
 
-            let exit_2 = [
-                pis[EXIT_2_START],
-                pis[EXIT_2_START + 1],
-                pis[EXIT_2_START + 2],
-                pis[EXIT_2_START + 3],
-            ];
+            let exit_2: [F; 8] = core::array::from_fn(|j| pis[EXIT_2_START + j]);
             let amount_2 = output2_felts[i];
             exit_sums
                 .entry(exit_2)
@@ -829,14 +861,14 @@ mod tests {
 
         let mut idx = ROOT_HEADER_LEN;
 
-        // Exit slots region: 2*N slots, each [sum(1), exit(4)]
-        let mut exit_sums_from_circuit: BTreeMap<[F; 4], F> = BTreeMap::new();
+        // Exit slots region: 2*N slots, each [sum(1), exit(8)]
+        let mut exit_sums_from_circuit: BTreeMap<[F; 8], F> = BTreeMap::new();
         for _ in 0..(n_leaf * 2) {
             let sum_circuit = pis[idx];
             idx += 1;
 
-            let exit_key_circuit = [pis[idx], pis[idx + 1], pis[idx + 2], pis[idx + 3]];
-            idx += 4;
+            let exit_key_circuit: [F; 8] = core::array::from_fn(|j| pis[idx + j]);
+            idx += 8;
 
             if sum_circuit != F::ZERO {
                 exit_sums_from_circuit
@@ -845,12 +877,45 @@ mod tests {
             }
         }
 
-        for (exit_key, sum_ref) in &exit_sums {
-            let sum_from_circuit = exit_sums_from_circuit.get(exit_key).unwrap();
+        // Convert to u64-based keys for reliable comparison
+        // (BTreeMap with [F; 8] keys can be unreliable due to Ord impl)
+        let exit_sums_u64: std::collections::HashMap<[u64; 8], u64> = exit_sums
+            .iter()
+            .map(|(k, v)| {
+                let k_u64: [u64; 8] = core::array::from_fn(|i| k[i].to_canonical_u64());
+                (k_u64, v.to_canonical_u64())
+            })
+            .collect();
+
+        let exit_sums_from_circuit_u64: std::collections::HashMap<[u64; 8], u64> =
+            exit_sums_from_circuit
+                .iter()
+                .map(|(k, v)| {
+                    let k_u64: [u64; 8] = core::array::from_fn(|i| k[i].to_canonical_u64());
+                    (k_u64, v.to_canonical_u64())
+                })
+                .collect();
+
+        assert_eq!(
+            exit_sums_u64.len(),
+            exit_sums_from_circuit_u64.len(),
+            "exit_sums size mismatch"
+        );
+
+        for (exit_key_u64, sum_ref_u64) in &exit_sums_u64 {
+            let sum_from_circuit_u64 =
+                exit_sums_from_circuit_u64
+                    .get(exit_key_u64)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "exit_key {:?} not found in circuit output (sum_ref={})",
+                            exit_key_u64, sum_ref_u64
+                        )
+                    });
             assert_eq!(
-                *sum_from_circuit, *sum_ref,
+                *sum_from_circuit_u64, *sum_ref_u64,
                 "sum mismatch for exit {:?}",
-                exit_key
+                exit_key_u64
             );
         }
 
@@ -883,9 +948,9 @@ mod tests {
         let output1_felts: [F; 8] =
             core::array::from_fn(|i| F::from_canonical_u64(output1_vals_u32[i] as u64));
 
-        let exits_felts: [[F; 4]; 8] = EXIT_ACCOUNTS.map(limbs_u64_to_felts_be);
-        let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs_u64_to_felts_be);
-        let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs_u64_to_felts_be);
+        let exits_felts: [[F; 8]; 8] = EXIT_ACCOUNTS.map(limbs8_u64_to_felts);
+        let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs4_u64_to_felts);
+        let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs4_u64_to_felts);
 
         let block_numbers: [F; 8] = core::array::from_fn(|i| F::from_canonical_u64(i as u64));
         let asset_id = F::from_canonical_u64(TEST_ASSET_ID_U64);
@@ -900,7 +965,7 @@ mod tests {
                 volume_fee_bps,
                 nullifiers_felts[i],
                 exits_felts[i],
-                [F::ZERO; 4],
+                [F::ZERO; 8],
                 block_hashes_felts[i], // different block hash per proof -> should fail
                 block_numbers[i],      // different block number per proof -> should fail
             ));
@@ -938,9 +1003,9 @@ mod tests {
 
         let output_felts: [F; 8] = core::array::from_fn(|_| F::from_canonical_u64(1));
 
-        let exits_felts: [[F; 4]; 8] = EXIT_ACCOUNTS.map(limbs_u64_to_felts_be);
-        let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs_u64_to_felts_be);
-        let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs_u64_to_felts_be);
+        let exits_felts: [[F; 8]; 8] = EXIT_ACCOUNTS.map(limbs8_u64_to_felts);
+        let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs4_u64_to_felts);
+        let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs4_u64_to_felts);
 
         let block_numbers: [F; 8] = core::array::from_fn(|i| F::from_canonical_u64(i as u64));
         let volume_fee_bps = F::from_canonical_u64(TEST_VOLUME_FEE_BPS);
@@ -955,7 +1020,7 @@ mod tests {
                 volume_fee_bps,
                 nullifiers_felts[i],
                 exits_felts[i],
-                [F::ZERO; 4],
+                [F::ZERO; 8],
                 block_hashes_felts[i],
                 block_numbers[i],
             ));
@@ -992,9 +1057,9 @@ mod tests {
         let output_felts: [F; 8] =
             core::array::from_fn(|i| F::from_canonical_u64(output_vals_u32[i] as u64));
 
-        let exits_felts: [[F; 4]; 8] = EXIT_ACCOUNTS.map(limbs_u64_to_felts_be);
-        let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs_u64_to_felts_be);
-        let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs_u64_to_felts_be);
+        let exits_felts: [[F; 8]; 8] = EXIT_ACCOUNTS.map(limbs8_u64_to_felts);
+        let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs4_u64_to_felts);
+        let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs4_u64_to_felts);
 
         let num_real_proofs = 2usize;
 
@@ -1016,14 +1081,14 @@ mod tests {
                 volume_fee_bps,
                 nullifiers_felts[i],
                 exits_felts[i],
-                [F::ZERO; 4],
+                [F::ZERO; 8],
                 common_block_hash,
                 common_block_number,
             ));
         }
 
         // Dummy proofs: zero block hash + zero outputs + zero exits
-        let dummy_exit = [F::ZERO; 4];
+        let dummy_exit = [F::ZERO; 8];
         let dummy_block_hash = [F::ZERO; 4];
         for nullifier in nullifiers_felts.iter().skip(num_real_proofs) {
             pis_list.push(make_pi_from_felts(
@@ -1077,7 +1142,8 @@ mod tests {
         let block_num_circuit = pis[ROOT_BLOCK_NUMBER_IDX];
         assert_eq!(block_num_circuit, common_block_number);
 
-        let nullifier_region_start = ROOT_HEADER_LEN + (pis_list.len() * 2 * 5);
+        let nullifier_region_start =
+            ROOT_HEADER_LEN + (pis_list.len() * 2 * aggregated_output::EXIT_SLOT_LEN);
         for (i, nullifier) in nullifiers_felts.iter().enumerate().take(num_real_proofs) {
             let idx = nullifier_region_start + i * 4;
             let got = [pis[idx], pis[idx + 1], pis[idx + 2], pis[idx + 3]];

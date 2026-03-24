@@ -203,7 +203,7 @@ fn build_layer1_wrapper_constraints(
     for pis_i in l0_pi_targets.iter().take(n_inner) {
         for slot_idx in 0..l0_exit_slots_per_proof {
             let slot_base = exit_slots_start + slot_idx * l1c::L0_EXIT_SLOT_LEN;
-            // [sum(1), exit_account(4)]
+            // [sum(1), exit_account(8)]
             for j in 0..l1c::L0_EXIT_SLOT_LEN {
                 output_pis.push(pis_i[slot_base + j]);
             }
@@ -279,11 +279,18 @@ mod tests {
     }
 
     /// Build one leaf PI array in the Bitcoin-style 2-output layout.
+    ///
+    /// Layout (29 felts total):
+    /// - asset_id(1), output_amount_1(1), output_amount_2(1), volume_fee_bps(1)
+    /// - nullifier(4)
+    /// - exit_account_1(8) - 8 felts for collision-resistant encoding
+    /// - exit_account_2(8) - 8 felts for collision-resistant encoding
+    /// - block_hash(4), block_number(1)
     fn make_leaf_pi(
         amount1: u32,
         amount2: u32,
-        exit1: [u64; 4],
-        exit2: [u64; 4],
+        exit1: [u64; 8],
+        exit2: [u64; 8],
         nullifier: [u64; 4],
         block_hash: [u64; 4],
         block_number: u32,
@@ -297,16 +304,16 @@ mod tests {
         for j in 0..4 {
             out[4 + j] = F::from_canonical_u64(nullifier[j]);
         }
-        for j in 0..4 {
+        for j in 0..8 {
             out[8 + j] = F::from_canonical_u64(exit1[j]);
         }
-        for j in 0..4 {
-            out[12 + j] = F::from_canonical_u64(exit2[j]);
+        for j in 0..8 {
+            out[16 + j] = F::from_canonical_u64(exit2[j]);
         }
         for j in 0..4 {
-            out[16 + j] = F::from_canonical_u64(block_hash[j]);
+            out[24 + j] = F::from_canonical_u64(block_hash[j]);
         }
-        out[20] = F::from_canonical_u64(block_number as u64);
+        out[28] = F::from_canonical_u64(block_number as u64);
 
         out
     }
@@ -399,8 +406,8 @@ mod tests {
             make_leaf_pi(
                 100,
                 0,
-                [1, 2, 3, 4],
-                [0, 0, 0, 0],
+                [1, 2, 3, 4, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0],
                 [0x10, 0x11, 0x12, 0x13],
                 block_hash,
                 block_number,
@@ -412,8 +419,8 @@ mod tests {
             make_leaf_pi(
                 200,
                 50,
-                [5, 6, 7, 8],
-                [9, 10, 11, 12],
+                [5, 6, 7, 8, 0, 0, 0, 0],
+                [9, 10, 11, 12, 0, 0, 0, 0],
                 [0x20, 0x21, 0x22, 0x23],
                 block_hash,
                 block_number,
@@ -427,8 +434,8 @@ mod tests {
             make_leaf_pi(
                 300,
                 0,
-                [13, 14, 15, 16],
-                [0, 0, 0, 0],
+                [13, 14, 15, 16, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0],
                 [0x30, 0x31, 0x32, 0x33],
                 block_hash,
                 block_number,
@@ -440,8 +447,8 @@ mod tests {
             make_leaf_pi(
                 400,
                 100,
-                [17, 18, 19, 20],
-                [21, 22, 23, 24],
+                [17, 18, 19, 20, 0, 0, 0, 0],
+                [21, 22, 23, 24, 0, 0, 0, 0],
                 [0x40, 0x41, 0x42, 0x43],
                 block_hash,
                 block_number,
@@ -585,8 +592,8 @@ mod tests {
             make_leaf_pi(
                 100,
                 0,
-                [1, 2, 3, 4],
-                [0, 0, 0, 0],
+                [1, 2, 3, 4, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0],
                 [1, 2, 3, 4],
                 block_a,
                 block_number,
@@ -598,8 +605,8 @@ mod tests {
             make_leaf_pi(
                 200,
                 0,
-                [5, 6, 7, 8],
-                [0, 0, 0, 0],
+                [5, 6, 7, 8, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0],
                 [5, 6, 7, 8],
                 block_a,
                 block_number,
@@ -613,8 +620,8 @@ mod tests {
             make_leaf_pi(
                 300,
                 0,
-                [9, 10, 11, 12],
-                [0, 0, 0, 0],
+                [9, 10, 11, 12, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0],
                 [9, 10, 11, 12],
                 block_b,
                 block_number,
@@ -626,8 +633,8 @@ mod tests {
             make_leaf_pi(
                 400,
                 0,
-                [13, 14, 15, 16],
-                [0, 0, 0, 0],
+                [13, 14, 15, 16, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0],
                 [13, 14, 15, 16],
                 block_b,
                 block_number,

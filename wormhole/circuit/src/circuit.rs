@@ -220,7 +220,7 @@ pub mod circuit_logic {
     fn connect_shared_targets(targets: &CircuitTargets, builder: &mut CircuitBuilder<F, D>) {
         use crate::nullifier::NULLIFIER_SALT;
         use plonky2::hash::poseidon2::Poseidon2Hash;
-        use zk_circuits_common::utils::injective_string_to_felt;
+        use zk_circuits_common::utils::string_to_felts;
 
         // Secret (8 field elements each).
         for (&a, &b) in targets
@@ -241,11 +241,16 @@ pub mod circuit_logic {
             builder.connect(a, b);
         }
 
-        // to_account and unspendable_account must be the same
-        builder.connect_hashes(
-            targets.unspendable_account.account_id,
-            targets.storage_proof.leaf_inputs.to_account,
-        );
+        // to_account and unspendable_account must be the same (both are 8 felts)
+        for (&a, &b) in targets
+            .unspendable_account
+            .account_id
+            .elements
+            .iter()
+            .zip(&targets.storage_proof.leaf_inputs.to_account.elements)
+        {
+            builder.connect(a, b);
+        }
 
         // Dummy proof detection: requires BOTH block_hash == 0 AND output_amounts == 0.
         // This prevents an attacker from slipping funds through with a zero block hash
@@ -281,7 +286,7 @@ pub mod circuit_logic {
         // Nullifier validation: nullifier == H(H(salt + secret + transfer_count))
         // Skip this validation for dummy proofs (block_hash == 0 AND outputs == 0).
         // This allows dummy proofs to use random nullifiers for better privacy.
-        let salt_felts = injective_string_to_felt(NULLIFIER_SALT);
+        let salt_felts = string_to_felts(NULLIFIER_SALT);
         let mut nullifier_preimage = Vec::new();
         for &f in salt_felts.iter() {
             nullifier_preimage.push(builder.constant(f));

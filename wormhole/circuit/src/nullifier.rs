@@ -1,13 +1,13 @@
 use alloc::vec::Vec;
 use core::array;
 use core::mem::size_of;
-use zk_circuits_common::serialization::SAFE_DIGEST_NUM_FELTS;
-use zk_circuits_common::utils::digest_bytes_to_felts;
-use zk_circuits_common::utils::digest_felts_to_bytes;
+use zk_circuits_common::utils::bytes_to_digest;
+use zk_circuits_common::utils::digest_to_bytes;
+use zk_circuits_common::utils::digest_to_felts;
+use zk_circuits_common::utils::felts_to_digest;
 use zk_circuits_common::utils::felts_to_u64;
-use zk_circuits_common::utils::safe_digest_bytes_to_felts;
-use zk_circuits_common::utils::safe_digest_felts_to_bytes;
 use zk_circuits_common::utils::DIGEST_BYTES_LEN;
+use zk_circuits_common::utils::DIGEST_NUM_FELTS;
 use zk_circuits_common::utils::DIGEST_NUM_FIELD_ELEMENTS;
 use zk_circuits_common::utils::FELTS_PER_U128;
 use zk_circuits_common::utils::FELTS_PER_U64;
@@ -23,7 +23,7 @@ use plonky2::{
 };
 use zk_circuits_common::circuit::{CircuitFragment, D, F};
 use zk_circuits_common::codec::{ByteCodec, FieldElementCodec};
-use zk_circuits_common::utils::{injective_string_to_felt, u64_to_felts, BytesDigest, Digest};
+use zk_circuits_common::utils::{string_to_felts, u64_to_felts, BytesDigest, Digest};
 
 pub const SALT_BYTES_LEN: usize = 8;
 pub const NULLIFIER_SALT: &str = "~nullif~";
@@ -36,8 +36,8 @@ const _: () = {
     );
 };
 pub const SECRET_BYTES_LEN: usize = 32;
-/// Number of field elements for the secret (32 bytes with safe 4-bytes/felt encoding)
-pub const SECRET_NUM_TARGETS: usize = SAFE_DIGEST_NUM_FELTS; // 8
+/// Number of field elements for the secret (32 bytes with 4 bytes/felt encoding)
+pub const SECRET_NUM_TARGETS: usize = DIGEST_NUM_FELTS; // 8
 pub const SALT_NUM_TARGETS: usize = 3;
 pub const FUNDING_ACCOUNT_NUM_TARGETS: usize = FELTS_PER_U128;
 pub const TRANSFER_COUNT_NUM_TARGETS: usize = FELTS_PER_U64;
@@ -46,21 +46,22 @@ pub const PREIMAGE_NUM_TARGETS: usize =
 pub const NULLIFIER_SIZE_FELTS: usize =
     DIGEST_NUM_FIELD_ELEMENTS + SECRET_NUM_TARGETS + TRANSFER_COUNT_NUM_TARGETS;
 
-/// Type alias for the secret as a fixed-size array
+/// Type alias for the secret as a fixed-size array (8 field elements for 32 bytes)
 pub type Secret = [F; SECRET_NUM_TARGETS];
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Nullifier {
     pub hash: Digest,
-    /// Secret encoded with safe 4-bytes/felt encoding (8 field elements for 32 bytes)
+    /// Secret encoded with 4 bytes/felt (8 field elements for 32 bytes)
     pub secret: Secret,
     transfer_count: [F; TRANSFER_COUNT_NUM_TARGETS],
 }
 
 impl Nullifier {
     pub fn new(digest: BytesDigest, secret: BytesDigest, transfer_count: u64) -> Self {
-        let hash = digest_bytes_to_felts(digest);
-        // Use safe encoding (4 bytes/felt) for collision resistance
-        let secret = safe_digest_bytes_to_felts(secret);
+        let hash = bytes_to_digest(digest);
+        // Use 4 bytes/felt encoding for collision resistance
+        let secret = digest_to_felts(secret);
         let transfer_count = u64_to_felts(transfer_count);
 
         Self {
@@ -73,9 +74,9 @@ impl Nullifier {
     pub fn from_preimage(secret: BytesDigest, transfer_count: u64) -> Self {
         let mut preimage = Vec::new();
 
-        let salt = injective_string_to_felt(NULLIFIER_SALT);
-        // Use safe encoding (4 bytes/felt) for collision resistance
-        let secret_felts = safe_digest_bytes_to_felts(secret);
+        let salt = string_to_felts(NULLIFIER_SALT);
+        // Use 4 bytes/felt encoding for collision resistance
+        let secret_felts = digest_to_felts(secret);
         let transfer_count_felts = u64_to_felts(transfer_count);
 
         preimage.extend(salt);
@@ -97,8 +98,8 @@ impl Nullifier {
 impl ByteCodec for Nullifier {
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
-        bytes.extend(*digest_felts_to_bytes(self.hash));
-        bytes.extend(*safe_digest_felts_to_bytes(self.secret));
+        bytes.extend(*digest_to_bytes(self.hash));
+        bytes.extend(*felts_to_digest(self.secret));
         let transfer_count_uint = felts_to_u64(self.transfer_count).unwrap();
         bytes.extend(transfer_count_uint.to_le_bytes());
         bytes
@@ -123,7 +124,7 @@ impl ByteCodec for Nullifier {
         let digest = slice[offset..offset + hash_size].try_into().map_err(|e| {
             anyhow::anyhow!("Failed to deserialize nullifier hash with error: {:?}", e)
         })?;
-        let hash = digest_bytes_to_felts(digest);
+        let hash = bytes_to_digest(digest);
         offset += hash_size;
 
         // Deserialize secret (32 bytes -> 8 field elements)
@@ -133,7 +134,7 @@ impl ByteCodec for Nullifier {
                 .map_err(|e| {
                     anyhow::anyhow!("Failed to deserialize nullifier secret with error: {:?}", e)
                 })?;
-        let secret = safe_digest_bytes_to_felts(secret_bytes);
+        let secret = digest_to_felts(secret_bytes);
         offset += secret_size;
 
         // Deserialize transfer_count
@@ -215,7 +216,7 @@ impl From<&CircuitInputs> for Nullifier {
 #[derive(Debug, Clone)]
 pub struct NullifierTargets {
     pub hash: HashOutTarget,
-    /// Secret targets (8 field elements with safe 4-bytes/felt encoding)
+    /// Secret targets (8 field elements with 4 bytes/felt encoding)
     pub secret: [Target; SECRET_NUM_TARGETS],
     pub transfer_count: [Target; TRANSFER_COUNT_NUM_TARGETS],
 }
@@ -271,9 +272,9 @@ impl CircuitFragment for Nullifier {
 /// a conditional version in connect_shared_targets() to support dummy proofs.
 pub fn add_nullifier_validation(targets: &NullifierTargets, builder: &mut CircuitBuilder<F, D>) {
     use plonky2::hash::poseidon2::Poseidon2Hash;
-    use zk_circuits_common::utils::injective_string_to_felt;
+    use zk_circuits_common::utils::string_to_felts;
 
-    let salt_felts = injective_string_to_felt(NULLIFIER_SALT);
+    let salt_felts = string_to_felts(NULLIFIER_SALT);
     let mut nullifier_preimage = Vec::new();
     for &f in salt_felts.iter() {
         nullifier_preimage.push(builder.constant(f));

@@ -26,7 +26,7 @@ use std::{fs, path::Path};
 
 use zk_circuits_common::{
     circuit::{C, D, F},
-    utils::digest_bytes_to_felts,
+    utils::bytes_to_digest,
 };
 
 use crate::{
@@ -243,7 +243,7 @@ impl Layer1AggregationProver {
         let proofs = inputs.proofs;
         let aggregator_address = inputs.aggregator_address;
 
-        let aggregator_address_felts = digest_bytes_to_felts(aggregator_address);
+        let aggregator_address_felts = bytes_to_digest(aggregator_address);
 
         if proofs.len() != self.num_layer0_proofs {
             bail!(

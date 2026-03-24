@@ -113,6 +113,7 @@ pub fn range32<F: RichField + Extendable<D>, const D: usize>(
     b.range_check(x, 32);
 }
 
+/// Compare two 4-element arrays (e.g., hash outputs) for equality.
 #[inline]
 pub fn bytes_digest_eq<F: RichField + Extendable<D>, const D: usize>(
     b: &mut CircuitBuilder<F, D>,
@@ -129,6 +130,31 @@ pub fn bytes_digest_eq<F: RichField + Extendable<D>, const D: usize>(
     b.and(e01, e23)
 }
 
+/// Compare two 8-element arrays (e.g., account IDs with collision-resistant encoding) for equality.
+#[inline]
+pub fn account_eq<F: RichField + Extendable<D>, const D: usize>(
+    b: &mut CircuitBuilder<F, D>,
+    a: [Target; 8],
+    c: [Target; 8],
+) -> BoolTarget {
+    // limb-wise equality in the field
+    let e0 = b.is_equal(a[0], c[0]);
+    let e1 = b.is_equal(a[1], c[1]);
+    let e2 = b.is_equal(a[2], c[2]);
+    let e3 = b.is_equal(a[3], c[3]);
+    let e4 = b.is_equal(a[4], c[4]);
+    let e5 = b.is_equal(a[5], c[5]);
+    let e6 = b.is_equal(a[6], c[6]);
+    let e7 = b.is_equal(a[7], c[7]);
+    let e01 = b.and(e0, e1);
+    let e23 = b.and(e2, e3);
+    let e45 = b.and(e4, e5);
+    let e67 = b.and(e6, e7);
+    let e0123 = b.and(e01, e23);
+    let e4567 = b.and(e45, e67);
+    b.and(e0123, e4567)
+}
+
 #[inline]
 pub fn limbs4_at_offset<const LEAF_PI_LEN: usize, const KEY_OFFSET: usize>(
     pis: &[Target],
@@ -137,6 +163,25 @@ pub fn limbs4_at_offset<const LEAF_PI_LEN: usize, const KEY_OFFSET: usize>(
     let base = index * LEAF_PI_LEN + KEY_OFFSET;
     [pis[base], pis[base + 1], pis[base + 2], pis[base + 3]]
 }
+
+#[inline]
+pub fn limbs8_at_offset<const LEAF_PI_LEN: usize, const KEY_OFFSET: usize>(
+    pis: &[Target],
+    index: usize,
+) -> [Target; 8] {
+    let base = index * LEAF_PI_LEN + KEY_OFFSET;
+    [
+        pis[base],
+        pis[base + 1],
+        pis[base + 2],
+        pis[base + 3],
+        pis[base + 4],
+        pis[base + 5],
+        pis[base + 6],
+        pis[base + 7],
+    ]
+}
+
 #[inline]
 pub fn limb1_at_offset<const LEAF_PI_LEN: usize, const KEY_OFFSET: usize>(
     pis: &[Target],

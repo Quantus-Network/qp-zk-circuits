@@ -1,7 +1,6 @@
 use alloc::{string::String, vec::Vec};
 use plonky2::{
     field::goldilocks_field::GoldilocksField,
-    fri::{FriConfig, FriReductionStrategy},
     iop::witness::PartialWitness,
     plonk::{
         circuit_builder::CircuitBuilder, circuit_data::CircuitConfig,
@@ -28,18 +27,7 @@ pub struct TransferProofJson {
 /// Uses reduced security parameters (82-bit vs 100-bit) for faster proving
 /// while maintaining sufficient security for the wormhole use case.
 pub fn wormhole_circuit_config() -> CircuitConfig {
-    CircuitConfig {
-        zero_knowledge: true,
-        security_bits: 82,
-        fri_config: FriConfig {
-            rate_bits: 3,
-            cap_height: 4,
-            proof_of_work_bits: 16,
-            reduction_strategy: FriReductionStrategy::ConstantArityBits(4, 5),
-            num_query_rounds: 22,
-        },
-        ..CircuitConfig::standard_recursion_config()
-    }
+    CircuitConfig::standard_recursion_zk_config()
 }
 
 pub trait CircuitFragment {

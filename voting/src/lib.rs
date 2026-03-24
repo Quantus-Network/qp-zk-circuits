@@ -295,7 +295,7 @@ mod voting_tests {
     };
     use zk_circuits_common::{
         circuit::C,
-        utils::{digest_bytes_to_felts, BytesDigest},
+        utils::{bytes_to_digest, BytesDigest},
     };
 
     fn compute_nullifier(private_key: &PrivateKey, proposal_id: &Digest) -> Digest {
@@ -315,7 +315,7 @@ mod voting_tests {
         ];
         let leaves: Vec<Digest> = private_keys_for_tree
             .iter()
-            .map(|bytes| Poseidon2Hash::hash_no_pad(&digest_bytes_to_felts(*bytes)).elements)
+            .map(|bytes| Poseidon2Hash::hash_no_pad(&bytes_to_digest(*bytes)).elements)
             .collect();
 
         // Build the Merkle tree level by level
@@ -340,13 +340,13 @@ mod voting_tests {
         }
 
         let root = current_level[0];
-        let voter_private_key: PrivateKey = digest_bytes_to_felts(private_keys_for_tree[0]);
+        let voter_private_key: PrivateKey = bytes_to_digest(private_keys_for_tree[0]);
         let merkle_siblings: Vec<Digest> = vec![leaves[1], merkle_tree[1][1]];
         let path_indices: Vec<bool> = vec![false, false];
         let actual_merkle_depth = 2;
 
         let digest_bytes = BytesDigest::try_from([42u8; 32]).unwrap();
-        let proposal_id: Digest = digest_bytes_to_felts(digest_bytes);
+        let proposal_id: Digest = bytes_to_digest(digest_bytes);
         let vote = true;
         let nullifier = compute_nullifier(&voter_private_key, &proposal_id);
 
@@ -367,8 +367,8 @@ mod voting_tests {
     }
 
     fn create_max_depth_inputs() -> VoteCircuitData {
-        let private_key = digest_bytes_to_felts(BytesDigest::try_from([9u8; 32]).unwrap());
-        let proposal_id = digest_bytes_to_felts(BytesDigest::try_from([7u8; 32]).unwrap());
+        let private_key = bytes_to_digest(BytesDigest::try_from([9u8; 32]).unwrap());
+        let proposal_id = bytes_to_digest(BytesDigest::try_from([7u8; 32]).unwrap());
         let vote = true;
 
         let mut current = Poseidon2Hash::hash_no_pad(&private_key).elements;

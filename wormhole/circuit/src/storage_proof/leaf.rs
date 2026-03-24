@@ -2,24 +2,30 @@ use alloc::vec::Vec;
 use core::array;
 use plonky2::field::types::Field;
 use plonky2::hash::poseidon2::hash_no_pad_bytes;
-use plonky2::{
-    hash::hash_types::HashOutTarget, iop::target::Target, plonk::circuit_builder::CircuitBuilder,
-};
+use plonky2::iop::target::Target;
+use plonky2::plonk::circuit_builder::CircuitBuilder;
 
 use crate::inputs::CircuitInputs;
-use crate::substrate_account::SubstrateAccount;
+use crate::substrate_account::{AccountTargets, SubstrateAccount};
 use zk_circuits_common::circuit::{D, F};
 use zk_circuits_common::codec::ByteCodec;
-use zk_circuits_common::utils::{u64_to_felts, BytesDigest, FELTS_PER_U64};
+use zk_circuits_common::utils::{u64_to_felts, BytesDigest, DIGEST_NUM_FELTS, FELTS_PER_U64};
 
-pub const NUM_LEAF_INPUT_FELTS: usize = 12;
+/// Number of field elements in the leaf preimage:
+/// - 1 (asset_id)
+/// - 2 (transfer_count as u64)
+/// - 8 (funding_account, 4 bytes/felt)
+/// - 8 (to_account, 4 bytes/felt)
+/// - 1 (input_amount)
+/// Total: 20
+pub const NUM_LEAF_INPUT_FELTS: usize = 1 + FELTS_PER_U64 + DIGEST_NUM_FELTS + DIGEST_NUM_FELTS + 1;
 
 #[derive(Debug, Clone)]
 pub struct LeafTargets {
     pub asset_id: Target,
     pub transfer_count: [Target; FELTS_PER_U64],
-    pub funding_account: HashOutTarget,
-    pub to_account: HashOutTarget,
+    pub funding_account: AccountTargets,
+    pub to_account: AccountTargets,
     /// The input amount from storage (private). This is what's stored in the merkle trie.
     pub input_amount: Target,
     /// The first output amount after fee deduction (public). Spend destination.
@@ -40,8 +46,8 @@ impl LeafTargets {
         let volume_fee_bps = builder.add_virtual_public_input();
         // Private inputs
         let transfer_count = array::from_fn(|_| builder.add_virtual_target());
-        let funding_account = builder.add_virtual_hash();
-        let to_account = builder.add_virtual_hash();
+        let funding_account = AccountTargets::new(builder);
+        let to_account = AccountTargets::new(builder);
         let input_amount = builder.add_virtual_target(); // Private - not a public input
 
         Self {

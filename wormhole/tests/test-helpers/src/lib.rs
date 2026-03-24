@@ -12,7 +12,7 @@ use wormhole_circuit::{
     storage_proof::ProcessedStorageProof,
     unspendable_account::UnspendableAccount,
 };
-use zk_circuits_common::utils::{digest_felts_to_bytes, BytesDigest};
+use zk_circuits_common::utils::{digest_to_bytes, felts_to_digest, BytesDigest};
 
 pub const DEFAULT_SECRETS: [&str; 2] = [
     "4c8587bd422e01d961acdc75e7d66f6761b7af7c9b1864a492f369c9d6724f05",
@@ -66,11 +66,10 @@ impl TestInputs for CircuitInputs {
             .unwrap();
 
         let funding_account = BytesDigest::try_from(DEFAULT_FUNDING_ACCOUNT).unwrap();
-        let nullifier = digest_felts_to_bytes(
-            Nullifier::from_preimage(secret, DEFAULT_TRANSFER_COUNTS[0]).hash,
-        );
+        let nullifier =
+            digest_to_bytes(Nullifier::from_preimage(secret, DEFAULT_TRANSFER_COUNTS[0]).hash);
         let unspendable_account =
-            digest_felts_to_bytes(UnspendableAccount::from_secret(secret).account_id);
+            felts_to_digest(UnspendableAccount::from_secret(secret).account_id);
         let exit_account = BytesDigest::try_from(DEFAULT_EXIT_ACCOUNT).unwrap();
 
         let storage_proof = ProcessedStorageProof::test_inputs_0();
@@ -111,11 +110,10 @@ impl TestInputs for CircuitInputs {
             .unwrap();
 
         let funding_account = BytesDigest::try_from(DEFAULT_FUNDING_ACCOUNT).unwrap();
-        let nullifier = digest_felts_to_bytes(
-            Nullifier::from_preimage(secret, DEFAULT_TRANSFER_COUNTS[1]).hash,
-        );
+        let nullifier =
+            digest_to_bytes(Nullifier::from_preimage(secret, DEFAULT_TRANSFER_COUNTS[1]).hash);
         let unspendable_account =
-            digest_felts_to_bytes(UnspendableAccount::from_secret(secret).account_id);
+            felts_to_digest(UnspendableAccount::from_secret(secret).account_id);
         let exit_account = BytesDigest::try_from(DEFAULT_EXIT_ACCOUNT).unwrap();
 
         let storage_proof = ProcessedStorageProof::test_inputs_1();
