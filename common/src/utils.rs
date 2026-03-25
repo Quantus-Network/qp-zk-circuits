@@ -22,7 +22,10 @@ pub const BIT_32_LIMB_MASK: u64 = 0xFFFF_FFFF;
 
 /// Poseidon2 hash output: 4 field elements (each holding 8 bytes).
 pub type Digest = [F; DIGEST_NUM_FIELD_ELEMENTS];
-pub type PrivateKey = [F; 4];
+
+/// Private key: 8 field elements (4 bytes per felt for collision-resistant encoding).
+/// Used for user-controlled secrets that need protection against collision attacks.
+pub type PrivateKey = [F; DIGEST_NUM_FELTS];
 
 /// Account ID: 8 field elements (4 bytes per felt for 32 bytes total).
 /// Used for substrate accounts where collision resistance is critical.

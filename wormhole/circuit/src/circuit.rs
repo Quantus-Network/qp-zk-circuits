@@ -37,6 +37,7 @@ pub mod circuit_logic {
     use crate::substrate_account::{DualExitAccount, DualExitAccountTargets};
     use crate::unspendable_account::{UnspendableAccount, UnspendableAccountTargets};
     use plonky2::{
+        field::types::Field,
         plonk::circuit_data::{CircuitData, ProverCircuitData, VerifierCircuitData},
         plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig},
     };
@@ -321,12 +322,15 @@ pub mod circuit_logic {
         }
 
         // The state_root from the block_header must be the same as the root_hash for the storage_proof.
+        // state_root is 8 felts (4 bytes/felt), root_hash is 4 felts (8 bytes/felt).
+        // Convert state_root to 4 felts by combining adjacent pairs: combined = low + high * 2^32
         // Skip this validation for dummy proofs (block_hash == 0 AND outputs == 0).
+        let two_pow_32 = builder.constant(F::from_canonical_u64(1u64 << 32));
         for i in 0..4 {
-            let diff = builder.sub(
-                targets.block_header.header.state_root.elements[i],
-                targets.storage_proof.root_hash.elements[i],
-            );
+            let low = targets.block_header.header.state_root[i * 2];
+            let high = targets.block_header.header.state_root[i * 2 + 1];
+            let combined = builder.mul_add(high, two_pow_32, low);
+            let diff = builder.sub(combined, targets.storage_proof.root_hash.elements[i]);
             let result = builder.mul(diff, is_not_dummy);
             builder.connect(result, zero);
         }

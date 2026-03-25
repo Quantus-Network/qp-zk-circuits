@@ -1,14 +1,12 @@
 use alloc::vec::Vec;
 use core::array;
 use plonky2::{
-    field::types::Field,
-    hash::{hash_types::HashOutTarget, poseidon2::hash_no_pad_bytes},
-    iop::target::Target,
+    field::types::Field, hash::poseidon2::hash_no_pad_bytes, iop::target::Target,
     plonk::circuit_builder::CircuitBuilder,
 };
 use zk_circuits_common::{
     circuit::{D, F},
-    utils::{bytes_to_digest, bytes_to_felts, BytesDigest, Digest},
+    utils::{bytes_to_felts, digest_to_felts, AccountId, BytesDigest, DIGEST_NUM_FELTS},
 };
 
 use crate::inputs::CircuitInputs;
@@ -20,10 +18,13 @@ const DIGEST_LOGS_FELTS: usize = 28;
 
 #[derive(Debug, Clone)]
 pub struct HeaderTargets {
-    pub parent_hash: HashOutTarget,
+    /// parent_hash uses 8 felts (4 bytes/felt) for collision-resistant encoding
+    pub parent_hash: [Target; DIGEST_NUM_FELTS],
     pub block_number: Target,
-    pub state_root: HashOutTarget,
-    pub extrinsics_root: HashOutTarget,
+    /// state_root uses 8 felts (4 bytes/felt) for collision-resistant encoding
+    pub state_root: [Target; DIGEST_NUM_FELTS],
+    /// extrinsics_root uses 8 felts (4 bytes/felt) for collision-resistant encoding
+    pub extrinsics_root: [Target; DIGEST_NUM_FELTS],
     pub digest: [Target; DIGEST_LOGS_FELTS],
 }
 
@@ -33,20 +34,29 @@ impl HeaderTargets {
             // parent_hash is a private input -- it contributes to block_hash computation
             // but does not need to be exposed as a public input since block_hash already
             // commits to it (block_hash = H(parent_hash || block_number || ...)).
-            parent_hash: builder.add_virtual_hash(),
+            // Uses 8 felts (4 bytes/felt) for collision-resistant encoding.
+            parent_hash: builder
+                .add_virtual_targets(DIGEST_NUM_FELTS)
+                .try_into()
+                .unwrap(),
             block_number: builder.add_virtual_public_input(),
-            state_root: builder.add_virtual_hash(),
-            extrinsics_root: builder.add_virtual_hash(),
+            state_root: builder
+                .add_virtual_targets(DIGEST_NUM_FELTS)
+                .try_into()
+                .unwrap(),
+            extrinsics_root: builder
+                .add_virtual_targets(DIGEST_NUM_FELTS)
+                .try_into()
+                .unwrap(),
             digest: array::from_fn(|_| builder.add_virtual_target()),
         }
     }
     pub fn collect_to_vec(&self) -> Vec<Target> {
         self.parent_hash
-            .elements
             .iter()
             .chain(core::iter::once(&self.block_number))
-            .chain(self.state_root.elements.iter())
-            .chain(self.extrinsics_root.elements.iter())
+            .chain(self.state_root.iter())
+            .chain(self.extrinsics_root.iter())
             .chain(self.digest.iter())
             .cloned()
             .collect()
@@ -55,10 +65,13 @@ impl HeaderTargets {
 
 #[derive(Debug)]
 pub struct HeaderInputs {
-    pub parent_hash: Digest,
+    /// parent_hash uses 8 felts (4 bytes/felt) for collision-resistant encoding
+    pub parent_hash: AccountId,
     pub block_number: F,
-    pub state_root: Digest,
-    pub extrinsics_root: Digest,
+    /// state_root uses 8 felts (4 bytes/felt) for collision-resistant encoding
+    pub state_root: AccountId,
+    /// extrinsics_root uses 8 felts (4 bytes/felt) for collision-resistant encoding
+    pub extrinsics_root: AccountId,
     pub digest: [F; DIGEST_LOGS_FELTS],
 }
 
@@ -71,10 +84,11 @@ impl HeaderInputs {
         digest: &[u8; DIGEST_LOGS_SIZE],
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            parent_hash: bytes_to_digest(parent_hash),
+            // Use 4 bytes/felt encoding for collision-resistant block header hashing
+            parent_hash: digest_to_felts(parent_hash),
             block_number: F::from_noncanonical_u64(block_number as u64),
-            state_root: bytes_to_digest(state_root),
-            extrinsics_root: bytes_to_digest(extrinsics_root),
+            state_root: digest_to_felts(state_root),
+            extrinsics_root: digest_to_felts(extrinsics_root),
             digest: bytes_to_felts(digest).try_into().unwrap(),
         })
     }

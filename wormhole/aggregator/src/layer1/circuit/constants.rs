@@ -57,7 +57,7 @@ pub const fn l0_pi_len(layer0_num_leaves: usize) -> usize {
 // Layer-1 aggregated proof PI layout (output of layer-1 circuit)
 // -----------------------------------------------------------------------------
 //
-// [ aggregator_address(4),
+// [ aggregator_address(8),  <-- 8 felts for collision-resistant account encoding
 //   asset_id(1),
 //   volume_fee_bps(1),
 //   block_hash(4),
@@ -68,14 +68,15 @@ pub const fn l0_pi_len(layer0_num_leaves: usize) -> usize {
 // ]
 // -----------------------------------------------------------------------------
 
-pub const AGGREGATOR_ADDRESS_START: usize = 0; // 4 felts
-pub const ASSET_ID_START: usize = 4;
-pub const VOLUME_FEE_BPS_START: usize = 5;
-pub const BLOCK_HASH_START: usize = 6; // 4 felts
-pub const BLOCK_NUMBER_START: usize = 10;
-pub const TOTAL_EXIT_SLOTS_START: usize = 11;
+pub const AGGREGATOR_ADDRESS_LEN: usize = 8; // 8 felts for collision-resistant encoding
+pub const AGGREGATOR_ADDRESS_START: usize = 0;
+pub const ASSET_ID_START: usize = AGGREGATOR_ADDRESS_START + AGGREGATOR_ADDRESS_LEN; // 8
+pub const VOLUME_FEE_BPS_START: usize = ASSET_ID_START + 1; // 9
+pub const BLOCK_HASH_START: usize = VOLUME_FEE_BPS_START + 1; // 10, 4 felts
+pub const BLOCK_NUMBER_START: usize = BLOCK_HASH_START + 4; // 14
+pub const TOTAL_EXIT_SLOTS_START: usize = BLOCK_NUMBER_START + 1; // 15
 
-pub const L1_HEADER_LEN: usize = 12; // 4 + 1 + 1 + 4 + 1 + 1
+pub const L1_HEADER_LEN: usize = TOTAL_EXIT_SLOTS_START + 1; // 16 = 8 + 1 + 1 + 4 + 1 + 1
 
 #[inline]
 pub const fn l1_total_exit_slots(n_inner: usize, layer0_num_leaves: usize) -> usize {
