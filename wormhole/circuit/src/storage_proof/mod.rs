@@ -13,6 +13,7 @@ use crate::{
 };
 use zk_circuits_common::{
     circuit::{CircuitFragment, D, F},
+    storage_proof::PROOF_NODE_MAX_SIZE_F,
     utils::{bytes_to_digest, bytes_to_felts, BytesDigest, BYTES_PER_FELT},
 };
 // Re-export ProcessedStorageProof for convenience
@@ -28,11 +29,7 @@ pub const MAX_PROOF_LEN: usize = zk_circuits_common::storage_proof::STORAGE_PROO
 /// Maximum number of actual trie nodes allowed in a Wormhole storage proof.
 pub const MAX_SUPPORTED_PROOF_LEN: usize =
     zk_circuits_common::storage_proof::MAX_STORAGE_PROOF_NODES;
-/// Maximum proof node size in field elements.
-/// With injective encoding (4 bytes/felt + terminator), 130 felts supports ~516 bytes.
-/// This must be large enough for the largest trie node in a valid storage proof.
-pub const PROOF_NODE_MAX_SIZE_F: usize = 130;
-pub const PROOF_NODE_MAX_SIZE_B: usize = 516;
+
 pub const FELTS_PER_AMOUNT: usize = 2;
 const EMPTY_PROOF_NODE: [F; PROOF_NODE_MAX_SIZE_F] = [F::ZERO; PROOF_NODE_MAX_SIZE_F];
 

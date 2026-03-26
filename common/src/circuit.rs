@@ -22,10 +22,7 @@ pub struct TransferProofJson {
     pub indices: Vec<usize>,
 }
 
-/// Circuit config optimized for wormhole proofs.
-///
-/// Uses reduced security parameters (82-bit vs 100-bit) for faster proving
-/// while maintaining sufficient security for the wormhole use case.
+/// Circuit config is standard plonky2 zk config
 pub fn wormhole_circuit_config() -> CircuitConfig {
     CircuitConfig::standard_recursion_zk_config()
 }

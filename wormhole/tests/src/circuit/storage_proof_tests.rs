@@ -3,13 +3,12 @@ use std::panic;
 use wormhole_circuit::{
     storage_proof::{
         leaf::LeafInputs, ProcessedStorageProof, StorageProof, StorageProofTargets, MAX_PROOF_LEN,
-        PROOF_NODE_MAX_SIZE_F,
     },
     substrate_account::SubstrateAccount,
 };
 use zk_circuits_common::{
     circuit::{CircuitFragment, C, D, F},
-    storage_proof::hash_node_with_poseidon_padded,
+    storage_proof::{hash_node_with_poseidon_padded, PROOF_NODE_MAX_SIZE_F},
     utils::{bytes_to_digest, u64_to_felts},
 };
 
