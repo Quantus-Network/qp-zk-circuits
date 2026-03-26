@@ -8,7 +8,6 @@ use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::utils::Digest;
 
 use crate::layer1::circuit::circuit_logic::Layer1AggregationCircuitTargets;
-use crate::layer1::circuit::constants::AGGREGATOR_ADDRESS_LEN;
 
 /// Fill a partial witness for the layer-1 aggregation circuit.
 ///
@@ -29,8 +28,12 @@ pub fn fill_layer1_aggregation_witness(
     }
 
     // Set aggregator address (4 felts, 8 bytes/felt)
-    for i in 0..AGGREGATOR_ADDRESS_LEN {
-        pw.set_target(targets.aggregator_address[i], aggregator_address[i])?;
+    for (target, value) in targets
+        .aggregator_address
+        .iter()
+        .zip(aggregator_address.iter())
+    {
+        pw.set_target(*target, *value)?;
     }
     pw.set_verifier_data_target(&targets.layer0_verifier_data, layer0_verifier_only)?;
 

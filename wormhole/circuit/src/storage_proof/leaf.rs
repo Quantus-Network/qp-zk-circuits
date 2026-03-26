@@ -18,7 +18,7 @@ use zk_circuits_common::utils::{
 /// - 4 (funding_account, 8 bytes/felt)
 /// - 4 (to_account, 8 bytes/felt)
 /// - 1 (input_amount)
-/// Total: 12
+///   Total: 12
 ///
 /// Note: Both accounts use 4 felts (8 bytes/felt) to match on-chain poseidon hashing.
 /// Collision resistance is provided by the storage proof verification.

@@ -128,8 +128,8 @@ fn unspendable_account_codec() {
     // Encode the account as field elements and compare.
     let field_elements = account.to_field_elements();
     assert_eq!(field_elements.len(), 12); // 4 account_id + 8 secret
-    for i in 0..12 {
-        assert_eq!(field_elements[i], F::from_noncanonical_u64((i + 1) as u64));
+    for (i, elem) in field_elements.iter().enumerate() {
+        assert_eq!(*elem, F::from_noncanonical_u64((i + 1) as u64));
     }
 
     // Decode the field elements back into an UnspendableAccount

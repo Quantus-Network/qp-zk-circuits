@@ -181,9 +181,9 @@ impl CircuitFragment for UnspendableAccount {
     ///
     /// The circuit computes the hash (4 felts) and directly compares with account_id (also 4 felts).
     fn circuit(
-        &Self::Targets {
-            ref account_id,
-            ref secret,
+        Self::Targets {
+            account_id,
+            secret,
         }: &Self::Targets,
         builder: &mut CircuitBuilder<F, D>,
     ) {
