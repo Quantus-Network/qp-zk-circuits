@@ -241,7 +241,7 @@ pub mod circuit_logic {
             builder.connect(a, b);
         }
 
-        // to_account and unspendable_account must be the same (both are 8 felts)
+        // to_account and unspendable_account must be the same (both are 4 felts)
         for (&a, &b) in targets
             .unspendable_account
             .account_id

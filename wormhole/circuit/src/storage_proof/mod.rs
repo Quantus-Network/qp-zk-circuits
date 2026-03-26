@@ -328,11 +328,11 @@ impl CircuitFragment for StorageProof {
         )?;
         pw.set_target_arr(
             &targets.leaf_inputs.funding_account.elements,
-            &self.leaf_inputs.funding_account.0,
+            &self.leaf_inputs.funding_account,
         )?;
         pw.set_target_arr(
             &targets.leaf_inputs.to_account.elements,
-            &self.leaf_inputs.to_account.0,
+            &self.leaf_inputs.to_account,
         )?;
         pw.set_target(
             targets.leaf_inputs.input_amount,

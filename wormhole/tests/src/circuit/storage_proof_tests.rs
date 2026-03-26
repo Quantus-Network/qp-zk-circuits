@@ -142,11 +142,11 @@ fn fill_targets_unchecked(
     )?;
     pw.set_target_arr(
         &targets.leaf_inputs.funding_account.elements,
-        &storage_proof.leaf_inputs.funding_account.0,
+        &storage_proof.leaf_inputs.funding_account,
     )?;
     pw.set_target_arr(
         &targets.leaf_inputs.to_account.elements,
-        &storage_proof.leaf_inputs.to_account.0,
+        &storage_proof.leaf_inputs.to_account,
     )?;
     pw.set_target(
         targets.leaf_inputs.input_amount,
@@ -263,7 +263,7 @@ fn invalid_exit_address() {
     let mut leaf_inputs = LeafInputs::test_inputs_0();
 
     // Alter the to account.
-    leaf_inputs.to_account = SubstrateAccount::new(&[0; 32]).unwrap();
+    leaf_inputs.to_account = *SubstrateAccount::new(&[0; 32]).unwrap();
 
     let proof = StorageProof::new(
         &proof,

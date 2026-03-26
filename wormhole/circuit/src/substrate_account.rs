@@ -74,6 +74,10 @@ impl From<BytesDigest> for SubstrateAccount {
     }
 }
 
+// ============================================================================
+// AccountTargets - Hash output encoding (4 felts) for exit accounts
+// ============================================================================
+
 /// Targets for a substrate account (4 field elements).
 #[derive(Debug, Clone, Copy)]
 pub struct AccountTargets {

@@ -953,7 +953,7 @@ dependencies = [
 [[package]]
 name = "qp-poseidon-core"
 version = "1.2.0"
-source = "git+https://github.com/Quantus-Network/qp-poseidon.git?branch=illuzen%2Finjective-to-felts#2d1c5431d7797deb482841e5fce295fa0849103d"
+source = "git+https://github.com/Quantus-Network/qp-poseidon.git?branch=illuzen%2Finjective-to-felts#3a5fca350193a0d76f19699b01d23895df3261e0"
 dependencies = [
  "p3-field",
  "p3-goldilocks",
