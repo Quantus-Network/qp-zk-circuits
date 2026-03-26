@@ -13,7 +13,7 @@ qp-plonky2 = { workspace = true, features = ["default"] }
 qp-poseidon = { version = "1.1.0", features = ["default"] }
 qp-poseidon-core = { workspace = true, default-features = false }
 qp-wormhole-inputs = { version = "1.1.1", path = "../inputs" }
-quantus-cli = { path = "../../../quantus-cli", default-features = false }
+quantus-cli = { git = "https://github.com/Quantus-Network/quantus-cli.git", branch = "illuzen/new-poseidon-api", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["alloc"] }
 sp-core = "39.0.0"

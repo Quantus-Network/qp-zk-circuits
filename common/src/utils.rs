@@ -10,27 +10,18 @@ use plonky2::hash::hash_types::HashOut;
 pub use qp_wormhole_inputs::{BytesDigest, DigestError, DIGEST_BYTES_LEN};
 
 // Re-export serialization constants
-pub use crate::serialization::{DIGEST_NUM_FELTS, FELTS_PER_U128, FELTS_PER_U64, POSEIDON2_OUTPUT};
+pub use crate::serialization::{FELTS_PER_U128, FELTS_PER_U64, POSEIDON2_OUTPUT};
+
+/// Number of felts for injective (collision-resistant) encoding of 32 bytes (4 bytes/felt).
+pub const INJECTIVE_DIGEST_NUM_FELTS: usize = 8;
 
 pub const BYTES_PER_FELT: usize = 4;
 
-/// Number of field elements for Poseidon2 hash output (the Digest type uses 4 felts).
-pub const DIGEST_NUM_FIELD_ELEMENTS: usize = POSEIDON2_OUTPUT;
-
-pub const ZERO_DIGEST: Digest = [F::ZERO; DIGEST_NUM_FIELD_ELEMENTS];
+pub const ZERO_DIGEST: Digest = [F::ZERO; POSEIDON2_OUTPUT];
 pub const BIT_32_LIMB_MASK: u64 = 0xFFFF_FFFF;
 
 /// Poseidon2 hash output: 4 field elements (each holding 8 bytes).
-pub type Digest = [F; DIGEST_NUM_FIELD_ELEMENTS];
-
-/// Private key: 8 field elements (4 bytes per felt for collision-resistant encoding).
-/// Used for user-controlled secrets that need protection against collision attacks.
-pub type PrivateKey = [F; DIGEST_NUM_FELTS];
-
-/// Account ID: 8 field elements (4 bytes per felt for 32 bytes total).
-/// Used for substrate accounts where collision resistance is critical.
-pub type AccountId = [F; DIGEST_NUM_FELTS];
-pub const ZERO_ACCOUNT_ID: AccountId = [F::ZERO; DIGEST_NUM_FELTS];
+pub type Digest = [F; POSEIDON2_OUTPUT];
 
 // ============================================================================
 // Conversion functions - delegating to local serialization module
@@ -69,7 +60,7 @@ pub fn felts_to_bytes(input: &[F]) -> Result<Vec<u8>, String> {
 
 /// Convert BytesDigest to 8 field elements (4 bytes/felt).
 /// Use for secrets/preimages where collision resistance matters.
-pub fn digest_to_felts(input: BytesDigest) -> [F; DIGEST_NUM_FELTS] {
+pub fn digest_to_felts(input: BytesDigest) -> [F; INJECTIVE_DIGEST_NUM_FELTS] {
     serialization::digest_to_felts(&input)
 }
 
@@ -77,7 +68,7 @@ pub fn digest_to_felts(input: BytesDigest) -> [F; DIGEST_NUM_FELTS] {
 ///
 /// Uses `new_unchecked` because the 4-bytes-per-felt encoding produces bytes
 /// that may not pass the 8-byte chunk validation (e.g., adjacent 0xFFFFFFFF values).
-pub fn felts_to_digest(input: [F; DIGEST_NUM_FELTS]) -> BytesDigest {
+pub fn felts_to_digest(input: [F; INJECTIVE_DIGEST_NUM_FELTS]) -> BytesDigest {
     let bytes: [u8; DIGEST_BYTES_LEN] = serialization::felts_to_digest(&input);
     BytesDigest::new_unchecked(bytes)
 }
@@ -100,24 +91,11 @@ pub fn try_4_felts_to_bytes(value: &[F]) -> anyhow::Result<BytesDigest> {
     let digest: Digest = value.try_into().map_err(|_| {
         anyhow!(
             "failed to deserialize bytes from 4 field elements. Expected length {}, got {}",
-            DIGEST_NUM_FIELD_ELEMENTS,
+            POSEIDON2_OUTPUT,
             value.len()
         )
     })?;
     Ok(digest_to_bytes(digest))
-}
-
-/// Try to convert a slice of 8 field elements to BytesDigest (4 bytes/felt).
-/// Use for account IDs and other 32-byte data that uses collision-resistant encoding.
-pub fn try_8_felts_to_bytes(value: &[F]) -> anyhow::Result<BytesDigest> {
-    let account: [F; DIGEST_NUM_FELTS] = value.try_into().map_err(|_| {
-        anyhow!(
-            "failed to deserialize bytes from 8 field elements. Expected length {}, got {}",
-            DIGEST_NUM_FELTS,
-            value.len()
-        )
-    })?;
-    Ok(felts_to_digest(account))
 }
 
 pub fn felts_to_hashout(felts: &[F; 4]) -> HashOut<F> {

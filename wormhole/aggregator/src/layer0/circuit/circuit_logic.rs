@@ -29,7 +29,7 @@ use plonky2::{
 
 use zk_circuits_common::{
     circuit::{C, D, F},
-    gadgets::{account_eq, bytes_digest_eq, limb1_at_offset, limbs4_at_offset, limbs8_at_offset},
+    gadgets::{bytes_digest_eq, limb1_at_offset, limbs4_at_offset},
 };
 
 use super::constants::{
@@ -230,13 +230,13 @@ fn build_layer0_wrapper_constraints(
 
     let num_exit_slots = n_leaf * 2;
 
-    let get_exit_and_amount = |proof_idx: usize, output_idx: usize| -> ([Target; 8], Target) {
+    let get_exit_and_amount = |proof_idx: usize, output_idx: usize| -> ([Target; 4], Target) {
         let pis = leaf_pi_targets[proof_idx];
 
         let exit = if output_idx == 0 {
-            limbs8_at_offset::<LEAF_PI_LEN, EXIT_1_START>(pis, 0)
+            limbs4_at_offset::<LEAF_PI_LEN, EXIT_1_START>(pis, 0)
         } else {
-            limbs8_at_offset::<LEAF_PI_LEN, EXIT_2_START>(pis, 0)
+            limbs4_at_offset::<LEAF_PI_LEN, EXIT_2_START>(pis, 0)
         };
 
         let amount = if output_idx == 0 {
@@ -260,7 +260,7 @@ fn build_layer0_wrapper_constraints(
             let earlier_output_idx = earlier % 2;
             let (exit_earlier, _) = get_exit_and_amount(earlier_proof_idx, earlier_output_idx);
 
-            let matches_earlier = account_eq(builder, exit_earlier, exit_slot);
+            let matches_earlier = bytes_digest_eq(builder, exit_earlier, exit_slot);
             is_duplicate = builder.or(is_duplicate, matches_earlier);
         }
 
@@ -271,7 +271,7 @@ fn build_layer0_wrapper_constraints(
             let j_output_idx = j % 2;
             let (exit_j, amount_j) = get_exit_and_amount(j_proof_idx, j_output_idx);
 
-            let matches = account_eq(builder, exit_j, exit_slot);
+            let matches = bytes_digest_eq(builder, exit_j, exit_slot);
             let conditional_amount = builder.select(matches, amount_j, zero);
             acc = builder.add(acc, conditional_amount);
         }
@@ -283,10 +283,6 @@ fn build_layer0_wrapper_constraints(
             builder.select(is_duplicate, zero, exit_slot[1]),
             builder.select(is_duplicate, zero, exit_slot[2]),
             builder.select(is_duplicate, zero, exit_slot[3]),
-            builder.select(is_duplicate, zero, exit_slot[4]),
-            builder.select(is_duplicate, zero, exit_slot[5]),
-            builder.select(is_duplicate, zero, exit_slot[6]),
-            builder.select(is_duplicate, zero, exit_slot[7]),
         ];
 
         // Range check final sum to 32 bits (u32::MAX > the max possible sum on our chain)
@@ -803,16 +799,16 @@ mod tests {
         let n_leaf = pis_list.len();
         assert_eq!(n_leaf, 8);
 
-        let mut exit_sums: BTreeMap<[F; 8], F> = BTreeMap::new();
+        let mut exit_sums: BTreeMap<[F; 4], F> = BTreeMap::new();
         for (i, pis) in pis_list.iter().enumerate() {
-            let exit_1: [F; 8] = core::array::from_fn(|j| pis[EXIT_1_START + j]);
+            let exit_1: [F; 4] = core::array::from_fn(|j| pis[EXIT_1_START + j]);
             let amount_1 = output1_felts[i];
             exit_sums
                 .entry(exit_1)
                 .and_modify(|s| *s += amount_1)
                 .or_insert(amount_1);
 
-            let exit_2: [F; 8] = core::array::from_fn(|j| pis[EXIT_2_START + j]);
+            let exit_2: [F; 4] = core::array::from_fn(|j| pis[EXIT_2_START + j]);
             let amount_2 = output2_felts[i];
             exit_sums
                 .entry(exit_2)
@@ -861,14 +857,14 @@ mod tests {
 
         let mut idx = ROOT_HEADER_LEN;
 
-        // Exit slots region: 2*N slots, each [sum(1), exit(8)]
-        let mut exit_sums_from_circuit: BTreeMap<[F; 8], F> = BTreeMap::new();
+        // Exit slots region: 2*N slots, each [sum(1), exit(4)]
+        let mut exit_sums_from_circuit: BTreeMap<[F; 4], F> = BTreeMap::new();
         for _ in 0..(n_leaf * 2) {
             let sum_circuit = pis[idx];
             idx += 1;
 
-            let exit_key_circuit: [F; 8] = core::array::from_fn(|j| pis[idx + j]);
-            idx += 8;
+            let exit_key_circuit: [F; 4] = core::array::from_fn(|j| pis[idx + j]);
+            idx += 4;
 
             if sum_circuit != F::ZERO {
                 exit_sums_from_circuit
@@ -878,20 +874,20 @@ mod tests {
         }
 
         // Convert to u64-based keys for reliable comparison
-        // (BTreeMap with [F; 8] keys can be unreliable due to Ord impl)
-        let exit_sums_u64: std::collections::HashMap<[u64; 8], u64> = exit_sums
+        // (BTreeMap with [F; 4] keys can be unreliable due to Ord impl)
+        let exit_sums_u64: std::collections::HashMap<[u64; 4], u64> = exit_sums
             .iter()
             .map(|(k, v)| {
-                let k_u64: [u64; 8] = core::array::from_fn(|i| k[i].to_canonical_u64());
+                let k_u64: [u64; 4] = core::array::from_fn(|i| k[i].to_canonical_u64());
                 (k_u64, v.to_canonical_u64())
             })
             .collect();
 
-        let exit_sums_from_circuit_u64: std::collections::HashMap<[u64; 8], u64> =
+        let exit_sums_from_circuit_u64: std::collections::HashMap<[u64; 4], u64> =
             exit_sums_from_circuit
                 .iter()
                 .map(|(k, v)| {
-                    let k_u64: [u64; 8] = core::array::from_fn(|i| k[i].to_canonical_u64());
+                    let k_u64: [u64; 4] = core::array::from_fn(|i| k[i].to_canonical_u64());
                     (k_u64, v.to_canonical_u64())
                 })
                 .collect();

@@ -18,8 +18,9 @@ use plonky2::{
 use zk_circuits_common::{
     circuit::{C, D, F},
     gadgets::bytes_digest_eq,
-    utils::DIGEST_NUM_FELTS,
 };
+
+use super::constants::AGGREGATOR_ADDRESS_LEN;
 
 use super::constants as l1c;
 
@@ -30,8 +31,8 @@ pub struct Layer1AggregationCircuitTargets {
     pub layer0_verifier_data: VerifierCircuitTarget,
     /// One proof target per layer-0 slot.
     pub layer0_proofs: Vec<ProofWithPublicInputsTarget<D>>,
-    /// Aggregator address (8 felts / 32 bytes) for collision-resistant account encoding.
-    pub aggregator_address: [Target; DIGEST_NUM_FELTS],
+    /// Aggregator address (4 felts, 8 bytes/felt) for hash-derived accounts.
+    pub aggregator_address: [Target; AGGREGATOR_ADDRESS_LEN],
 }
 
 pub struct Layer1AggregationCircuit {
@@ -84,9 +85,9 @@ impl Layer1AggregationCircuit {
         }
 
         // Aggregator address is witness-filled (NOT a constant).
-        // Uses 8 felts (4 bytes/felt) for collision-resistant account encoding.
-        let aggregator_address: [Target; DIGEST_NUM_FELTS] = builder
-            .add_virtual_targets(DIGEST_NUM_FELTS)
+        // Uses 4 felts (8 bytes/felt) for hash-derived accounts.
+        let aggregator_address: [Target; AGGREGATOR_ADDRESS_LEN] = builder
+            .add_virtual_targets(AGGREGATOR_ADDRESS_LEN)
             .try_into()
             .unwrap();
 
@@ -169,7 +170,7 @@ fn build_layer1_wrapper_constraints(
     // -------------------------------------------------------------------------
     let mut output_pis: Vec<Target> = Vec::new();
 
-    // 1) Aggregator address (witness target, 8 felts for collision-resistant encoding)
+    // 1) Aggregator address (witness target, 4 felts, 8 bytes/felt)
     output_pis.extend_from_slice(&targets.aggregator_address);
 
     // 2) Reference values from proof 0
@@ -207,7 +208,7 @@ fn build_layer1_wrapper_constraints(
     for pis_i in l0_pi_targets.iter().take(n_inner) {
         for slot_idx in 0..l0_exit_slots_per_proof {
             let slot_base = exit_slots_start + slot_idx * l1c::L0_EXIT_SLOT_LEN;
-            // [sum(1), exit_account(8)]
+            // [sum(1), exit_account(4)]
             for j in 0..l1c::L0_EXIT_SLOT_LEN {
                 output_pis.push(pis_i[slot_base + j]);
             }
@@ -238,6 +239,7 @@ mod tests {
     use plonky2::plonk::proof::ProofWithPublicInputs;
     use qp_wormhole_inputs::PUBLIC_INPUTS_FELTS_LEN as LEAF_PI_LEN;
 
+    use super::super::constants::AGGREGATOR_ADDRESS_LEN;
     use crate::layer0::circuit::circuit_logic::{
         AggregationCircuitTargets, Layer0AggregationCircuit,
     };
@@ -284,17 +286,17 @@ mod tests {
 
     /// Build one leaf PI array in the Bitcoin-style 2-output layout.
     ///
-    /// Layout (29 felts total):
+    /// Layout (21 felts total):
     /// - asset_id(1), output_amount_1(1), output_amount_2(1), volume_fee_bps(1)
     /// - nullifier(4)
-    /// - exit_account_1(8) - 8 felts for collision-resistant encoding
-    /// - exit_account_2(8) - 8 felts for collision-resistant encoding
+    /// - exit_account_1(4) - 4 felts (8 bytes/felt)
+    /// - exit_account_2(4) - 4 felts (8 bytes/felt)
     /// - block_hash(4), block_number(1)
     fn make_leaf_pi(
         amount1: u32,
         amount2: u32,
-        exit1: [u64; 8],
-        exit2: [u64; 8],
+        exit1: [u64; 4],
+        exit2: [u64; 4],
         nullifier: [u64; 4],
         block_hash: [u64; 4],
         block_number: u32,
@@ -308,16 +310,16 @@ mod tests {
         for j in 0..4 {
             out[4 + j] = F::from_canonical_u64(nullifier[j]);
         }
-        for j in 0..8 {
+        for j in 0..4 {
             out[8 + j] = F::from_canonical_u64(exit1[j]);
         }
-        for j in 0..8 {
-            out[16 + j] = F::from_canonical_u64(exit2[j]);
+        for j in 0..4 {
+            out[12 + j] = F::from_canonical_u64(exit2[j]);
         }
         for j in 0..4 {
-            out[24 + j] = F::from_canonical_u64(block_hash[j]);
+            out[16 + j] = F::from_canonical_u64(block_hash[j]);
         }
-        out[28] = F::from_canonical_u64(block_number as u64);
+        out[20] = F::from_canonical_u64(block_number as u64);
 
         out
     }
@@ -363,7 +365,7 @@ mod tests {
         l1_targets: &Layer1AggregationCircuitTargets,
         layer0_verifier_only: &plonky2::plonk::circuit_data::VerifierOnlyCircuitData<C, D>,
         layer0_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
-        aggregator_address: [F; DIGEST_NUM_FELTS],
+        aggregator_address: [F; AGGREGATOR_ADDRESS_LEN],
     ) -> Result<ProofWithPublicInputs<F, C, D>, anyhow::Error> {
         assert_eq!(layer0_proofs.len(), N_INNER);
 
@@ -378,7 +380,7 @@ mod tests {
             pw.set_proof_with_pis_target(pt, proof).unwrap();
         }
 
-        // Fill aggregator address (8 felts for collision-resistant encoding)
+        // Fill aggregator address (4 felts, 8 bytes/felt)
         for (i, limb) in aggregator_address.iter().enumerate() {
             pw.set_target(l1_targets.aggregator_address[i], *limb)
                 .unwrap();
@@ -410,8 +412,8 @@ mod tests {
             make_leaf_pi(
                 100,
                 0,
-                [1, 2, 3, 4, 0, 0, 0, 0],
-                [0, 0, 0, 0, 0, 0, 0, 0],
+                [1, 2, 3, 4],
+                [0, 0, 0, 0],
                 [0x10, 0x11, 0x12, 0x13],
                 block_hash,
                 block_number,
@@ -423,8 +425,8 @@ mod tests {
             make_leaf_pi(
                 200,
                 50,
-                [5, 6, 7, 8, 0, 0, 0, 0],
-                [9, 10, 11, 12, 0, 0, 0, 0],
+                [5, 6, 7, 8],
+                [9, 10, 11, 12],
                 [0x20, 0x21, 0x22, 0x23],
                 block_hash,
                 block_number,
@@ -438,8 +440,8 @@ mod tests {
             make_leaf_pi(
                 300,
                 0,
-                [13, 14, 15, 16, 0, 0, 0, 0],
-                [0, 0, 0, 0, 0, 0, 0, 0],
+                [13, 14, 15, 16],
+                [0, 0, 0, 0],
                 [0x30, 0x31, 0x32, 0x33],
                 block_hash,
                 block_number,
@@ -451,8 +453,8 @@ mod tests {
             make_leaf_pi(
                 400,
                 100,
-                [17, 18, 19, 20, 0, 0, 0, 0],
-                [21, 22, 23, 24, 0, 0, 0, 0],
+                [17, 18, 19, 20],
+                [21, 22, 23, 24],
                 [0x40, 0x41, 0x42, 0x43],
                 block_hash,
                 block_number,
@@ -498,16 +500,12 @@ mod tests {
         let l1_targets = l1_circuit.targets();
         let l1_data = l1_circuit.build_circuit();
 
-        // 8 felts for collision-resistant account encoding
-        let aggregator_address: [F; DIGEST_NUM_FELTS] = [
+        // 4 felts (8 bytes/felt) for hash-derived accounts
+        let aggregator_address: [F; AGGREGATOR_ADDRESS_LEN] = [
             F::from_canonical_u64(0xDEAD),
             F::from_canonical_u64(0xBEEF),
             F::from_canonical_u64(0xCAFE),
             F::from_canonical_u64(0xBABE),
-            F::from_canonical_u64(0x1111),
-            F::from_canonical_u64(0x2222),
-            F::from_canonical_u64(0x3333),
-            F::from_canonical_u64(0x4444),
         ];
 
         let l1_proof = prove_layer1(
@@ -531,7 +529,7 @@ mod tests {
         let expected_len = l1c::l1_pi_len(N_INNER, NUM_LEAVES);
         assert_eq!(pis.len(), expected_len, "unexpected layer-1 PI length");
 
-        // Aggregator address (8 felts for collision-resistant encoding)
+        // Aggregator address (4 felts, 8 bytes/felt)
         assert_eq!(
             pis[l1c::AGGREGATOR_ADDRESS_START].to_canonical_u64(),
             0xDEAD
@@ -547,22 +545,6 @@ mod tests {
         assert_eq!(
             pis[l1c::AGGREGATOR_ADDRESS_START + 3].to_canonical_u64(),
             0xBABE
-        );
-        assert_eq!(
-            pis[l1c::AGGREGATOR_ADDRESS_START + 4].to_canonical_u64(),
-            0x1111
-        );
-        assert_eq!(
-            pis[l1c::AGGREGATOR_ADDRESS_START + 5].to_canonical_u64(),
-            0x2222
-        );
-        assert_eq!(
-            pis[l1c::AGGREGATOR_ADDRESS_START + 6].to_canonical_u64(),
-            0x3333
-        );
-        assert_eq!(
-            pis[l1c::AGGREGATOR_ADDRESS_START + 7].to_canonical_u64(),
-            0x4444
         );
 
         // Asset ID and volume fee
@@ -629,8 +611,8 @@ mod tests {
             make_leaf_pi(
                 100,
                 0,
-                [1, 2, 3, 4, 0, 0, 0, 0],
-                [0, 0, 0, 0, 0, 0, 0, 0],
+                [1, 2, 3, 4],
+                [0, 0, 0, 0],
                 [1, 2, 3, 4],
                 block_a,
                 block_number,
@@ -642,8 +624,8 @@ mod tests {
             make_leaf_pi(
                 200,
                 0,
-                [5, 6, 7, 8, 0, 0, 0, 0],
-                [0, 0, 0, 0, 0, 0, 0, 0],
+                [5, 6, 7, 8],
+                [0, 0, 0, 0],
                 [5, 6, 7, 8],
                 block_a,
                 block_number,
@@ -657,8 +639,8 @@ mod tests {
             make_leaf_pi(
                 300,
                 0,
-                [9, 10, 11, 12, 0, 0, 0, 0],
-                [0, 0, 0, 0, 0, 0, 0, 0],
+                [9, 10, 11, 12],
+                [0, 0, 0, 0],
                 [9, 10, 11, 12],
                 block_b,
                 block_number,
@@ -670,8 +652,8 @@ mod tests {
             make_leaf_pi(
                 400,
                 0,
-                [13, 14, 15, 16, 0, 0, 0, 0],
-                [0, 0, 0, 0, 0, 0, 0, 0],
+                [13, 14, 15, 16],
+                [0, 0, 0, 0],
                 [13, 14, 15, 16],
                 block_b,
                 block_number,
@@ -715,10 +697,6 @@ mod tests {
             F::from_canonical_u64(2),
             F::from_canonical_u64(3),
             F::from_canonical_u64(4),
-            F::from_canonical_u64(5),
-            F::from_canonical_u64(6),
-            F::from_canonical_u64(7),
-            F::from_canonical_u64(8),
         ];
 
         let res = prove_layer1(

@@ -8,13 +8,13 @@ use zk_circuits_common::circuit::CircuitFragment;
 use zk_circuits_common::circuit::{D, F};
 use zk_circuits_common::codec::{ByteCodec, FieldElementCodec};
 use zk_circuits_common::utils::{
-    digest_to_felts, felts_to_digest, AccountId, BytesDigest, DIGEST_NUM_FELTS,
+    bytes_to_digest, digest_to_bytes, BytesDigest, Digest, POSEIDON2_OUTPUT,
 };
 
-/// A substrate account represented as 8 field elements (4 bytes per felt).
-/// This encoding ensures collision resistance for account addresses.
+/// A substrate account represented as 4 field elements (8 bytes per felt).
+/// This encoding is safe for hash-derived accounts.
 #[derive(Debug, Default, Eq, PartialEq, Clone, Copy)]
-pub struct SubstrateAccount(pub AccountId);
+pub struct SubstrateAccount(pub Digest);
 
 impl SubstrateAccount {
     pub fn new(address: &[u8]) -> anyhow::Result<Self> {
@@ -24,19 +24,17 @@ impl SubstrateAccount {
 
 impl ByteCodec for SubstrateAccount {
     fn to_bytes(&self) -> Vec<u8> {
-        felts_to_digest(self.0).to_vec()
+        digest_to_bytes(self.0).to_vec()
     }
 
     fn from_bytes(slice: &[u8]) -> anyhow::Result<Self> {
-        // For 4-bytes-per-felt encoding, we don't need the 8-byte chunk validation
-        // that BytesDigest::try_from performs. Each u32 chunk is valid in Goldilocks.
-        let bytes: [u8; 32] = slice.try_into().map_err(|_| {
+        let bytes: BytesDigest = slice.try_into().map_err(|_| {
             anyhow::anyhow!(
                 "SubstrateAccount requires exactly 32 bytes, got {}",
                 slice.len()
             )
         })?;
-        let address = digest_to_felts(BytesDigest::new_unchecked(bytes));
+        let address = bytes_to_digest(bytes);
         Ok(SubstrateAccount(address))
     }
 }
@@ -47,22 +45,22 @@ impl FieldElementCodec for SubstrateAccount {
     }
 
     fn from_field_elements(elements: &[F]) -> anyhow::Result<Self> {
-        if elements.len() != DIGEST_NUM_FELTS {
+        if elements.len() != POSEIDON2_OUTPUT {
             return Err(anyhow::anyhow!(
                 "Expected {} field elements for SubstrateAccount, got: {}",
-                DIGEST_NUM_FELTS,
+                POSEIDON2_OUTPUT,
                 elements.len()
             ));
         }
-        let account_id: AccountId = elements
+        let digest: Digest = elements
             .try_into()
-            .map_err(|_| anyhow::anyhow!("Failed to convert slice to AccountId"))?;
-        Ok(Self(account_id))
+            .map_err(|_| anyhow::anyhow!("Failed to convert slice to Digest"))?;
+        Ok(Self(digest))
     }
 }
 
 impl Deref for SubstrateAccount {
-    type Target = AccountId;
+    type Target = Digest;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -71,15 +69,15 @@ impl Deref for SubstrateAccount {
 
 impl From<BytesDigest> for SubstrateAccount {
     fn from(value: BytesDigest) -> Self {
-        let felts = digest_to_felts(value);
+        let felts = bytes_to_digest(value);
         SubstrateAccount(felts)
     }
 }
 
-/// Targets for a substrate account (8 field elements).
+/// Targets for a substrate account (4 field elements).
 #[derive(Debug, Clone, Copy)]
 pub struct AccountTargets {
-    pub elements: [Target; DIGEST_NUM_FELTS],
+    pub elements: [Target; POSEIDON2_OUTPUT],
 }
 
 impl AccountTargets {

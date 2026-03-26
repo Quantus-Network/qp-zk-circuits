@@ -7,10 +7,10 @@ use zk_circuits_common::utils::digest_to_felts;
 use zk_circuits_common::utils::felts_to_digest;
 use zk_circuits_common::utils::felts_to_u64;
 use zk_circuits_common::utils::DIGEST_BYTES_LEN;
-use zk_circuits_common::utils::DIGEST_NUM_FELTS;
-use zk_circuits_common::utils::DIGEST_NUM_FIELD_ELEMENTS;
 use zk_circuits_common::utils::FELTS_PER_U128;
 use zk_circuits_common::utils::FELTS_PER_U64;
+use zk_circuits_common::utils::INJECTIVE_DIGEST_NUM_FELTS;
+use zk_circuits_common::utils::POSEIDON2_OUTPUT;
 
 use crate::inputs::CircuitInputs;
 use plonky2::{
@@ -37,14 +37,14 @@ const _: () = {
 };
 pub const SECRET_BYTES_LEN: usize = 32;
 /// Number of field elements for the secret (32 bytes with 4 bytes/felt encoding)
-pub const SECRET_NUM_TARGETS: usize = DIGEST_NUM_FELTS; // 8
+pub const SECRET_NUM_TARGETS: usize = INJECTIVE_DIGEST_NUM_FELTS; // 8
 pub const SALT_NUM_TARGETS: usize = 3;
 pub const FUNDING_ACCOUNT_NUM_TARGETS: usize = FELTS_PER_U128;
 pub const TRANSFER_COUNT_NUM_TARGETS: usize = FELTS_PER_U64;
 pub const PREIMAGE_NUM_TARGETS: usize =
     SECRET_NUM_TARGETS + SALT_NUM_TARGETS + FUNDING_ACCOUNT_NUM_TARGETS;
 pub const NULLIFIER_SIZE_FELTS: usize =
-    DIGEST_NUM_FIELD_ELEMENTS + SECRET_NUM_TARGETS + TRANSFER_COUNT_NUM_TARGETS;
+    POSEIDON2_OUTPUT + SECRET_NUM_TARGETS + TRANSFER_COUNT_NUM_TARGETS;
 
 /// Type alias for the secret as a fixed-size array (8 field elements for 32 bytes)
 pub type Secret = [F; SECRET_NUM_TARGETS];
@@ -179,10 +179,10 @@ impl FieldElementCodec for Nullifier {
 
         let mut offset = 0;
         // Deserialize hash
-        let hash: Digest = elements[offset..offset + DIGEST_NUM_FIELD_ELEMENTS]
+        let hash: Digest = elements[offset..offset + POSEIDON2_OUTPUT]
             .try_into()
             .map_err(|_| anyhow::anyhow!("Failed to deserialize nullifier hash"))?;
-        offset += DIGEST_NUM_FIELD_ELEMENTS;
+        offset += POSEIDON2_OUTPUT;
 
         // Deserialize secret (8 field elements)
         let secret: Secret = elements[offset..offset + SECRET_NUM_TARGETS]

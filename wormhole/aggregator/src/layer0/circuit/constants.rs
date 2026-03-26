@@ -8,23 +8,23 @@
 /// - output_amount_2(1)
 /// - volume_fee_bps(1)
 /// - nullifier(4)
-/// - exit_account_1(8) - uses 8 felts for collision-resistant encoding
-/// - exit_account_2(8) - uses 8 felts for collision-resistant encoding
+/// - exit_account_1(4) - 4 felts (8 bytes/felt) for hash-derived accounts
+/// - exit_account_2(4) - 4 felts (8 bytes/felt) for hash-derived accounts
 /// - block_hash(4)
 /// - block_number(1)
 ///
-/// Total = 29 felts
-pub const LEAF_PI_LEN: usize = 29;
+/// Total = 21 felts
+pub const LEAF_PI_LEN: usize = 21;
 
 pub const ASSET_ID_START: usize = 0; // 1 felt
 pub const OUTPUT_AMOUNT_1_START: usize = 1; // 1 felt
 pub const OUTPUT_AMOUNT_2_START: usize = 2; // 1 felt
 pub const VOLUME_FEE_BPS_START: usize = 3; // 1 felt
 pub const NULLIFIER_START: usize = 4; // 4 felts
-pub const EXIT_1_START: usize = 8; // 8 felts
-pub const EXIT_2_START: usize = 16; // 8 felts
-pub const BLOCK_HASH_START: usize = 24; // 4 felts
-pub const BLOCK_NUMBER_START: usize = 28; // 1 felt
+pub const EXIT_1_START: usize = 8; // 4 felts
+pub const EXIT_2_START: usize = 12; // 4 felts
+pub const BLOCK_HASH_START: usize = 16; // 4 felts
+pub const BLOCK_NUMBER_START: usize = 20; // 1 felt
 
 /// Layer-0 aggregated proof output layout constants.
 ///
@@ -32,7 +32,7 @@ pub const BLOCK_NUMBER_START: usize = 28; // 1 felt
 /// ```text
 /// [num_exit_slots(1), asset_id(1), volume_fee_bps(1),
 ///  block_hash(4), block_number(1),
-///  [sum(1), exit_account(8)] * (2*N),
+///  [sum(1), exit_account(4)] * (2*N),
 ///  nullifier(4) * N,
 ///  padding...]
 /// ```
@@ -53,8 +53,8 @@ pub mod aggregated_output {
     /// Length of fixed header before exit-slot data.
     pub const HEADER_LEN: usize = 8;
 
-    /// Each exit slot is [sum(1), exit_account(8)] = 9 felts.
-    pub const EXIT_SLOT_LEN: usize = 9;
+    /// Each exit slot is [sum(1), exit_account(4)] = 5 felts.
+    pub const EXIT_SLOT_LEN: usize = 5;
 
     /// Number of exit slots for N leaves (2 outputs per leaf).
     pub const fn exit_slots_count(num_leaves: usize) -> usize {

@@ -7,9 +7,7 @@ use plonky2::field::goldilocks_field::GoldilocksField;
 use plonky2::field::types::PrimeField64;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use zk_circuits_common::circuit::{C, D, F};
-use zk_circuits_common::utils::{
-    try_4_felts_to_bytes, try_8_felts_to_bytes, BytesDigest, DIGEST_BYTES_LEN,
-};
+use zk_circuits_common::utils::{try_4_felts_to_bytes, BytesDigest, DIGEST_BYTES_LEN};
 
 // Import public input types and constants from wormhole_inputs (single source of truth)
 use qp_wormhole_inputs::{
@@ -74,14 +72,14 @@ pub trait ParsePublicInputs {
 
 impl ParsePublicInputs for PublicCircuitInputs {
     fn try_from_felts(pis: &[GoldilocksField]) -> anyhow::Result<PublicCircuitInputs> {
-        // Public inputs are ordered as follows:
+        // Public inputs are ordered as follows (total 21 felts):
         // asset_id: 1 felt
         // output_amount_1: 1 felt (spend)
         // output_amount_2: 1 felt (change)
         // volume_fee_bps: 1 felt
         // Nullifier.hash: 4 felts
-        // ExitAccount1.address: 4 felts (spend destination)
-        // ExitAccount2.address: 4 felts (change destination)
+        // ExitAccount1.address: 4 felts (8 bytes/felt for hash-derived accounts)
+        // ExitAccount2.address: 4 felts (8 bytes/felt for hash-derived accounts)
         // BlockHeader.block_hash: 4 felts
         // BlockHeader.block_number: 1 felt
         if pis.len() != PUBLIC_INPUTS_FELTS_LEN {
@@ -113,10 +111,10 @@ impl ParsePublicInputs for PublicCircuitInputs {
             .context("failed to deserialize block hash")?;
 
         let exit_account_1 =
-            try_8_felts_to_bytes(&pis[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX])
+            try_4_felts_to_bytes(&pis[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX])
                 .context("failed to deserialize exit_account_1")?;
         let exit_account_2 =
-            try_8_felts_to_bytes(&pis[EXIT_ACCOUNT_2_START_INDEX..EXIT_ACCOUNT_2_END_INDEX])
+            try_4_felts_to_bytes(&pis[EXIT_ACCOUNT_2_START_INDEX..EXIT_ACCOUNT_2_END_INDEX])
                 .context("failed to deserialize exit_account_2")?;
         let block_number_felt = pis[BLOCK_NUMBER_INDEX];
         let block_number = block_number_felt
@@ -187,8 +185,8 @@ impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
         }
         #[inline]
         fn read_account(slice: &[F]) -> anyhow::Result<BytesDigest> {
-            // Account IDs use 8 felts (4 bytes/felt) for collision resistance
-            try_8_felts_to_bytes(slice).context("failed to deserialize account")
+            // Account IDs use 4 felts (8 bytes/felt) for hash-derived accounts
+            try_4_felts_to_bytes(slice).context("failed to deserialize account")
         }
 
         let block_data = BlockData {
@@ -217,10 +215,10 @@ impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
                 })?;
             cursor += 1;
 
-            // exit_account (8 felts for collision-resistant encoding)
+            // exit_account (4 felts, 8 bytes/felt for hash-derived accounts)
             let exit_account =
-                read_account(&pis[cursor..cursor + 8]).context("parsing exit_account")?;
-            cursor += 8;
+                read_account(&pis[cursor..cursor + 4]).context("parsing exit_account")?;
+            cursor += 4;
             account_data.push(PublicInputsByAccount {
                 summed_output_amount,
                 exit_account,
@@ -236,8 +234,8 @@ impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
         }
 
         // Compute expected felts consumed
-        // 8 metadata + 2*N*9 exit slots (2 outputs per leaf, 1 sum + 8 account) + N*4 nullifiers
-        let expected_felts = 8 + num_exit_slots * 9 + n_leaf * 4;
+        // 8 metadata + 2*N*5 exit slots (2 outputs per leaf, 1 sum + 4 account) + N*4 nullifiers
+        let expected_felts = 8 + num_exit_slots * 5 + n_leaf * 4;
         if cursor != expected_felts {
             bail!(
                 "Internal parsing error: consumed {} felts, but expected {} (n_leaf={}, num_exit_slots={}).",

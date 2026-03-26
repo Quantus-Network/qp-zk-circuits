@@ -9,7 +9,9 @@ use crate::inputs::CircuitInputs;
 use crate::substrate_account::{AccountTargets, SubstrateAccount};
 use zk_circuits_common::circuit::{D, F};
 use zk_circuits_common::codec::ByteCodec;
-use zk_circuits_common::utils::{u64_to_felts, BytesDigest, DIGEST_NUM_FELTS, FELTS_PER_U64};
+use zk_circuits_common::utils::{
+    u64_to_felts, BytesDigest, FELTS_PER_U64, INJECTIVE_DIGEST_NUM_FELTS,
+};
 
 /// Number of field elements in the leaf preimage:
 /// - 1 (asset_id)
@@ -18,7 +20,8 @@ use zk_circuits_common::utils::{u64_to_felts, BytesDigest, DIGEST_NUM_FELTS, FEL
 /// - 8 (to_account, 4 bytes/felt)
 /// - 1 (input_amount)
 /// Total: 20
-pub const NUM_LEAF_INPUT_FELTS: usize = 1 + FELTS_PER_U64 + DIGEST_NUM_FELTS + DIGEST_NUM_FELTS + 1;
+pub const NUM_LEAF_INPUT_FELTS: usize =
+    1 + FELTS_PER_U64 + INJECTIVE_DIGEST_NUM_FELTS + INJECTIVE_DIGEST_NUM_FELTS + 1;
 
 #[derive(Debug, Clone)]
 pub struct LeafTargets {

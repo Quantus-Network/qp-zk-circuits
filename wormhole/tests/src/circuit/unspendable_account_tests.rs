@@ -3,7 +3,7 @@ use wormhole_circuit::unspendable_account::{UnspendableAccount, UnspendableAccou
 use zk_circuits_common::{
     circuit::{CircuitFragment, C, D, F},
     codec::FieldElementCodec,
-    utils::{digest_to_felts, felts_to_digest, BytesDigest},
+    utils::{bytes_to_digest, digest_to_bytes, BytesDigest},
 };
 
 #[cfg(test)]
@@ -57,7 +57,8 @@ fn preimage_matches_right_address() {
 
         let decoded_address = BytesDigest::try_from(decoded_address.as_slice()).unwrap();
 
-        let address = digest_to_felts(decoded_address);
+        // account_id is now 4 felts (8 bytes/felt)
+        let address = bytes_to_digest(decoded_address);
         assert_eq!(unspendable_account.account_id.to_vec(), address);
         let result = run_test(&unspendable_account);
         assert!(result.is_ok());
@@ -74,7 +75,8 @@ fn preimage_does_not_match_wrong_address() {
     // Override the correct account_id with a wrong one (different bytes).
     // Use valid bytes that don't exceed field order (not all 0xFF which creates u64::MAX)
     let wrong_address = BytesDigest::try_from([0x12u8; 32]).unwrap();
-    let wrong_hash = digest_to_felts(wrong_address);
+    // account_id is now 4 felts (8 bytes/felt)
+    let wrong_hash = bytes_to_digest(wrong_address);
     unspendable_account.account_id = wrong_hash;
 
     let result = run_test(&unspendable_account);
@@ -88,7 +90,8 @@ fn print_expected_unspendable_addresses() {
         let decoded_secret: [u8; 32] = hex::decode(secret).unwrap().try_into().unwrap();
         let unspendable_account =
             UnspendableAccount::from_secret(decoded_secret.try_into().unwrap());
-        let as_bytes = felts_to_digest(unspendable_account.account_id);
+        // account_id is now 4 felts, convert to bytes
+        let as_bytes = digest_to_bytes(unspendable_account.account_id);
         println!("{}", hex::encode(*as_bytes));
     }
 }
@@ -102,34 +105,30 @@ fn all_zero_preimage_is_valid_and_hashes() {
 
 #[test]
 fn unspendable_account_codec() {
-    // account_id is now 8 felts, secret is 8 felts
+    // account_id is now 4 felts (8 bytes/felt), secret is 8 felts (4 bytes/felt)
     let account = UnspendableAccount {
         account_id: [
             F::from_noncanonical_u64(1),
             F::from_noncanonical_u64(2),
             F::from_noncanonical_u64(3),
             F::from_noncanonical_u64(4),
+        ],
+        secret: [
             F::from_noncanonical_u64(5),
             F::from_noncanonical_u64(6),
             F::from_noncanonical_u64(7),
             F::from_noncanonical_u64(8),
-        ],
-        secret: [
             F::from_noncanonical_u64(9),
             F::from_noncanonical_u64(10),
             F::from_noncanonical_u64(11),
             F::from_noncanonical_u64(12),
-            F::from_noncanonical_u64(13),
-            F::from_noncanonical_u64(14),
-            F::from_noncanonical_u64(15),
-            F::from_noncanonical_u64(16),
         ],
     };
 
     // Encode the account as field elements and compare.
     let field_elements = account.to_field_elements();
-    assert_eq!(field_elements.len(), 16); // 8 account_id + 8 secret
-    for i in 0..16 {
+    assert_eq!(field_elements.len(), 12); // 4 account_id + 8 secret
+    for i in 0..12 {
         assert_eq!(field_elements[i], F::from_noncanonical_u64((i + 1) as u64));
     }
 

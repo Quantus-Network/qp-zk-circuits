@@ -24,13 +24,13 @@ const GOLDILOCKS_ORDER: u64 = 0xFFFFFFFF00000001;
 
 /// The total size of the public inputs field element vector.
 /// Layout: asset_id(1) + output_amount_1(1) + output_amount_2(1) + volume_fee_bps(1) +
-///         nullifier(4) + exit_account_1(8) + exit_account_2(8) + block_hash(4) + block_number(1)
-/// = 1 + 1 + 1 + 1 + 4 + 8 + 8 + 4 + 1 = 29
+///         nullifier(4) + exit_account_1(4) + exit_account_2(4) + block_hash(4) + block_number(1)
+/// = 1 + 1 + 1 + 1 + 4 + 4 + 4 + 4 + 1 = 21
 ///
-/// Note: exit accounts use 8 felts (4 bytes/felt) for collision-resistant encoding.
+/// Note: exit accounts use 4 felts (8 bytes/felt) for hash-derived accounts.
 /// parent_hash is a private input to the leaf circuit (used to compute block_hash)
 /// but is not exposed as a public input since block_hash already commits to it.
-pub const PUBLIC_INPUTS_FELTS_LEN: usize = 29;
+pub const PUBLIC_INPUTS_FELTS_LEN: usize = 21;
 
 // Index constants for parsing public inputs
 pub const ASSET_ID_INDEX: usize = 0;
@@ -40,12 +40,12 @@ pub const VOLUME_FEE_BPS_INDEX: usize = 3;
 pub const NULLIFIER_START_INDEX: usize = 4;
 pub const NULLIFIER_END_INDEX: usize = 8;
 pub const EXIT_ACCOUNT_1_START_INDEX: usize = 8;
-pub const EXIT_ACCOUNT_1_END_INDEX: usize = 16;
-pub const EXIT_ACCOUNT_2_START_INDEX: usize = 16;
-pub const EXIT_ACCOUNT_2_END_INDEX: usize = 24;
-pub const BLOCK_HASH_START_INDEX: usize = 24;
-pub const BLOCK_HASH_END_INDEX: usize = 28;
-pub const BLOCK_NUMBER_INDEX: usize = 28;
+pub const EXIT_ACCOUNT_1_END_INDEX: usize = 12;
+pub const EXIT_ACCOUNT_2_START_INDEX: usize = 12;
+pub const EXIT_ACCOUNT_2_END_INDEX: usize = 16;
+pub const BLOCK_HASH_START_INDEX: usize = 16;
+pub const BLOCK_HASH_END_INDEX: usize = 20;
+pub const BLOCK_NUMBER_INDEX: usize = 20;
 
 /// A 32-byte digest that can be converted to/from field elements.
 #[derive(Hash, Default, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
@@ -237,30 +237,6 @@ fn hash_u64s_to_bytes_digest(vals: &[u64]) -> anyhow::Result<BytesDigest> {
     BytesDigest::try_from(bytes).map_err(|e| anyhow::anyhow!("{}", e))
 }
 
-/// Helper to convert 8 u64 values (account address) to a BytesDigest.
-/// Each felt contributes 4 bytes (collision-resistant encoding).
-/// Used for arbitrary 32-byte data like account addresses.
-fn account_u64s_to_bytes_digest(vals: &[u64]) -> anyhow::Result<BytesDigest> {
-    if vals.len() != 8 {
-        bail!(
-            "Expected 8 field elements for account digest, got {}",
-            vals.len()
-        );
-    }
-    let mut bytes = [0u8; DIGEST_BYTES_LEN];
-    for (i, &val) in vals.iter().enumerate() {
-        if val > u32::MAX as u64 {
-            bail!(
-                "Account field element at index {} exceeds 32-bit range: {}",
-                i,
-                val
-            );
-        }
-        bytes[i * 4..(i + 1) * 4].copy_from_slice(&(val as u32).to_le_bytes());
-    }
-    BytesDigest::try_from(bytes).map_err(|e| anyhow::anyhow!("{}", e))
-}
-
 impl PublicCircuitInputs {
     /// Parse public inputs from a slice of u64 values (canonical representation of field elements).
     pub fn try_from_u64_slice(pis: &[u64]) -> anyhow::Result<Self> {
@@ -287,14 +263,12 @@ impl PublicCircuitInputs {
 
         let nullifier = hash_u64s_to_bytes_digest(&pis[NULLIFIER_START_INDEX..NULLIFIER_END_INDEX])
             .context("failed to parse nullifier")?;
-        let exit_account_1 = account_u64s_to_bytes_digest(
-            &pis[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX],
-        )
-        .context("failed to parse exit_account_1")?;
-        let exit_account_2 = account_u64s_to_bytes_digest(
-            &pis[EXIT_ACCOUNT_2_START_INDEX..EXIT_ACCOUNT_2_END_INDEX],
-        )
-        .context("failed to parse exit_account_2")?;
+        let exit_account_1 =
+            hash_u64s_to_bytes_digest(&pis[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX])
+                .context("failed to parse exit_account_1")?;
+        let exit_account_2 =
+            hash_u64s_to_bytes_digest(&pis[EXIT_ACCOUNT_2_START_INDEX..EXIT_ACCOUNT_2_END_INDEX])
+                .context("failed to parse exit_account_2")?;
         let block_hash =
             hash_u64s_to_bytes_digest(&pis[BLOCK_HASH_START_INDEX..BLOCK_HASH_END_INDEX])
                 .context("failed to parse block_hash")?;
@@ -400,22 +374,22 @@ impl AggregatedPublicCircuitInputs {
             })?;
             cursor += 1;
 
-            if cursor + 8 > pis.len() {
+            if cursor + 4 > pis.len() {
                 bail!(
-                    "AggregatedPI: not enough elements for exit_account {} (need cursor+8={}, have {})",
+                    "AggregatedPI: not enough elements for exit_account {} (need cursor+4={}, have {})",
                     i,
-                    cursor + 8,
+                    cursor + 4,
                     pis.len()
                 );
             }
-            let exit_account = account_u64s_to_bytes_digest(&pis[cursor..cursor + 8])
-                .with_context(|| {
+            let exit_account =
+                hash_u64s_to_bytes_digest(&pis[cursor..cursor + 4]).with_context(|| {
                     format!(
                         "AggregatedPI: parsing exit_account[{}] at cursor {}",
                         i, cursor
                     )
                 })?;
-            cursor += 8;
+            cursor += 4;
 
             account_data.push(PublicInputsByAccount {
                 summed_output_amount,
@@ -446,8 +420,8 @@ impl AggregatedPublicCircuitInputs {
         }
 
         // Verify we consumed expected number of felts
-        // 8 metadata + 2*N*9 exit slots (1 sum + 8 account) + N*4 nullifiers
-        let expected_felts = 8 + num_exit_slots * 9 + n_leaf * 4;
+        // 8 metadata + 2*N*5 exit slots (1 sum + 4 account) + N*4 nullifiers
+        let expected_felts = 8 + num_exit_slots * 5 + n_leaf * 4;
         if cursor != expected_felts {
             bail!(
                 "AggregatedPI: cursor mismatch - consumed {} felts, expected {} (n_leaf={}, num_exit_slots={})",

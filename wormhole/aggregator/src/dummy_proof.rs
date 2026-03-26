@@ -32,7 +32,7 @@ use wormhole_circuit::inputs::{CircuitInputs, PrivateCircuitInputs};
 use wormhole_circuit::storage_proof::ProcessedStorageProof;
 use wormhole_circuit::unspendable_account::UnspendableAccount;
 use zk_circuits_common::circuit::{C, D, F};
-use zk_circuits_common::utils::{felts_to_digest, BytesDigest};
+use zk_circuits_common::utils::{digest_to_bytes, BytesDigest};
 
 // ============================================================================
 // Public sentinel constants
@@ -145,7 +145,7 @@ pub fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
 
     let nullifier = BytesDigest::try_from(DEFAULT_NULLIFIER)?;
 
-    let unspendable_account = felts_to_digest(UnspendableAccount::from_secret(secret).account_id);
+    let unspendable_account = digest_to_bytes(UnspendableAccount::from_secret(secret).account_id);
     let exit_account = BytesDigest::try_from(DUMMY_EXIT_ACCOUNT)?;
 
     let storage_proof = build_storage_proof()?;

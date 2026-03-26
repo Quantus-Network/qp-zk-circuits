@@ -4,7 +4,7 @@ use zk_circuits_common::circuit::{CircuitFragment, C, D, F};
 use zk_circuits_common::{
     codec::ByteCodec,
     codec::FieldElementCodec,
-    utils::{felts_to_digest, DIGEST_NUM_FELTS, ZERO_ACCOUNT_ID},
+    utils::{POSEIDON2_OUTPUT, ZERO_DIGEST},
 };
 
 #[cfg(test)]
@@ -29,8 +29,8 @@ fn test_exit_account_round_trip() -> anyhow::Result<()> {
     let elements = exit_account.to_field_elements();
     assert_eq!(
         elements.len(),
-        DIGEST_NUM_FELTS,
-        "Expected 8 field elements"
+        POSEIDON2_OUTPUT,
+        "Expected 4 field elements"
     );
     let decoded = SubstrateAccount::from_field_elements(&elements)?;
     assert_eq!(exit_account, decoded, "Round-trip failed");
@@ -43,12 +43,12 @@ fn test_exit_account_zero_address() -> anyhow::Result<()> {
     let elements = exit_account.to_field_elements();
     assert_eq!(
         elements.len(),
-        DIGEST_NUM_FELTS,
-        "Expected 8 field elements"
+        POSEIDON2_OUTPUT,
+        "Expected 4 field elements"
     );
     assert_eq!(
         elements,
-        ZERO_ACCOUNT_ID.to_vec(),
+        ZERO_DIGEST.to_vec(),
         "Zero address should encode to zero elements"
     );
     let decoded = SubstrateAccount::from_field_elements(&elements)?;
@@ -58,22 +58,28 @@ fn test_exit_account_zero_address() -> anyhow::Result<()> {
 
 #[test]
 fn test_exit_account_max_address() -> anyhow::Result<()> {
-    // Each field element now holds 4 bytes (u32), so max is 0xFFFFFFFF
-    let felts = [F::from_noncanonical_u64(0xFFFFFFFF); DIGEST_NUM_FELTS];
-    let digest_bytes = felts_to_digest(felts);
-    let exit_account = SubstrateAccount::new(&*digest_bytes)?;
+    // With 8 bytes/felt encoding, we need values that fit in Goldilocks field.
+    // The max valid 8-byte chunk is just under 2^64 - 2^32 + 1 (Goldilocks order).
+    // Use a pattern that produces valid field elements (each 8-byte chunk < field order).
+    // 0x00FFFFFFFFFFFFFF is safely below field order for each chunk.
+    let mut max_valid_bytes = [0u8; 32];
+    for i in 0..4 {
+        // Each 8-byte chunk: 0x00FFFFFFFFFFFFFF (little-endian)
+        max_valid_bytes[i * 8] = 0xFF;
+        max_valid_bytes[i * 8 + 1] = 0xFF;
+        max_valid_bytes[i * 8 + 2] = 0xFF;
+        max_valid_bytes[i * 8 + 3] = 0xFF;
+        max_valid_bytes[i * 8 + 4] = 0xFF;
+        max_valid_bytes[i * 8 + 5] = 0xFF;
+        max_valid_bytes[i * 8 + 6] = 0xFF;
+        max_valid_bytes[i * 8 + 7] = 0x00; // Keep high byte zero to stay under field order
+    }
+    let exit_account = SubstrateAccount::new(&max_valid_bytes)?;
     let elements = exit_account.to_field_elements();
     assert_eq!(
         elements.len(),
-        DIGEST_NUM_FELTS,
-        "Expected 8 field elements"
-    );
-    // Each element should be 0xFFFFFFFF
-    let expected_value = F::from_noncanonical_u64(0xFFFFFFFF);
-    assert_eq!(
-        elements,
-        vec![expected_value; DIGEST_NUM_FELTS],
-        "Max address encoding incorrect"
+        POSEIDON2_OUTPUT,
+        "Expected 4 field elements"
     );
     let decoded = SubstrateAccount::from_field_elements(&elements)?;
     assert_eq!(exit_account, decoded, "Max address round-trip failed");
@@ -82,7 +88,7 @@ fn test_exit_account_max_address() -> anyhow::Result<()> {
 
 #[test]
 fn test_exit_account_insufficient_elements() {
-    let elements = vec![F::ZERO; 7]; // Too few elements (needs 8)
+    let elements = vec![F::ZERO; 3]; // Too few elements (needs 4)
     let result = SubstrateAccount::from_field_elements(&elements);
     assert!(
         result.is_err(),
@@ -90,7 +96,7 @@ fn test_exit_account_insufficient_elements() {
     );
     assert_eq!(
         result.unwrap_err().to_string(),
-        "Expected 8 field elements for SubstrateAccount, got: 7"
+        "Expected 4 field elements for SubstrateAccount, got: 3"
     );
 }
 
@@ -103,16 +109,16 @@ fn test_exit_account_specific_address() -> anyhow::Result<()> {
     let elements = exit_account.to_field_elements();
     assert_eq!(
         elements.len(),
-        DIGEST_NUM_FELTS,
-        "Expected 8 field elements"
+        POSEIDON2_OUTPUT,
+        "Expected 4 field elements"
     );
-    // With 4 bytes/felt (little-endian):
-    // First element (bytes 0-3): 0x00000001
-    // Last element (bytes 28-31): 0xFF000000
+    // With 8 bytes/felt (little-endian):
+    // First element (bytes 0-7): 0x0000000000000001
+    // Last element (bytes 24-31): 0xFF00000000000000
     let expected_first = F::from_canonical_u64(1);
-    let expected_last = F::from_canonical_u64(255u64 << 24);
+    let expected_last = F::from_canonical_u64(255u64 << 56);
     assert_eq!(elements[0], expected_first, "First element incorrect");
-    assert_eq!(elements[7], expected_last, "Last element incorrect");
+    assert_eq!(elements[3], expected_last, "Last element incorrect");
     let decoded = SubstrateAccount::from_field_elements(&elements)?;
     assert_eq!(exit_account, decoded, "Specific address round-trip failed");
     Ok(())
@@ -128,16 +134,16 @@ fn exit_account_codec() {
 
     // Encode the account's address into field elements.
     let field_elements = account.to_field_elements();
-    assert_eq!(field_elements.len(), DIGEST_NUM_FELTS);
+    assert_eq!(field_elements.len(), POSEIDON2_OUTPUT);
 
     // Reconstruct the original bytes from the field elements.
-    // With 4 bytes/felt encoding:
+    // With 8 bytes/felt encoding:
     let mut expected_elements = Vec::new();
-    for i in 0..DIGEST_NUM_FELTS {
-        let mut bytes = [0u8; 4];
-        bytes.copy_from_slice(&address_bytes[i * 4..(i + 1) * 4]);
-        let value = u32::from_le_bytes(bytes);
-        expected_elements.push(F::from_noncanonical_u64(value as u64));
+    for i in 0..POSEIDON2_OUTPUT {
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(&address_bytes[i * 8..(i + 1) * 8]);
+        let value = u64::from_le_bytes(bytes);
+        expected_elements.push(F::from_noncanonical_u64(value));
     }
     assert_eq!(field_elements, expected_elements);
 
@@ -154,7 +160,7 @@ fn codec_invalid_length() {
     assert!(recovered_account_result.is_err());
     assert_eq!(
         recovered_account_result.unwrap_err().to_string(),
-        "Expected 8 field elements for SubstrateAccount, got: 2"
+        "Expected 4 field elements for SubstrateAccount, got: 2"
     );
 
     let long_elements = vec![
@@ -163,17 +169,13 @@ fn codec_invalid_length() {
         F::from_noncanonical_u64(3),
         F::from_noncanonical_u64(4),
         F::from_noncanonical_u64(5),
-        F::from_noncanonical_u64(6),
-        F::from_noncanonical_u64(7),
-        F::from_noncanonical_u64(8),
-        F::from_noncanonical_u64(9),
     ];
 
     let recovered_account_result = SubstrateAccount::from_field_elements(&long_elements);
     assert!(recovered_account_result.is_err());
     assert_eq!(
         recovered_account_result.unwrap_err().to_string(),
-        "Expected 8 field elements for SubstrateAccount, got: 9"
+        "Expected 4 field elements for SubstrateAccount, got: 5"
     );
 }
 
@@ -184,7 +186,7 @@ fn codec_empty_elements() {
     assert!(recovered_account_result.is_err());
     assert_eq!(
         recovered_account_result.unwrap_err().to_string(),
-        "Expected 8 field elements for SubstrateAccount, got: 0"
+        "Expected 4 field elements for SubstrateAccount, got: 0"
     );
 }
 
