@@ -113,6 +113,7 @@ pub fn range32<F: RichField + Extendable<D>, const D: usize>(
     b.range_check(x, 32);
 }
 
+/// Compare two 4-element arrays (e.g., hash outputs) for equality.
 #[inline]
 pub fn bytes_digest_eq<F: RichField + Extendable<D>, const D: usize>(
     b: &mut CircuitBuilder<F, D>,
@@ -137,6 +138,7 @@ pub fn limbs4_at_offset<const LEAF_PI_LEN: usize, const KEY_OFFSET: usize>(
     let base = index * LEAF_PI_LEN + KEY_OFFSET;
     [pis[base], pis[base + 1], pis[base + 2], pis[base + 3]]
 }
+
 #[inline]
 pub fn limb1_at_offset<const LEAF_PI_LEN: usize, const KEY_OFFSET: usize>(
     pis: &[Target],

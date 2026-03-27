@@ -6,6 +6,8 @@ pub mod block_header;
 pub mod circuit;
 pub mod inputs;
 pub mod nullifier;
+#[cfg(feature = "profile")]
+pub mod profile;
 pub mod storage_proof;
 pub mod substrate_account;
 pub mod unspendable_account;

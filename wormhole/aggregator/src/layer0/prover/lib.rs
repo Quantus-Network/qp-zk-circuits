@@ -29,7 +29,7 @@ use std::{fs, path::Path};
 
 use zk_circuits_common::{
     circuit::{C, D, F},
-    utils::digest_bytes_to_felts,
+    utils::bytes_to_digest,
 };
 
 use crate::{
@@ -365,6 +365,6 @@ fn assert_dummy_padding_asset_id_compatible(
 /// for real slots via conditional select.
 fn generate_dummy_nullifier_pre_images_for_slots(n_slots: usize) -> Vec<[F; 4]> {
     (0..n_slots)
-        .map(|_| digest_bytes_to_felts(generate_random_nullifier_preimage()))
+        .map(|_| bytes_to_digest(generate_random_nullifier_preimage()))
         .collect()
 }

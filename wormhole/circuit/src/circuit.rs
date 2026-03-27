@@ -40,7 +40,7 @@ pub mod circuit_logic {
         plonk::circuit_data::{CircuitData, ProverCircuitData, VerifierCircuitData},
         plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig},
     };
-    use zk_circuits_common::circuit::{CircuitFragment, C, D, F};
+    use zk_circuits_common::circuit::{wormhole_circuit_config, CircuitFragment, C, D, F};
 
     #[derive(Debug, Clone)]
     pub struct CircuitTargets {
@@ -64,6 +64,37 @@ pub mod circuit_logic {
                 block_header: BlockHeaderTargets::new(builder),
             }
         }
+
+        #[cfg(feature = "profile")]
+        pub fn new_profiled(builder: &mut CircuitBuilder<F, D>) -> Self {
+            use crate::profile::GateProfiler;
+            let mut profiler = GateProfiler::new();
+
+            println!("\n=== Target Creation Gates ===");
+
+            let storage_proof = StorageProofTargets::new(builder);
+            profiler.checkpoint("StorageProofTargets::new", builder.num_gates());
+
+            let nullifier = NullifierTargets::new(builder);
+            profiler.checkpoint("NullifierTargets::new", builder.num_gates());
+
+            let unspendable_account = UnspendableAccountTargets::new(builder);
+            profiler.checkpoint("UnspendableAccountTargets::new", builder.num_gates());
+
+            let exit_accounts = DualExitAccountTargets::new(builder);
+            profiler.checkpoint("DualExitAccountTargets::new", builder.num_gates());
+
+            let block_header = BlockHeaderTargets::new(builder);
+            profiler.checkpoint("BlockHeaderTargets::new", builder.num_gates());
+
+            Self {
+                nullifier,
+                unspendable_account,
+                storage_proof,
+                exit_accounts,
+                block_header,
+            }
+        }
     }
 
     pub struct WormholeCircuit {
@@ -73,13 +104,22 @@ pub mod circuit_logic {
 
     impl Default for WormholeCircuit {
         fn default() -> Self {
-            let config = CircuitConfig::standard_recursion_zk_config();
+            let config = wormhole_circuit_config();
             Self::new(config)
         }
     }
 
     impl WormholeCircuit {
         pub fn new(config: CircuitConfig) -> Self {
+            #[cfg(feature = "profile")]
+            return Self::new_profiled(config);
+
+            #[cfg(not(feature = "profile"))]
+            Self::new_internal(config)
+        }
+
+        #[cfg(not(feature = "profile"))]
+        fn new_internal(config: CircuitConfig) -> Self {
             let mut builder = CircuitBuilder::<F, D>::new(config);
 
             // Setup targets
@@ -99,6 +139,53 @@ pub mod circuit_logic {
             Self { builder, targets }
         }
 
+        #[cfg(feature = "profile")]
+        fn new_profiled(config: CircuitConfig) -> Self {
+            use crate::profile::GateProfiler;
+            let mut profiler = GateProfiler::new();
+
+            let mut builder = CircuitBuilder::<F, D>::new(config);
+
+            // Setup targets with profiling
+            let targets = CircuitTargets::new_profiled(&mut builder);
+
+            println!("\n=== Circuit Fragment Gates ===");
+            let gates_after_targets = builder.num_gates();
+
+            // Setup circuits with profiling
+            use crate::block_header::BlockHeader;
+
+            Nullifier::circuit(&targets.nullifier, &mut builder);
+            profiler.checkpoint("Nullifier::circuit", builder.num_gates());
+
+            UnspendableAccount::circuit(&targets.unspendable_account, &mut builder);
+            profiler.checkpoint("UnspendableAccount::circuit", builder.num_gates());
+
+            StorageProof::circuit(&targets.storage_proof, &mut builder);
+            profiler.checkpoint("StorageProof::circuit", builder.num_gates());
+
+            DualExitAccount::circuit(&targets.exit_accounts, &mut builder);
+            profiler.checkpoint("DualExitAccount::circuit", builder.num_gates());
+
+            BlockHeader::circuit(&targets.block_header, &mut builder);
+            profiler.checkpoint("BlockHeader::circuit", builder.num_gates());
+
+            // Ensure that shared inputs to each fragment are the same.
+            connect_shared_targets(&targets, &mut builder);
+            profiler.checkpoint("connect_shared_targets", builder.num_gates());
+
+            profiler.print_summary();
+
+            println!(
+                "\nTotal gates before build: {} (targets: {}, fragments: {})",
+                builder.num_gates(),
+                gates_after_targets,
+                builder.num_gates() - gates_after_targets
+            );
+
+            Self { builder, targets }
+        }
+
         pub fn targets(&self) -> CircuitTargets {
             self.targets.clone()
         }
@@ -114,15 +201,28 @@ pub mod circuit_logic {
         pub fn build_verifier(self) -> VerifierCircuitData<F, C, D> {
             self.builder.build_verifier()
         }
+
+        /// Build circuit with profiling output. Prints gate instance counts before building.
+        /// Requires RUST_LOG=debug to see per-gate-type counts.
+        #[cfg(feature = "profile")]
+        pub fn build_circuit_profiled(self) -> CircuitData<F, C, D> {
+            println!("\n=== Gate Instance Counts ===");
+            self.builder.print_gate_counts(0);
+            self.builder.build()
+        }
+
+        /// Returns the current number of gates in the circuit (before building).
+        pub fn num_gates(&self) -> usize {
+            self.builder.num_gates()
+        }
     }
 
     fn connect_shared_targets(targets: &CircuitTargets, builder: &mut CircuitBuilder<F, D>) {
         use crate::nullifier::NULLIFIER_SALT;
         use plonky2::hash::poseidon2::Poseidon2Hash;
-        use zk_circuits_common::utils::injective_string_to_felt;
+        use zk_circuits_common::utils::string_to_felts;
 
-        // Secret.
-        builder.connect_hashes(targets.unspendable_account.secret, targets.nullifier.secret);
+        builder.connect_hashes(targets.nullifier.secret, targets.unspendable_account.secret);
         // Transfer count.
         for (&a, &b) in targets
             .nullifier
@@ -133,11 +233,16 @@ pub mod circuit_logic {
             builder.connect(a, b);
         }
 
-        // to_account and unspendable_account must be the same
-        builder.connect_hashes(
-            targets.unspendable_account.account_id,
-            targets.storage_proof.leaf_inputs.to_account,
-        );
+        // to_account and unspendable_account must be the same (both are 4 felts)
+        for (&a, &b) in targets
+            .unspendable_account
+            .account_id
+            .elements
+            .iter()
+            .zip(&targets.storage_proof.leaf_inputs.to_account.elements)
+        {
+            builder.connect(a, b);
+        }
 
         // Dummy proof detection: requires BOTH block_hash == 0 AND output_amounts == 0.
         // This prevents an attacker from slipping funds through with a zero block hash
@@ -173,12 +278,12 @@ pub mod circuit_logic {
         // Nullifier validation: nullifier == H(H(salt + secret + transfer_count))
         // Skip this validation for dummy proofs (block_hash == 0 AND outputs == 0).
         // This allows dummy proofs to use random nullifiers for better privacy.
-        let salt_felts = injective_string_to_felt(NULLIFIER_SALT);
+        let salt_felts = string_to_felts(NULLIFIER_SALT);
         let mut nullifier_preimage = Vec::new();
         for &f in salt_felts.iter() {
             nullifier_preimage.push(builder.constant(f));
         }
-        nullifier_preimage.extend(targets.nullifier.secret.elements.iter());
+        nullifier_preimage.extend(targets.nullifier.secret.elements.iter().copied());
         nullifier_preimage.extend(targets.nullifier.transfer_count.iter());
 
         let inner_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(nullifier_preimage);
@@ -208,10 +313,11 @@ pub mod circuit_logic {
         }
 
         // The state_root from the block_header must be the same as the root_hash for the storage_proof.
+        // Both are now 4 felts (8 bytes/felt), so we can directly compare them.
         // Skip this validation for dummy proofs (block_hash == 0 AND outputs == 0).
         for i in 0..4 {
             let diff = builder.sub(
-                targets.block_header.header.state_root.elements[i],
+                targets.block_header.header.state_root[i],
                 targets.storage_proof.root_hash.elements[i],
             );
             let result = builder.mul(diff, is_not_dummy);

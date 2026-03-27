@@ -4,7 +4,6 @@
 
 use plonky2::{
     field::types::Field,
-    hash::hash_types::HashOutTarget,
     iop::target::Target,
     plonk::{
         circuit_builder::CircuitBuilder,
@@ -21,6 +20,8 @@ use zk_circuits_common::{
     gadgets::bytes_digest_eq,
 };
 
+use super::constants::AGGREGATOR_ADDRESS_LEN;
+
 use super::constants as l1c;
 
 /// Runtime targets for the prebuilt layer-1 aggregation circuit.
@@ -30,8 +31,8 @@ pub struct Layer1AggregationCircuitTargets {
     pub layer0_verifier_data: VerifierCircuitTarget,
     /// One proof target per layer-0 slot.
     pub layer0_proofs: Vec<ProofWithPublicInputsTarget<D>>,
-    /// Aggregator address (4 felts / 32 bytes) as a witness-filled hash target.
-    pub aggregator_address: HashOutTarget,
+    /// Aggregator address (4 felts, 8 bytes/felt) for hash-derived accounts.
+    pub aggregator_address: [Target; AGGREGATOR_ADDRESS_LEN],
 }
 
 pub struct Layer1AggregationCircuit {
@@ -84,7 +85,11 @@ impl Layer1AggregationCircuit {
         }
 
         // Aggregator address is witness-filled (NOT a constant).
-        let aggregator_address = builder.add_virtual_hash();
+        // Uses 4 felts (8 bytes/felt) for hash-derived accounts.
+        let aggregator_address: [Target; AGGREGATOR_ADDRESS_LEN] = builder
+            .add_virtual_targets(AGGREGATOR_ADDRESS_LEN)
+            .try_into()
+            .unwrap();
 
         let targets = Layer1AggregationCircuitTargets {
             layer0_verifier_data,
@@ -112,6 +117,19 @@ impl Layer1AggregationCircuit {
 
     pub fn build_verifier(self) -> VerifierCircuitData<F, C, D> {
         self.builder.build_verifier()
+    }
+
+    /// Build circuit with profiling output. Prints gate counts before building.
+    #[cfg(feature = "profile")]
+    pub fn build_circuit_profiled(self) -> CircuitData<F, C, D> {
+        println!("\n=== Layer-1 Gate Instance Counts ===");
+        self.builder.print_gate_counts(0);
+        self.builder.build()
+    }
+
+    /// Returns the current number of gates in the circuit (before building).
+    pub fn num_gates(&self) -> usize {
+        self.builder.num_gates()
     }
 }
 
@@ -152,8 +170,8 @@ fn build_layer1_wrapper_constraints(
     // -------------------------------------------------------------------------
     let mut output_pis: Vec<Target> = Vec::new();
 
-    // 1) Aggregator address (witness target)
-    output_pis.extend_from_slice(&targets.aggregator_address.elements);
+    // 1) Aggregator address (witness target, 4 felts, 8 bytes/felt)
+    output_pis.extend_from_slice(&targets.aggregator_address);
 
     // 2) Reference values from proof 0
     let asset_ref = l0_pi_targets[0][l1c::L0_ASSET_ID_OFFSET];
@@ -221,6 +239,7 @@ mod tests {
     use plonky2::plonk::proof::ProofWithPublicInputs;
     use qp_wormhole_inputs::PUBLIC_INPUTS_FELTS_LEN as LEAF_PI_LEN;
 
+    use super::super::constants::AGGREGATOR_ADDRESS_LEN;
     use crate::layer0::circuit::circuit_logic::{
         AggregationCircuitTargets, Layer0AggregationCircuit,
     };
@@ -266,6 +285,13 @@ mod tests {
     }
 
     /// Build one leaf PI array in the Bitcoin-style 2-output layout.
+    ///
+    /// Layout (21 felts total):
+    /// - asset_id(1), output_amount_1(1), output_amount_2(1), volume_fee_bps(1)
+    /// - nullifier(4)
+    /// - exit_account_1(4) - 4 felts (8 bytes/felt)
+    /// - exit_account_2(4) - 4 felts (8 bytes/felt)
+    /// - block_hash(4), block_number(1)
     fn make_leaf_pi(
         amount1: u32,
         amount2: u32,
@@ -339,7 +365,7 @@ mod tests {
         l1_targets: &Layer1AggregationCircuitTargets,
         layer0_verifier_only: &plonky2::plonk::circuit_data::VerifierOnlyCircuitData<C, D>,
         layer0_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
-        aggregator_address: [F; 4],
+        aggregator_address: [F; AGGREGATOR_ADDRESS_LEN],
     ) -> Result<ProofWithPublicInputs<F, C, D>, anyhow::Error> {
         assert_eq!(layer0_proofs.len(), N_INNER);
 
@@ -354,9 +380,9 @@ mod tests {
             pw.set_proof_with_pis_target(pt, proof).unwrap();
         }
 
-        // Fill aggregator address hash target (4 felts)
+        // Fill aggregator address (4 felts, 8 bytes/felt)
         for (i, limb) in aggregator_address.iter().enumerate() {
-            pw.set_target(l1_targets.aggregator_address.elements[i], *limb)
+            pw.set_target(l1_targets.aggregator_address[i], *limb)
                 .unwrap();
         }
 
@@ -474,7 +500,8 @@ mod tests {
         let l1_targets = l1_circuit.targets();
         let l1_data = l1_circuit.build_circuit();
 
-        let aggregator_address = [
+        // 4 felts (8 bytes/felt) for hash-derived accounts
+        let aggregator_address: [F; AGGREGATOR_ADDRESS_LEN] = [
             F::from_canonical_u64(0xDEAD),
             F::from_canonical_u64(0xBEEF),
             F::from_canonical_u64(0xCAFE),
@@ -502,28 +529,40 @@ mod tests {
         let expected_len = l1c::l1_pi_len(N_INNER, NUM_LEAVES);
         assert_eq!(pis.len(), expected_len, "unexpected layer-1 PI length");
 
-        // Aggregator address (4 felts)
-        assert_eq!(pis[0].to_canonical_u64(), 0xDEAD);
-        assert_eq!(pis[1].to_canonical_u64(), 0xBEEF);
-        assert_eq!(pis[2].to_canonical_u64(), 0xCAFE);
-        assert_eq!(pis[3].to_canonical_u64(), 0xBABE);
+        // Aggregator address (4 felts, 8 bytes/felt)
+        assert_eq!(
+            pis[l1c::AGGREGATOR_ADDRESS_START].to_canonical_u64(),
+            0xDEAD
+        );
+        assert_eq!(
+            pis[l1c::AGGREGATOR_ADDRESS_START + 1].to_canonical_u64(),
+            0xBEEF
+        );
+        assert_eq!(
+            pis[l1c::AGGREGATOR_ADDRESS_START + 2].to_canonical_u64(),
+            0xCAFE
+        );
+        assert_eq!(
+            pis[l1c::AGGREGATOR_ADDRESS_START + 3].to_canonical_u64(),
+            0xBABE
+        );
 
         // Asset ID and volume fee
-        assert_eq!(pis[4].to_canonical_u64(), 0); // asset_id = native
-        assert_eq!(pis[5].to_canonical_u64(), 10); // volume_fee_bps
+        assert_eq!(pis[l1c::ASSET_ID_START].to_canonical_u64(), 0); // asset_id = native
+        assert_eq!(pis[l1c::VOLUME_FEE_BPS_START].to_canonical_u64(), 10); // volume_fee_bps
 
         // Block hash
-        assert_eq!(pis[6].to_canonical_u64(), 0xAA01);
-        assert_eq!(pis[7].to_canonical_u64(), 0xAA02);
-        assert_eq!(pis[8].to_canonical_u64(), 0xAA03);
-        assert_eq!(pis[9].to_canonical_u64(), 0xAA04);
+        assert_eq!(pis[l1c::BLOCK_HASH_START].to_canonical_u64(), 0xAA01);
+        assert_eq!(pis[l1c::BLOCK_HASH_START + 1].to_canonical_u64(), 0xAA02);
+        assert_eq!(pis[l1c::BLOCK_HASH_START + 2].to_canonical_u64(), 0xAA03);
+        assert_eq!(pis[l1c::BLOCK_HASH_START + 3].to_canonical_u64(), 0xAA04);
 
         // Block number
-        assert_eq!(pis[10].to_canonical_u64(), 42);
+        assert_eq!(pis[l1c::BLOCK_NUMBER_START].to_canonical_u64(), 42);
 
         // Total exit slots = N_INNER * (2 * NUM_LEAVES)
         assert_eq!(
-            pis[11].to_canonical_u64(),
+            pis[l1c::TOTAL_EXIT_SLOTS_START].to_canonical_u64(),
             (N_INNER * 2 * NUM_LEAVES) as u64
         );
 

@@ -7,7 +7,7 @@ use plonky2::field::goldilocks_field::GoldilocksField;
 use plonky2::field::types::PrimeField64;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use zk_circuits_common::circuit::{C, D, F};
-use zk_circuits_common::utils::{try_felts_slice_to_bytes_digest, BytesDigest, DIGEST_BYTES_LEN};
+use zk_circuits_common::utils::{try_4_felts_to_bytes, BytesDigest, DIGEST_BYTES_LEN};
 
 // Import public input types and constants from wormhole_inputs (single source of truth)
 use qp_wormhole_inputs::{
@@ -72,14 +72,14 @@ pub trait ParsePublicInputs {
 
 impl ParsePublicInputs for PublicCircuitInputs {
     fn try_from_felts(pis: &[GoldilocksField]) -> anyhow::Result<PublicCircuitInputs> {
-        // Public inputs are ordered as follows:
+        // Public inputs are ordered as follows (total 21 felts):
         // asset_id: 1 felt
         // output_amount_1: 1 felt (spend)
         // output_amount_2: 1 felt (change)
         // volume_fee_bps: 1 felt
         // Nullifier.hash: 4 felts
-        // ExitAccount1.address: 4 felts (spend destination)
-        // ExitAccount2.address: 4 felts (change destination)
+        // ExitAccount1.address: 4 felts (8 bytes/felt for hash-derived accounts)
+        // ExitAccount2.address: 4 felts (8 bytes/felt for hash-derived accounts)
         // BlockHeader.block_hash: 4 felts
         // BlockHeader.block_number: 1 felt
         if pis.len() != PUBLIC_INPUTS_FELTS_LEN {
@@ -105,21 +105,17 @@ impl ParsePublicInputs for PublicCircuitInputs {
             .to_canonical_u64()
             .try_into()
             .context("failed to convert volume_fee_bps felt to u32")?;
-        let nullifier =
-            try_felts_slice_to_bytes_digest(&pis[NULLIFIER_START_INDEX..NULLIFIER_END_INDEX])
-                .context("failed to deserialize nullifier hash")?;
-        let block_hash =
-            try_felts_slice_to_bytes_digest(&pis[BLOCK_HASH_START_INDEX..BLOCK_HASH_END_INDEX])
-                .context("failed to deserialize block hash")?;
+        let nullifier = try_4_felts_to_bytes(&pis[NULLIFIER_START_INDEX..NULLIFIER_END_INDEX])
+            .context("failed to deserialize nullifier hash")?;
+        let block_hash = try_4_felts_to_bytes(&pis[BLOCK_HASH_START_INDEX..BLOCK_HASH_END_INDEX])
+            .context("failed to deserialize block hash")?;
 
-        let exit_account_1 = try_felts_slice_to_bytes_digest(
-            &pis[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX],
-        )
-        .context("failed to deserialize exit_account_1")?;
-        let exit_account_2 = try_felts_slice_to_bytes_digest(
-            &pis[EXIT_ACCOUNT_2_START_INDEX..EXIT_ACCOUNT_2_END_INDEX],
-        )
-        .context("failed to deserialize exit_account_2")?;
+        let exit_account_1 =
+            try_4_felts_to_bytes(&pis[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX])
+                .context("failed to deserialize exit_account_1")?;
+        let exit_account_2 =
+            try_4_felts_to_bytes(&pis[EXIT_ACCOUNT_2_START_INDEX..EXIT_ACCOUNT_2_END_INDEX])
+                .context("failed to deserialize exit_account_2")?;
         let block_number_felt = pis[BLOCK_NUMBER_INDEX];
         let block_number = block_number_felt
             .to_canonical_u64()
@@ -157,7 +153,7 @@ impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
     fn try_from_felts(pis: &[GoldilocksField]) -> anyhow::Result<AggregatedPublicCircuitInputs> {
         // Layout in the FINAL (deduped) wrapper proof PIs:
         // [num_unique_exits, asset_id, volume_fee_bps, block_data(5),
-        //  [output_sum(1), exit_account(4)] * 2*N,  <-- 2 outputs per leaf
+        //  [output_sum(1), exit_account(8)] * 2*N,  <-- 2 outputs per leaf, 8 felts per exit account
         //  nullifiers(4) * N, padding...]
         //
         // IMPORTANT: With 2 outputs per leaf, we have 2*N exit slots.
@@ -183,12 +179,18 @@ impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
 
         // Helpers
         #[inline]
-        fn read_digest(slice: &[F]) -> anyhow::Result<BytesDigest> {
-            try_felts_slice_to_bytes_digest(slice).context("failed to deserialize BytesDigest")
+        fn read_hash(slice: &[F]) -> anyhow::Result<BytesDigest> {
+            // Hash outputs use 4 felts (8 bytes/felt)
+            try_4_felts_to_bytes(slice).context("failed to deserialize hash")
+        }
+        #[inline]
+        fn read_account(slice: &[F]) -> anyhow::Result<BytesDigest> {
+            // Account IDs use 4 felts (8 bytes/felt) for hash-derived accounts
+            try_4_felts_to_bytes(slice).context("failed to deserialize account")
         }
 
         let block_data = BlockData {
-            block_hash: read_digest(&pis[3..7]).context("parsing block_hash")?,
+            block_hash: read_hash(&pis[3..7]).context("parsing block_hash")?,
             block_number: pis[7]
                 .to_canonical_u64()
                 .try_into()
@@ -213,9 +215,9 @@ impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
                 })?;
             cursor += 1;
 
-            // exit_account (4 felts)
+            // exit_account (4 felts, 8 bytes/felt for hash-derived accounts)
             let exit_account =
-                read_digest(&pis[cursor..cursor + 4]).context("parsing exit_account")?;
+                read_account(&pis[cursor..cursor + 4]).context("parsing exit_account")?;
             cursor += 4;
             account_data.push(PublicInputsByAccount {
                 summed_output_amount,
@@ -226,13 +228,13 @@ impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
         // Read N nullifiers (one per leaf proof)
         let mut nullifiers: Vec<BytesDigest> = Vec::with_capacity(n_leaf);
         for _ in 0..n_leaf {
-            let n = read_digest(&pis[cursor..cursor + 4]).context("parsing nullifier")?;
+            let n = read_hash(&pis[cursor..cursor + 4]).context("parsing nullifier")?;
             cursor += 4;
             nullifiers.push(n);
         }
 
         // Compute expected felts consumed
-        // 8 metadata + 2*N*5 exit slots (2 outputs per leaf) + N*4 nullifiers
+        // 8 metadata + 2*N*5 exit slots (2 outputs per leaf, 1 sum + 4 account) + N*4 nullifiers
         let expected_felts = 8 + num_exit_slots * 5 + n_leaf * 4;
         if cursor != expected_felts {
             bail!(

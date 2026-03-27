@@ -13,8 +13,8 @@ use crate::{
 };
 use zk_circuits_common::{
     circuit::{CircuitFragment, D, F},
-    gadgets::digest4_from_le32x8,
-    utils::{digest_bytes_to_felts, injective_bytes_to_felts, INJECTIVE_BYTES_LIMB},
+    storage_proof::PROOF_NODE_MAX_SIZE_F,
+    utils::{bytes_to_digest, bytes_to_felts, BytesDigest, BYTES_PER_FELT},
 };
 // Re-export ProcessedStorageProof for convenience
 pub use zk_circuits_common::storage_proof::ProcessedStorageProof;
@@ -29,10 +29,13 @@ pub const MAX_PROOF_LEN: usize = zk_circuits_common::storage_proof::STORAGE_PROO
 /// Maximum number of actual trie nodes allowed in a Wormhole storage proof.
 pub const MAX_SUPPORTED_PROOF_LEN: usize =
     zk_circuits_common::storage_proof::MAX_STORAGE_PROOF_NODES;
-pub const PROOF_NODE_MAX_SIZE_F: usize = 189; // Should match the felt preimage max set on poseidon-resonance crate.
-pub const PROOF_NODE_MAX_SIZE_B: usize = 256;
+
 pub const FELTS_PER_AMOUNT: usize = 2;
 const EMPTY_PROOF_NODE: [F; PROOF_NODE_MAX_SIZE_F] = [F::ZERO; PROOF_NODE_MAX_SIZE_F];
+
+/// Number of field elements for a hash in the trie encoding.
+/// With injective encoding (4 bytes/felt), a 32-byte hash is 8 felts.
+const HASH_NUM_FELTS: usize = 8;
 
 #[derive(Debug, Clone)]
 pub struct StorageProofTargets {
@@ -50,8 +53,8 @@ impl StorageProofTargets {
         // LeafTargets::new() registers asset_id as a public input first
         let leaf_inputs = LeafTargets::new(builder);
 
-        // Setup targets. Each 8-bytes are represented as their equivalent field element. We also
-        // need to track total proof length to allow for variable length.
+        // Setup targets. Each 4 bytes are represented as their equivalent field element
+        // (injective encoding). We also need to track total proof length to allow for variable length.
         let proof_data: Vec<_> = (0..MAX_PROOF_LEN)
             .map(|_| builder.add_virtual_targets(PROOF_NODE_MAX_SIZE_F))
             .collect();
@@ -88,10 +91,11 @@ impl StorageProof {
         leaf_inputs: LeafInputs,
         is_not_dummy: bool,
     ) -> Self {
+        // Use injective encoding (4 bytes per felt) for collision resistance.
         let proof: Vec<Vec<F>> = processed_proof
             .proof
             .iter()
-            .map(|node| injective_bytes_to_felts(node))
+            .map(|node| bytes_to_felts(node))
             .collect();
 
         let indices = processed_proof
@@ -99,7 +103,8 @@ impl StorageProof {
             .iter()
             .map(|&i| {
                 // Divide by 8 to get the field element index instead of the hex index.
-                let i = i / (INJECTIVE_BYTES_LIMB * 2);
+                // (hex index / 2 = byte index, byte index / 4 = felt index with injective encoding)
+                let i = i / (BYTES_PER_FELT * 2);
                 F::from_canonical_usize(i)
             })
             .collect();
@@ -180,9 +185,6 @@ impl CircuitFragment for StorageProof {
         let leaf_inputs_hash =
             builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(leaf_inputs.collect_to_vec());
 
-        // constant 2^32 for (lo + hi * 2^32) reconstruction
-        let two_pow_32 = builder.constant(F::from_canonical_u64(1u64 << 32));
-
         let zero = builder.zero();
         let empty_proof_node_hash =
             builder.constant_hash(Poseidon2Hash::hash_no_pad(&EMPTY_PROOF_NODE));
@@ -221,7 +223,11 @@ impl CircuitFragment for StorageProof {
             }
 
             // Update `prev_hash` to the hash of the child that's stored within this node.
-            // We first find the hash using the commited index.
+            // We first find the hash using the committed index.
+            //
+            // With injective encoding (4 bytes per felt), a 32-byte hash is stored as
+            // 8 consecutive felts. We need to read them and combine pairs to get the
+            // 4-felt HashOut that Poseidon2 produces.
             let mut found_hash = vec![
                 builder.zero(),
                 builder.zero(),
@@ -229,28 +235,29 @@ impl CircuitFragment for StorageProof {
                 builder.zero(),
             ];
             let expected_hash_index = indices[i];
-            for (j, felt) in node.iter().enumerate().take(PROOF_NODE_MAX_SIZE_F - 8) {
-                // Range constrain each target in the node to be 32 bits.
-                builder.range_check(*felt, 32);
+            // Only iterate up to PROOF_NODE_MAX_SIZE_F - 8, since we read 8 consecutive felts
+            for (j, _felt) in node
+                .iter()
+                .enumerate()
+                .take(PROOF_NODE_MAX_SIZE_F - HASH_NUM_FELTS)
+            {
                 let felt_index = builder.constant(F::from_canonical_usize(j));
                 let is_start_of_hash = builder.is_equal(felt_index, expected_hash_index);
 
-                // If this is the start of the hash, set the next 4 felts of `found_hash`.
-                // Combine pairs (lo, hi) -> lo + hi * 2^32 (little-endian)
-                // Gather the 8 consecutive 32-bit felts into a small array first for clarity.
-                let limbs = node[j..j + 8].try_into().unwrap();
-                let [h0, h1, h2, h3] =
-                    digest4_from_le32x8::<F, D>(builder, limbs, Some(two_pow_32));
+                // With injective encoding, a hash is 8 consecutive felts (4 bytes each = 32 bytes total).
+                // Combine pairs to reconstruct the 4-felt hash output (8 bytes each).
+                // h0 = f0 + f1 * 2^32, h1 = f2 + f3 * 2^32, etc.
+                let shift = builder.constant(F::from_canonical_u64(1u64 << 32));
+                let h0 = builder.mul_add(node[j + 1], shift, node[j]);
+                let h1 = builder.mul_add(node[j + 3], shift, node[j + 2]);
+                let h2 = builder.mul_add(node[j + 5], shift, node[j + 4]);
+                let h3 = builder.mul_add(node[j + 7], shift, node[j + 6]);
 
-                // If this is the start of the hash, set the 4 reconstructed felts into found_hash.
+                // If this is the start of the hash, set the 4 felts into found_hash.
                 found_hash[0] = builder.select(is_start_of_hash, h0, found_hash[0]);
                 found_hash[1] = builder.select(is_start_of_hash, h1, found_hash[1]);
                 found_hash[2] = builder.select(is_start_of_hash, h2, found_hash[2]);
                 found_hash[3] = builder.select(is_start_of_hash, h3, found_hash[3]);
-            }
-            // Range check the last 8 felts of the node to be 32 bits.
-            for felt in node.iter().skip(PROOF_NODE_MAX_SIZE_F - 8) {
-                builder.range_check(*felt, 32);
             }
 
             // Verify that the value node contains the expected leaf_inputs_hash.
@@ -275,7 +282,6 @@ impl CircuitFragment for StorageProof {
         targets: Self::Targets,
     ) -> anyhow::Result<()> {
         use plonky2::iop::witness::WitnessWrite;
-        use zk_circuits_common::utils::felts_to_hashout;
 
         pw.set_hash_target(targets.root_hash, bytes_32_to_hashout(self.root_hash))?;
         // Set is_not_dummy for dummy proof detection logic
@@ -315,16 +321,19 @@ impl CircuitFragment for StorageProof {
         }
 
         // Set leaf input targets.
-        let funding_account = felts_to_hashout(&self.leaf_inputs.funding_account.0);
-        let to_account = felts_to_hashout(&self.leaf_inputs.to_account.0);
-
         pw.set_target(targets.leaf_inputs.asset_id, self.leaf_inputs.asset_id)?;
         pw.set_target_arr(
             &targets.leaf_inputs.transfer_count,
             &self.leaf_inputs.transfer_count,
         )?;
-        pw.set_hash_target(targets.leaf_inputs.funding_account, funding_account)?;
-        pw.set_hash_target(targets.leaf_inputs.to_account, to_account)?;
+        pw.set_target_arr(
+            &targets.leaf_inputs.funding_account.elements,
+            &self.leaf_inputs.funding_account,
+        )?;
+        pw.set_target_arr(
+            &targets.leaf_inputs.to_account.elements,
+            &self.leaf_inputs.to_account,
+        )?;
         pw.set_target(
             targets.leaf_inputs.input_amount,
             self.leaf_inputs.input_amount,
@@ -347,9 +356,7 @@ impl CircuitFragment for StorageProof {
 }
 
 fn bytes_32_to_hashout(bytes: [u8; 32]) -> HashOut<F> {
-    use zk_circuits_common::utils::BytesDigest;
-
     let digest = BytesDigest::try_from(bytes).unwrap();
-    let elements = digest_bytes_to_felts(digest);
+    let elements = bytes_to_digest(digest);
     HashOut { elements }
 }

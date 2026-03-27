@@ -7,15 +7,11 @@ use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::config::PoseidonGoldilocksConfig;
 use plonky2::util::serialization::DefaultGateSerializer;
 use qp_wormhole_inputs::PublicCircuitInputs;
-use test_helpers::{
-    block_header::{DEFAULT_BLOCK_HASHES, DEFAULT_BLOCK_NUMBERS},
-    TestInputs, DEFAULT_OUTPUT_AMOUNTS, DEFAULT_VOLUME_FEE_BPS,
-};
+use test_helpers::TestInputs;
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_circuit::storage_proof::MAX_PROOF_LEN;
 use wormhole_prover::WormholeProver;
-use zk_circuits_common::circuit::{C, D, F};
-use zk_circuits_common::utils::BytesDigest;
+use zk_circuits_common::circuit::{wormhole_circuit_config, C, D, F};
 
 #[cfg(test)]
 const CIRCUIT_CONFIG: CircuitConfig = CircuitConfig::standard_recursion_config();
@@ -103,22 +99,8 @@ fn proof_can_be_deserialized() {
 
     let public_inputs = PublicCircuitInputs::try_from_proof(&proof).unwrap();
 
-    // Build the expected values
-    let expected = PublicCircuitInputs {
-        asset_id: 0u32,
-        output_amount_1: DEFAULT_OUTPUT_AMOUNTS[0],
-        output_amount_2: 0u32, // No second output in tests
-        volume_fee_bps: DEFAULT_VOLUME_FEE_BPS,
-        nullifier: BytesDigest::try_from([
-            102, 213, 23, 119, 137, 1, 172, 231, 97, 86, 27, 28, 210, 26, 24, 162, 195, 135, 231,
-            170, 205, 111, 30, 63, 225, 212, 217, 138, 233, 170, 170, 122,
-        ])
-        .unwrap(),
-        exit_account_1: BytesDigest::try_from([4u8; 32]).unwrap(),
-        exit_account_2: BytesDigest::default(), // No second exit account
-        block_hash: BytesDigest::try_from(DEFAULT_BLOCK_HASHES[0]).unwrap(),
-        block_number: DEFAULT_BLOCK_NUMBERS[0],
-    };
+    // Build expected values from the canonical test fixtures.
+    let expected = inputs.public;
     assert_eq!(public_inputs, expected);
     println!("{:?}", public_inputs);
 }
@@ -151,7 +133,7 @@ fn export_test_proof() {
 fn export_test_proof_zk() {
     const FILE_PATH: &str = "../../dummy_proof_zk.bin";
 
-    let circuit_config = CircuitConfig::standard_recursion_zk_config();
+    let circuit_config = wormhole_circuit_config();
 
     let prover = WormholeProver::new(circuit_config);
     let inputs = CircuitInputs::test_inputs_0();

@@ -22,12 +22,14 @@ zk-circuits-common = { package = "qp-zk-circuits-common", version = "1.1.1", pat
 
 [dev-dependencies]
 criterion = { workspace = true }
+env_logger = "0.9"
 test-helpers = { path = "../tests/test-helpers", default-features = false }
 
 [features]
 default = ["multithread", "std"]
 multithread = ["rayon"]
 no_zk = []
+profile = ["qp-plonky2/rand", "qp-plonky2/timing", "std"]
 std = [
 	"anyhow/std",
 	"qp-plonky2/std",

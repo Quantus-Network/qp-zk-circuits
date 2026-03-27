@@ -2,7 +2,10 @@ use alloc::{string::String, vec::Vec};
 use plonky2::{
     field::goldilocks_field::GoldilocksField,
     iop::witness::PartialWitness,
-    plonk::{circuit_builder::CircuitBuilder, config::PoseidonGoldilocksConfig},
+    plonk::{
+        circuit_builder::CircuitBuilder, circuit_data::CircuitConfig,
+        config::PoseidonGoldilocksConfig,
+    },
 };
 use serde::Deserialize;
 
@@ -17,6 +20,11 @@ pub struct TransferProofJson {
     pub state_root: String,         // hex (no 0x)
     pub storage_proof: Vec<String>, // hex-encoded nodes
     pub indices: Vec<usize>,
+}
+
+/// Circuit config is standard plonky2 zk config
+pub fn wormhole_circuit_config() -> CircuitConfig {
+    CircuitConfig::standard_recursion_zk_config()
 }
 
 pub trait CircuitFragment {

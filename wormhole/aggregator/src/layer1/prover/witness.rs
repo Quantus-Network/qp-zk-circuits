@@ -5,7 +5,7 @@ use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::{circuit_data::VerifierOnlyCircuitData, proof::ProofWithPublicInputs};
 
 use zk_circuits_common::circuit::{C, D, F};
-use zk_circuits_common::utils::{felts_to_hashout, Digest};
+use zk_circuits_common::utils::Digest;
 
 use crate::layer1::circuit::circuit_logic::Layer1AggregationCircuitTargets;
 
@@ -27,10 +27,14 @@ pub fn fill_layer1_aggregation_witness(
         );
     }
 
-    pw.set_hash_target(
-        targets.aggregator_address,
-        felts_to_hashout(&aggregator_address),
-    )?;
+    // Set aggregator address (4 felts, 8 bytes/felt)
+    for (target, value) in targets
+        .aggregator_address
+        .iter()
+        .zip(aggregator_address.iter())
+    {
+        pw.set_target(*target, *value)?;
+    }
     pw.set_verifier_data_target(&targets.layer0_verifier_data, layer0_verifier_only)?;
 
     for (proof_t, proof) in targets.layer0_proofs.iter().zip(layer0_proofs.iter()) {

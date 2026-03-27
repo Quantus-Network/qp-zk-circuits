@@ -2,24 +2,36 @@ use alloc::vec::Vec;
 use core::array;
 use plonky2::field::types::Field;
 use plonky2::hash::poseidon2::hash_no_pad_bytes;
-use plonky2::{
-    hash::hash_types::HashOutTarget, iop::target::Target, plonk::circuit_builder::CircuitBuilder,
-};
+use plonky2::iop::target::Target;
+use plonky2::plonk::circuit_builder::CircuitBuilder;
 
 use crate::inputs::CircuitInputs;
-use crate::substrate_account::SubstrateAccount;
+use crate::substrate_account::AccountTargets;
 use zk_circuits_common::circuit::{D, F};
-use zk_circuits_common::codec::ByteCodec;
-use zk_circuits_common::utils::{u64_to_felts, BytesDigest, FELTS_PER_U64};
+use zk_circuits_common::utils::{
+    bytes_to_digest, u64_to_felts, BytesDigest, Digest, FELTS_PER_U64, POSEIDON2_OUTPUT,
+};
 
-pub const NUM_LEAF_INPUT_FELTS: usize = 12;
+/// Number of field elements in the leaf preimage:
+/// - 1 (asset_id)
+/// - 2 (transfer_count as u64)
+/// - 4 (funding_account, 8 bytes/felt)
+/// - 4 (to_account, 8 bytes/felt)
+/// - 1 (input_amount)
+///   Total: 12
+///
+/// Note: Both accounts use 4 felts (8 bytes/felt) to match on-chain poseidon hashing.
+/// Collision resistance is provided by the storage proof verification.
+pub const NUM_LEAF_INPUT_FELTS: usize = 1 + FELTS_PER_U64 + POSEIDON2_OUTPUT + POSEIDON2_OUTPUT + 1;
 
 #[derive(Debug, Clone)]
 pub struct LeafTargets {
     pub asset_id: Target,
     pub transfer_count: [Target; FELTS_PER_U64],
-    pub funding_account: HashOutTarget,
-    pub to_account: HashOutTarget,
+    /// Funding account encoded as 4 felts (8 bytes/felt)
+    pub funding_account: AccountTargets,
+    /// To account (unspendable) encoded as 4 felts (8 bytes/felt)
+    pub to_account: AccountTargets,
     /// The input amount from storage (private). This is what's stored in the merkle trie.
     pub input_amount: Target,
     /// The first output amount after fee deduction (public). Spend destination.
@@ -40,8 +52,8 @@ impl LeafTargets {
         let volume_fee_bps = builder.add_virtual_public_input();
         // Private inputs
         let transfer_count = array::from_fn(|_| builder.add_virtual_target());
-        let funding_account = builder.add_virtual_hash();
-        let to_account = builder.add_virtual_hash();
+        let funding_account = AccountTargets::new(builder);
+        let to_account = AccountTargets::new(builder);
         let input_amount = builder.add_virtual_target(); // Private - not a public input
 
         Self {
@@ -82,8 +94,10 @@ impl LeafTargets {
 pub struct LeafInputs {
     pub asset_id: F,
     pub transfer_count: [F; FELTS_PER_U64],
-    pub funding_account: SubstrateAccount,
-    pub to_account: SubstrateAccount,
+    /// Funding account encoded as 4 felts (8 bytes/felt)
+    pub funding_account: Digest,
+    /// To account (unspendable) encoded as 4 felts (8 bytes/felt)
+    pub to_account: Digest,
     /// The input amount from storage (private)
     pub input_amount: F,
     /// The first output amount after fee deduction (public). Spend destination.
@@ -112,8 +126,9 @@ impl LeafInputs {
         let output_amount_1 = F::from_canonical_u32(output_amount_1);
         let output_amount_2 = F::from_canonical_u32(output_amount_2);
         let volume_fee_bps = F::from_canonical_u32(volume_fee_bps);
-        let funding_account = SubstrateAccount::from_bytes(funding_account.as_slice())?;
-        let to_account = SubstrateAccount::from_bytes(to_account.as_slice())?;
+        // Use 4 felts (8 bytes/felt) to match on-chain poseidon encoding
+        let funding_account = bytes_to_digest(funding_account);
+        let to_account = bytes_to_digest(to_account);
         Ok(Self {
             asset_id,
             transfer_count,
@@ -131,8 +146,8 @@ impl LeafInputs {
         let mut leaf_elements = Vec::new();
         leaf_elements.push(self.asset_id);
         leaf_elements.extend_from_slice(&self.transfer_count);
-        leaf_elements.extend_from_slice(&self.funding_account.0);
-        leaf_elements.extend_from_slice(&self.to_account.0);
+        leaf_elements.extend_from_slice(&self.funding_account);
+        leaf_elements.extend_from_slice(&self.to_account);
         leaf_elements.push(self.input_amount);
 
         hash_no_pad_bytes(&leaf_elements)

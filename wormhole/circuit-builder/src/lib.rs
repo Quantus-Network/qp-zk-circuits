@@ -3,12 +3,11 @@ use std::fs::{create_dir_all, write};
 use std::path::Path;
 use wormhole_aggregator::layer1::circuit::generate_layer1_circuit_binaries;
 
-use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::config::PoseidonGoldilocksConfig;
 use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
 use wormhole_aggregator::layer0::circuit::build::generate_layer0_circuit_binaries;
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
-use zk_circuits_common::circuit::D;
+use zk_circuits_common::circuit::{wormhole_circuit_config, D};
 
 // Re-export CircuitBinsConfig from aggregator so users of circuit-builder can access it
 pub use wormhole_aggregator::CircuitBinsConfig;
@@ -22,7 +21,7 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
     include_prover: bool,
 ) -> Result<()> {
     println!("Building wormhole circuit...");
-    let config = CircuitConfig::standard_recursion_zk_config();
+    let config = wormhole_circuit_config();
     let circuit = WormholeCircuit::new(config);
     let targets = circuit.targets();
     let circuit_data = circuit.build_circuit();

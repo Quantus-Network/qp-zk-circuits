@@ -1,9 +1,10 @@
 #![cfg(test)]
 
 use plonky2::plonk::circuit_data::CircuitConfig;
+use zk_circuits_common::circuit::wormhole_circuit_config;
+
 pub mod aggregator_tests;
 
-fn circuit_config() -> CircuitConfig {
-    // Use zk config to match CLI and production usage
-    CircuitConfig::standard_recursion_zk_config()
+pub fn circuit_config() -> CircuitConfig {
+    wormhole_circuit_config()
 }

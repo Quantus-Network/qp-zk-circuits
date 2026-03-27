@@ -1,29 +1,30 @@
 use alloc::vec::Vec;
 use core::array;
 use plonky2::{
-    field::types::Field,
-    hash::{hash_types::HashOutTarget, poseidon2::hash_no_pad_bytes},
-    iop::target::Target,
+    field::types::Field, hash::poseidon2::hash_no_pad_bytes, iop::target::Target,
     plonk::circuit_builder::CircuitBuilder,
 };
 use zk_circuits_common::{
     circuit::{D, F},
-    utils::{digest_bytes_to_felts, injective_bytes_to_felts, BytesDigest, Digest},
+    utils::{bytes_to_digest, bytes_to_felts, BytesDigest, Digest, POSEIDON2_OUTPUT},
 };
 
 use crate::inputs::CircuitInputs;
 
 pub const DIGEST_LOGS_SIZE: usize = 110;
 
-/// 110 bytes, rounded to 23 felts ~= 112 bytes with 4 byte limbs per felt
+/// 110 bytes, rounded to 28 felts with injective encoding (4 bytes/felt + terminator)
 const DIGEST_LOGS_FELTS: usize = 28;
 
 #[derive(Debug, Clone)]
 pub struct HeaderTargets {
-    pub parent_hash: HashOutTarget,
+    /// parent_hash uses 4 felts (8 bytes/felt) for hash outputs
+    pub parent_hash: [Target; POSEIDON2_OUTPUT],
     pub block_number: Target,
-    pub state_root: HashOutTarget,
-    pub extrinsics_root: HashOutTarget,
+    /// state_root uses 4 felts (8 bytes/felt) for hash outputs
+    pub state_root: [Target; POSEIDON2_OUTPUT],
+    /// extrinsics_root uses 4 felts (8 bytes/felt) for hash outputs
+    pub extrinsics_root: [Target; POSEIDON2_OUTPUT],
     pub digest: [Target; DIGEST_LOGS_FELTS],
 }
 
@@ -33,20 +34,29 @@ impl HeaderTargets {
             // parent_hash is a private input -- it contributes to block_hash computation
             // but does not need to be exposed as a public input since block_hash already
             // commits to it (block_hash = H(parent_hash || block_number || ...)).
-            parent_hash: builder.add_virtual_hash(),
+            // Uses 4 felts (8 bytes/felt) for hash outputs.
+            parent_hash: builder
+                .add_virtual_targets(POSEIDON2_OUTPUT)
+                .try_into()
+                .unwrap(),
             block_number: builder.add_virtual_public_input(),
-            state_root: builder.add_virtual_hash(),
-            extrinsics_root: builder.add_virtual_hash(),
+            state_root: builder
+                .add_virtual_targets(POSEIDON2_OUTPUT)
+                .try_into()
+                .unwrap(),
+            extrinsics_root: builder
+                .add_virtual_targets(POSEIDON2_OUTPUT)
+                .try_into()
+                .unwrap(),
             digest: array::from_fn(|_| builder.add_virtual_target()),
         }
     }
     pub fn collect_to_vec(&self) -> Vec<Target> {
         self.parent_hash
-            .elements
             .iter()
             .chain(core::iter::once(&self.block_number))
-            .chain(self.state_root.elements.iter())
-            .chain(self.extrinsics_root.elements.iter())
+            .chain(self.state_root.iter())
+            .chain(self.extrinsics_root.iter())
             .chain(self.digest.iter())
             .cloned()
             .collect()
@@ -55,9 +65,12 @@ impl HeaderTargets {
 
 #[derive(Debug)]
 pub struct HeaderInputs {
+    /// parent_hash uses 4 felts (8 bytes/felt) for hash outputs
     pub parent_hash: Digest,
     pub block_number: F,
+    /// state_root uses 4 felts (8 bytes/felt) for hash outputs
     pub state_root: Digest,
+    /// extrinsics_root uses 4 felts (8 bytes/felt) for hash outputs
     pub extrinsics_root: Digest,
     pub digest: [F; DIGEST_LOGS_FELTS],
 }
@@ -71,11 +84,12 @@ impl HeaderInputs {
         digest: &[u8; DIGEST_LOGS_SIZE],
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            parent_hash: digest_bytes_to_felts(parent_hash),
+            // Use 8 bytes/felt encoding for hash outputs
+            parent_hash: bytes_to_digest(parent_hash),
             block_number: F::from_noncanonical_u64(block_number as u64),
-            state_root: digest_bytes_to_felts(state_root),
-            extrinsics_root: digest_bytes_to_felts(extrinsics_root),
-            digest: injective_bytes_to_felts(digest).try_into().unwrap(),
+            state_root: bytes_to_digest(state_root),
+            extrinsics_root: bytes_to_digest(extrinsics_root),
+            digest: bytes_to_felts(digest).try_into().unwrap(),
         })
     }
     pub fn block_hash(&self) -> BytesDigest {

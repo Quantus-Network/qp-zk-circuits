@@ -8,8 +8,8 @@
 /// - output_amount_2(1)
 /// - volume_fee_bps(1)
 /// - nullifier(4)
-/// - exit_account_1(4)
-/// - exit_account_2(4)
+/// - exit_account_1(4) - 4 felts (8 bytes/felt) for hash-derived accounts
+/// - exit_account_2(4) - 4 felts (8 bytes/felt) for hash-derived accounts
 /// - block_hash(4)
 /// - block_number(1)
 ///

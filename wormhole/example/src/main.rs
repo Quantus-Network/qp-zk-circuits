@@ -7,8 +7,8 @@
 
 use anyhow::Context;
 use clap::Parser;
-use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
+use zk_circuits_common::circuit::wormhole_circuit_config;
 use qp_poseidon::PoseidonHasher;
 use qp_wormhole_inputs::{AggregatedPublicCircuitInputs, PublicCircuitInputs};
 use quantus_cli::chain::quantus_subxt::api as quantus_node;
@@ -20,7 +20,7 @@ use quantus_cli::qp_dilithium_crypto::DilithiumPair;
 use quantus_cli::wallet::QuantumKeyPair;
 use quantus_cli::{AccountId32, ChainConfig, QuantusClient};
 use serde::{Deserialize, Serialize};
-use sp_core::{Hasher, H256};
+use sp_core::{Hasher, Pair, H256};
 use std::str::FromStr;
 use subxt::backend::legacy::rpc_methods::{Bytes, ReadProof};
 use subxt::blocks::Block;
@@ -228,7 +228,7 @@ impl TryFrom<DebugInputs> for CircuitInputs {
 fn generate_zk_proof(inputs: CircuitInputs) -> anyhow::Result<ProofWithPublicInputs<F, C, D>> {
     println!("Generating ZK proof...");
     // Must use zk_config to match the aggregator's dummy proof
-    let config = CircuitConfig::standard_recursion_zk_config();
+    let config = wormhole_circuit_config();
     let prover = WormholeProver::new(config);
     let prover_next = prover.commit(&inputs)?;
     let proof: ProofWithPublicInputs<F, C, D> = prover_next.prove().expect("proof failed; qed");
@@ -270,7 +270,7 @@ fn aggregate_proofs(proof_files: Vec<String>, output_file: &str) -> anyhow::Resu
     println!("Loading {} proof files...", proof_files.len());
 
     // Build the wormhole prover circuit data
-    let config = CircuitConfig::standard_recursion_zk_config();
+    let config = wormhole_circuit_config();
     let prover = WormholeProver::new(config.clone());
     let common_data = &prover.circuit_data.common;
 
@@ -521,13 +521,9 @@ async fn perform_batched_transfers(
             )
                 .encode(),
         );
-        let proof_address = quantus_node::storage().wormhole().transfer_proof((
-            asset_id,
-            event.transfer_count,
-            event.from.clone(),
-            event.to.clone(),
-            event.amount,
-        ));
+        let proof_address = quantus_node::storage()
+            .wormhole()
+            .transfer_proof((event.to.clone(), event.transfer_count));
         let mut final_key = proof_address.to_root_bytes();
         final_key.extend_from_slice(&leaf_hash);
 
@@ -663,13 +659,9 @@ async fn perform_transfer_and_get_inputs(
         )
             .encode(),
     );
-    let proof_address = quantus_node::storage().wormhole().transfer_proof((
-        asset_id,
-        event.transfer_count,
-        event.from.clone(),
-        event.to.clone(),
-        event.amount,
-    ));
+    let proof_address = quantus_node::storage()
+        .wormhole()
+        .transfer_proof((event.to.clone(), event.transfer_count));
     let mut final_key = proof_address.to_root_bytes();
     final_key.extend_from_slice(&leaf_hash);
 
@@ -893,8 +885,8 @@ async fn main() -> anyhow::Result<()> {
         DilithiumPair::from_seed(&seed).expect("valid dev account seed for DilithiumPair");
 
     let quantum_keypair = QuantumKeyPair {
-        public_key: funding_pair.public().0.to_vec(),
-        private_key: funding_pair.secret.to_vec(),
+        public_key: funding_pair.public().as_ref().to_vec(),
+        private_key: funding_pair.secret_bytes().to_vec(),
     };
 
     let funding_account = AccountId32::new(PoseidonHasher::hash(funding_pair.public().as_ref()).0);
