@@ -58,21 +58,6 @@ pub fn felts_to_bytes(input: &[F]) -> Result<Vec<u8>, String> {
     serialization::felts_to_bytes(input).map_err(|e| e.to_string())
 }
 
-/// Convert BytesDigest to 8 field elements (4 bytes/felt).
-/// Use for secrets/preimages where collision resistance matters.
-pub fn digest_to_felts(input: BytesDigest) -> [F; INJECTIVE_DIGEST_NUM_FELTS] {
-    serialization::digest_to_felts(&input)
-}
-
-/// Convert 8 field elements to BytesDigest (inverse of `digest_to_felts`).
-///
-/// Uses `new_unchecked` because the 4-bytes-per-felt encoding produces bytes
-/// that may not pass the 8-byte chunk validation (e.g., adjacent 0xFFFFFFFF values).
-pub fn felts_to_digest(input: [F; INJECTIVE_DIGEST_NUM_FELTS]) -> BytesDigest {
-    let bytes: [u8; DIGEST_BYTES_LEN] = serialization::felts_to_digest(&input);
-    BytesDigest::new_unchecked(bytes)
-}
-
 /// Convert BytesDigest to 4 field elements (digest format, 8 bytes/felt).
 /// Use for hash outputs where the value came from Poseidon2 squeeze.
 pub fn bytes_to_digest(input: BytesDigest) -> Digest {

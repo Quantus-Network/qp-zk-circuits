@@ -3,9 +3,9 @@ use test_helpers::{DEFAULT_SECRETS, DEFAULT_TRANSFER_COUNTS};
 use wormhole_circuit::nullifier::{add_nullifier_validation, Nullifier, NullifierTargets};
 use zk_circuits_common::{
     circuit::{CircuitFragment, C, D, F},
-    utils::digest_to_felts,
+    codec::FieldElementCodec,
+    utils::{bytes_to_digest, BytesDigest},
 };
-use zk_circuits_common::{codec::FieldElementCodec, utils::BytesDigest};
 
 #[cfg(test)]
 fn run_test(nullifier: &Nullifier) -> anyhow::Result<ProofWithPublicInputs<F, C, D>> {
@@ -46,7 +46,7 @@ fn invalid_secret_fails_proof() {
     let mut invalid_bytes = hex::decode(DEFAULT_SECRETS[0]).unwrap();
     invalid_bytes[0] ^= 0xFF;
     let invalid_bytes: [u8; 32] = invalid_bytes[..32].try_into().unwrap();
-    valid_nullifier.secret = digest_to_felts(BytesDigest::try_from(invalid_bytes).unwrap());
+    valid_nullifier.secret = bytes_to_digest(BytesDigest::try_from(invalid_bytes).unwrap());
 
     let res = run_test(&valid_nullifier);
     assert!(res.is_err());
@@ -68,9 +68,9 @@ fn nullifier_codec() {
     );
 
     // Encode the account as field elements and compare.
-    // 4 (hash) + 8 (secret) + 2 (transfer_count) = 14
+    // 4 (hash) + 4 (secret) + 2 (transfer_count) = 10
     let field_elements = nullifier.to_field_elements();
-    assert_eq!(field_elements.len(), 14);
+    assert_eq!(field_elements.len(), 10);
 
     // Decode the field elements back into a Nullifier
     let recovered_nullifier = Nullifier::from_field_elements(&field_elements).unwrap();
@@ -85,7 +85,7 @@ fn codec_invalid_length() {
     assert!(recovered_nullifier_result.is_err());
     assert_eq!(
         recovered_nullifier_result.unwrap_err().to_string(),
-        "Expected 14 field elements for Nullifier, got: 2"
+        "Expected 10 field elements for Nullifier, got: 2"
     );
 }
 
@@ -97,6 +97,6 @@ fn codec_empty_elements() {
     assert!(recovered_nullifier_result.is_err());
     assert_eq!(
         recovered_nullifier_result.unwrap_err().to_string(),
-        "Expected 14 field elements for Nullifier, got: 0"
+        "Expected 10 field elements for Nullifier, got: 0"
     );
 }

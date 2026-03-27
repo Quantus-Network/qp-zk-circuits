@@ -222,15 +222,7 @@ pub mod circuit_logic {
         use plonky2::hash::poseidon2::Poseidon2Hash;
         use zk_circuits_common::utils::string_to_felts;
 
-        // Secret (8 field elements each).
-        for (&a, &b) in targets
-            .unspendable_account
-            .secret
-            .iter()
-            .zip(&targets.nullifier.secret)
-        {
-            builder.connect(a, b);
-        }
+        builder.connect_hashes(targets.nullifier.secret, targets.unspendable_account.secret);
         // Transfer count.
         for (&a, &b) in targets
             .nullifier
@@ -291,7 +283,7 @@ pub mod circuit_logic {
         for &f in salt_felts.iter() {
             nullifier_preimage.push(builder.constant(f));
         }
-        nullifier_preimage.extend(targets.nullifier.secret.iter().copied());
+        nullifier_preimage.extend(targets.nullifier.secret.elements.iter().copied());
         nullifier_preimage.extend(targets.nullifier.transfer_count.iter());
 
         let inner_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(nullifier_preimage);

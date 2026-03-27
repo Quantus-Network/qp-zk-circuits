@@ -11,12 +11,10 @@ use plonky2::{
 use anyhow::bail;
 use zk_circuits_common::circuit::{CircuitFragment, D, F};
 use zk_circuits_common::gadgets::{enforce_target_less_than_const, is_const_less_than};
-use zk_circuits_common::utils::{
-    felts_to_hashout, Digest, INJECTIVE_DIGEST_NUM_FELTS, POSEIDON2_OUTPUT, ZERO_DIGEST,
-};
+use zk_circuits_common::utils::{felts_to_hashout, Digest, POSEIDON2_OUTPUT, ZERO_DIGEST};
 
-/// Type alias for secrets (8 felts, 4 bytes/felt for collision resistance)
-pub type Secret = [F; INJECTIVE_DIGEST_NUM_FELTS];
+/// Type alias for secrets (4 felts, 8 bytes/felt)
+pub type Secret = [F; POSEIDON2_OUTPUT];
 
 /// Maximum Merkle path length supported by the circuit.
 /// A depth of 32 allows membership proofs in trees with up to 2^32 leaves.
@@ -43,7 +41,7 @@ pub struct VotePublicInputs {
 /// without revealing the voter's identity.
 #[derive(Debug, Clone)]
 pub struct VotePrivateInputs {
-    /// The secret of the voter (8 felts, 4 bytes/felt for collision resistance)
+    /// The secret of the voter (4 felts, 8 bytes/felt)
     pub secret: Secret,
     /// The sibling hashes in the merkle tree path
     pub merkle_siblings: Vec<Digest>,
@@ -63,8 +61,8 @@ pub struct VoteTargets {
     pub expected_nullifier: HashOutTarget,
 
     // Private Input Targets
-    /// Secret uses 8 felts (4 bytes/felt) for collision-resistant encoding
-    pub secret: [Target; INJECTIVE_DIGEST_NUM_FELTS],
+    /// Secret uses 4 felts (8 bytes/felt)
+    pub secret: [Target; POSEIDON2_OUTPUT],
     pub merkle_siblings: Vec<HashOutTarget>,
     pub path_indices: Vec<BoolTarget>,
     pub actual_merkle_depth: Target,
@@ -80,9 +78,9 @@ impl VoteTargets {
         let expected_nullifier = builder.add_virtual_hash_public_input();
 
         // Private Input Targets
-        // Secret uses 8 felts (4 bytes/felt) for collision-resistant encoding
-        let secret: [Target; INJECTIVE_DIGEST_NUM_FELTS] = builder
-            .add_virtual_targets(INJECTIVE_DIGEST_NUM_FELTS)
+        // Secret uses 4 felts (8 bytes/felt)
+        let secret: [Target; POSEIDON2_OUTPUT] = builder
+            .add_virtual_targets(POSEIDON2_OUTPUT)
             .try_into()
             .unwrap();
         let merkle_siblings: Vec<_> = (0..MAX_MERKLE_DEPTH)
@@ -130,7 +128,7 @@ impl CircuitFragment for VoteCircuitData {
 
     fn circuit(targets: &Self::Targets, builder: &mut CircuitBuilder<F, D>) {
         // --- 1. Merkle Proof Verification ---
-        // Hash the secret (8 felts) to get the leaf hash
+        // Hash the secret (4 felts) to get the leaf hash
         let leaf_hash_targets = builder
             .hash_n_to_hash_no_pad_p2::<plonky2::hash::poseidon2::Poseidon2Hash>(
                 targets.secret.to_vec(),
@@ -267,7 +265,7 @@ impl CircuitFragment for VoteCircuitData {
             felts_to_hashout(&self.public_inputs.nullifier),
         )?;
 
-        // Set private input witnesses (8 felts for collision-resistant encoding)
+        // Set private input witnesses.
         for (i, &felt) in self.private_inputs.secret.iter().enumerate() {
             pw.set_target(targets.secret[i], felt)?;
         }
@@ -303,7 +301,7 @@ mod voting_tests {
     };
     use zk_circuits_common::{
         circuit::C,
-        utils::{digest_to_felts, BytesDigest},
+        utils::{bytes_to_digest, BytesDigest},
     };
 
     fn compute_nullifier(secret: &Secret, proposal_id: &Digest) -> Digest {
@@ -323,7 +321,7 @@ mod voting_tests {
         ];
         let leaves: Vec<Digest> = private_keys_for_tree
             .iter()
-            .map(|bytes| Poseidon2Hash::hash_no_pad(&digest_to_felts(*bytes)).elements)
+            .map(|bytes| Poseidon2Hash::hash_no_pad(&bytes_to_digest(*bytes)).elements)
             .collect();
 
         // Build the Merkle tree level by level
@@ -348,8 +346,8 @@ mod voting_tests {
         }
 
         let root = current_level[0];
-        // Use collision-resistant encoding (4 bytes/felt) for secrets
-        let voter_secret: Secret = digest_to_felts(private_keys_for_tree[0]);
+        // Use the digest serializer for secrets.
+        let voter_secret: Secret = bytes_to_digest(private_keys_for_tree[0]);
         let merkle_siblings: Vec<Digest> = vec![leaves[1], merkle_tree[1][1]];
         let path_indices: Vec<bool> = vec![false, false];
         let actual_merkle_depth = 2;
@@ -376,8 +374,8 @@ mod voting_tests {
     }
 
     fn create_max_depth_inputs() -> VoteCircuitData {
-        // Use collision-resistant encoding (4 bytes/felt) for secrets
-        let secret = digest_to_felts(BytesDigest::try_from([9u8; 32]).unwrap());
+        // Use the digest serializer for secrets.
+        let secret = bytes_to_digest(BytesDigest::try_from([9u8; 32]).unwrap());
         // proposal_id is a hash output, generate it properly
         let proposal_id: Digest = Poseidon2Hash::hash_no_pad(&[F::from_canonical_u64(7)]).elements;
         let vote = true;
@@ -509,7 +507,7 @@ mod voting_tests {
     fn test_completely_invalid_proof() -> anyhow::Result<()> {
         let mut inputs = create_test_inputs();
         // Use completely random values that should make the proof invalid
-        inputs.private_inputs.secret = [F::from_canonical_u64(12345); 8];
+        inputs.private_inputs.secret = [F::from_canonical_u64(12345); 4];
         inputs.private_inputs.merkle_siblings = vec![
             [F::from_canonical_u64(67890); 4],
             [F::from_canonical_u64(11111); 4],

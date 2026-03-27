@@ -6,7 +6,6 @@
 //! ## API Overview
 //!
 //! - `bytes_to_felts` / `felts_to_bytes` - Variable-length byte arrays (4 bytes/felt + terminator)
-//! - `digest_to_felts` / `felts_to_digest` - Fixed 32-byte digests → 8 felts (4 bytes/felt)
 //! - `bytes_to_digest` / `digest_to_bytes` - Digest values (4 felts ↔ 32 bytes, 8 bytes/felt)
 
 use alloc::{string::String, vec::Vec};
@@ -15,7 +14,7 @@ use plonky2::field::types::{Field, PrimeField64};
 // Re-export constants from qp-poseidon-core
 pub use qp_poseidon_constants::POSEIDON2_OUTPUT;
 pub use qp_poseidon_core::serialization::{
-    AMOUNT_QUANTIZATION_FACTOR, BYTES_PER_FELT, DIGEST_NUM_FELTS, FELTS_PER_U128, FELTS_PER_U64,
+    AMOUNT_QUANTIZATION_FACTOR, BYTES_PER_FELT, FELTS_PER_U128, FELTS_PER_U64,
 };
 
 use crate::circuit::F;
@@ -133,27 +132,6 @@ pub fn string_to_felts(input: &str) -> Vec<F> {
 }
 
 // ============================================================================
-// Fixed 32-byte digest <-> 8 felts (4 bytes/felt)
-// Uses qp-poseidon-core's u64-based implementation
-// ============================================================================
-
-/// Convert a 32-byte digest to 8 field elements (4 bytes per felt).
-///
-/// Use this for hashes, secrets, account IDs, and other fixed 32-byte values.
-pub fn digest_to_felts(input: &[u8; 32]) -> [F; DIGEST_NUM_FELTS] {
-    let u64s = qp_poseidon_core::serialization::digest_to_u64s(input);
-    core::array::from_fn(|i| from_u64(u64s[i]))
-}
-
-/// Convert 8 field elements back to a 32-byte digest.
-///
-/// Inverse of `digest_to_felts`.
-pub fn felts_to_digest(input: &[F; DIGEST_NUM_FELTS]) -> [u8; 32] {
-    let u64s: [u64; DIGEST_NUM_FELTS] = core::array::from_fn(|i| to_u64(input[i]));
-    qp_poseidon_core::serialization::u64s_to_digest(&u64s)
-}
-
-// ============================================================================
 // Digest serialization (4 felts <-> 32 bytes, 8 bytes/felt)
 // ============================================================================
 
@@ -230,21 +208,6 @@ mod tests {
             let reconstructed = felts_to_bytes(&felts).unwrap();
             assert_eq!(original, reconstructed);
         }
-    }
-
-    #[test]
-    fn test_digest_round_trip() {
-        let original = [42u8; 32];
-        let felts = digest_to_felts(&original);
-        let reconstructed = felts_to_digest(&felts);
-        assert_eq!(original, reconstructed);
-    }
-
-    #[test]
-    fn test_digest_uses_8_felts() {
-        let original = [42u8; 32];
-        let felts = digest_to_felts(&original);
-        assert_eq!(felts.len(), DIGEST_NUM_FELTS);
     }
 
     #[test]
