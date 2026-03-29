@@ -37,4 +37,4 @@ version = "1.2.1"
 uninlined_format_args = "allow"
 
 [patch.crates-io]
-qp-poseidon-core = { path = "../qp-poseidon/core" }
+qp-poseidon-core = { git = "https://github.com/Quantus-Network/qp-poseidon", branch = "illuzen/compact-storage-hasher" }
