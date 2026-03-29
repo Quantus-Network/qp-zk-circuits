@@ -13,8 +13,9 @@ use crate::{
 };
 use zk_circuits_common::{
     circuit::{CircuitFragment, D, F},
+    serialization::bytes_to_felts_compact,
     storage_proof::PROOF_NODE_MAX_SIZE_F,
-    utils::{bytes_to_digest, bytes_to_felts, BytesDigest, BYTES_PER_FELT},
+    utils::{bytes_to_digest, BytesDigest},
 };
 // Re-export ProcessedStorageProof for convenience
 pub use zk_circuits_common::storage_proof::ProcessedStorageProof;
@@ -34,8 +35,8 @@ pub const FELTS_PER_AMOUNT: usize = 2;
 const EMPTY_PROOF_NODE: [F; PROOF_NODE_MAX_SIZE_F] = [F::ZERO; PROOF_NODE_MAX_SIZE_F];
 
 /// Number of field elements for a hash in the trie encoding.
-/// With injective encoding (4 bytes/felt), a 32-byte hash is 8 felts.
-const HASH_NUM_FELTS: usize = 8;
+/// With compact encoding (8 bytes/felt), a 32-byte hash is 4 felts.
+const HASH_NUM_FELTS: usize = 4;
 
 #[derive(Debug, Clone)]
 pub struct StorageProofTargets {
@@ -53,8 +54,8 @@ impl StorageProofTargets {
         // LeafTargets::new() registers asset_id as a public input first
         let leaf_inputs = LeafTargets::new(builder);
 
-        // Setup targets. Each 4 bytes are represented as their equivalent field element
-        // (injective encoding). We also need to track total proof length to allow for variable length.
+        // Setup targets. Each 8 bytes are represented as their equivalent field element
+        // (compact encoding). We also need to track total proof length to allow for variable length.
         let proof_data: Vec<_> = (0..MAX_PROOF_LEN)
             .map(|_| builder.add_virtual_targets(PROOF_NODE_MAX_SIZE_F))
             .collect();
@@ -91,20 +92,22 @@ impl StorageProof {
         leaf_inputs: LeafInputs,
         is_not_dummy: bool,
     ) -> Self {
-        // Use injective encoding (4 bytes per felt) for collision resistance.
+        // Use compact encoding (8 bytes per felt) for efficient proving.
         let proof: Vec<Vec<F>> = processed_proof
             .proof
             .iter()
-            .map(|node| bytes_to_felts(node))
+            .map(|node| bytes_to_felts_compact(node))
             .collect();
 
+        // Compact encoding uses 8 bytes per felt.
+        const COMPACT_BYTES_PER_FELT: usize = 8;
         let indices = processed_proof
             .indices
             .iter()
             .map(|&i| {
-                // Divide by 8 to get the field element index instead of the hex index.
-                // (hex index / 2 = byte index, byte index / 4 = felt index with injective encoding)
-                let i = i / (BYTES_PER_FELT * 2);
+                // Divide by 16 to get the field element index instead of the hex index.
+                // (hex index / 2 = byte index, byte index / 8 = felt index with compact encoding)
+                let i = i / (COMPACT_BYTES_PER_FELT * 2);
                 F::from_canonical_usize(i)
             })
             .collect();
@@ -225,9 +228,8 @@ impl CircuitFragment for StorageProof {
             // Update `prev_hash` to the hash of the child that's stored within this node.
             // We first find the hash using the committed index.
             //
-            // With injective encoding (4 bytes per felt), a 32-byte hash is stored as
-            // 8 consecutive felts. We need to read them and combine pairs to get the
-            // 4-felt HashOut that Poseidon2 produces.
+            // With compact encoding (8 bytes per felt), a 32-byte hash is stored as
+            // 4 consecutive felts. We read them directly as the 4-felt HashOut.
             let mut found_hash = vec![
                 builder.zero(),
                 builder.zero(),
@@ -235,7 +237,7 @@ impl CircuitFragment for StorageProof {
                 builder.zero(),
             ];
             let expected_hash_index = indices[i];
-            // Only iterate up to PROOF_NODE_MAX_SIZE_F - 8, since we read 8 consecutive felts
+            // Only iterate up to PROOF_NODE_MAX_SIZE_F - 4, since we read 4 consecutive felts
             for (j, _felt) in node
                 .iter()
                 .enumerate()
@@ -244,14 +246,12 @@ impl CircuitFragment for StorageProof {
                 let felt_index = builder.constant(F::from_canonical_usize(j));
                 let is_start_of_hash = builder.is_equal(felt_index, expected_hash_index);
 
-                // With injective encoding, a hash is 8 consecutive felts (4 bytes each = 32 bytes total).
-                // Combine pairs to reconstruct the 4-felt hash output (8 bytes each).
-                // h0 = f0 + f1 * 2^32, h1 = f2 + f3 * 2^32, etc.
-                let shift = builder.constant(F::from_canonical_u64(1u64 << 32));
-                let h0 = builder.mul_add(node[j + 1], shift, node[j]);
-                let h1 = builder.mul_add(node[j + 3], shift, node[j + 2]);
-                let h2 = builder.mul_add(node[j + 5], shift, node[j + 4]);
-                let h3 = builder.mul_add(node[j + 7], shift, node[j + 6]);
+                // With compact encoding, a hash is 4 consecutive felts (8 bytes each = 32 bytes total).
+                // Read them directly as the 4-felt hash output.
+                let h0 = node[j];
+                let h1 = node[j + 1];
+                let h2 = node[j + 2];
+                let h3 = node[j + 3];
 
                 // If this is the start of the hash, set the 4 felts into found_hash.
                 found_hash[0] = builder.select(is_start_of_hash, h0, found_hash[0]);

@@ -132,6 +132,24 @@ pub fn string_to_felts(input: &str) -> Vec<F> {
 }
 
 // ============================================================================
+// Compact encoding (8 bytes/felt) for variable-length data
+// ============================================================================
+
+/// Convert variable-length bytes to field elements using compact encoding (8 bytes/felt).
+///
+/// Unlike `bytes_to_felts` (4 bytes/felt + terminator), this uses the full
+/// 8-byte capacity of each field element. Input is zero-padded to align to 8 bytes.
+///
+/// Use this for trie node hashing where collision resistance is provided by the
+/// trie structure rather than the encoding.
+pub fn bytes_to_felts_compact(input: &[u8]) -> Vec<F> {
+    qp_poseidon_core::serialization::bytes_to_u64s_compact(input)
+        .into_iter()
+        .map(from_u64)
+        .collect()
+}
+
+// ============================================================================
 // Digest serialization (4 felts <-> 32 bytes, 8 bytes/felt)
 // ============================================================================
 

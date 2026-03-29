@@ -53,6 +53,11 @@ pub fn bytes_to_felts(input: &[u8]) -> Vec<F> {
     serialization::bytes_to_felts(input)
 }
 
+/// Converts bytes to field elements using compact encoding (8 bytes/felt).
+pub fn bytes_to_felts_compact(input: &[u8]) -> Vec<F> {
+    serialization::bytes_to_felts_compact(input)
+}
+
 /// Converts field elements back to bytes.
 pub fn felts_to_bytes(input: &[F]) -> Result<Vec<u8>, String> {
     serialization::felts_to_bytes(input).map_err(|e| e.to_string())

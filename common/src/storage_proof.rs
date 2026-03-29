@@ -13,14 +13,13 @@ use anyhow::bail;
 
 /// Maximum proof node size in field elements for circuit-compatible hashing.
 ///
-/// With injective encoding (4 bytes/felt + terminator), 160 felts supports ~636 bytes.
+/// With compact encoding (8 bytes/felt), 80 felts supports 640 bytes.
 /// This accommodates worst-case trie branch nodes: 8 (header) + 32 (partial) + 8 (bitmap)
 /// + 512 (16 children) + 40 (value) = 600 bytes.
 ///
-/// This constant is the single source of truth for both:
-/// - Off-circuit hashing via `hash_for_circuit::<PROOF_NODE_MAX_SIZE_F>()`
-/// - In-circuit proof node array sizing
-pub const PROOF_NODE_MAX_SIZE_F: usize = 160;
+/// This constant is re-exported from qp_poseidon_constants::MAX_TRIE_NODE_FELTS
+/// to ensure consistency between off-circuit hashing and in-circuit witness sizing.
+pub use qp_poseidon_constants::MAX_TRIE_NODE_FELTS as PROOF_NODE_MAX_SIZE_F;
 
 /// Maximum number of trie nodes that an actual Wormhole storage proof may contain.
 ///
@@ -60,10 +59,10 @@ impl ProcessedStorageProof {
 
 /// Hash a node preimage exactly as the blockchain does.
 ///
-/// Uses injective encoding (4 bytes per felt + terminator) to match
+/// Uses compact encoding (8 bytes per felt) to match
 /// the chain's `PoseidonHasher::hash` implementation.
 pub fn hash_node_with_poseidon_padded(node_bytes: &[u8]) -> [u8; 32] {
-    qp_poseidon_core::hash_for_circuit::<PROOF_NODE_MAX_SIZE_F>(node_bytes)
+    qp_poseidon_core::hash_for_circuit::<{ PROOF_NODE_MAX_SIZE_F }>(node_bytes)
 }
 
 /// Parse a HashedValueLeaf node (type 5) and extract the byte offset where the value hash starts.
