@@ -8,7 +8,7 @@ use wormhole_circuit::{
 };
 use zk_circuits_common::{
     circuit::{CircuitFragment, C, D, F},
-    storage_proof::{hash_node_with_poseidon_padded, PROOF_NODE_MAX_SIZE_F},
+    storage_proof::{hash_node_with_poseidon_padded, PROOF_NODE_MAX_SIZE_FELTS},
     utils::{bytes_to_digest, u64_to_felts},
 };
 
@@ -104,7 +104,7 @@ fn fill_targets_unchecked(
     use plonky2::hash::hash_types::HashOut;
     use plonky2::iop::witness::WitnessWrite;
 
-    const EMPTY_PROOF_NODE: [F; PROOF_NODE_MAX_SIZE_F] = [F::ZERO; PROOF_NODE_MAX_SIZE_F];
+    const EMPTY_PROOF_NODE: [F; PROOF_NODE_MAX_SIZE_FELTS] = [F::ZERO; PROOF_NODE_MAX_SIZE_FELTS];
 
     let root_hash = HashOut {
         elements: bytes_to_digest(storage_proof.root_hash.try_into()?),
@@ -120,7 +120,7 @@ fn fill_targets_unchecked(
         match storage_proof.proof.get(i) {
             Some(node) => {
                 let mut padded_proof_node = node.clone();
-                padded_proof_node.resize(PROOF_NODE_MAX_SIZE_F, F::ZERO);
+                padded_proof_node.resize(PROOF_NODE_MAX_SIZE_FELTS, F::ZERO);
                 pw.set_target_arr(&targets.proof_data[i], &padded_proof_node)?;
             }
             None => pw.set_target_arr(&targets.proof_data[i], &EMPTY_PROOF_NODE)?,

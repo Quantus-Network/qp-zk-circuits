@@ -37,5 +37,4 @@ version = "1.2.1"
 uninlined_format_args = "allow"
 
 [patch.crates-io]
-qp-poseidon-constants = { path = "../qp-poseidon-constants" }
 qp-poseidon-core = { path = "../qp-poseidon/core" }

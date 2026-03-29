@@ -14,7 +14,7 @@ use crate::{
 use zk_circuits_common::{
     circuit::{CircuitFragment, D, F},
     serialization::bytes_to_felts_compact,
-    storage_proof::PROOF_NODE_MAX_SIZE_F,
+    storage_proof::PROOF_NODE_MAX_SIZE_FELTS,
     utils::{bytes_to_digest, BytesDigest},
 };
 // Re-export ProcessedStorageProof for convenience
@@ -32,7 +32,7 @@ pub const MAX_SUPPORTED_PROOF_LEN: usize =
     zk_circuits_common::storage_proof::MAX_STORAGE_PROOF_NODES;
 
 pub const FELTS_PER_AMOUNT: usize = 2;
-const EMPTY_PROOF_NODE: [F; PROOF_NODE_MAX_SIZE_F] = [F::ZERO; PROOF_NODE_MAX_SIZE_F];
+const EMPTY_PROOF_NODE: [F; PROOF_NODE_MAX_SIZE_FELTS] = [F::ZERO; PROOF_NODE_MAX_SIZE_FELTS];
 
 /// Number of field elements for a hash in the trie encoding.
 /// With compact encoding (8 bytes/felt), a 32-byte hash is 4 felts.
@@ -57,7 +57,7 @@ impl StorageProofTargets {
         // Setup targets. Each 8 bytes are represented as their equivalent field element
         // (compact encoding). We also need to track total proof length to allow for variable length.
         let proof_data: Vec<_> = (0..MAX_PROOF_LEN)
-            .map(|_| builder.add_virtual_targets(PROOF_NODE_MAX_SIZE_F))
+            .map(|_| builder.add_virtual_targets(PROOF_NODE_MAX_SIZE_FELTS))
             .collect();
 
         let indices: Vec<_> = (0..MAX_PROOF_LEN)
@@ -237,11 +237,11 @@ impl CircuitFragment for StorageProof {
                 builder.zero(),
             ];
             let expected_hash_index = indices[i];
-            // Only iterate up to PROOF_NODE_MAX_SIZE_F - 4, since we read 4 consecutive felts
+            // Only iterate up to PROOF_NODE_MAX_SIZE_FELTS - 4, since we read 4 consecutive felts
             for (j, _felt) in node
                 .iter()
                 .enumerate()
-                .take(PROOF_NODE_MAX_SIZE_F - HASH_NUM_FELTS)
+                .take(PROOF_NODE_MAX_SIZE_FELTS - HASH_NUM_FELTS)
             {
                 let felt_index = builder.constant(F::from_canonical_usize(j));
                 let is_start_of_hash = builder.is_equal(felt_index, expected_hash_index);
@@ -301,14 +301,14 @@ impl CircuitFragment for StorageProof {
                 Some(node) => {
                     let mut padded_proof_node = node.clone();
 
-                    if padded_proof_node.len() > PROOF_NODE_MAX_SIZE_F {
+                    if padded_proof_node.len() > PROOF_NODE_MAX_SIZE_FELTS {
                         bail!(
                             "proof node at index {} is too large: {}",
                             i,
                             padded_proof_node.len()
                         );
                     }
-                    padded_proof_node.resize(PROOF_NODE_MAX_SIZE_F, F::ZERO);
+                    padded_proof_node.resize(PROOF_NODE_MAX_SIZE_FELTS, F::ZERO);
                     pw.set_target_arr(&targets.proof_data[i], &padded_proof_node)?;
                 }
                 None => pw.set_target_arr(&targets.proof_data[i], &EMPTY_PROOF_NODE)?,
