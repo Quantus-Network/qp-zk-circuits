@@ -10,7 +10,7 @@ clap = { version = "4.5", features = ["derive"] }
 hex = { workspace = true, features = ["alloc"] }
 parity-scale-codec = "3.7.5"
 qp-plonky2 = { workspace = true, features = ["default"] }
-qp-poseidon = { version = "1.3.0", features = ["default"] }
+qp-poseidon = { version = "1.4.0", features = ["default"] }
 qp-poseidon-core = { workspace = true, default-features = false }
 qp-wormhole-inputs = { version = "1.2.1", path = "../inputs" }
 quantus-cli = { git = "https://github.com/Quantus-Network/quantus-cli.git", branch = "illuzen/new-poseidon-api", default-features = false }
