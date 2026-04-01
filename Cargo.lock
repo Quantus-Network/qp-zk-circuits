@@ -973,9 +973,34 @@ dependencies = [
 [[package]]
 name = "qp-rusty-crystals-dilithium"
 version = "2.4.0"
+dependencies = [
+ "zeroize",
+]
+
+[[package]]
+name = "qp-rusty-crystals-dilithium"
+version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e223f0218cd3d55a04d96cc9a82415d2edd5e37b5ebd0f466d44a22bf8b34532"
 dependencies = [
+ "zeroize",
+]
+
+[[package]]
+name = "qp-rusty-crystals-hdwallet"
+version = "2.3.0"
+dependencies = [
+ "bip39",
+ "getrandom 0.2.17",
+ "hex",
+ "hex-literal",
+ "hmac",
+ "qp-poseidon-core",
+ "qp-rusty-crystals-dilithium 2.4.0",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
  "zeroize",
 ]
 
@@ -991,7 +1016,7 @@ dependencies = [
  "hex-literal",
  "hmac",
  "qp-poseidon-core",
- "qp-rusty-crystals-dilithium",
+ "qp-rusty-crystals-dilithium 2.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serde_json",
  "sha2",
@@ -1036,7 +1061,7 @@ dependencies = [
  "env_logger",
  "hex",
  "qp-plonky2",
- "qp-rusty-crystals-hdwallet",
+ "qp-rusty-crystals-hdwallet 2.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "qp-wormhole-inputs",
  "qp-zk-circuits-common",
 ]
@@ -1382,6 +1407,8 @@ dependencies = [
  "hex",
  "libc",
  "qp-plonky2",
+ "qp-poseidon-core",
+ "qp-rusty-crystals-hdwallet 2.3.0",
  "qp-wormhole-aggregator",
  "qp-wormhole-circuit",
  "qp-wormhole-circuit-builder",
