@@ -1,6 +1,5 @@
 use anyhow::Result;
 use plonky2::plonk::circuit_data::CircuitConfig;
-use plonky2::plonk::config::PoseidonGoldilocksConfig;
 use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
 use std::fs;
 use std::path::Path;
@@ -10,7 +9,7 @@ use wormhole_circuit::circuit::{circuit_data_from_bytes, circuit_data_to_bytes};
 use wormhole_circuit::inputs::CircuitInputs;
 use wormhole_prover::WormholeProver;
 use wormhole_verifier::WormholeVerifier;
-use zk_circuits_common::circuit::D;
+use zk_circuits_common::circuit::{C, D};
 
 #[test]
 fn test_circuit_data_serialization() {
@@ -46,7 +45,7 @@ fn test_prover_and_verifier_from_file_e2e() -> Result<()> {
     let circuit_data = WormholeCircuit::new(config).build_circuit();
 
     let gate_serializer = DefaultGateSerializer;
-    let generator_serializer = DefaultGeneratorSerializer::<PoseidonGoldilocksConfig, D> {
+    let generator_serializer = DefaultGeneratorSerializer::<C, D> {
         _phantom: Default::default(),
     };
 

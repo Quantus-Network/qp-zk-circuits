@@ -3,11 +3,10 @@ use std::fs::{create_dir_all, write};
 use std::path::Path;
 use wormhole_aggregator::layer1::circuit::generate_layer1_circuit_binaries;
 
-use plonky2::plonk::config::PoseidonGoldilocksConfig;
 use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
 use wormhole_aggregator::layer0::circuit::build::generate_layer0_circuit_binaries;
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
-use zk_circuits_common::circuit::{wormhole_circuit_config, D};
+use zk_circuits_common::circuit::{wormhole_circuit_config, C, D};
 
 // Re-export CircuitBinsConfig from aggregator so users of circuit-builder can access it
 pub use wormhole_aggregator::CircuitBinsConfig;
@@ -28,7 +27,7 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
     println!("Circuit built.");
 
     let gate_serializer = DefaultGateSerializer;
-    let generator_serializer = DefaultGeneratorSerializer::<PoseidonGoldilocksConfig, D> {
+    let generator_serializer = DefaultGeneratorSerializer::<C, D> {
         _phantom: Default::default(),
     };
 

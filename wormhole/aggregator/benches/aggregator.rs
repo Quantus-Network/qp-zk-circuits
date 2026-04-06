@@ -11,7 +11,8 @@ use qp_wormhole_inputs::BytesDigest;
 use zk_circuits_common::circuit::{C, D, F};
 
 /// Generate dummy proofs from the circuit config (no external files needed).
-const BINS_DIR: &str = "../../generated-bins";
+/// Path is relative to CARGO_MANIFEST_DIR (the aggregator crate root).
+const BINS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../generated-bins");
 const LAYER1_L0_NUM_LEAVES: usize = 8; // Must be consistent with the layer0 circuit binaries used in layer1 benchmarks.
 const LAYER1_AGGREGATOR_ADDRESS: [u8; 32] = [42u8; 32];
 

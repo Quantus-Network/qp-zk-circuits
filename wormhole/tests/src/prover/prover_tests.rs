@@ -4,7 +4,6 @@ use std::panic;
 use hex;
 use plonky2::plonk::circuit_builder::CircuitBuilder;
 use plonky2::plonk::circuit_data::CircuitConfig;
-use plonky2::plonk::config::PoseidonGoldilocksConfig;
 use plonky2::util::serialization::DefaultGateSerializer;
 use qp_wormhole_inputs::PublicCircuitInputs;
 use test_helpers::TestInputs;
@@ -70,10 +69,9 @@ fn new_from_bytes_rejects_invalid_prover_bytes_without_panicking() {
 #[test]
 fn new_from_bytes_rejects_non_wormhole_circuit_data() {
     let gate_serializer = DefaultGateSerializer;
-    let generator_serializer =
-        plonky2::util::serialization::DefaultGeneratorSerializer::<PoseidonGoldilocksConfig, D> {
-            _phantom: Default::default(),
-        };
+    let generator_serializer = plonky2::util::serialization::DefaultGeneratorSerializer::<C, D> {
+        _phantom: Default::default(),
+    };
 
     let mut builder = CircuitBuilder::<F, D>::new(CIRCUIT_CONFIG);
     let _pi = builder.add_virtual_public_input();
