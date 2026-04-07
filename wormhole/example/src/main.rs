@@ -8,7 +8,6 @@
 use anyhow::Context;
 use clap::Parser;
 use plonky2::plonk::proof::ProofWithPublicInputs;
-use zk_circuits_common::circuit::wormhole_leaf_circuit_config;
 use qp_poseidon::PoseidonHasher;
 use qp_wormhole_inputs::{AggregatedPublicCircuitInputs, PublicCircuitInputs};
 use quantus_cli::chain::quantus_subxt::api as quantus_node;
@@ -36,6 +35,7 @@ use wormhole_circuit::inputs::{
 use wormhole_circuit::nullifier::Nullifier;
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::aggregation::AggregationConfig;
+use zk_circuits_common::circuit::wormhole_leaf_circuit_config;
 use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::storage_proof::prepare_proof_for_circuit;
 use zk_circuits_common::utils::{digest_to_bytes, BytesDigest, Digest};
@@ -699,9 +699,7 @@ async fn perform_transfer_and_get_inputs(
             output_amount_1: output_amount,
             output_amount_2: 0u32, // No second output in example
             volume_fee_bps: VOLUME_FEE_BPS,
-            nullifier: digest_to_bytes(
-                Nullifier::from_preimage(secret, event.transfer_count).hash,
-            ),
+            nullifier: digest_to_bytes(Nullifier::from_preimage(secret, event.transfer_count).hash),
             exit_account_1: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
             exit_account_2: BytesDigest::default(), // No second exit account
             block_hash: BytesDigest::try_from(block_hash.as_ref())?,
