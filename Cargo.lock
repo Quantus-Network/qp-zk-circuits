@@ -297,6 +297,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "critical-section"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
+
+[[package]]
 name = "crossbeam-deque"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -658,6 +664,10 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+dependencies = [
+ "critical-section",
+ "portable-atomic",
+]
 
 [[package]]
 name = "once_cell_polyfill"
@@ -815,6 +825,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c32c137808ca984ab2458b612b7eb0462d853ee041a3136e83d54b96074c7610"
 
 [[package]]
+name = "portable-atomic"
+version = "1.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
+
+[[package]]
 name = "ppv-lite86"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -844,18 +860,20 @@ dependencies = [
 
 [[package]]
 name = "qp-plonky2"
-version = "1.1.6"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d74c09b03472d90b14309122930a9efb80541e0df2b83eae0ee280dc60d09657"
+checksum = "68d28dbd82dfe8a62cefc289250d7566759c40f82288d65be946c2ac74dbed65"
 dependencies = [
  "ahash",
  "anyhow",
+ "critical-section",
  "getrandom 0.2.17",
  "hashbrown",
  "itertools 0.11.0",
  "keccak-hash",
  "log",
  "num",
+ "once_cell",
  "p3-field",
  "p3-goldilocks",
  "p3-poseidon2",
@@ -876,9 +894,9 @@ dependencies = [
 
 [[package]]
 name = "qp-plonky2-core"
-version = "1.1.6"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d4b67b899994eae278d802c9d8735fc824f4ecfc1b61f8a2a9163b88384162a"
+checksum = "eb4459c942f010177378e11c298f991980d7b1f15d3027841e63f416a286c6e7"
 dependencies = [
  "ahash",
  "anyhow",
@@ -902,9 +920,9 @@ dependencies = [
 
 [[package]]
 name = "qp-plonky2-field"
-version = "1.1.6"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c90a6abc681568deeb0a1f238225de5d3bf11e89373894e5199395268c68cd8"
+checksum = "f774c3cbd1adfd41347276143ffab74b17a3f4d7a43c804ede4f89d8719e06dd"
 dependencies = [
  "anyhow",
  "itertools 0.11.0",
@@ -919,17 +937,19 @@ dependencies = [
 
 [[package]]
 name = "qp-plonky2-verifier"
-version = "1.1.6"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5283d4b8c9bf9f5488643f46b8a9886161acfc654ef8b7d77c53745f3c6e0f56"
+checksum = "a081b3905cc4256ba83320c3f647a37862aa54d8dcae0e40d929c783d5f667e6"
 dependencies = [
  "ahash",
  "anyhow",
+ "critical-section",
  "hashbrown",
  "itertools 0.11.0",
  "keccak-hash",
  "log",
  "num",
+ "once_cell",
  "p3-field",
  "p3-goldilocks",
  "p3-poseidon2",
