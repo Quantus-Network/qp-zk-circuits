@@ -1319,13 +1319,13 @@ mod tests {
         let large_amount = F::from_canonical_u64((u32::MAX / 2) as u64);
 
         let mut pis_list: Vec<[F; LEAF_PI_LEN]> = Vec::with_capacity(8);
-        for i in 0..8 {
+        for nullifier in &nullifiers_felts {
             pis_list.push(make_pi_from_felts(
                 asset_id,
                 large_amount, // All proofs send to same exit, will overflow u32
                 F::ZERO,
                 volume_fee_bps,
-                nullifiers_felts[i],
+                *nullifier,
                 common_exit, // Same exit account for all
                 [F::ZERO; 8],
                 common_block_hash,
@@ -1389,13 +1389,13 @@ mod tests {
         // 7 dummy proofs with distinct nullifiers that should be replaced
         let dummy_exit = [F::ZERO; 8];
         let dummy_block_hash = [F::ZERO; 4];
-        for i in 1..8 {
+        for nullifier in nullifiers_felts.iter().skip(1) {
             pis_list.push(make_pi_from_felts(
                 asset_id,
                 F::ZERO,
                 F::ZERO,
                 volume_fee_bps,
-                nullifiers_felts[i], // Original nullifier (should be replaced)
+                *nullifier, // Original nullifier (should be replaced)
                 dummy_exit,
                 dummy_exit,
                 dummy_block_hash,
