@@ -99,13 +99,16 @@ pub struct WormholeProver {
     targets: Option<CircuitTargets>,
 }
 
-/// Builds a fresh [`WormholeProver`] with the default circuit configuration.
+/// Builds a fresh [`WormholeProver`] with the default leaf circuit configuration (non-ZK).
 ///
 /// This is an expensive operation that builds the circuit from scratch.
 /// For production use, prefer [`WormholeProver::new_from_files`] or
 /// [`WormholeProver::new_from_bytes`] to load pre-built circuit data.
+///
+/// Note: Leaf proofs use non-ZK config because they're only verified by the aggregator
+/// (not on-chain). This improves proving performance without compromising security.
 pub fn build_fresh() -> WormholeProver {
-    WormholeProver::new(zk_circuits_common::circuit::wormhole_circuit_config())
+    WormholeProver::new(zk_circuits_common::circuit::wormhole_leaf_circuit_config())
 }
 
 impl WormholeProver {

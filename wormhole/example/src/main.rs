@@ -8,7 +8,7 @@
 use anyhow::Context;
 use clap::Parser;
 use plonky2::plonk::proof::ProofWithPublicInputs;
-use zk_circuits_common::circuit::wormhole_circuit_config;
+use zk_circuits_common::circuit::wormhole_leaf_circuit_config;
 use qp_poseidon::PoseidonHasher;
 use qp_wormhole_inputs::{AggregatedPublicCircuitInputs, PublicCircuitInputs};
 use quantus_cli::chain::quantus_subxt::api as quantus_node;
@@ -226,9 +226,9 @@ impl TryFrom<DebugInputs> for CircuitInputs {
 
 /// Generate a proof from the given inputs
 fn generate_zk_proof(inputs: CircuitInputs) -> anyhow::Result<ProofWithPublicInputs<F, C, D>> {
-    println!("Generating ZK proof...");
-    // Must use zk_config to match the aggregator's dummy proof
-    let config = wormhole_circuit_config();
+    println!("Generating leaf proof...");
+    // Leaf proofs use non-ZK config (only aggregated proofs need ZK for on-chain verification)
+    let config = wormhole_leaf_circuit_config();
     let prover = WormholeProver::new(config);
     let prover_next = prover.commit(&inputs)?;
     let proof: ProofWithPublicInputs<F, C, D> = prover_next.prove().expect("proof failed; qed");
@@ -269,8 +269,8 @@ fn aggregate_proofs(proof_files: Vec<String>, output_file: &str) -> anyhow::Resu
     println!("\n=== Starting Proof Aggregation ===");
     println!("Loading {} proof files...", proof_files.len());
 
-    // Build the wormhole prover circuit data
-    let config = wormhole_circuit_config();
+    // Build the wormhole prover circuit data (leaf proofs use non-ZK config)
+    let config = wormhole_leaf_circuit_config();
     let prover = WormholeProver::new(config.clone());
     let common_data = &prover.circuit_data.common;
 
