@@ -66,7 +66,6 @@ use plonky2::{
         circuit_data::{
             CircuitConfig, CommonCircuitData, ProverCircuitData, ProverOnlyCircuitData,
         },
-        config::PoseidonGoldilocksConfig,
         proof::ProofWithPublicInputs,
     },
     util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer},
@@ -156,7 +155,7 @@ impl WormholeProver {
     /// Creates a new [`WormholeProver`] from prover and common data bytes.
     pub fn new_from_bytes(prover_only_bytes: &[u8], common_bytes: &[u8]) -> anyhow::Result<Self> {
         let gate_serializer = DefaultGateSerializer;
-        let generator_serializer = DefaultGeneratorSerializer::<PoseidonGoldilocksConfig, D> {
+        let generator_serializer = DefaultGeneratorSerializer::<C, D> {
             _phantom: Default::default(),
         };
 
@@ -195,7 +194,7 @@ impl WormholeProver {
         common_data_path: &Path,
     ) -> anyhow::Result<Self> {
         let gate_serializer = DefaultGateSerializer;
-        let generator_serializer = DefaultGeneratorSerializer::<PoseidonGoldilocksConfig, D> {
+        let generator_serializer = DefaultGeneratorSerializer::<C, D> {
             _phantom: Default::default(),
         };
 

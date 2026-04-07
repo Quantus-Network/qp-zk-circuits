@@ -18,7 +18,6 @@ use std::fs::{create_dir_all, write};
 use std::path::Path;
 
 use plonky2::plonk::circuit_data::{CommonCircuitData, ProverCircuitData, VerifierCircuitData};
-use plonky2::plonk::config::PoseidonGoldilocksConfig;
 use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
 
 use zk_circuits_common::circuit::{wormhole_circuit_config, C, D, F};
@@ -131,7 +130,7 @@ fn write_verifier_artifacts(
 }
 
 fn write_prover_artifact(bins_dir: &Path, prover_data: &ProverCircuitData<F, C, D>) -> Result<()> {
-    let generator_serializer = DefaultGeneratorSerializer::<PoseidonGoldilocksConfig, D> {
+    let generator_serializer = DefaultGeneratorSerializer::<C, D> {
         _phantom: Default::default(),
     };
 

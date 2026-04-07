@@ -17,7 +17,6 @@ use plonky2::{
             CircuitConfig, CommonCircuitData, ProverCircuitData, ProverOnlyCircuitData,
             VerifierOnlyCircuitData,
         },
-        config::PoseidonGoldilocksConfig,
         proof::ProofWithPublicInputs,
     },
     util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer},
@@ -120,7 +119,7 @@ impl Layer0AggregationProver {
         num_leaf_proofs: usize,
     ) -> Result<Self> {
         let gate_serializer = DefaultGateSerializer;
-        let generator_serializer = DefaultGeneratorSerializer::<PoseidonGoldilocksConfig, D> {
+        let generator_serializer = DefaultGeneratorSerializer::<C, D> {
             _phantom: Default::default(),
         };
 

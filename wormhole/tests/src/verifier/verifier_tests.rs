@@ -15,9 +15,9 @@ const CIRCUIT_CONFIG: CircuitConfig = CircuitConfig::standard_recursion_config()
 /// Helper to build a verifier from the circuit for testing.
 /// In production, verifiers load pre-built circuit data from files.
 fn build_test_verifier() -> plonky2::plonk::circuit_data::VerifierCircuitData<
-    plonky2::field::goldilocks_field::GoldilocksField,
-    plonky2::plonk::config::PoseidonGoldilocksConfig,
-    2,
+    zk_circuits_common::circuit::F,
+    zk_circuits_common::circuit::C,
+    { zk_circuits_common::circuit::D },
 > {
     WormholeCircuit::new(CIRCUIT_CONFIG).build_verifier()
 }

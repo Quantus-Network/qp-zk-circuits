@@ -8,17 +8,12 @@
 //! It expects the leaf circuit `common.bin` to already exist in the same output directory.
 
 use anyhow::{anyhow, Context, Result};
-use plonky2::{
-    plonk::config::PoseidonGoldilocksConfig,
-    util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer},
-};
+use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
 use std::{
     fs::{create_dir_all, write},
     path::Path,
 };
-use zk_circuits_common::circuit::wormhole_circuit_config;
-
-use zk_circuits_common::circuit::{D, F};
+use zk_circuits_common::circuit::{wormhole_circuit_config, C, D, F};
 
 use crate::layer0::circuit::circuit_logic::Layer0AggregationCircuit;
 
@@ -61,7 +56,7 @@ pub fn generate_layer0_circuit_binaries<P: AsRef<Path>>(
     let circuit_data = agg_circuit.build_circuit();
 
     let gate_serializer = DefaultGateSerializer;
-    let generator_serializer = DefaultGeneratorSerializer::<PoseidonGoldilocksConfig, D> {
+    let generator_serializer = DefaultGeneratorSerializer::<C, D> {
         _phantom: Default::default(),
     };
 

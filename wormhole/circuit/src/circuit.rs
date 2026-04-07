@@ -4,7 +4,6 @@
 use alloc::vec::Vec;
 use plonky2::{
     plonk::circuit_data::CircuitData,
-    plonk::config::PoseidonGoldilocksConfig,
     util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer},
 };
 use zk_circuits_common::circuit::{C, D, F};
@@ -13,7 +12,7 @@ pub fn circuit_data_to_bytes(
     data: &CircuitData<F, C, D>,
 ) -> Result<Vec<u8>, plonky2::util::serialization::IoError> {
     let gate_serializer = DefaultGateSerializer;
-    let generator_serializer = DefaultGeneratorSerializer::<PoseidonGoldilocksConfig, D> {
+    let generator_serializer = DefaultGeneratorSerializer::<C, D> {
         _phantom: Default::default(),
     };
     data.to_bytes(&gate_serializer, &generator_serializer)
@@ -23,7 +22,7 @@ pub fn circuit_data_from_bytes(
     bytes: &[u8],
 ) -> Result<CircuitData<F, C, D>, plonky2::util::serialization::IoError> {
     let gate_serializer = DefaultGateSerializer;
-    let generator_serializer = DefaultGeneratorSerializer::<PoseidonGoldilocksConfig, D> {
+    let generator_serializer = DefaultGeneratorSerializer::<C, D> {
         _phantom: Default::default(),
     };
     CircuitData::from_bytes(bytes, &gate_serializer, &generator_serializer)
