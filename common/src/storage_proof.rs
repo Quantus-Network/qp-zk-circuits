@@ -14,6 +14,24 @@ pub use qp_poseidon_core::PROOF_NODE_MAX_SIZE_FELTS;
 
 /// Maximum number of trie nodes that an actual Wormhole storage proof may contain.
 ///
+/// # Circuit Constraint
+///
+/// The circuit enforces `proof_len < STORAGE_PROOF_WITNESS_CAPACITY` (i.e., `proof_len <= 19`)
+/// as a ZK constraint, not just a prover-side check. This ensures the leaf-binding check
+/// cannot be skipped by setting `proof_len` beyond the fixed iteration window.
+///
+/// # Security Assumptions
+///
+/// Storage proof depth grows logarithmically with the number of entries in the state trie.
+/// Since storage keys are hashes (uniformly distributed), an attacker cannot force deeper
+/// paths by choosing keys. Reaching depth 19+ requires ~1.3×10¹² trie entries (birthday
+/// bound at 50% probability for two keys sharing 19+ leading nibbles). Real-world Substrate
+/// chains typically have proof depths of 5-15 nodes.
+///
+/// The hash chain from `state_root` to the leaf is what provides cryptographic security—
+/// even if `proof_len` could exceed the limit, forging a valid hash chain from an honest
+/// state root to a malicious leaf would require breaking Poseidon2.
+///
 /// The circuit reserves one extra witness slot to keep the leaf-binding check in-circuit, so the
 /// fixed witness capacity is [`STORAGE_PROOF_WITNESS_CAPACITY`].
 pub const MAX_STORAGE_PROOF_NODES: usize = 19;
