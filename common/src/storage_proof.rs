@@ -6,7 +6,6 @@
 //! - Computing indices for parent-child relationships in trie structures
 
 use alloc::string::String;
-use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
 use anyhow::bail;
@@ -121,21 +120,26 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
     state_root: String,
     leaf_hash: [u8; 32],
 ) -> anyhow::Result<ProcessedStorageProof> {
-    // Build map: node_hash_hex -> node_bytes
-    let mut node_map: alloc::collections::BTreeMap<String, Vec<u8>> =
+    // Build map: node_hash (binary) -> node_bytes
+    let mut node_map: alloc::collections::BTreeMap<[u8; 32], Vec<u8>> =
         alloc::collections::BTreeMap::new();
 
     for node in proof.iter() {
         let node_bytes = node.as_ref();
-        let hash_hex = hex::encode(hash_node_with_poseidon_padded(node_bytes));
-        node_map.insert(hash_hex, node_bytes.to_vec());
+        let hash = hash_node_with_poseidon_padded(node_bytes);
+        node_map.insert(hash, node_bytes.to_vec());
     }
 
-    let state_root_hex = state_root.trim_start_matches("0x").to_string();
+    // Parse state root from hex string to bytes
+    let state_root_hex = state_root.trim_start_matches("0x");
+    let state_root_bytes: [u8; 32] = hex::decode(state_root_hex)
+        .map_err(|e| anyhow::anyhow!("Invalid state root hex: {}", e))?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("State root must be 32 bytes"))?;
 
     // Find root node
     let root_node = node_map
-        .get(&state_root_hex)
+        .get(&state_root_bytes)
         .ok_or_else(|| anyhow::anyhow!("No node hashes to state root"))?;
 
     let mut ordered_nodes = vec![root_node.clone()];
@@ -176,7 +180,9 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
     let hash_offset =
         parse_leaf_hash_offset(leaf).ok_or_else(|| anyhow::anyhow!("Failed to parse leaf node"))?;
 
-    let value_ref = hex::encode(&leaf[hash_offset..hash_offset + 32]);
+    let value_ref: [u8; 32] = leaf[hash_offset..hash_offset + 32]
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Value reference must be 32 bytes"))?;
     let value_node = node_map
         .get(&value_ref)
         .ok_or_else(|| anyhow::anyhow!("Value node not found in proof"))?;
