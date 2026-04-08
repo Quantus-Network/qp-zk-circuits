@@ -1,5 +1,5 @@
 [package]
-edition = "2021"
+edition.workspace = true
 name = "wormhole-example"
 publish = false
 version.workspace = true
@@ -13,11 +13,10 @@ qp-plonky2 = { workspace = true, features = ["default"] }
 qp-poseidon = { version = "1.4.0", features = ["default"] }
 qp-poseidon-core = { workspace = true, default-features = false }
 qp-wormhole-inputs = { version = "1.3.0", path = "../inputs" }
-quantus-cli = { git = "https://github.com/Quantus-Network/quantus-cli.git", branch = "illuzen/new-poseidon-api", default-features = false }
-serde = { version = "1.0", features = ["derive"] }
+quantus-cli = { workspace = true }
+serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { version = "1.0", features = ["alloc"] }
 sp-core = "39.0.0"
-sp-trie = { git = "https://github.com/Quantus-Network/chain.git", default-features = false, features = ["std"] }
 subxt = "0.44.2"
 tokio = "1.48.0"
 wormhole-aggregator = { package = "qp-wormhole-aggregator", version = "1.3.0", path = "../aggregator", default-features = false, features = [

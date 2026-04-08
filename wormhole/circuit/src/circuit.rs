@@ -39,7 +39,7 @@ pub mod circuit_logic {
         plonk::circuit_data::{CircuitData, ProverCircuitData, VerifierCircuitData},
         plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig},
     };
-    use zk_circuits_common::circuit::{wormhole_circuit_config, CircuitFragment, C, D, F};
+    use zk_circuits_common::circuit::{wormhole_leaf_circuit_config, CircuitFragment, C, D, F};
 
     #[derive(Debug, Clone)]
     pub struct CircuitTargets {
@@ -102,8 +102,12 @@ pub mod circuit_logic {
     }
 
     impl Default for WormholeCircuit {
+        /// Creates a WormholeCircuit with the default leaf circuit config (non-ZK).
+        ///
+        /// Leaf proofs don't need ZK because they're only verified by the aggregator (which runs
+        /// in a trusted environment), not on-chain. Disabling ZK improves proving performance.
         fn default() -> Self {
-            let config = wormhole_circuit_config();
+            let config = wormhole_leaf_circuit_config();
             Self::new(config)
         }
     }

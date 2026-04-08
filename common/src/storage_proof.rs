@@ -6,7 +6,6 @@
 //! - Computing indices for parent-child relationships in trie structures
 
 use alloc::string::String;
-use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
 use anyhow::bail;
@@ -14,6 +13,24 @@ use anyhow::bail;
 pub use qp_poseidon_core::PROOF_NODE_MAX_SIZE_FELTS;
 
 /// Maximum number of trie nodes that an actual Wormhole storage proof may contain.
+///
+/// # Circuit Constraint
+///
+/// The circuit enforces `proof_len < STORAGE_PROOF_WITNESS_CAPACITY` (i.e., `proof_len <= 19`)
+/// as a ZK constraint, not just a prover-side check. This ensures the leaf-binding check
+/// cannot be skipped by setting `proof_len` beyond the fixed iteration window.
+///
+/// # Security Assumptions
+///
+/// Storage proof depth grows logarithmically with the number of entries in the state trie.
+/// Since storage keys are hashes (uniformly distributed), an attacker cannot force deeper
+/// paths by choosing keys. Reaching depth 19+ requires ~1.3×10¹² trie entries (birthday
+/// bound at 50% probability for two keys sharing 19+ leading nibbles). Real-world Substrate
+/// chains typically have proof depths of 5-15 nodes.
+///
+/// The hash chain from `state_root` to the leaf is what provides cryptographic security—
+/// even if `proof_len` could exceed the limit, forging a valid hash chain from an honest
+/// state root to a malicious leaf would require breaking Poseidon2.
 ///
 /// The circuit reserves one extra witness slot to keep the leaf-binding check in-circuit, so the
 /// fixed witness capacity is [`STORAGE_PROOF_WITNESS_CAPACITY`].
@@ -121,21 +138,26 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
     state_root: String,
     leaf_hash: [u8; 32],
 ) -> anyhow::Result<ProcessedStorageProof> {
-    // Build map: node_hash_hex -> node_bytes
-    let mut node_map: alloc::collections::BTreeMap<String, Vec<u8>> =
+    // Build map: node_hash (binary) -> node_bytes
+    let mut node_map: alloc::collections::BTreeMap<[u8; 32], Vec<u8>> =
         alloc::collections::BTreeMap::new();
 
     for node in proof.iter() {
         let node_bytes = node.as_ref();
-        let hash_hex = hex::encode(hash_node_with_poseidon_padded(node_bytes));
-        node_map.insert(hash_hex, node_bytes.to_vec());
+        let hash = hash_node_with_poseidon_padded(node_bytes);
+        node_map.insert(hash, node_bytes.to_vec());
     }
 
-    let state_root_hex = state_root.trim_start_matches("0x").to_string();
+    // Parse state root from hex string to bytes
+    let state_root_hex = state_root.trim_start_matches("0x");
+    let state_root_bytes: [u8; 32] = hex::decode(state_root_hex)
+        .map_err(|e| anyhow::anyhow!("Invalid state root hex: {}", e))?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("State root must be 32 bytes"))?;
 
     // Find root node
     let root_node = node_map
-        .get(&state_root_hex)
+        .get(&state_root_bytes)
         .ok_or_else(|| anyhow::anyhow!("No node hashes to state root"))?;
 
     let mut ordered_nodes = vec![root_node.clone()];
@@ -176,7 +198,9 @@ pub fn prepare_proof_for_circuit<T: AsRef<[u8]>>(
     let hash_offset =
         parse_leaf_hash_offset(leaf).ok_or_else(|| anyhow::anyhow!("Failed to parse leaf node"))?;
 
-    let value_ref = hex::encode(&leaf[hash_offset..hash_offset + 32]);
+    let value_ref: [u8; 32] = leaf[hash_offset..hash_offset + 32]
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Value reference must be 32 bytes"))?;
     let value_node = node_map
         .get(&value_ref)
         .ok_or_else(|| anyhow::anyhow!("Value node not found in proof"))?;

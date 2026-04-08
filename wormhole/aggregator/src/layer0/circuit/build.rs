@@ -13,7 +13,7 @@ use std::{
     fs::{create_dir_all, write},
     path::Path,
 };
-use zk_circuits_common::circuit::{wormhole_circuit_config, C, D, F};
+use zk_circuits_common::circuit::{wormhole_aggregator_circuit_config, C, D, F};
 
 use crate::layer0::circuit::circuit_logic::Layer0AggregationCircuit;
 
@@ -49,8 +49,11 @@ pub fn generate_layer0_circuit_binaries<P: AsRef<Path>>(
     let leaf_common = load_leaf_common_data(&output_path.join("common.bin"))?;
 
     // Build monolithic layer-0 aggregation circuit
-    let agg_circuit =
-        Layer0AggregationCircuit::new(wormhole_circuit_config(), leaf_common, num_leaf_proofs);
+    let agg_circuit = Layer0AggregationCircuit::new(
+        wormhole_aggregator_circuit_config(),
+        leaf_common,
+        num_leaf_proofs,
+    );
 
     // Build full circuit so we can serialize verifier + prover + common
     let circuit_data = agg_circuit.build_circuit();

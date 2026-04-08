@@ -4,7 +4,11 @@
 //! and generating a zero-knowledge proof using those inputs.
 //!
 //! The typical usage flow involves:
-//! 1. Initializing the prover (e.g., via [`WormholeProver::default`] or [`WormholeProver::new`]).
+//! 1. Initializing the prover via one of:
+//!    - [`WormholeProver::new_from_files`] - Load pre-built circuit data (recommended for production)
+//!    - [`WormholeProver::new_from_bytes`] - Load from in-memory bytes
+//!    - [`WormholeProver::new`] - Build fresh with custom config
+//!    - [`build_fresh`] - Build fresh with default config
 //! 2. Creating user inputs with [`CircuitInputs`].
 //! 3. Committing user inputs using [`WormholeProver::commit`].
 //! 4. Generating a proof using [`WormholeProver::prove`].
@@ -95,27 +99,16 @@ pub struct WormholeProver {
     targets: Option<CircuitTargets>,
 }
 
-#[cfg(feature = "std")]
-impl Default for WormholeProver {
-    fn default() -> Self {
-        Self::new_from_files(
-            Path::new("generated-bins/prover.bin"),
-            Path::new("generated-bins/common.bin"),
-        )
-        .unwrap_or_else(|_| {
-            let wormhole_circuit = WormholeCircuit::default();
-            let partial_witness = PartialWitness::new();
-
-            let targets = Some(wormhole_circuit.targets());
-            let circuit_data = wormhole_circuit.build_prover();
-
-            Self {
-                circuit_data,
-                partial_witness,
-                targets,
-            }
-        })
-    }
+/// Builds a fresh [`WormholeProver`] with the default leaf circuit configuration (non-ZK).
+///
+/// This is an expensive operation that builds the circuit from scratch.
+/// For production use, prefer [`WormholeProver::new_from_files`] or
+/// [`WormholeProver::new_from_bytes`] to load pre-built circuit data.
+///
+/// Note: Leaf proofs use non-ZK config because they're only verified by the aggregator
+/// (not on-chain). This improves proving performance without compromising security.
+pub fn build_fresh() -> WormholeProver {
+    WormholeProver::new(zk_circuits_common::circuit::wormhole_leaf_circuit_config())
 }
 
 impl WormholeProver {

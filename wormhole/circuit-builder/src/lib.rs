@@ -6,7 +6,7 @@ use wormhole_aggregator::layer1::circuit::generate_layer1_circuit_binaries;
 use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
 use wormhole_aggregator::layer0::circuit::build::generate_layer0_circuit_binaries;
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
-use zk_circuits_common::circuit::{wormhole_circuit_config, C, D};
+use zk_circuits_common::circuit::{wormhole_leaf_circuit_config, C, D};
 
 // Re-export CircuitBinsConfig from aggregator so users of circuit-builder can access it
 pub use wormhole_aggregator::CircuitBinsConfig;
@@ -19,8 +19,8 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
     include_prover: bool,
 ) -> Result<()> {
-    println!("Building wormhole circuit...");
-    let config = wormhole_circuit_config();
+    println!("Building wormhole leaf circuit (non-ZK for faster proving)...");
+    let config = wormhole_leaf_circuit_config();
     let circuit = WormholeCircuit::new(config);
     let targets = circuit.targets();
     let circuit_data = circuit.build_circuit();
