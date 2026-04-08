@@ -376,7 +376,7 @@ mod tests {
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
 
-    use zk_circuits_common::circuit::{wormhole_circuit_config, C, D, F};
+    use zk_circuits_common::circuit::{wormhole_aggregator_circuit_config, C, D, F};
 
     use crate::layer0::{
         circuit::{
@@ -458,7 +458,7 @@ mod tests {
             "dummy_nullifier_pre_images must have one entry per leaf slot"
         );
 
-        let agg_config = wormhole_circuit_config();
+        let agg_config = wormhole_aggregator_circuit_config();
         let agg_circuit =
             Layer0AggregationCircuit::new(agg_config.clone(), leaf_common.clone(), n_leaf);
         let targets = agg_circuit.targets();
@@ -1162,6 +1162,309 @@ mod tests {
             "Successfully aggregated {} real proofs + {} dummy proofs!",
             num_real_proofs,
             8 - num_real_proofs
+        );
+    }
+
+    #[test]
+    fn recursive_aggregation_tree_all_dummy_proofs() {
+        // All 8 proofs are dummy (block_hash = 0 sentinel)
+        // This tests that the circuit accepts an all-dummy batch
+        let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs4_u64_to_felts);
+
+        let asset_id = F::from_canonical_u64(TEST_ASSET_ID_U64);
+        let volume_fee_bps = F::from_canonical_u64(TEST_VOLUME_FEE_BPS);
+
+        let dummy_exit = [F::ZERO; 8];
+        let dummy_block_hash = [F::ZERO; 4];
+
+        let mut pis_list: Vec<[F; LEAF_PI_LEN]> = Vec::with_capacity(8);
+        for nullifier in &nullifiers_felts {
+            pis_list.push(make_pi_from_felts(
+                asset_id,
+                F::ZERO,
+                F::ZERO,
+                volume_fee_bps,
+                *nullifier,
+                dummy_exit,
+                dummy_exit,
+                dummy_block_hash,
+                F::ZERO,
+            ));
+        }
+
+        let leaves = pis_list
+            .clone()
+            .into_iter()
+            .map(prove_dummy_wormhole)
+            .collect::<Vec<_>>();
+        let leaf_common = leaves[0].1.common.clone();
+        let leaf_verifier_only = leaves[0].1.verifier_only.clone();
+        let proofs = leaves
+            .into_iter()
+            .map(|(proof, _)| proof)
+            .collect::<Vec<_>>();
+
+        let dummy_nullifier_pre_images = deterministic_dummy_nullifier_pre_images(proofs.len());
+
+        let (root_proof, root_verifier) = aggregate_proofs_layer0(
+            proofs,
+            leaf_common,
+            leaf_verifier_only,
+            dummy_nullifier_pre_images.clone(),
+        )
+        .unwrap();
+
+        root_verifier.verify(root_proof.clone()).unwrap();
+
+        let pis = &root_proof.public_inputs;
+
+        // Block hash should be zero (all dummy)
+        let block_hash_circuit: [F; 4] = [
+            pis[ROOT_BLOCK_HASH_START],
+            pis[ROOT_BLOCK_HASH_START + 1],
+            pis[ROOT_BLOCK_HASH_START + 2],
+            pis[ROOT_BLOCK_HASH_START + 3],
+        ];
+        assert_eq!(
+            block_hash_circuit,
+            [F::ZERO; 4],
+            "all-dummy batch should have zero block hash"
+        );
+
+        // All nullifiers should be replaced with hashes of the pre-images
+        let nullifier_region_start =
+            ROOT_HEADER_LEN + (pis_list.len() * 2 * aggregated_output::EXIT_SLOT_LEN);
+        for (i, pre_image) in dummy_nullifier_pre_images.iter().enumerate() {
+            let idx = nullifier_region_start + i * 4;
+            let got = [pis[idx], pis[idx + 1], pis[idx + 2], pis[idx + 3]];
+            let expected = hash_dummy_nullifier_pre_image_native(*pre_image);
+            assert_eq!(got, expected, "dummy nullifier hash mismatch at leaf {i}");
+        }
+
+        println!("Successfully aggregated all-dummy batch of 8 proofs!");
+    }
+
+    #[test]
+    fn recursive_aggregation_tree_mismatched_volume_fee_bps_fails() {
+        let volume_fee_a = F::from_canonical_u64(10); // 0.1%
+        let volume_fee_b = F::from_canonical_u64(50); // 0.5%
+
+        let output_felts: [F; 8] = core::array::from_fn(|_| F::from_canonical_u64(1));
+
+        let exits_felts: [[F; 8]; 8] = EXIT_ACCOUNTS.map(limbs8_u64_to_felts);
+        let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs4_u64_to_felts);
+        let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs4_u64_to_felts);
+
+        let common_block_hash = block_hashes_felts[0];
+        let common_block_number = F::from_canonical_u64(42);
+        let asset_id = F::from_canonical_u64(TEST_ASSET_ID_U64);
+
+        let mut pis_list: Vec<[F; LEAF_PI_LEN]> = Vec::with_capacity(8);
+        for i in 0..8 {
+            // Proof 3 has a different volume_fee_bps
+            let volume_fee_bps = if i == 3 { volume_fee_b } else { volume_fee_a };
+            pis_list.push(make_pi_from_felts(
+                asset_id,
+                output_felts[i],
+                F::ZERO,
+                volume_fee_bps,
+                nullifiers_felts[i],
+                exits_felts[i],
+                [F::ZERO; 8],
+                common_block_hash,
+                common_block_number,
+            ));
+        }
+
+        let leaves = pis_list
+            .into_iter()
+            .map(prove_dummy_wormhole)
+            .collect::<Vec<_>>();
+        let leaf_common = leaves[0].1.common.clone();
+        let leaf_verifier_only = leaves[0].1.verifier_only.clone();
+        let proofs = leaves
+            .into_iter()
+            .map(|(proof, _)| proof)
+            .collect::<Vec<_>>();
+        let dummy_nullifier_pre_images = deterministic_dummy_nullifier_pre_images(proofs.len());
+
+        let res = aggregate_proofs_layer0(
+            proofs,
+            leaf_common,
+            leaf_verifier_only,
+            dummy_nullifier_pre_images,
+        );
+
+        assert!(
+            res.is_err(),
+            "expected failure due to mismatched volume_fee_bps"
+        );
+    }
+
+    #[test]
+    fn recursive_aggregation_tree_exit_sum_overflow_fails() {
+        // Test that exit amounts near u32::MAX that would overflow when summed are rejected
+        // Use exit accounts that will collide (same account for multiple proofs)
+        // so their amounts get summed
+        let common_exit: [F; 8] = limbs8_u64_to_felts(EXIT_ACCOUNTS[0]);
+        let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs4_u64_to_felts);
+        let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs4_u64_to_felts);
+
+        let common_block_hash = block_hashes_felts[0];
+        let common_block_number = F::from_canonical_u64(42);
+        let asset_id = F::from_canonical_u64(TEST_ASSET_ID_U64);
+        let volume_fee_bps = F::from_canonical_u64(TEST_VOLUME_FEE_BPS);
+
+        // Each proof has output near u32::MAX / 2, so 3+ proofs to same exit will overflow
+        let large_amount = F::from_canonical_u64((u32::MAX / 2) as u64);
+
+        let mut pis_list: Vec<[F; LEAF_PI_LEN]> = Vec::with_capacity(8);
+        for nullifier in &nullifiers_felts {
+            pis_list.push(make_pi_from_felts(
+                asset_id,
+                large_amount, // All proofs send to same exit, will overflow u32
+                F::ZERO,
+                volume_fee_bps,
+                *nullifier,
+                common_exit, // Same exit account for all
+                [F::ZERO; 8],
+                common_block_hash,
+                common_block_number,
+            ));
+        }
+
+        let leaves = pis_list
+            .into_iter()
+            .map(prove_dummy_wormhole)
+            .collect::<Vec<_>>();
+        let leaf_common = leaves[0].1.common.clone();
+        let leaf_verifier_only = leaves[0].1.verifier_only.clone();
+        let proofs = leaves
+            .into_iter()
+            .map(|(proof, _)| proof)
+            .collect::<Vec<_>>();
+        let dummy_nullifier_pre_images = deterministic_dummy_nullifier_pre_images(proofs.len());
+
+        let res = aggregate_proofs_layer0(
+            proofs,
+            leaf_common,
+            leaf_verifier_only,
+            dummy_nullifier_pre_images,
+        );
+
+        assert!(
+            res.is_err(),
+            "expected failure due to exit sum overflow (exceeds 32-bit range)"
+        );
+    }
+
+    #[test]
+    fn recursive_aggregation_dummy_nullifiers_are_replaced() {
+        // Verify that dummy proof nullifiers are actually replaced with hashes of pre-images
+        // (more thorough check than the existing mixed-dummy test)
+        let exits_felts: [[F; 8]; 8] = EXIT_ACCOUNTS.map(limbs8_u64_to_felts);
+        let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs4_u64_to_felts);
+        let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs4_u64_to_felts);
+
+        let common_block_hash = block_hashes_felts[0];
+        let common_block_number = F::from_canonical_u64(42);
+        let asset_id = F::from_canonical_u64(TEST_ASSET_ID_U64);
+        let volume_fee_bps = F::from_canonical_u64(TEST_VOLUME_FEE_BPS);
+
+        let mut pis_list: Vec<[F; LEAF_PI_LEN]> = Vec::with_capacity(8);
+
+        // 1 real proof
+        pis_list.push(make_pi_from_felts(
+            asset_id,
+            F::from_canonical_u64(100),
+            F::ZERO,
+            volume_fee_bps,
+            nullifiers_felts[0],
+            exits_felts[0],
+            [F::ZERO; 8],
+            common_block_hash,
+            common_block_number,
+        ));
+
+        // 7 dummy proofs with distinct nullifiers that should be replaced
+        let dummy_exit = [F::ZERO; 8];
+        let dummy_block_hash = [F::ZERO; 4];
+        for nullifier in nullifiers_felts.iter().skip(1) {
+            pis_list.push(make_pi_from_felts(
+                asset_id,
+                F::ZERO,
+                F::ZERO,
+                volume_fee_bps,
+                *nullifier, // Original nullifier (should be replaced)
+                dummy_exit,
+                dummy_exit,
+                dummy_block_hash,
+                F::ZERO,
+            ));
+        }
+
+        let leaves = pis_list
+            .clone()
+            .into_iter()
+            .map(prove_dummy_wormhole)
+            .collect::<Vec<_>>();
+        let leaf_common = leaves[0].1.common.clone();
+        let leaf_verifier_only = leaves[0].1.verifier_only.clone();
+        let proofs = leaves
+            .into_iter()
+            .map(|(proof, _)| proof)
+            .collect::<Vec<_>>();
+
+        let dummy_nullifier_pre_images = deterministic_dummy_nullifier_pre_images(proofs.len());
+
+        let (root_proof, root_verifier) = aggregate_proofs_layer0(
+            proofs,
+            leaf_common,
+            leaf_verifier_only,
+            dummy_nullifier_pre_images.clone(),
+        )
+        .unwrap();
+
+        root_verifier.verify(root_proof.clone()).unwrap();
+
+        let pis = &root_proof.public_inputs;
+        let nullifier_region_start =
+            ROOT_HEADER_LEN + (pis_list.len() * 2 * aggregated_output::EXIT_SLOT_LEN);
+
+        // Check real proof nullifier is preserved
+        let real_nullifier_idx = nullifier_region_start;
+        let real_nullifier_got = [
+            pis[real_nullifier_idx],
+            pis[real_nullifier_idx + 1],
+            pis[real_nullifier_idx + 2],
+            pis[real_nullifier_idx + 3],
+        ];
+        assert_eq!(
+            real_nullifier_got, nullifiers_felts[0],
+            "real proof nullifier should be preserved"
+        );
+
+        // Check ALL dummy nullifiers are replaced (not equal to original)
+        for i in 1..8 {
+            let idx = nullifier_region_start + i * 4;
+            let got = [pis[idx], pis[idx + 1], pis[idx + 2], pis[idx + 3]];
+            let original = nullifiers_felts[i];
+            let expected_replacement =
+                hash_dummy_nullifier_pre_image_native(dummy_nullifier_pre_images[i]);
+
+            assert_ne!(
+                got, original,
+                "dummy nullifier at index {i} should NOT equal original"
+            );
+            assert_eq!(
+                got, expected_replacement,
+                "dummy nullifier at index {i} should equal H(H(pre_image))"
+            );
+        }
+
+        println!(
+            "Verified dummy nullifier replacement for {} dummy proofs",
+            7
         );
     }
 }

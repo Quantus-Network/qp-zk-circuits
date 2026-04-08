@@ -20,7 +20,7 @@ use std::path::Path;
 use plonky2::plonk::circuit_data::{CommonCircuitData, ProverCircuitData, VerifierCircuitData};
 use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
 
-use zk_circuits_common::circuit::{wormhole_circuit_config, C, D, F};
+use zk_circuits_common::circuit::{wormhole_aggregator_circuit_config, C, D, F};
 
 use crate::common::utils::l0_num_leaves_from_padded_pi_len;
 use crate::layer1::circuit::circuit_logic::Layer1AggregationCircuit;
@@ -48,7 +48,7 @@ pub fn generate_layer1_circuit_binaries<P: AsRef<Path>>(
     // 2) Build layer-1 circuit + targets layout
     // -------------------------------------------------------------------------
     let layer1_circuit = Layer1AggregationCircuit::new(
-        wormhole_circuit_config(),
+        wormhole_aggregator_circuit_config(),
         layer0_common,
         num_layer0_proofs,
         layer0_num_leaves,

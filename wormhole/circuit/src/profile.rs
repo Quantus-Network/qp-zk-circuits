@@ -78,7 +78,7 @@ mod tests {
     use plonky2::fri::FriConfig;
     use plonky2::fri::FriReductionStrategy;
     use plonky2::plonk::circuit_data::CircuitConfig;
-    use zk_circuits_common::circuit::wormhole_circuit_config;
+    use zk_circuits_common::circuit::wormhole_aggregator_circuit_config;
 
     /// Profile the wormhole circuit in both ZK and non-ZK configurations.
     ///
@@ -98,7 +98,7 @@ mod tests {
         println!("   WORMHOLE CIRCUIT PROFILE (ZK)");
         println!("========================================\n");
 
-        let config = wormhole_circuit_config();
+        let config = wormhole_aggregator_circuit_config();
         let circuit = WormholeCircuit::new(config);
         let data = circuit.build_circuit_profiled();
         print_circuit_metrics(&data.common);
@@ -164,7 +164,6 @@ mod tests {
             println!("Expected security: {} bits", expected_security);
 
             let config = CircuitConfig {
-                zero_knowledge: true,
                 security_bits: expected_security,
                 fri_config: FriConfig {
                     rate_bits: 3,
@@ -173,7 +172,7 @@ mod tests {
                     reduction_strategy: FriReductionStrategy::ConstantArityBits(4, 5),
                     num_query_rounds,
                 },
-                ..CircuitConfig::standard_recursion_config()
+                ..CircuitConfig::standard_recursion_polyfri_zk_config()
             };
 
             let circuit = WormholeCircuit::new(config);

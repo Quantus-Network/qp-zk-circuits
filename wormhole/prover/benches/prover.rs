@@ -4,12 +4,12 @@ use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use plonky2::plonk::circuit_data::CircuitConfig;
 use qp_wormhole_prover::WormholeProver;
 use wormhole_aggregator::build_dummy_circuit_inputs;
-use zk_circuits_common::circuit::wormhole_circuit_config;
+use zk_circuits_common::circuit::wormhole_aggregator_circuit_config;
 
 const MEASUREMENT_TIME_S: u64 = 88;
 
 fn create_proof_benchmark_zk(c: &mut Criterion) {
-    let config = wormhole_circuit_config();
+    let config = wormhole_aggregator_circuit_config();
     // Use dummy inputs which are generated fresh and compatible with current hash function
     let inputs = build_dummy_circuit_inputs().expect("Failed to build dummy circuit inputs");
 

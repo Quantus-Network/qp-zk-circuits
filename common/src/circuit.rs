@@ -22,9 +22,22 @@ pub struct TransferProofJson {
     pub indices: Vec<usize>,
 }
 
-/// Circuit config is standard plonky2 zk config
-pub fn wormhole_circuit_config() -> CircuitConfig {
-    CircuitConfig::standard_recursion_zk_config()
+/// Circuit config for leaf wormhole proofs (non-ZK).
+///
+/// Since the chain only verifies aggregated proofs (not individual leaf proofs), there's no
+/// privacy benefit from using ZK on the leaves. Disabling ZK gives faster proving and smaller
+/// proofs without compromising security - the aggregator that verifies these proofs runs in a
+/// trusted environment anyway.
+pub fn wormhole_leaf_circuit_config() -> CircuitConfig {
+    CircuitConfig::standard_recursion_config() // zero_knowledge: false
+}
+
+/// Circuit config for aggregation circuits (ZK enabled via row blinding).
+///
+/// The aggregated proofs are verified on-chain, so they must use ZK to prevent leaking
+/// witness information to the public.
+pub fn wormhole_aggregator_circuit_config() -> CircuitConfig {
+    CircuitConfig::standard_recursion_polyfri_zk_config()
 }
 
 pub trait CircuitFragment {

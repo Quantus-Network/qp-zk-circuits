@@ -103,6 +103,8 @@ const DEFAULT_STORAGE_PROOF_INDICES: [usize; 7] = [768, 48, 240, 48, 160, 128, 1
 // ============================================================================
 
 /// Deserialize a dummy proof from raw bytes.
+///
+/// This is kept public for use by benchmarks which need to load serialized proofs.
 pub fn load_dummy_proof(
     bytes: Vec<u8>,
     common_data: &CommonCircuitData<F, D>,
@@ -185,7 +187,7 @@ pub fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
 
 /// Generate a random 32-byte nullifier preimage for dummy proofs.
 /// The circuit will hash this to produce the actual nullifier.
-pub fn generate_random_nullifier_preimage() -> BytesDigest {
+pub(crate) fn generate_random_nullifier_preimage() -> BytesDigest {
     let mut rng = rand::thread_rng();
     loop {
         let mut nullifier = [0u8; 32];

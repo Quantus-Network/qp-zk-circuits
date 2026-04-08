@@ -90,7 +90,7 @@ pub fn enforce_target_less_than_const<F: RichField + Extendable<D>, const D: usi
 ///
 /// # Returns
 /// - `BoolTarget`: The value given by XORing `a` and `b`.
-pub fn xor<F: RichField + Extendable<D>, const D: usize>(
+fn xor<F: RichField + Extendable<D>, const D: usize>(
     builder: &mut CircuitBuilder<F, D>,
     a: BoolTarget,
     b: BoolTarget,
@@ -102,15 +102,6 @@ pub fn xor<F: RichField + Extendable<D>, const D: usize>(
     let a_plus_b = builder.add(a_t, b_t);
     let xor = builder.sub(a_plus_b, two_ab);
     BoolTarget::new_unsafe(xor)
-}
-
-#[inline]
-pub fn range32<F: RichField + Extendable<D>, const D: usize>(
-    b: &mut CircuitBuilder<F, D>,
-    x: Target,
-) {
-    // Constrain x < 2^32
-    b.range_check(x, 32);
 }
 
 /// Compare two 4-element arrays (e.g., hash outputs) for equality.
@@ -146,40 +137,6 @@ pub fn limb1_at_offset<const LEAF_PI_LEN: usize, const KEY_OFFSET: usize>(
 ) -> Target {
     let base = index * LEAF_PI_LEN + KEY_OFFSET;
     pis[base]
-}
-
-/// Count unique 4x32-bit keys (big-endian limbs) among N leaves each of LEAF_PI_LEN:
-/// KEY_OFFSET is the offset of the 4x32-bit key within each leaf's public inputs.
-/// For each `i`, `flag[i] = 1` if `key[i] != key[j]` for all `j < i`, else `0`.
-/// Returns `sum(flag)` as a `Target`.
-pub fn count_unique_4x32_keys<
-    F: RichField + Extendable<D>,
-    const D: usize,
-    const LEAF_PI_LEN: usize,
-    const KEY_OFFSET: usize,
->(
-    b: &mut CircuitBuilder<F, D>,
-    pis: &[Target],
-    n: usize,
-) -> Target {
-    let one = b.one();
-    let mut first_flags: Vec<Target> = Vec::with_capacity(n);
-
-    for i in 0..n {
-        // seen_any = OR_{j<i} (keys[i] == keys[j])
-        let mut seen_any = BoolTarget::new_unsafe(b.zero());
-        for j in 0..i {
-            let key_i = limbs4_at_offset::<LEAF_PI_LEN, KEY_OFFSET>(pis, i);
-            let key_j = limbs4_at_offset::<LEAF_PI_LEN, KEY_OFFSET>(pis, j);
-            let eq = bytes_digest_eq(b, key_i, key_j); // BoolTarget
-            seen_any = b.or(seen_any, eq);
-        }
-        // first_i = 1 - seen_any
-        let first_i = b.sub(one, seen_any.target);
-        first_flags.push(first_i);
-    }
-
-    b.add_many(&first_flags)
 }
 
 /// Pack two 32-bit limbs (little-endian) into one felt: `lo + hi * 2^32`.

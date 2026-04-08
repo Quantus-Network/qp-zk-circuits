@@ -8,7 +8,6 @@
 use anyhow::Context;
 use clap::Parser;
 use plonky2::plonk::proof::ProofWithPublicInputs;
-use zk_circuits_common::circuit::wormhole_circuit_config;
 use qp_poseidon::PoseidonHasher;
 use qp_wormhole_inputs::{AggregatedPublicCircuitInputs, PublicCircuitInputs};
 use quantus_cli::chain::quantus_subxt::api as quantus_node;
@@ -36,9 +35,10 @@ use wormhole_circuit::inputs::{
 use wormhole_circuit::nullifier::Nullifier;
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::aggregation::AggregationConfig;
+use zk_circuits_common::circuit::wormhole_leaf_circuit_config;
 use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::storage_proof::prepare_proof_for_circuit;
-use zk_circuits_common::utils::{digest_felts_to_bytes, BytesDigest, Digest};
+use zk_circuits_common::utils::{digest_to_bytes, BytesDigest, Digest};
 
 const DEBUG_FILE: &str = "proof_debug.json";
 const SCALE_DOWN_FACTOR: u128 = 10_000_000_000u128; // 10^10
@@ -200,7 +200,7 @@ impl TryFrom<DebugInputs> for CircuitInputs {
                 transfer_count: inputs.transfer_count,
                 funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
                 storage_proof: processed_storage_proof,
-                unspendable_account: digest_felts_to_bytes(Digest::from(unspendable_account)),
+                unspendable_account: digest_to_bytes(Digest::from(unspendable_account)),
                 parent_hash,
                 state_root,
                 extrinsics_root,
@@ -212,7 +212,7 @@ impl TryFrom<DebugInputs> for CircuitInputs {
                 output_amount_1: inputs.output_amount,
                 output_amount_2: 0u32, // No second output in example
                 volume_fee_bps: inputs.volume_fee_bps,
-                nullifier: digest_felts_to_bytes(
+                nullifier: digest_to_bytes(
                     Nullifier::from_preimage(secret, inputs.transfer_count).hash,
                 ),
                 exit_account_1: BytesDigest::try_from(dest_account_id.as_ref() as &[u8])?,
@@ -226,9 +226,9 @@ impl TryFrom<DebugInputs> for CircuitInputs {
 
 /// Generate a proof from the given inputs
 fn generate_zk_proof(inputs: CircuitInputs) -> anyhow::Result<ProofWithPublicInputs<F, C, D>> {
-    println!("Generating ZK proof...");
-    // Must use zk_config to match the aggregator's dummy proof
-    let config = wormhole_circuit_config();
+    println!("Generating leaf proof...");
+    // Leaf proofs use non-ZK config (only aggregated proofs need ZK for on-chain verification)
+    let config = wormhole_leaf_circuit_config();
     let prover = WormholeProver::new(config);
     let prover_next = prover.commit(&inputs)?;
     let proof: ProofWithPublicInputs<F, C, D> = prover_next.prove().expect("proof failed; qed");
@@ -269,8 +269,8 @@ fn aggregate_proofs(proof_files: Vec<String>, output_file: &str) -> anyhow::Resu
     println!("\n=== Starting Proof Aggregation ===");
     println!("Loading {} proof files...", proof_files.len());
 
-    // Build the wormhole prover circuit data
-    let config = wormhole_circuit_config();
+    // Build the wormhole prover circuit data (leaf proofs use non-ZK config)
+    let config = wormhole_leaf_circuit_config();
     let prover = WormholeProver::new(config.clone());
     let common_data = &prover.circuit_data.common;
 
@@ -371,22 +371,20 @@ fn derive_secret(base_secret: [u8; 32], index: usize) -> [u8; 32] {
     secret
 }
 
-/// Gets unspendable account from secret
-fn get_unspendable_account(
-    secret_bytes: [u8; 32],
-) -> anyhow::Result<(BytesDigest, SubxtAccountId, Digest)> {
-    let secret: BytesDigest = secret_bytes.try_into()?;
-    let unspendable_account =
+/// Computes the unspendable account from a secret.
+///
+/// Returns both:
+/// - `SubxtAccountId`: For on-chain transfers
+/// - `Digest`: For circuit inputs (field element representation)
+fn unspendable_account_from_secret(secret: BytesDigest) -> (SubxtAccountId, Digest) {
+    let digest =
         wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(secret).account_id;
-
-    let unspendable_account_bytes_digest = digest_felts_to_bytes(unspendable_account);
-    let unspendable_account_bytes: [u8; 32] = unspendable_account_bytes_digest
+    let bytes_digest = digest_to_bytes(digest);
+    let bytes: [u8; 32] = bytes_digest
         .as_ref()
         .try_into()
         .expect("BytesDigest is always 32 bytes");
-    let unspendable_account_id = SubxtAccountId(unspendable_account_bytes);
-
-    Ok((secret, unspendable_account_id, unspendable_account))
+    (SubxtAccountId(bytes), digest)
 }
 
 /// Performs batched transfers and returns circuit inputs for all of them
@@ -411,8 +409,10 @@ async fn perform_batched_transfers(
 
     for i in 0..num_transfers {
         let secret_bytes = derive_secret(base_secret, i);
-        let (secret, unspendable_account_id, unspendable_account) =
-            get_unspendable_account(secret_bytes)?;
+        let secret: BytesDigest = secret_bytes
+            .try_into()
+            .expect("secret_bytes is always 32 bytes");
+        let (unspendable_account_id, unspendable_account) = unspendable_account_from_secret(secret);
 
         println!(
             "Transfer {}: unspendable account {:?}",
@@ -547,7 +547,7 @@ async fn perform_batched_transfers(
                 input_amount,
                 funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
                 storage_proof: processed_storage_proof,
-                unspendable_account: digest_felts_to_bytes(Digest::from(*unspendable_account)),
+                unspendable_account: digest_to_bytes(Digest::from(*unspendable_account)),
                 parent_hash,
                 state_root,
                 extrinsics_root,
@@ -558,7 +558,7 @@ async fn perform_batched_transfers(
                 volume_fee_bps: VOLUME_FEE_BPS,
                 output_amount_1: output_amount,
                 output_amount_2: 0u32, // No second output in example
-                nullifier: digest_felts_to_bytes(
+                nullifier: digest_to_bytes(
                     Nullifier::from_preimage(*secret, event.transfer_count).hash,
                 ),
                 exit_account_1: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
@@ -588,16 +588,7 @@ async fn perform_transfer_and_get_inputs(
 
     // Secret from input
     let secret: BytesDigest = secret_bytes.try_into()?;
-    let unspendable_account =
-        wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(secret).account_id;
-
-    // Convert Digest (field elements) to BytesDigest (bytes)
-    let unspendable_account_bytes_digest = digest_felts_to_bytes(unspendable_account);
-    let unspendable_account_bytes: [u8; 32] = unspendable_account_bytes_digest
-        .as_ref()
-        .try_into()
-        .expect("BytesDigest is always 32 bytes");
-    let unspendable_account_id = SubxtAccountId(unspendable_account_bytes);
+    let (unspendable_account_id, unspendable_account) = unspendable_account_from_secret(secret);
 
     // Exit account from input
     let exit_account_id = SubxtAccountId(exit_account_bytes);
@@ -696,7 +687,7 @@ async fn perform_transfer_and_get_inputs(
             transfer_count: event.transfer_count,
             funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
             storage_proof: processed_storage_proof,
-            unspendable_account: digest_felts_to_bytes(Digest::from(unspendable_account)),
+            unspendable_account: digest_to_bytes(Digest::from(unspendable_account)),
             parent_hash,
             state_root,
             extrinsics_root,
@@ -708,9 +699,7 @@ async fn perform_transfer_and_get_inputs(
             output_amount_1: output_amount,
             output_amount_2: 0u32, // No second output in example
             volume_fee_bps: VOLUME_FEE_BPS,
-            nullifier: digest_felts_to_bytes(
-                Nullifier::from_preimage(secret, event.transfer_count).hash,
-            ),
+            nullifier: digest_to_bytes(Nullifier::from_preimage(secret, event.transfer_count).hash),
             exit_account_1: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
             exit_account_2: BytesDigest::default(), // No second exit account
             block_hash: BytesDigest::try_from(block_hash.as_ref())?,
