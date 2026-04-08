@@ -88,8 +88,11 @@ mod tests {
 
             // Build layer-0 aggregation circuit
             let start = std::time::Instant::now();
-            let l0_circuit =
-                Layer0AggregationCircuit::new(wormhole_aggregator_circuit_config(), leaf_common, num_leaves);
+            let l0_circuit = Layer0AggregationCircuit::new(
+                wormhole_aggregator_circuit_config(),
+                leaf_common,
+                num_leaves,
+            );
 
             // Print gate counts before building
             println!("Gates before build: {}", l0_circuit.num_gates());
