@@ -78,7 +78,7 @@ mod tests {
     use plonky2::fri::FriConfig;
     use plonky2::fri::FriReductionStrategy;
     use plonky2::plonk::circuit_data::CircuitConfig;
-    use zk_circuits_common::circuit::wormhole_circuit_config;
+    use zk_circuits_common::circuit::wormhole_aggregator_circuit_config;
 
     /// Profile the wormhole circuit in both ZK and non-ZK configurations.
     ///
@@ -98,7 +98,7 @@ mod tests {
         println!("   WORMHOLE CIRCUIT PROFILE (ZK)");
         println!("========================================\n");
 
-        let config = wormhole_circuit_config();
+        let config = wormhole_aggregator_circuit_config();
         let circuit = WormholeCircuit::new(config);
         let data = circuit.build_circuit_profiled();
         print_circuit_metrics(&data.common);

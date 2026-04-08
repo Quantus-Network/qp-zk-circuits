@@ -10,10 +10,11 @@ pub fn setup_test_builder_and_witness(
     CircuitBuilder<F, D>,
     plonky2::iop::witness::PartialWitness<F>,
 ) {
-    let mut config = CircuitConfig::standard_recursion_config();
-    if zk {
-        config.zero_knowledge = true;
-    }
+    let config = if zk {
+        CircuitConfig::standard_recursion_zk_config()
+    } else {
+        CircuitConfig::standard_recursion_config()
+    };
     let builder = CircuitBuilder::<F, D>::new(config);
     let pw = plonky2::iop::witness::PartialWitness::new();
 

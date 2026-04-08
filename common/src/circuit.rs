@@ -32,12 +32,12 @@ pub fn wormhole_leaf_circuit_config() -> CircuitConfig {
     CircuitConfig::standard_recursion_config() // zero_knowledge: false
 }
 
-/// Circuit config for aggregation circuits (ZK enabled).
+/// Circuit config for aggregation circuits (ZK enabled via row blinding).
 ///
 /// The aggregated proofs are verified on-chain, so they must use ZK to prevent leaking
 /// witness information to the public.
-pub fn wormhole_circuit_config() -> CircuitConfig {
-    CircuitConfig::standard_recursion_zk_config() // zero_knowledge: true
+pub fn wormhole_aggregator_circuit_config() -> CircuitConfig {
+    CircuitConfig::standard_recursion_polyfri_zk_config()
 }
 
 pub trait CircuitFragment {

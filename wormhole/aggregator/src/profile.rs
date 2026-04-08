@@ -47,7 +47,7 @@ mod tests {
         circuit_data::{CircuitConfig, CircuitData},
     };
     use qp_wormhole_inputs::PUBLIC_INPUTS_FELTS_LEN as LEAF_PI_LEN;
-    use zk_circuits_common::circuit::{wormhole_circuit_config, C};
+    use zk_circuits_common::circuit::{wormhole_aggregator_circuit_config, C};
 
     /// Build a minimal fake leaf circuit that matches the Wormhole leaf PI layout.
     /// Used to get CommonCircuitData for layer0 circuit construction.
@@ -89,7 +89,7 @@ mod tests {
             // Build layer-0 aggregation circuit
             let start = std::time::Instant::now();
             let l0_circuit =
-                Layer0AggregationCircuit::new(wormhole_circuit_config(), leaf_common, num_leaves);
+                Layer0AggregationCircuit::new(wormhole_aggregator_circuit_config(), leaf_common, num_leaves);
 
             // Print gate counts before building
             println!("Gates before build: {}", l0_circuit.num_gates());
@@ -129,7 +129,7 @@ mod tests {
 
         // Build layer-0 circuit to get its common data for layer1
         let l0_circuit = Layer0AggregationCircuit::new(
-            wormhole_circuit_config(),
+            wormhole_aggregator_circuit_config(),
             leaf_data.common.clone(),
             layer0_num_leaves,
         );
@@ -152,7 +152,7 @@ mod tests {
             // Build layer-1 aggregation circuit
             let start = std::time::Instant::now();
             let l1_circuit = Layer1AggregationCircuit::new(
-                wormhole_circuit_config(),
+                wormhole_aggregator_circuit_config(),
                 l0_common.clone(),
                 num_l0_proofs,
                 layer0_num_leaves,
@@ -208,7 +208,7 @@ mod tests {
 
         for num_leaves in [2, 4, 8, 16] {
             let l0_circuit = Layer0AggregationCircuit::new(
-                wormhole_circuit_config(),
+                wormhole_aggregator_circuit_config(),
                 leaf_common.clone(),
                 num_leaves,
             );

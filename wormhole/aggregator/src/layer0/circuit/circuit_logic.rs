@@ -376,7 +376,7 @@ mod tests {
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
 
-    use zk_circuits_common::circuit::{wormhole_circuit_config, C, D, F};
+    use zk_circuits_common::circuit::{wormhole_aggregator_circuit_config, C, D, F};
 
     use crate::layer0::{
         circuit::{
@@ -458,7 +458,7 @@ mod tests {
             "dummy_nullifier_pre_images must have one entry per leaf slot"
         );
 
-        let agg_config = wormhole_circuit_config();
+        let agg_config = wormhole_aggregator_circuit_config();
         let agg_circuit =
             Layer0AggregationCircuit::new(agg_config.clone(), leaf_common.clone(), n_leaf);
         let targets = agg_circuit.targets();

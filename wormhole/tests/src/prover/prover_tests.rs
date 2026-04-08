@@ -10,7 +10,7 @@ use test_helpers::TestInputs;
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_circuit::storage_proof::MAX_PROOF_LEN;
 use wormhole_prover::WormholeProver;
-use zk_circuits_common::circuit::{wormhole_circuit_config, C, D, F};
+use zk_circuits_common::circuit::{wormhole_aggregator_circuit_config, C, D, F};
 
 #[cfg(test)]
 const CIRCUIT_CONFIG: CircuitConfig = CircuitConfig::standard_recursion_config();
@@ -131,7 +131,7 @@ fn export_test_proof() {
 fn export_test_proof_zk() {
     const FILE_PATH: &str = "../../dummy_proof_zk.bin";
 
-    let circuit_config = wormhole_circuit_config();
+    let circuit_config = wormhole_aggregator_circuit_config();
 
     let prover = WormholeProver::new(circuit_config);
     let inputs = CircuitInputs::test_inputs_0();
