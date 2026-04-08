@@ -164,7 +164,6 @@ mod tests {
             println!("Expected security: {} bits", expected_security);
 
             let config = CircuitConfig {
-                zero_knowledge: true,
                 security_bits: expected_security,
                 fri_config: FriConfig {
                     rate_bits: 3,
@@ -173,7 +172,7 @@ mod tests {
                     reduction_strategy: FriReductionStrategy::ConstantArityBits(4, 5),
                     num_query_rounds,
                 },
-                ..CircuitConfig::standard_recursion_config()
+                ..CircuitConfig::standard_recursion_polyfri_zk_config()
             };
 
             let circuit = WormholeCircuit::new(config);
