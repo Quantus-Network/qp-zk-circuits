@@ -518,43 +518,6 @@ Two privacy aspects:
 
 \emph{System-level privacy}: Output amounts, exit accounts, nullifiers, and block references are public. Layer-0 padding enlarges the explanation class, but this is not full unlinkability---amount leakage, address reuse, and timing correlation remain limitations.
 
-\section{Implementation}
-\label{sec:implementation}
-
-The codebase is organized as separate crates \citep{quantusrepo}:
-
-\begin{table}[t]
-\centering
-\small
-\begin{tabularx}{\textwidth}{@{}l X@{}}
-\toprule
-Crate & Role \\
-\midrule
-\texttt{qp-wormhole-inputs} & Shared public-input and aggregated-output data structures. \\
-\texttt{qp-wormhole-circuit} & Leaf circuit definition, witness targets, and circuit fragments. \\
-\texttt{qp-wormhole-prover} & Prover API for witness commitment and proof generation. \\
-\texttt{qp-wormhole-verifier} & Lightweight verifier-facing interface. \\
-\texttt{qp-wormhole-aggregator} & Recursive aggregation and wrapper logic. \\
-\texttt{qp-wormhole-circuit-builder} & Serialization of prebuilt circuit artifacts for deployment. \\
-\bottomrule
-\end{tabularx}
-\caption{Repository-level implementation split.}
-\label{tab:crates}
-\end{table}
-
-
-\subsection{qp-plonky2 and Poseidon2}
-
-Wormhole uses \texttt{qp-plonky2}, our Plonky2 fork with Poseidon2 support integrated into the recursive FRI pipeline \citep{qpplonky2}. When development began, Plonky3 lacked the recursion surface we needed \citep{plonky3}; Plonky3 has since added recursion support \citep{plonky3recursion}, but our benchmarks use the deployed \texttt{qp-plonky2} stack.
-
-\subsection{Prover API}
-
-The prover uses a two-step interface: \texttt{commit} fills the witness, then \texttt{prove} generates the proof. This isolates witness assembly from proving for benchmarking.
-
-\subsection{Prebuilt binaries}
-
-The repository supports both prebuilt circuit binaries and in-memory reconstruction. Deployment uses prebuilt binaries for a stable artifact boundary.
-
 \section{Evaluation}
 \label{sec:evaluation}
 
