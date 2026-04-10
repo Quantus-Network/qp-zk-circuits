@@ -236,132 +236,37 @@ for which there exists witness data \(w\) such that \((x,w) \in \mathcal{R}_{\ma
 
 A \emph{real} leaf is a leaf whose public \texttt{block\_hash} is nonzero. A \emph{dummy} leaf is a padding object identified by the sentinel \texttt{block\_hash} \(=0^{32}\).
 
-\subsection{Soundness and deposit binding}
+\subsection{Deposit binding}
 
-\begin{theorem}[Leaf soundness]
-Assume the leaf proof system is knowledge sound. For every accepted leaf proof \((x,\pi)\), there exists an extractor that outputs a witness \(w\) such that \((x,w)\in \mathcal{R}_{\mathrm{leaf}}\).
-\end{theorem}
+Every accepted leaf proof binds to an authenticated deposit record: by knowledge soundness of the proof system, there exists a witness satisfying conditions (C1)--(C5), which include storage-proof verification and header binding. The blockchain validates that the public \texttt{block\_hash}/\texttt{block\_number} pair refers to a real block, completing the chain of authentication from proof to on-chain state.
 
-\begin{proof}[Proof sketch]
-This is the standard consequence of knowledge soundness for the leaf relation. The extractor outputs values for the secret, counter, funding account, wormhole account, storage-proof witness, header fields, and input amount that satisfy conditions (C1)--(C5) from \cref{sec:formal}. No further claim is made here about whether the committed block actually exists in canonical chain history; that is deferred to the on-chain check of the public \texttt{block\_hash}/\texttt{block\_number} pair.
-\end{proof}
+\subsection{One-time withdrawal}
 
-\begin{corollary}[Authenticated-deposit binding]
-Assume leaf soundness and correct on-chain validation of the public block hash. Then every accepted real leaf proof binds to an authenticated deposit record and certifies that its disclosed exits satisfy the protocol fee rule for that record.
-\end{corollary}
+A deposit creates a transfer record on-chain, keyed by \((a, c, \alpha_{\mathrm{fund}}, \alpha_{\mathrm{wh}}, v)\) where \(a\) is the asset, \(c\) is a counter, \(\alpha_{\mathrm{fund}}\) is the funding account, \(\alpha_{\mathrm{wh}}\) is the wormhole address, and \(v\) is the amount. To withdraw, a prover must know a secret \(s\) such that \(\WA(s) = \alpha_{\mathrm{wh}}\); by collision resistance, this secret is unique. The nullifier is \(\Null(s, c)\).
 
-\begin{proof}
-By leaf soundness, an accepting real leaf yields a witness satisfying \(\mathcal{R}_{\mathrm{leaf}}\). Conditions (C3) and (C4) bind the proof to an authenticated transfer record under the state root committed by the structured header fields, while condition (C5) enforces the fee inequality. On-chain validation upgrades the public header commitment from a merely self-consistent header witness to a real block in chain history.
-\end{proof}
-
-\subsection{First-layer wrapper soundness}
-
-\begin{theorem}[First-layer wrapper soundness]
-Assume the recursive verifier gadgets and the wrapper circuit are sound. Let \(Y\) be the public output of an accepted first-layer wrapper proof of arity \(N\). Then there exists a list of child instances
-\[
-((x_1,\pi_1,\delta_1),\ldots,(x_N,\pi_N,\delta_N)),
-\]
-where \(\delta_i\in\{0,1\}\) indicates whether child \(i\) is dummy, such that:
-\begin{enumerate}[label=(W\arabic*),leftmargin=1.9em]
-    \item if \(\delta_i=0\), then \(\pi_i\) is an accepted leaf proof on public input \(x_i\);
-    \item if \(\delta_i=1\), then child \(i\) is recognized by the dummy sentinel \texttt{block\_hash} \(=0^{32}\);
-    \item all non-dummy children share the same public header tuple exposed by \(Y\): a common block hash, asset identifier, fee parameter, and block number;
-    \item the exit slots exposed by \(Y\) are exactly the result of applying the wrapper's grouping rule to the multiset of non-dummy child exits; and
-    \item the nullifier region of \(Y\) contains every real child nullifier, while dummy positions are filled by wrapper-supplied replacement values.
-\end{enumerate}
-\end{theorem}
-
-\begin{proof}[Proof sketch]
-Soundness of the recursive verifier gadgets ensures that every accepted child proof referenced by the wrapper witness is itself valid. The wrapper then recomputes its public outputs from those children subject to explicit conditional checks: non-dummy children must agree on the batch \texttt{block\_hash}, \texttt{asset\_id}, and \texttt{volume\_fee\_bps}; exit slots are formed by the implemented grouping-and-zeroing logic; and nullifiers are forwarded child-by-child with dummy substitution in positions marked by the sentinel. The shared \texttt{block\_number} claim is obtained by combining wrapper soundness with leaf soundness: each real child is itself a sound leaf proof satisfying condition (C4), so a common \texttt{block\_hash} implies a common committed header and hence a common \texttt{block\_number}. Hence any accepting wrapper proof can be explained by a concrete list of real and dummy children satisfying (W1)--(W5).
-\end{proof}
-
-\begin{lemma}[Dummy-padding safety]
-Assume the designated dummy template exposes zero-valued exits, and the blockchain only settles the public exits produced by the wrapper. Then dummy padding cannot increase settled value. Random replacement of dummy nullifiers affects only accidental-collision probability and therefore liveness, not soundness.
-\end{lemma}
-
-\begin{proof}
-Under the stated dummy-template assumption, a dummy child contributes no positive exit amount to the grouped wrapper outputs. Replacing its nullifier with a fresh filler does not create an authenticated deposit record or any additional settled value; at worst, an accidental nullifier collision causes rejection of the aggregate. Thus dummy padding cannot authorize value that was absent from the real children.
-\end{proof}
-
-\subsection{One-time withdrawal and double-spend resistance}
-
-\begin{theorem}[One-time withdrawal per authenticated deposit record]
-Assume:
-\begin{enumerate}[label=(D\arabic*),leftmargin=1.9em]
-    \item the blockchain rejects reused nullifiers, including duplicates within one candidate aggregate submission;
-    \item the authenticated transfer record fixes the transfer counter \(c\) used in nullifier derivation; and
-    \item the hash function used in \(\WA(\cdot)\) and \(\Null(\cdot,\cdot)\) is collision resistant and second-preimage resistant for the relevant domain-separated inputs.
-\end{enumerate}
-Then no probabilistic polynomial-time adversary can obtain two accepted real withdrawals from the same authenticated deposit record except with negligible probability.
-\end{theorem}
-
-\begin{proof}[Proof sketch]
-Suppose two accepted real withdrawals correspond to the same authenticated deposit record. By authenticated-deposit binding, extraction yields witnesses \((s,c)\) and \((s',c')\) together with the same authenticated record
-\[
-(a,v_{\mathrm{in}},c,\alpha_{\mathrm{fund}},\alpha_{\mathrm{wh}},h_B,b).
-\]
-Because the record fixes the counter, we have \(c=c'\). Because the record also fixes the wormhole address, both witnesses satisfy
-\[
-\WA(s)=\alpha_{\mathrm{wh}}=\WA(s').
-\]
-If \(s\neq s'\), the adversary has found a collision or second preimage for the wormhole-address derivation. Therefore \(s=s'\) except with negligible probability. But then
-\[
-\Null(s,c)=\Null(s',c'),
-\]
-so both withdrawals expose the same nullifier. The blockchain rejects the second occurrence by assumption (D1). Hence one authenticated deposit record can underwrite at most one accepted real withdrawal.
-\end{proof}
-
-The theorem above is intentionally phrased in terms of an \emph{authenticated deposit record}, not an informal notion of ``the same funds.'' If a future protocol version supports explicit partial-withdrawal state transitions, that stronger state model should be proved separately rather than inferred from the present one-shot nullifier discipline.
-
-\subsection{Operational unspendability and spend-path exclusivity}
-
-The protocol needs one assumption external to the circuit: funds sent to a wormhole address should not be directly spendable through ordinary signature-based authorization.
-
-\begin{proposition}[Spend-path exclusivity under the chain's address discipline]
-Let \(\mathsf{Addr}:\pkset\rightarrow\{0,1\}^{256}\) denote the chain's ordinary address derivation from externally controlled public keys. Suppose:
-\begin{enumerate}[label=(U\arabic*),leftmargin=1.9em]
-    \item every direct spend accepted by the base chain must be authorized by a valid public key \(pk\in\pkset\) whose address is \(\mathsf{Addr}(pk)\); and
-    \item no efficient adversary can find \(pk\in\pkset\) such that \(\mathsf{Addr}(pk)=\WA(s)\) for a target wormhole address, except by breaking the collision or preimage resistance of the derivation.
-\end{enumerate}
-Then value sent to \(\WA(s)\) can leave the system only through the proof-authorized settlement path.
+\begin{proposition}
+If two accepted withdrawals have different nullifiers, they correspond to different transfer records.
 \end{proposition}
 
-\begin{proof}[Proof sketch]
-Any direct spend must use some valid external credential \(pk\) by assumption (U1). If such a spend exists from \(\WA(s)\), then \(\mathsf{Addr}(pk)=\WA(s)\), contradicting (U2) except with negligible probability. Therefore the only remaining spend path is the proof-authorized one. We treat spend-path exclusivity as a system assumption about the surrounding chain interface rather than as a theorem of the circuit in isolation.
+\begin{proof}
+Let \(n = \Null(s, c)\) and \(n' = \Null(s', c')\) be the nullifiers for two withdrawals corresponding to transfer records \(d\) and \(d'\). Suppose \(n \neq n'\). If \(d = d'\), then both records fix the same wormhole address \(\alpha_{\mathrm{wh}}\) and counter \(c = c'\). Since \(\WA(s) = \alpha_{\mathrm{wh}} = \WA(s')\), collision resistance implies \(s = s'\). But then \(n = \Null(s, c) = \Null(s', c') = n'\), a contradiction. Therefore \(d \neq d'\).
 \end{proof}
+
+Since the blockchain rejects duplicate nullifiers, each deposit can be withdrawn at most once.
+
+\subsection{Spend-path exclusivity}
+
+The protocol assumes that funds sent to a wormhole address cannot be spent through ordinary signature-based authorization. Since the wormhole address is derived from a hash (not a public key), no valid signing key exists for it. The only way to move funds out is through the proof-authorized settlement path.
 
 \subsection{Value conservation}
 
-\begin{lemma}[Per-leaf fee bound]
-For every accepted real leaf proof, the sum of its two public output amounts is at most the authenticated input amount net of the public fee parameter.
-\end{lemma}
-
-\begin{proof}
-This is exactly condition (C5) of \(\mathcal{R}_{\mathrm{leaf}}\), obtained by extraction from leaf soundness.
-\end{proof}
-
-\begin{lemma}[Wrapper amount preservation]
-Assume the first-layer wrapper groups identical exit accounts by summing their amounts into one slot and zeroing duplicate slots. Then the sum of the forwarded exit amounts equals the sum of the exit amounts of the real child proofs.
-\end{lemma}
-
-\begin{proof}
-The wrapper's grouping step is a partition of the multiset of real child exits by destination account. Replacing each partition class by a single slot whose amount is the class sum preserves the total amount. Zeroing duplicate slots removes representation duplicates, not value.
-\end{proof}
-
-\begin{theorem}[Global value conservation]
-Assume:
-\begin{enumerate}[label=(V\arabic*),leftmargin=1.9em]
-    \item leaf soundness,
-    \item first-layer wrapper soundness,
-    \item blockchain rejection of reused nullifiers, and
-    \item blockchain settlement that applies exactly the forwarded public exit amounts.
-\end{enumerate}
-Then the total value settled by any accepted first-layer aggregate proof is at most the total value of its underlying authenticated deposit records after protocol fees. Across multiple accepted proofs, no authenticated deposit record is counted more than once.
-\end{theorem}
-
-\begin{proof}[Proof sketch]
-By first-layer wrapper soundness, an accepted aggregate expands to a multiset of real child leaves and dummy padding. By dummy-padding safety, dummies contribute no settled value. By authenticated-deposit binding and the per-leaf fee bound, each real child contributes at most its authenticated deposit amount net of fees. By wrapper amount preservation, the sum of forwarded exit amounts equals the sum of the real child exit amounts. Finally, one-time withdrawal per authenticated deposit record rules out counting the same authenticated record twice via multiple accepted nullifiers. Hence settled value never exceeds the aggregate authenticated input value net of fees.
-\end{proof}
+Value conservation follows from three properties:
+\begin{itemize}[leftmargin=1.5em]
+    \item Each leaf proof enforces the fee constraint (C5): outputs cannot exceed the deposit amount minus fees.
+    \item The wrapper's exit grouping preserves total amounts—it only combines outputs to the same destination.
+    \item One-time withdrawal (above) prevents double-counting the same deposit.
+\end{itemize}
+Together with correct on-chain settlement, these ensure that total settled value never exceeds total deposited value minus fees.
 
 
 \subsection{Layer-0 anonymity sets and balance-linking difficulty}

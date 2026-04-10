@@ -37,4 +37,5 @@ uninlined_format_args = "allow"
 
 # Force updated versions for security advisories
 [patch.crates-io]
+qp-poseidon-core = { path = "../qp-poseidon/core" }
 time = { git = "https://github.com/time-rs/time", tag = "v0.3.47" }
