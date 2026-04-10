@@ -252,37 +252,6 @@ The relation \(\mathcal{R}_{\mathrm{leaf}}\) is the set of all \((x,w)\) satisfy
 
 The proof system does not, by itself, settle a withdrawal. The runtime must also check the following: (i) the referenced block exists in chain history, (ii) the public fee parameter matches the active runtime fee configuration, (iii) the public nullifier has not appeared before, and (iv) any asset-specific accounting rules are satisfied. These external checks are part of the overall security argument.
 
-\section{Leaf Circuit Design}
-\label{sec:leaf}
-
-The implemented leaf circuit is assembled from specialized fragments \citep{quantusrepo}. This modular structure cleanly separates correctness arguments.
-
-\subsection{Nullifier circuit}
-
-The nullifier fragment allocates the public nullifier and proves consistency with the secret and transfer counter. In the current implementation, the equality constraint to the public hash is gated so that dummy leaves can bypass the check while preserving overall wrapper validity.
-
-\subsection{Unspendable-account circuit}
-
-The unspendable-account fragment proves that the deposit destination equals the double-hash derivation of the secret under the protocol tag \texttt{"wormhole"}. This binds a user's secret to the on-chain deposit address without revealing the secret itself.
-
-\subsection{Storage-proof circuit}
-
-The storage-proof fragment is the most substantial component. It verifies a processed Merkle-style proof that a transfer record exists under the provided state root and exposes the fields needed by the fee and accounting logic. This is the bridge between off-chain proving and authenticated chain state.
-
-\subsection{Dual-exit circuit}
-
-The dual-exit fragment models a two-output withdrawal with Bitcoin-like ``spend plus change'' semantics. We refer to the current interface as a \emph{two-output model} because that term accurately captures the interface and highlights a practical limitation: the protocol does not yet expose an arbitrary-length output vector.
-
-\subsection{Block-header circuit}
-
-Instead of taking an opaque serialized header as a monolithic input, the circuit receives structured header components and recomputes a public commitment from them. This improves specification clarity and makes it easier to state exactly what the proof binds to.
-
-This design also closes an authentication gap that appears if one tries to expose only the state root publicly. A bare public state root is not enough for the runtime to validate provenance, because the runtime must connect the proof to an actual canonical block rather than to an arbitrary root supplied by the prover. By privately witnessing the full structured header and publicly exposing its Poseidon2 commitment together with the block number, the leaf proof lets the runtime check that the committed header corresponds to a real block, while the circuit guarantees that the same header contains the state root used by the storage proof. The result is a cryptographic link from the private transaction witness back to authenticated blockchain state.
-
-\subsection{Dummy-leaf semantics}
-
-Dummy leaves are used to pad partially filled batches. The current implementation identifies a dummy by the sentinel condition \texttt{block\_hash = 0\string^32}. Constraints tied to real deposits, such as nullifier consistency or block-header correctness, are conditionally disabled for dummies; however, the wrapper later replaces dummy nullifiers with fresh random values so that dummy leaves cannot collide on-chain. Dummy padding is therefore not merely an engineering convenience; it is part of the privacy story because it obscures batch occupancy.
-
 \section{Recursive Aggregation Architecture}
 \label{sec:aggregation}
 
