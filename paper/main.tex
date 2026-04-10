@@ -54,7 +54,7 @@ This paper takes a different approach: rather than proving signature validity, u
     \item A formal specification of the wormhole-address withdrawal relation, covering nullifier derivation, authenticated state inclusion, and fee constraints.
     \item A two-layer recursive aggregation architecture where the first layer performs privacy-sensitive dummy padding and shuffling on the client, while subsequent layers can be delegated.
     \item Combinatorial analysis of anonymity set size under the layer-0 grouping rules.
-    \item Security proofs for deposit binding, one-time withdrawal, and value conservation, with explicit separation of proof-level and runtime-level assumptions.
+    \item Security proofs for deposit binding, one-time withdrawal, and value conservation, with explicit separation of proof-level and chain-level assumptions.
     \item Benchmarks showing sub-second proving and sub-20ms verification for batches up to 49 withdrawals.
 \end{enumerate}
 
@@ -85,42 +85,36 @@ The protocol aims to satisfy four simultaneous goals:
 
 \subsection{Roles}
 
-The system comprises the following roles.
 \begin{itemize}[leftmargin=1.5em]
-    \item \textbf{User / wallet.} Generates a secret, derives an wormhole address, funds it, collects the witness data for withdrawal, and may optionally perform first-layer aggregation locally.
-    \item \textbf{Proof source or indexer.} Supplies the user with the relevant transfer record, block-header data, and storage proof needed to construct a witness. This role is not trusted for correctness because incorrect data causes proof failure.
-    \item \textbf{First-layer aggregator.} A privacy-sensitive local actor that fills a batch with real and dummy leaf proofs, shuffles them, and produces the first recursive wrapper.
-    \item \textbf{Higher-layer aggregator.} A potentially delegated actor that composes already aggregated proofs and forwards their public outputs.
-    \item \textbf{Runtime / verifier.} Checks block consistency, fee parameters, nullifier freshness, and proof validity before applying settlement.
+    \item \textbf{User / Prover:} Generates a secret, derives a wormhole address, deposits funds, and later produces a zero-knowledge proof to withdraw. First-layer aggregation should be performed locally to preserve privacy.
+    \item \textbf{Aggregator:} Combines multiple proofs into a single aggregate proof. This role may be the user, a third-party service, or a block producer. Higher-layer aggregation can be delegated since it operates only on public outputs.
+    \item \textbf{Blockchain / Verifier:} Validates the final proof, checks nullifier freshness, and settles withdrawals to the specified exit accounts.
 \end{itemize}
-
-\subsection{State objects}
-
-Let \(\mathcal{A}\) be the set of 32-byte account identifiers and let \(\sigma\) denote chain state. A withdrawal witness references the following objects:
-\begin{itemize}[leftmargin=1.5em]
-    \item an asset identifier \(a\),
-    \item an input amount \(v_{\mathrm{in}}\), quantized to the circuit's 0.01-unit resolution,
-    \item a transfer counter \(c\),
-    \item a funding account \(\alpha_{\mathrm{fund}}\),
-    \item an unspendable deposit account \(\alpha_{\mathrm{wh}}\),
-    \item a processed storage proof authenticating the transfer record under a state root \(\mathsf{rt}\), and
-    \item structured block-header fields \((\mathsf{parent\_hash}, b, \mathsf{rt}, \mathsf{extrinsics\_root}, \mathsf{digest})\).
-\end{itemize}
-
-The runtime additionally maintains a nullifier set \(\mathcal{N}\) of all accepted nullifiers.
 
 \subsection{Adversarial capabilities}
 
-We assume a probabilistic polynomial-time adversary that can observe the full chain, submit arbitrary deposits, inspect public proof outputs, perform timing analysis, and attempt to replay or malform proof submissions. The adversary does \emph{not} break the collision resistance of the hash function, the knowledge soundness of the proof system, or the chain's block-history availability assumptions.
+We assume a probabilistic polynomial-time adversary that can:
+\begin{itemize}[leftmargin=1.5em]
+    \item observe the full chain and all public proof outputs,
+    \item submit arbitrary deposits,
+    \item perform timing analysis, and
+    \item attempt to replay or malform proof submissions.
+\end{itemize}
+The adversary cannot:
+\begin{itemize}[leftmargin=1.5em]
+    \item break the collision resistance of the hash function,
+    \item break the knowledge soundness of the proof system, or
+    \item violate the chain's block-history availability.
+\end{itemize}
 
 \subsection{Trust assumptions}
 
 The protocol relies on the following assumptions.
 \begin{enumerate}[leftmargin=1.5em]
-    \item \textbf{Hash security.} The Poseidon2 instantiation used by the system remains collision resistant and preimage resistant for the relevant security level \citep{poseidon2}.
-    \item \textbf{Proof soundness.} The configured Plonky2 recursion stack remains knowledge sound under its standard assumptions \citep{plonky2,fri}.
-    \item \textbf{Authenticated history.} The runtime can check that the public block hash and block number correspond to a valid block in chain history.
-    \item \textbf{Witness availability.} Honest users can obtain the storage proof and block-header data needed to build a witness for their deposit.
+    \item \textbf{Hash Security:} The Poseidon2 instantiation used by the system remains collision resistant and preimage resistant for the relevant security level \citep{poseidon2}.
+    \item \textbf{Proof Soundness:} The configured Plonky2 recursion stack remains knowledge sound under its standard assumptions \citep{plonky2,fri}.
+    \item \textbf{Authenticated History:} The blockchain can check that the public block hash and block number correspond to a valid block in chain history.
+    \item \textbf{Witness Availability:} Honest users can obtain the storage proof and block-header data needed to build a witness for their deposit.
 \end{enumerate}
 
 \section{Protocol Overview}
@@ -138,7 +132,7 @@ The user then funds this address through an ordinary transfer on Quantus. The de
 \paragraph{2. Witness acquisition.}
 To withdraw, the user gathers the transfer record, a processed storage proof, the state root to which that proof authenticates, and the structured block-header fields needed to recompute the public block hash. These data form the private witness except for the public block fields that will be exposed by the proof.
 
-A subtlety is that the protocol does \emph{not} expose the state root directly as its public chain anchor. An earlier design considered doing exactly that, but a bare public state root is insufficient for runtime validation: seeing only a root does not tell the verifier whether that root belongs to any valid canonical block. The implemented design therefore witnesses the structured header privately and exposes a public Poseidon2 commitment to that full header together with the public block number. The runtime validates the committed header against chain history, while the circuit binds the privately used state root in the storage proof to that same committed header.
+A subtlety is that the protocol does \emph{not} expose the state root directly as its public chain anchor. An earlier design considered doing exactly that, but a bare public state root is insufficient for on-chain validation: seeing only a root does not tell the verifier whether that root belongs to any valid canonical block. The implemented design therefore witnesses the structured header privately and exposes a public Poseidon2 commitment to that full header together with the public block number. The blockchain validates the committed header against chain history, while the circuit binds the privately used state root in the storage proof to that same committed header.
 
 \paragraph{3. Leaf proof generation.}
 The user chooses up to two exit outputs, computes a nullifier
@@ -151,7 +145,7 @@ and produces a leaf proof. The proof reveals the nullifier, the exits, the outpu
 A privacy-sensitive local aggregator batches leaf proofs that share the same public \texttt{block\_hash}. If the batch is not full, the aggregator pads it with dummy leaves, shuffles the order, recursively merges the proofs, and then applies a wrapper circuit that enforces consistency and forwards grouped exits and nullifiers.
 
 \paragraph{5. Settlement.}
-The runtime verifies the aggregate proof, checks that the public \texttt{block\_hash} matches the referenced block number, verifies that the fee parameter matches runtime configuration, rejects reused nullifiers, and settles the exits.
+The blockchain verifies the aggregate proof, checks that the public \texttt{block\_hash} matches the referenced block number, verifies that the fee parameter matches the configured rate, rejects reused nullifiers, and settles the exits.
 
 \section{Formal Specification and Interfaces}
 \label{sec:formal}
@@ -221,16 +215,16 @@ Let \(x = (a, v_1, v_2, f, n, \alpha_1, \alpha_2, h_B, b)\) denote the public in
     \[
     (v_1 + v_2) \cdot 10000 \leq v_{\mathrm{in}} \cdot (10000 - f).
     \]
-    \item \textbf{Range constraints.} The public quantities lie within the ranges expected by the runtime interface.
+    \item \textbf{Range constraints.} The public quantities lie within the expected ranges.
 \end{enumerate}
 
 \begin{definition}[Leaf relation]
 The relation \(\mathcal{R}_{\mathrm{leaf}}\) is the set of all \((x,w)\) satisfying conditions (C1)--(C6).
 \end{definition}
 
-\subsection{Runtime interface}
+\subsection{On-chain verification}
 
-The proof system does not, by itself, settle a withdrawal. The runtime must also check the following: (i) the referenced block exists in chain history, (ii) the public fee parameter matches the active runtime fee configuration, (iii) the public nullifier has not appeared before, and (iv) any asset-specific accounting rules are satisfied. These external checks are part of the overall security argument.
+The proof system does not, by itself, settle a withdrawal. The blockchain must also check: (i) the referenced block exists in chain history, (ii) the public fee parameter matches the configured rate, (iii) the nullifier has not appeared before, and (iv) any asset-specific accounting rules are satisfied. These external checks are part of the overall security argument.
 
 \section{Recursive Aggregation Architecture}
 \label{sec:aggregation}
@@ -266,7 +260,7 @@ Higher recursive layers operate over already aggregated proofs rather than raw l
 \section{Security and Privacy Analysis}
 \label{sec:security}
 
-This section separates \emph{proof-level} statements from \emph{system-level} statements. Proof-level statements concern the relations enforced by the leaf circuit and the first-layer wrapper. System-level statements additionally rely on runtime checks outside the proof system: the public \texttt{block\_hash}/\texttt{block\_number} pair must refer to a real block in chain history, the public fee parameter must match runtime configuration, nullifiers must be rejected on reuse (including duplicates inside one candidate batch), and settlement must apply exactly the forwarded exit amounts.
+This section separates \emph{proof-level} statements from \emph{system-level} statements. Proof-level statements concern the relations enforced by the leaf circuit and the first-layer wrapper. System-level statements additionally rely on chain-level checks outside the proof system: the public \texttt{block\_hash}/\texttt{block\_number} pair must refer to a real block in chain history, the public fee parameter must match the configured rate, nullifiers must be rejected on reuse (including duplicates inside one candidate batch), and settlement must apply exactly the forwarded exit amounts.
 
 \begin{table}[t]
 \centering
@@ -279,10 +273,10 @@ Leaf-to-deposit binding & Runtime validates that the public \texttt{block\_hash}
 First-layer wrapper soundness & The recursive verifier gadgets correctly enforce child-proof validity, and the wrapper implementation matches its stated grouping and forwarding logic. \\
 One-time withdrawal per authenticated deposit record & Runtime rejects reused nullifiers, including duplicates within one aggregate submission; the authenticated transfer record fixes the transfer counter used in nullifier derivation. \\
 Spend-path exclusivity for wormhole addresses & The surrounding chain only admits direct spends from addresses backed by valid external credentials, and no efficient adversary can manufacture such credentials for an wormhole address. \\
-Global value conservation & Runtime settles exactly the forwarded public outputs and records the associated nullifiers. \\
+Global value conservation & Blockchain settles exactly the forwarded public outputs and records the associated nullifiers. \\
 \bottomrule
 \end{tabularx}
-\caption{Where the security argument relies on runtime or chain-interface assumptions beyond circuit correctness.}
+\caption{Where the security argument relies on chain-level assumptions beyond circuit correctness.}
 \label{tab:security-assumptions}
 \end{table}
 
@@ -325,15 +319,15 @@ Assume the leaf proof system is knowledge sound. For every accepted leaf proof \
 \end{theorem}
 
 \begin{proof}[Proof sketch]
-This is the standard consequence of knowledge soundness for the leaf relation. The extractor outputs values for the secret, counter, funding account, wormhole account, storage-proof witness, header fields, and input amount that satisfy conditions (C1)--(C6) from \cref{sec:formal}. No further claim is made here about whether the committed block actually exists in canonical chain history; that is deferred to the runtime check on the public \texttt{block\_hash}/\texttt{block\_number} pair.
+This is the standard consequence of knowledge soundness for the leaf relation. The extractor outputs values for the secret, counter, funding account, wormhole account, storage-proof witness, header fields, and input amount that satisfy conditions (C1)--(C6) from \cref{sec:formal}. No further claim is made here about whether the committed block actually exists in canonical chain history; that is deferred to the on-chain check of the public \texttt{block\_hash}/\texttt{block\_number} pair.
 \end{proof}
 
 \begin{corollary}[Authenticated-deposit binding]
-Assume leaf soundness and correct runtime validation of the public block hash. Then every accepted real leaf proof binds to an authenticated deposit record and certifies that its disclosed exits satisfy the protocol fee rule for that record.
+Assume leaf soundness and correct on-chain validation of the public block hash. Then every accepted real leaf proof binds to an authenticated deposit record and certifies that its disclosed exits satisfy the protocol fee rule for that record.
 \end{corollary}
 
 \begin{proof}
-By leaf soundness, an accepting real leaf yields a witness satisfying \(\mathcal{R}_{\mathrm{leaf}}\). Conditions (C3) and (C4) bind the proof to an authenticated transfer record under the state root committed by the structured header fields, while condition (C5) enforces the fee inequality. Runtime validation upgrades the public header commitment from a merely self-consistent header witness to a real block in chain history.
+By leaf soundness, an accepting real leaf yields a witness satisfying \(\mathcal{R}_{\mathrm{leaf}}\). Conditions (C3) and (C4) bind the proof to an authenticated transfer record under the state root committed by the structured header fields, while condition (C5) enforces the fee inequality. On-chain validation upgrades the public header commitment from a merely self-consistent header witness to a real block in chain history.
 \end{proof}
 
 \subsection{First-layer wrapper soundness}
@@ -358,7 +352,7 @@ Soundness of the recursive verifier gadgets ensures that every accepted child pr
 \end{proof}
 
 \begin{lemma}[Dummy-padding safety]
-Assume the designated dummy template exposes zero-valued exits, and the runtime only settles the public exits produced by the wrapper. Then dummy padding cannot increase settled value. Random replacement of dummy nullifiers affects only accidental-collision probability and therefore liveness, not soundness.
+Assume the designated dummy template exposes zero-valued exits, and the blockchain only settles the public exits produced by the wrapper. Then dummy padding cannot increase settled value. Random replacement of dummy nullifiers affects only accidental-collision probability and therefore liveness, not soundness.
 \end{lemma}
 
 \begin{proof}
@@ -370,7 +364,7 @@ Under the stated dummy-template assumption, a dummy child contributes no positiv
 \begin{theorem}[One-time withdrawal per authenticated deposit record]
 Assume:
 \begin{enumerate}[label=(D\arabic*),leftmargin=1.9em]
-    \item the runtime rejects reused nullifiers, including duplicates within one candidate aggregate submission;
+    \item the blockchain rejects reused nullifiers, including duplicates within one candidate aggregate submission;
     \item the authenticated transfer record fixes the transfer counter \(c\) used in nullifier derivation; and
     \item the hash function used in \(\WA(\cdot)\) and \(\Null(\cdot,\cdot)\) is collision resistant and second-preimage resistant for the relevant domain-separated inputs.
 \end{enumerate}
@@ -390,7 +384,7 @@ If \(s\neq s'\), the adversary has found a collision or second preimage for the 
 \[
 \Null(s,c)=\Null(s',c'),
 \]
-so both withdrawals expose the same nullifier. The runtime rejects the second occurrence by assumption (D1). Hence one authenticated deposit record can underwrite at most one accepted real withdrawal.
+so both withdrawals expose the same nullifier. The blockchain rejects the second occurrence by assumption (D1). Hence one authenticated deposit record can underwrite at most one accepted real withdrawal.
 \end{proof}
 
 The theorem above is intentionally phrased in terms of an \emph{authenticated deposit record}, not an informal notion of ``the same funds.'' If a future protocol version supports explicit partial-withdrawal state transitions, that stronger state model should be proved separately rather than inferred from the present one-shot nullifier discipline.
@@ -435,8 +429,8 @@ Assume:
 \begin{enumerate}[label=(V\arabic*),leftmargin=1.9em]
     \item leaf soundness,
     \item first-layer wrapper soundness,
-    \item runtime rejection of reused nullifiers, and
-    \item runtime settlement that applies exactly the forwarded public exit amounts.
+    \item blockchain rejection of reused nullifiers, and
+    \item blockchain settlement that applies exactly the forwarded public exit amounts.
 \end{enumerate}
 Then the total value settled by any accepted first-layer aggregate proof is at most the total value of its underlying authenticated deposit records after protocol fees. Across multiple accepted proofs, no authenticated deposit record is counted more than once.
 \end{theorem}
