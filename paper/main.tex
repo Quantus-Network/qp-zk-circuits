@@ -287,7 +287,6 @@ Higher recursive layers operate over already aggregated proofs rather than raw l
 \label{sec:security}
 
 This section separates \emph{proof-level} statements from \emph{system-level} statements. Proof-level statements concern the relations enforced by the leaf circuit and the first-layer wrapper. System-level statements additionally rely on runtime checks outside the proof system: the public \texttt{block\_hash}/\texttt{block\_number} pair must refer to a real block in chain history, the public fee parameter must match runtime configuration, nullifiers must be rejected on reuse (including duplicates inside one candidate batch), and settlement must apply exactly the forwarded exit amounts.
-Appendix \ref{app:proofs} expands the proof sketches below into code-aware reductions tied to the current dummy-template and artifact-loading paths.
 
 \begin{table}[t]
 \centering
@@ -375,7 +374,7 @@ where \(\delta_i\in\{0,1\}\) indicates whether child \(i\) is dummy, such that:
 \end{theorem}
 
 \begin{proof}[Proof sketch]
-Soundness of the recursive verifier gadgets ensures that every accepted child proof referenced by the wrapper witness is itself valid. The wrapper then recomputes its public outputs from those children subject to explicit conditional checks: non-dummy children must agree on the batch \texttt{block\_hash}, \texttt{asset\_id}, and \texttt{volume\_fee\_bps}; exit slots are formed by the implemented grouping-and-zeroing logic; and nullifiers are forwarded child-by-child with dummy substitution in positions marked by the sentinel. The shared \texttt{block\_number} claim is obtained by combining wrapper soundness with leaf soundness: each real child is itself a sound leaf proof satisfying condition (C4), so a common \texttt{block\_hash} implies a common committed header and hence a common \texttt{block\_number}. A line-by-line version of this argument, together with the exact code-path linkage for dummy padding, is given in \cref{app:proofs}. Hence any accepting wrapper proof can be explained by a concrete list of real and dummy children satisfying (W1)--(W5).
+Soundness of the recursive verifier gadgets ensures that every accepted child proof referenced by the wrapper witness is itself valid. The wrapper then recomputes its public outputs from those children subject to explicit conditional checks: non-dummy children must agree on the batch \texttt{block\_hash}, \texttt{asset\_id}, and \texttt{volume\_fee\_bps}; exit slots are formed by the implemented grouping-and-zeroing logic; and nullifiers are forwarded child-by-child with dummy substitution in positions marked by the sentinel. The shared \texttt{block\_number} claim is obtained by combining wrapper soundness with leaf soundness: each real child is itself a sound leaf proof satisfying condition (C4), so a common \texttt{block\_hash} implies a common committed header and hence a common \texttt{block\_number}. Hence any accepting wrapper proof can be explained by a concrete list of real and dummy children satisfying (W1)--(W5).
 \end{proof}
 
 \begin{lemma}[Dummy-padding safety]
@@ -631,54 +630,6 @@ A wallet-side heuristic (not a formal guarantee): for candidate deposits \(\math
 \[
 \mathsf{Score}(V,\mathcal{D}) = \log_2 \left| \left\{ S \subseteq \mathcal{D} : \sum_{d\in S} d\cdot (1-f) \approx V \right\} \right|.
 \]
-
-\section{Exact public-input tables}
-
-For implementation-facing completeness, we preserve the exact leaf and wrapper layouts.
-
-\begin{table}[h]
-\centering
-\small
-\begin{tabular}{@{}lll@{}}
-\toprule
-Index range & Field & Size (felts) \\
-\midrule
-0 & \texttt{asset\_id} & 1 \\
-1 & \texttt{output\_amount\_1} & 1 \\
-2 & \texttt{output\_amount\_2} & 1 \\
-3 & \texttt{volume\_fee\_bps} & 1 \\
-4--7 & \texttt{nullifier} & 4 \\
-8--11 & \texttt{exit\_account\_1} & 4 \\
-12--15 & \texttt{exit\_account\_2} & 4 \\
-16--19 & \texttt{block\_hash} & 4 \\
-20 & \texttt{block\_number} & 1 \\
-\bottomrule
-\end{tabular}
-\caption{Leaf public-input layout (21 felts total).}
-\label{tab:leaf-layout}
-\end{table}
-
-\begin{table}[h]
-\centering
-\small
-\begin{tabular}{@{}lll@{}}
-\toprule
-Offset & Field & Size \\
-\midrule
-0 & \texttt{num\_exit\_slots} & 1 \\
-1 & \texttt{asset\_id} & 1 \\
-2 & \texttt{volume\_fee\_bps} & 1 \\
-3--6 & \texttt{block\_hash} & 4 \\
-7 & \texttt{block\_number} & 1 \\
-8.. & \texttt{[sum, exit\_account]} repeated \(2N\) times & 5 per slot \\
-next & \texttt{nullifier} repeated \(N\) times & 4 per nullifier \\
-rest & zero padding & until \(21N+8\) felts \\
-\bottomrule
-\end{tabular}
-\caption{First-layer aggregate public-input layout.}
-\label{tab:agg-layout}
-\end{table}
-
 
 \begin{thebibliography}{99}
 
