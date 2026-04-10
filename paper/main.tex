@@ -60,28 +60,24 @@ This paper takes a different approach: rather than proving signature validity, u
 
 \section{Background and Design Goals}
 
-\subsection{From post-quantum signatures to proof-based settlement}
+\subsection{Wormholes and Privacy Pools}
 
-Post-quantum signatures are expensive to publish and verify. Rather than publishing a large signature per spend, users can prove knowledge of a short secret checked against authenticated state. The chain verifies a proof and updates a nullifier set.
+EIP-7503 proposes \emph{zero-knowledge wormholes}: deposit to secret-derived addresses, then prove knowledge of the secret to withdraw \citep{eip7503}. We extend this concept with post-quantum proving and recursive aggregation with dummy padding for privacy.
 
-\subsection{Relationship to wormholes and privacy pools}
+Related systems include privacy pools and shielded ledgers like Zcash and Tornado Cash \citep{eip7503,privacypools,zcash,tornadocash}. Unlike fully shielded ledgers, Quantus proves against native chain state without a separate note commitment tree. Importantly, no ciphertexts are stored on-chain, so a future break in cryptographic assumptions cannot retroactively compromise transaction privacy.
 
-EIP-7503 proposes \emph{zero-knowledge wormholes}: deposit to secret-derived addresses, then prove knowledge of the secret to withdraw \citep{eip7503}. Quantus differs in three ways: (1) post-quantum-friendly proving, (2) implemented against authenticated state (not just a proposal), and (3) recursive aggregation with dummy padding.
+\subsection{Transparent Recursion}
 
-Related systems include privacy pools and shielded ledgers like Zcash and Tornado Cash \citep{eip7503,privacypools,zcash,tornadocash}. Unlike fully shielded ledgers, Quantus proves against native chain state without a separate note commitment tree.
-
-\subsection{Why transparent recursion}
-
-We use \texttt{qp-plonky2}, combining PLONK arithmetization with FRI commitments for recursive verification without trusted setup \citep{plonky2,fri,qpplonky2}. Poseidon2 provides efficient in-circuit hashing over prime fields \citep{poseidon2}.
+We use Plonky2, combining PLONK arithmetization with FRI commitments for recursive verification without trusted setup \citep{plonky2,fri}. Poseidon2 provides efficient in-circuit hashing over prime fields \citep{poseidon2}.
 
 \subsection{Design goals}
 
 The protocol aims to satisfy four simultaneous goals:
 \begin{enumerate}[leftmargin=1.5em]
-    \item \textbf{Scalable authorization.} On-chain work should scale with proof verification and forwarded public outputs, not with raw post-quantum signature material per transaction.
-    \item \textbf{Authenticated settlement.} Every successful withdrawal must be bound to a real deposit recorded in authenticated chain state.
-    \item \textbf{Replay prevention.} A deposit should not authorize multiple withdrawals; nullifiers must uniquely bind proofs to deposits.
-    \item \textbf{Meaningful privacy.} The chain should reveal only the public information needed for settlement: exits, amounts, shared fee parameters, nullifiers, and a block commitment. Funding accounts, secrets, and raw storage proofs should remain private.
+    \item \textbf{Amortized Verification:} The marginal on-chain cost of verifying an additional withdrawal should be small.
+    \item \textbf{Deposit Binding:} Every withdrawal must be bound to a real deposit recorded in authenticated chain state.
+    \item \textbf{Replay Prevention:} A deposit should not authorize multiple withdrawals; nullifiers must uniquely bind proofs to deposits.
+    \item \textbf{Meaningful Privacy:} The chain should reveal only the public information needed for settlement: exits, amounts, shared fee parameters, nullifiers, and a block hash. Funding accounts, secrets, and raw storage proofs should remain private.
 \end{enumerate}
 
 \section{System, Adversary, and Trust Model}
@@ -123,7 +119,7 @@ The protocol relies on the following assumptions.
 \begin{enumerate}[leftmargin=1.5em]
     \item \textbf{Hash security.} The Poseidon2 instantiation used by the system remains collision resistant and preimage resistant for the relevant security level \citep{poseidon2}.
     \item \textbf{Proof soundness.} The configured Plonky2 recursion stack remains knowledge sound under its standard assumptions \citep{plonky2,fri}.
-    \item \textbf{Authenticated history.} The runtime can check that the public block commitment and block number correspond to a valid block in chain history.
+    \item \textbf{Authenticated history.} The runtime can check that the public block hash and block number correspond to a valid block in chain history.
     \item \textbf{Witness availability.} Honest users can obtain the storage proof and block-header data needed to build a witness for their deposit.
 \end{enumerate}
 
@@ -140,7 +136,7 @@ The user samples a secret \(s\) and derives an wormhole address
 The user then funds this address through an ordinary transfer on Quantus. The deposit is accompanied by a chain record that can later be authenticated inside the circuit.
 
 \paragraph{2. Witness acquisition.}
-To withdraw, the user gathers the transfer record, a processed storage proof, the state root to which that proof authenticates, and the structured block-header fields needed to recompute the public block commitment. These data form the private witness except for the public block fields that will be exposed by the proof.
+To withdraw, the user gathers the transfer record, a processed storage proof, the state root to which that proof authenticates, and the structured block-header fields needed to recompute the public block hash. These data form the private witness except for the public block fields that will be exposed by the proof.
 
 A subtlety is that the protocol does \emph{not} expose the state root directly as its public chain anchor. An earlier design considered doing exactly that, but a bare public state root is insufficient for runtime validation: seeing only a root does not tell the verifier whether that root belongs to any valid canonical block. The implemented design therefore witnesses the structured header privately and exposes a public Poseidon2 commitment to that full header together with the public block number. The runtime validates the committed header against chain history, while the circuit binds the privately used state root in the storage proof to that same committed header.
 
@@ -149,7 +145,7 @@ The user chooses up to two exit outputs, computes a nullifier
 \[
 \Null(s,c) = H(H(\mathsf{``\string~nullif\string~''} \parallel s \parallel c)),
 \]
-and produces a leaf proof. The proof reveals the nullifier, the exits, the output amounts, the asset identifier, the fee basis points, the public block commitment, and the block number, while keeping the secret, funding account, storage proof, and transfer-specific raw details private.
+and produces a leaf proof. The proof reveals the nullifier, the exits, the output amounts, the asset identifier, the fee basis points, the public block hash, and the block number, while keeping the secret, funding account, storage proof, and transfer-specific raw details private.
 
 \paragraph{4. First-layer aggregation.}
 A privacy-sensitive local aggregator batches leaf proofs that share the same public \texttt{block\_hash}. If the batch is not full, the aggregator pads it with dummy leaves, shuffles the order, recursively merges the proofs, and then applies a wrapper circuit that enforces consistency and forwards grouped exits and nullifiers.
@@ -299,7 +295,7 @@ An \emph{authenticated deposit record} is a tuple
 \[
 d = (a, v_{\mathrm{in}}, c, \alpha_{\mathrm{fund}}, \alpha_{\mathrm{wh}}, h_B, b)
 \]
-for which there exists witness data \(w\) such that \((x,w) \in \mathcal{R}_{\mathrm{leaf}}\), where \(x\) exposes asset identifier \(a\), block commitment \(h_B\), block number \(b\), and exits satisfying the fee constraint against \(v_{\mathrm{in}}\). Intuitively, \(d\) is a deposit object that has been authenticated by the storage-proof and header-binding subcircuits described in \cref{sec:formal,sec:leaf}.
+for which there exists witness data \(w\) such that \((x,w) \in \mathcal{R}_{\mathrm{leaf}}\), where \(x\) exposes asset identifier \(a\), block hash \(h_B\), block number \(b\), and exits satisfying the fee constraint against \(v_{\mathrm{in}}\). Intuitively, \(d\) is a deposit object that has been authenticated by the storage-proof and header-binding subcircuits described in \cref{sec:formal,sec:leaf}.
 \end{definition}
 
 A \emph{real} leaf is a leaf whose public \texttt{block\_hash} is nonzero. A \emph{dummy} leaf is a padding object identified by the sentinel \texttt{block\_hash} \(=0^{32}\) and used only inside first-layer aggregation.
@@ -333,7 +329,7 @@ This is the standard consequence of knowledge soundness for the leaf relation. T
 \end{proof}
 
 \begin{corollary}[Authenticated-deposit binding]
-Assume leaf soundness and correct runtime validation of the public block commitment. Then every accepted real leaf proof binds to an authenticated deposit record and certifies that its disclosed exits satisfy the protocol fee rule for that record.
+Assume leaf soundness and correct runtime validation of the public block hash. Then every accepted real leaf proof binds to an authenticated deposit record and certifies that its disclosed exits satisfy the protocol fee rule for that record.
 \end{corollary}
 
 \begin{proof}
@@ -595,7 +591,7 @@ EIP-7503 proposes proof-of-burn reminting via secret-derived addresses \citep{ei
 Zcash provides strong privacy through shielded notes; Tornado Cash popularized mixer-style privacy on Ethereum \citep{zcash,tornadocash}. Quantus offers lighter-weight private settlement anchored in native chain state.
 
 \paragraph{Recursive proofs.}
-Halo and Plonky2 are standard recursive proof systems \citep{halo,plonky2}. Plonky3 provides Poseidon2 primitives with a separate recursion track \citep{plonky3,plonky3recursion}. Quantus applies recursive composition to post-quantum private settlement using \texttt{qp-plonky2} with Poseidon2.
+Halo and Plonky2 are standard recursive proof systems \citep{halo,plonky2}. Plonky3 provides Poseidon2 primitives with a separate recursion track \citep{plonky3,plonky3recursion}. We use Plonky2 with Poseidon2 for recursive composition.
 
 \paragraph{Hash-based authorization.}
 The Ziggy signature scheme \citep{ziggy} uses a ZK-STARK to prove knowledge of a hash preimage, replacing lattice-based signatures with hash-based proofs. Our wormhole construction applies a similar idea to blockchain settlement: users prove knowledge of a secret whose hash determines their deposit address.
