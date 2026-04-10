@@ -95,6 +95,8 @@
             uses: dtolnay/rust-toolchain@stable
           - name: Cache Rust dependencies
             uses: Swatinem/rust-cache@v2
+          - name: Build circuit binaries
+            run: ./scripts/build-circuits.sh
           - name: Run slow crypto tests
             run: |
               cargo test --release -p tests -- aggregator_tests circuit_data_tests storage_proof_tests prover_tests verifier_tests
