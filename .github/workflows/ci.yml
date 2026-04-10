@@ -80,9 +80,9 @@
           - name: Cache Rust dependencies
             uses: Swatinem/rust-cache@v2
           - name: Run clippy (workspace)
-            run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+            run: cargo clippy --workspace --all-targets --all-features --locked --release -- -D warnings
           - name: Check documentation
-            run: cargo doc --workspace --locked --no-deps --all-features --document-private-items
+            run: cargo doc --workspace --locked --no-deps --all-features --document-private-items --release
 
       slow-tests:
         name: 🐌 Slow Tests (Crypto-heavy)
