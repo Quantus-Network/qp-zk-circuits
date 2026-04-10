@@ -255,16 +255,6 @@ The proof system does not, by itself, settle a withdrawal. The runtime must also
 \section{Recursive Aggregation Architecture}
 \label{sec:aggregation}
 
-\subsection{Leaf layout and wrapper output layout}
-
-Each leaf proof contributes 21 public-input field elements. The first aggregation layer produces a wrapper proof whose semantic public output consists of:
-\begin{itemize}[leftmargin=1.5em]
-    \item a fixed 8-felt header containing the number of exit slots, asset identifier, fee basis points, block hash, and block number;
-    \item \(2N\) exit slots, each represented as a 1-felt amount plus a 4-felt exit account; and
-    \item \(N\) nullifiers, each occupying 4 felts.
-\end{itemize}
-Thus the meaningful forwarded payload is \(14N + 8\) felts, although the current wrapper pads its public-input vector out to \(21N + 8\) felts for layout regularity.
-
 \subsection{First-layer policy}
 
 The first aggregation layer is privacy-sensitive. A valid batch must satisfy:
