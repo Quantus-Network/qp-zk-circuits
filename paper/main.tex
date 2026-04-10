@@ -625,61 +625,6 @@ Wormhole addresses let a post-quantum blockchain move authorization off-chain wh
 
 \appendix
 
-\section{Proof details and code linkage}
-\label{app:proofs}
-
-This appendix links the main-text security arguments to implementation details.
-
-\subsection{Dummy-template implementation}
-
-The dummy template is serialized as \texttt{dummy\_proof.bin} with all-zero outputs and \texttt{block\_hash} \(= 0^{32}\). The layer-0 prover pads batches by cloning this template, shuffles while preserving a real proof in slot~0, and generates random dummy nullifiers. The wrapper detects dummies via the sentinel \texttt{block\_hash}.
-
-\begin{table}[t]
-\centering
-\footnotesize
-\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.30\textwidth}>{\raggedright\arraybackslash}p{0.27\textwidth}>{\raggedright\arraybackslash}p{0.37\textwidth}@{}}
-\toprule
-Claim used in the proofs & Primary file path & Concrete symbol / behavior \\
-\midrule
-Designated dummy template exists as a serialized artifact & \path{wormhole/circuit-builder/src/lib.rs} & \path{generate_circuit_binaries} writes \path{dummy_proof.bin}. \\
-Dummy witness uses zero block hash and zero outputs & \path{wormhole/aggregator/src/dummy_proof.rs} & \path{build_dummy_circuit_inputs}, \path{DUMMY_BLOCK_HASH}, \path{DUMMY_EXIT_ACCOUNT}. \\
-Layer-0 padding clones exactly that template & \path{wormhole/aggregator/src/layer0/prover/lib.rs} & \path{dummy_proof_template.clone()} inside \path{commit}. \\
-Real proof remains in slot~0 if any real proof exists & \path{wormhole/aggregator/src/layer0/prover/lib.rs} & \path{shuffle_proofs_preserving_first_real_layer0}. \\
-Wrapper detects dummy children and substitutes filler nullifiers & \path{wormhole/aggregator/src/layer0/circuit/circuit_logic.rs} & \path{build_layer0_wrapper_constraints}; dummy flag from \texttt{block\_hash} \(= 0^{32}\). \\
-Artifact integrity is checked against hashes stored with the run config & \path{wormhole/aggregator/src/config.rs} & \path{CircuitBinsConfig::verify_hashes}. \\
-Layer-1 uses full batches and intentionally omits privacy padding & \path{wormhole/aggregator/src/aggregator.rs}\newline\path{wormhole/aggregator/src/layer1/prover/lib.rs} & \path{Layer1Aggregator::aggregate}\newline\path{Layer1AggregationProver::commit}. \\
-\bottomrule
-\end{tabularx}
-\caption{Code-level loci behind the security assumptions used in the appendix reductions.}
-\label{tab:code-linkage}
-\end{table}
-
-\subsection{Deposit binding}
-
-For a real leaf proof (non-zero \texttt{block\_hash}), knowledge soundness extracts a witness satisfying \(\mathcal{R}_{\mathrm{leaf}}\): (C3) gives an authenticated storage proof, (C4) binds the header commitment, and the runtime checks the block exists in canonical history. This is the only step outside the circuit---the runtime validates the \((\texttt{block\_hash}, \texttt{block\_number})\) pair.
-
-\subsection{Wrapper soundness}
-
-The wrapper verifies \(N\) child proofs and enforces: non-dummy children share \texttt{block\_hash}, all children share \texttt{asset\_id} and \texttt{volume\_fee\_bps} (from slot~0). Exit grouping sums amounts by destination and zeros duplicates. Nullifiers forward real values or dummy fillers based on the sentinel check.
-
-Common \texttt{block\_number} follows from leaf soundness: real children with the same \texttt{block\_hash} have the same committed header, hence the same \texttt{block\_number}.
-
-\subsection{Dummy-padding safety}
-
-Dummies have zero outputs and zero exit accounts, so they contribute nothing to forwarded amounts. The wrapper uses fresh random fillers for dummy nullifiers---this affects liveness (collision risk) not soundness.
-
-\subsection{Layer-0 ambiguity}
-
-Three sources enlarge the explanation class \(\mathcal{E}(Y)\): (1) exit grouping hides individual contributions, (2) dummy nullifiers look random, (3) shuffle hides slot assignment. For grouped exits with total \(S_a = m_a \Delta\) and multiplicity \(r_a\), there are \(\binom{m_a - 1}{r_a - 1}\) compositions---the stars-and-bars count from the main text.
-
-\subsection{One-time withdrawal}
-
-Two withdrawals from the same deposit record \(d\) would extract witnesses with the same counter \(c\) and wormhole address, hence \(\WA(s)=\WA(s')\). Unless \(s=s'\) (collision), both expose the same nullifier \(\Null(s,c)\). The runtime rejects duplicates.
-
-\subsection{Value conservation}
-
-By wrapper soundness, aggregates expand into real children and dummies. Dummies contribute nothing. Each real child is bound to an authenticated deposit with a fee-constrained exit sum. Nullifier freshness prevents double-counting. Total settled value is bounded by total deposit value.
-
 \section{Privacy-score heuristic}
 
 A wallet-side heuristic (not a formal guarantee): for candidate deposits \(\mathcal{D}\) and withdrawal amount \(V\),

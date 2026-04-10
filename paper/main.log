@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  10 APR 2026 14:00
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  10 APR 2026 14:06
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -734,6 +734,10 @@ Package microtype Info: Character `029' is missing
 (microtype)             in font `T1/lmr/m/sc/10.95'.
 (microtype)             Ignoring protrusion settings for this character.
  [5] [6]
+
+LaTeX Warning: Reference `app:proofs' on page 7 undefined on input line 290.
+
+
 Underfull \hbox (badness 10000) in paragraph at lines 305--305
 []|\T1/lmr/m/n/10 (+20) Runtime val-i-dates that the pub-lic
  []
@@ -742,13 +746,12 @@ Underfull \hbox (badness 10000) in paragraph at lines 305--305
 
 LaTeX Warning: Reference `sec:leaf' on page 1 undefined on input line 319.
 
-[8] [9] [10] [11] [12{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/l
-m/lm-mathex.enc}] [13] [14] [15]
-Underfull \hbox (badness 10000) in alignment at lines 689--689
-[][][] 
- []
+[8]
 
-[16] [17] [18] [19] (./main.aux)
+LaTeX Warning: Reference `app:proofs' on page 1 undefined on input line 378.
+
+[9] [10] [11] [12{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm
+-mathex.enc}] [13] [14] [15] [16] [17] (./main.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
@@ -758,14 +761,14 @@ L3 programming layer <2026-01-19>
 LaTeX Warning: There were undefined references.
 
 Package rerunfilecheck Info: File `main.out' has not changed.
-(rerunfilecheck)             Checksum: D673E3B25C31DF94CC57E4C07E660202;9306.
+(rerunfilecheck)             Checksum: 6A2C025364A8A5E09515FB2BF4508F1B;7434.
  ) 
 Here is how much of TeX's memory you used:
- 17648 strings out of 469006
- 287795 string characters out of 5454813
+ 17572 strings out of 469006
+ 286753 string characters out of 5454813
  760648 words of memory out of 5000000
- 45601 multiletter control sequences out of 15000+600000
- 743886 words of font info for 264 fonts, out of 8000000 for 9000
+ 45563 multiletter control sequences out of 15000+600000
+ 735462 words of font info for 247 fonts, out of 8000000 for 9000
  319 hyphenation exceptions out of 8191
  75i,12n,79p,1105b,636s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmbx10.pfb></u
@@ -785,13 +788,12 @@ f-dist/fonts/type1/public/lm/lmr10.pfb></usr/local/texlive/2026basic/texmf-dist
 r/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmsy10.pfb></usr/loc
 al/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmsy8.pfb></usr/local/tex
 live/2026basic/texmf-dist/fonts/type1/public/lm/lmtt10.pfb></usr/local/texlive/
-2026basic/texmf-dist/fonts/type1/public/lm/lmtt9.pfb></usr/local/texlive/2026ba
-sic/texmf-dist/fonts/type1/public/lm/lmtti10.pfb></usr/local/texlive/2026basic/
-texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb>
-Output written on main.pdf (19 pages, 478279 bytes).
+2026basic/texmf-dist/fonts/type1/public/lm/lmtti10.pfb></usr/local/texlive/2026
+basic/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb>
+Output written on main.pdf (17 pages, 421685 bytes).
 PDF statistics:
- 612 PDF objects out of 1000 (max. 8388607)
- 540 compressed objects within 6 object streams
- 185 named destinations out of 1000 (max. 500000)
- 66985 words of extra memory for PDF output out of 74296 (max. 10000000)
+ 535 PDF objects out of 1000 (max. 8388607)
+ 469 compressed objects within 5 object streams
+ 169 named destinations out of 1000 (max. 500000)
+ 61257 words of extra memory for PDF output out of 61914 (max. 10000000)
 
