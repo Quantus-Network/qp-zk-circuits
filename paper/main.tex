@@ -156,23 +156,6 @@ A privacy-sensitive local aggregator batches leaf proofs that share the same pub
 \paragraph{5. Settlement.}
 The runtime verifies the aggregate proof, checks that the public \texttt{block\_hash} matches the referenced block number, verifies that the fee parameter matches runtime configuration, rejects reused nullifiers, and settles the exits.
 
-\begin{algorithm}[t]
-\caption{High-level withdrawal pipeline}
-\label{alg:pipeline}
-\begin{algorithmic}[1]
-\Procedure{WithdrawAndSettle}{$s,c,\alpha_1,\alpha_2,v_1,v_2$}
-    \State derive \(\alpha_{\mathrm{wh}} \gets \WA(s)\)
-    \State fetch transfer record, block-header fields, and storage proof for counter \(c\)
-    \State compute \(n \gets \Null(s,c)\)
-    \State form public inputs \(x = (a,v_1,v_2,f,n,\alpha_1,\alpha_2,h_B,b)\)
-    \State form witness \(w\) from secret, transfer record, and authenticated state data
-    \State produce leaf proof \(\pi \gets \mathsf{Prove}(x,w)\)
-    \State optionally aggregate \(\pi\) with same-block leaf proofs
-    \State submit proof and public inputs for runtime verification
-\EndProcedure
-\end{algorithmic}
-\end{algorithm}
-
 \section{Formal Specification and Interfaces}
 \label{sec:formal}
 
