@@ -123,28 +123,26 @@ The protocol relies on the following assumptions.
 The protocol consists of five stages.
 
 \paragraph{1. Secret generation and deposit.}
-The user samples a secret \(s\) and derives an wormhole address
+The user samples a secret \(s\) and derives a wormhole address
 \[
-\WA(s) = H(H(\mathsf{``wormhole''} \parallel s)).
+\WA(s) = H(H(\mathsf{salt_{wh}} \parallel s)).
 \]
-The user then funds this address through an ordinary transfer on Quantus. The deposit is accompanied by a chain record that can later be authenticated inside the circuit.
+The user then funds this address through an ordinary on-chain transfer. The deposit creates a record that can later be authenticated inside the circuit.
 
-\paragraph{2. Witness acquisition.}
-To withdraw, the user gathers the transfer record, a processed storage proof, the state root to which that proof authenticates, and the structured block-header fields needed to recompute the public block hash. These data form the private witness except for the public block fields that will be exposed by the proof.
+\paragraph{2. Witness Acquisition:}
+To withdraw, the user gathers the deposit record, a storage proof, and block header data. These form the private witness.
 
-A subtlety is that the protocol does \emph{not} expose the state root directly as its public chain anchor. An earlier design considered doing exactly that, but a bare public state root is insufficient for on-chain validation: seeing only a root does not tell the verifier whether that root belongs to any valid canonical block. The implemented design therefore witnesses the structured header privately and exposes a public Poseidon2 commitment to that full header together with the public block number. The blockchain validates the committed header against chain history, while the circuit binds the privately used state root in the storage proof to that same committed header.
-
-\paragraph{3. Leaf proof generation.}
+\paragraph{3. Leaf Proof Generation:}
 The user chooses up to two exit outputs, computes a nullifier
 \[
-\Null(s,c) = H(H(\mathsf{``\string~nullif\string~''} \parallel s \parallel c)),
+\Null(s,c) = H(H(\mathsf{salt_{null}} \parallel s \parallel c)),
 \]
-and produces a leaf proof. The proof reveals the nullifier, the exits, the output amounts, the asset identifier, the fee basis points, the public block hash, and the block number, while keeping the secret, funding account, storage proof, and transfer-specific raw details private.
+and produces a leaf proof. The proof reveals the nullifier, the exits, the output amounts, the asset identifier, the fee basis points, the public block hash, and the block number, while keeping the secret, funding account, storage proof, and transfer-specific raw details private. Leaf proofs are not zero-knowledge. They are only seen by the user who generated them.
 
-\paragraph{4. First-layer aggregation.}
-A privacy-sensitive local aggregator batches leaf proofs that share the same public \texttt{block\_hash}. If the batch is not full, the aggregator pads it with dummy leaves, shuffles the order, recursively merges the proofs, and then applies a wrapper circuit that enforces consistency and forwards grouped exits and nullifiers.
+\paragraph{4. First-Layer Aggregation:}
+The user batches leaf proofs that share the same \texttt{block\_hash}, pads with dummy leaves if needed, shuffles the order, and produces a zero-knowledge wrapper proof that forwards grouped exits and nullifiers. This step should be performed locally to preserve privacy.
 
-\paragraph{5. Settlement.}
+\paragraph{5. Settlement:}
 The blockchain verifies the aggregate proof, checks that the public \texttt{block\_hash} matches the referenced block number, verifies that the fee parameter matches the configured rate, rejects reused nullifiers, and settles the exits.
 
 \section{Formal Specification and Interfaces}
