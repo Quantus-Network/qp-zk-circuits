@@ -231,30 +231,12 @@ An \emph{authenticated deposit record} is a tuple
 \[
 d = (a, v_{\mathrm{in}}, c, \alpha_{\mathrm{fund}}, \alpha_{\mathrm{wh}}, h_B, b)
 \]
-for which there exists witness data \(w\) such that \((x,w) \in \mathcal{R}_{\mathrm{leaf}}\), where \(x\) exposes asset identifier \(a\), block hash \(h_B\), block number \(b\), and exits satisfying the fee constraint against \(v_{\mathrm{in}}\). Intuitively, \(d\) is a deposit object that has been authenticated by the storage-proof and header-binding subcircuits described in \cref{sec:formal,sec:leaf}.
+for which there exists witness data \(w\) such that \((x,w) \in \mathcal{R}_{\mathrm{leaf}}\), where \(x\) exposes asset identifier \(a\), block hash \(h_B\), block number \(b\), and exits satisfying the fee constraint against \(v_{\mathrm{in}}\).
 \end{definition}
 
-A \emph{real} leaf is a leaf whose public \texttt{block\_hash} is nonzero. A \emph{dummy} leaf is a padding object identified by the sentinel \texttt{block\_hash} \(=0^{32}\) and used only inside first-layer aggregation.
+A \emph{real} leaf is a leaf whose public \texttt{block\_hash} is nonzero. A \emph{dummy} leaf is a padding object identified by the sentinel \texttt{block\_hash} \(=0^{32}\).
 
-\subsection{Completeness}
-
-\begin{theorem}[Leaf completeness]
-If an honest prover holds witness data \(w\) for which \((x,w)\in \mathcal{R}_{\mathrm{leaf}}\), then the prover can generate a leaf proof accepted by the leaf verifier.
-\end{theorem}
-
-\begin{proof}[Proof sketch]
-Completeness follows from the correctness of the individual circuit fragments and of the proving system. Each fragment enforces a deterministic relation between its witness variables and public outputs. When the nullifier, wormhole address, storage proof, header commitment, fee inequality, and range constraints are all satisfied, the assembled witness satisfies \(\mathcal{R}_{\mathrm{leaf}}\), so the prover can produce an accepting proof.
-\end{proof}
-
-\begin{theorem}[Wrapper completeness]
-Suppose a first-layer aggregator is given a full batch of valid child proofs, padding any missing positions with the designated dummy template. If all real children share the same public \texttt{block\_hash}, \texttt{asset\_id}, and \texttt{volume\_fee\_bps}, then the aggregator can produce an accepting first-layer wrapper proof.
-\end{theorem}
-
-\begin{proof}[Proof sketch]
-The wrapper verifies the child proofs recursively, checks equality of the shared batch parameters across all non-dummy children, applies the implemented exit-grouping logic, and forwards nullifiers together with dummy replacements. When the inputs satisfy those conditions, the wrapper constraints are satisfiable by construction.
-\end{proof}
-
-\subsection{Leaf soundness and deposit binding}
+\subsection{Soundness and deposit binding}
 
 \begin{theorem}[Leaf soundness]
 Assume the leaf proof system is knowledge sound. For every accepted leaf proof \((x,\pi)\), there exists an extractor that outputs a witness \(w\) such that \((x,w)\in \mathcal{R}_{\mathrm{leaf}}\).
@@ -333,7 +315,7 @@ The theorem above is intentionally phrased in terms of an \emph{authenticated de
 
 \subsection{Operational unspendability and spend-path exclusivity}
 
-The protocol needs one assumption that is partly external to the circuit: funds sent to an wormhole address should not also be directly spendable through an ordinary account-authentication path.
+The protocol needs one assumption external to the circuit: funds sent to a wormhole address should not be directly spendable through ordinary signature-based authorization.
 
 \begin{proposition}[Spend-path exclusivity under the chain's address discipline]
 Let \(\mathsf{Addr}:\pkset\rightarrow\{0,1\}^{256}\) denote the chain's ordinary address derivation from externally controlled public keys. Suppose:
@@ -423,15 +405,9 @@ x_1 + \cdots + x_{r_a} = m_a
 gives the classical stars-and-bars count \(\binom{m_a - 1}{r_a - 1}\). Each such solution corresponds to a distinct quantized decomposition of the grouped amount into hidden child outputs. Independent grouped accounts multiply, yielding the stated lower bound. Any uncertainty about which leaves were dummy, how the client ordered the batch before wrapping, or which of a leaf's two output positions carried a given contribution can only enlarge the anonymity set.
 \end{proof}
 
-The implementation preserves one real child in slot~0. This reduces but does not eliminate occupancy ambiguity from shuffling.
-
 \subsection{Privacy boundary}
 
-Two privacy aspects:
-
-\emph{Proof-level witness hiding}: Secrets, funding accounts, storage paths, and header details are not public inputs. Leakage would require breaking the proof system or side channels.
-
-\emph{System-level privacy}: Output amounts, exit accounts, nullifiers, and block references are public. Layer-0 padding enlarges the anonymity set, but this is not full unlinkability. Amount leakage, address reuse, and timing correlation remain limitations.
+The proof system hides secrets, funding accounts, and storage proofs—these are witness data, not public inputs. However, output amounts, exit accounts, nullifiers, and block references are public. Layer-0 padding enlarges the anonymity set but does not provide full unlinkability; amount patterns, address reuse, and timing correlation remain potential vectors for deanonymization.
 
 \section{Evaluation}
 \label{sec:evaluation}

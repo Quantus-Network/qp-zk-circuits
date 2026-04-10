@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  10 APR 2026 16:44
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  10 APR 2026 16:53
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -737,37 +737,30 @@ Package microtype Info: Loading generic protrusion settings for font family
 (microtype)             For optimal results, create family-specific settings.
 (microtype)             See the microtype manual for details.
  [4] [5]
-
-LaTeX Warning: Reference `sec:leaf' on page 1 undefined on input line 234.
-
 [6] [7] [8] [9] [10{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/
 lm-mathex.enc}]
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <10> on input line 456.
+(Font)              <10> on input line 432.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <7> on input line 456.
+(Font)              <7> on input line 432.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <5> on input line 456.
- [11] [12] [13] [14] [15] (./main.aux)
+(Font)              <5> on input line 432.
+ [11] [12] [13] [14] (./main.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
  ***********
-
-
-LaTeX Warning: There were undefined references.
-
 Package rerunfilecheck Info: File `main.out' has not changed.
-(rerunfilecheck)             Checksum: 201BACDA335375FBFD5E26EEC1312A99;6574.
+(rerunfilecheck)             Checksum: 8A67827209A50FEDAAAA9B445709B90F;6428.
  ) 
 Here is how much of TeX's memory you used:
- 17545 strings out of 469006
- 286395 string characters out of 5454813
+ 17529 strings out of 469006
+ 286211 string characters out of 5454813
  756648 words of memory out of 5000000
- 45597 multiletter control sequences out of 15000+600000
- 725186 words of font info for 229 fonts, out of 8000000 for 9000
+ 45595 multiletter control sequences out of 15000+600000
+ 724619 words of font info for 224 fonts, out of 8000000 for 9000
  319 hyphenation exceptions out of 8191
- 75i,9n,79p,997b,690s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,9n,79p,997b,731s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmbx10.pfb></u
 sr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmbx12.pfb></usr/lo
 cal/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmex10.pfb></usr/local/t
@@ -786,10 +779,10 @@ r/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmsy8.pfb></usr/loca
 l/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmtt10.pfb></usr/local/tex
 live/2026basic/texmf-dist/fonts/type1/public/lm/lmtti10.pfb></usr/local/texlive
 /2026basic/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb>
-Output written on main.pdf (15 pages, 378662 bytes).
+Output written on main.pdf (14 pages, 373997 bytes).
 PDF statistics:
- 475 PDF objects out of 1000 (max. 8388607)
- 412 compressed objects within 5 object streams
- 135 named destinations out of 1000 (max. 500000)
- 54569 words of extra memory for PDF output out of 61914 (max. 10000000)
+ 463 PDF objects out of 1000 (max. 8388607)
+ 401 compressed objects within 5 object streams
+ 131 named destinations out of 1000 (max. 500000)
+ 54561 words of extra memory for PDF output out of 61914 (max. 10000000)
 
