@@ -80,9 +80,9 @@
           - name: Cache Rust dependencies
             uses: Swatinem/rust-cache@v2
           - name: Run clippy (workspace)
-            run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+            run: cargo clippy --workspace --all-targets --all-features --locked --release -- -D warnings
           - name: Check documentation
-            run: cargo doc --workspace --locked --no-deps --all-features --document-private-items
+            run: cargo doc --workspace --locked --no-deps --all-features --document-private-items --release
 
       slow-tests:
         name: 🐌 Slow Tests (Crypto-heavy)
@@ -95,6 +95,8 @@
             uses: dtolnay/rust-toolchain@stable
           - name: Cache Rust dependencies
             uses: Swatinem/rust-cache@v2
+          - name: Build circuit binaries
+            run: ./scripts/build-circuits.sh
           - name: Run slow crypto tests
             run: |
               cargo test --release -p tests -- aggregator_tests circuit_data_tests storage_proof_tests prover_tests verifier_tests

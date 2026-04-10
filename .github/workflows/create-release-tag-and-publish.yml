@@ -98,13 +98,13 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build workspace
-        run: cargo build --workspace --locked
+        run: cargo build --workspace --locked --release
 
       - name: Run clippy (workspace)
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked --release -- -D warnings
 
       - name: Generate documentation (workspace)
-        run: cargo doc --workspace --locked --no-deps --all-features
+        run: cargo doc --workspace --locked --no-deps --all-features --release
 
   security-audit:
     name: 🔒 Security Audit
