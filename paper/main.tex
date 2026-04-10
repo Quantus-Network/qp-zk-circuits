@@ -28,7 +28,7 @@
 \newcommand{\BlockHash}{\mathsf{BH}}
 \newcommand{\pkset}{\mathcal{PK}_\Sigma}
 
-\title{Wormhole Addresses: Recursive Zero-Knowledge Private Settlement for Post-Quantum Blockchains}
+\title{Wormhole Aggregation: Recursive Zero-Knowledge Settlement for Post-Quantum Blockchains}
 \author[1]{Christopher Smith}
 \author[1]{Ethan Cemer}
 \affil[1]{Quantus Labs}
@@ -43,21 +43,19 @@ Post-quantum signature schemes impose large public keys and signatures, increasi
 
 \section{Introduction}
 
-Shor's algorithm breaks elliptic-curve signatures \citep{shor}. Post-quantum replacements like ML-DSA have much larger keys and signatures, increasing bandwidth, state growth, and verification cost \citep{mldsa}. Simply swapping signature schemes sacrifices throughput and does nothing for privacy.
+The post-quantum transition poses a dilemma for blockchains. Shor's algorithm breaks elliptic-curve signatures \citep{shor}, but post-quantum replacements like ML-DSA impose keys and signatures an order of magnitude larger \citep{mldsa}. A na\"ive swap increases bandwidth and state growth while doing nothing for privacy. Every transaction still reveals sender, recipient, and amount.
 
-We take a different approach: instead of authorizing spends directly on-chain, users deposit to addresses derived from secrets and later prove in zero knowledge that (i) the deposit exists, (ii) they know the secret, (iii) it hasn't been spent, and (iv) exits satisfy fee rules. Recursive aggregation then compresses many withdrawals into fewer on-chain verifications.
+One response is to verify post-quantum signatures inside a zero-knowledge circuit and aggregate many such proofs, compressing the on-chain footprint. But this requires implementing post-quantum signature verification in-circuit, which is expensive.
 
-This design builds on EIP-7503's wormhole concept \citep{eip7503}, adapted to the Quantus stack with storage-proof-based implementation \citep{quantusrepo}.
+This paper takes a different approach: rather than proving signature validity, users prove knowledge of a secret tied to an unspent deposit. The approach builds on EIP-7503's ``wormhole'' concept \citep{eip7503}, where funds are sent to addresses derived from secrets and later withdrawn by proving knowledge of that secret. This sidesteps post-quantum signature verification entirely. The circuit only needs hash functions and storage-proof verification. We adapt this idea with recursive proof aggregation for scalable settlement \citep{quantusrepo}.
 
 \paragraph{Contributions.}
 \begin{enumerate}[leftmargin=1.5em]
-    \item Formalize the \emph{wormhole-address} spending model: deposits flow to deterministic unspendable addresses derived from a secret; withdrawals require proving knowledge of that secret plus authenticated state inclusion.
-    \item Specify the leaf relation: public outputs, private witnesses, and sub-circuit constraints for nullifier derivation, unspendable-account derivation, storage-proof verification, fee-constrained dual exits, and block-header commitment.
-    \item Describe the recursive aggregation architecture. The first aggregation layer batches leaf proofs sharing the same \texttt{block\_hash}, pads with dummy leaves, shuffles client-locally, and wraps with a circuit forwarding nullifiers and grouped exits.
-    \item Provide combinatorial privacy analysis of layer-0, showing how dummy padding, hidden batch order, and grouped exits enlarge the anonymity set for balance-linking adversaries.
-    \item Explain why the public commitment covers the full block header (not just the state root), letting the runtime validate that the witnessed state root belongs to canonical history.
-    \item Report measured build, prove, and verify times using \texttt{qp-plonky2} with Poseidon2 recursion, for batch sizes 2--49 (layer-0) and fan-ins 2--32 (layer-1).
-    \item State security claims for deposit binding, wrapper soundness, one-time withdrawal, spend-path exclusivity, and value conservation, separating proof-level from runtime-level assumptions.
+    \item A formal specification of the wormhole-address withdrawal relation, covering nullifier derivation, authenticated state inclusion, and fee constraints.
+    \item A two-layer recursive aggregation architecture where the first layer performs privacy-sensitive dummy padding and shuffling on the client, while subsequent layers can be delegated.
+    \item Combinatorial analysis of anonymity set size under the layer-0 grouping rules.
+    \item Security proofs for deposit binding, one-time withdrawal, and value conservation, with explicit separation of proof-level and runtime-level assumptions.
+    \item Benchmarks showing sub-second proving and sub-20ms verification for batches up to 49 withdrawals.
 \end{enumerate}
 
 \section{Background and Design Goals}
