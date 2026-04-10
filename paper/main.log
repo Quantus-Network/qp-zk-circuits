@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  10 APR 2026 16:07
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  10 APR 2026 16:34
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -737,16 +737,15 @@ Package microtype Info: Loading generic protrusion settings for font family
 (microtype)             For optimal results, create family-specific settings.
 (microtype)             See the microtype manual for details.
  [4] [5]
-Underfull \hbox (badness 10000) in paragraph at lines 276--276
+Underfull \hbox (badness 10000) in paragraph at lines 249--249
 []|\T1/lmr/m/n/10 (+20) Runtime val-i-dates that the pub-lic
  []
 
-[6]
 
-LaTeX Warning: Reference `sec:leaf' on page 1 undefined on input line 290.
+LaTeX Warning: Reference `sec:leaf' on page 1 undefined on input line 263.
 
-[7] [8] [9] [10] [11{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm
-/lm-mathex.enc}] [12] [13] [14] [15] [16] (./main.aux)
+[6] [7] [8] [9] [10] [11{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvip
+s/lm/lm-mathex.enc}] [12] [13] [14] [15] (./main.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
@@ -759,13 +758,13 @@ Package rerunfilecheck Info: File `main.out' has not changed.
 (rerunfilecheck)             Checksum: 8FDB00145F6159F67E15A1D2E1EBB731;6675.
  ) 
 Here is how much of TeX's memory you used:
- 17583 strings out of 469006
- 286868 string characters out of 5454813
- 757648 words of memory out of 5000000
- 45608 multiletter control sequences out of 15000+600000
- 725898 words of font info for 235 fonts, out of 8000000 for 9000
+ 17574 strings out of 469006
+ 286764 string characters out of 5454813
+ 756648 words of memory out of 5000000
+ 45604 multiletter control sequences out of 15000+600000
+ 725920 words of font info for 235 fonts, out of 8000000 for 9000
  319 hyphenation exceptions out of 8191
- 75i,12n,79p,997b,630s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,10n,79p,997b,692s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmbx10.pfb></u
 sr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmbx12.pfb></usr/lo
 cal/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmex10.pfb></usr/local/t
@@ -784,10 +783,10 @@ r/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmsy8.pfb></usr/loca
 l/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmtt10.pfb></usr/local/tex
 live/2026basic/texmf-dist/fonts/type1/public/lm/lmtti10.pfb></usr/local/texlive
 /2026basic/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb>
-Output written on main.pdf (16 pages, 383855 bytes).
+Output written on main.pdf (15 pages, 381104 bytes).
 PDF statistics:
- 503 PDF objects out of 1000 (max. 8388607)
- 439 compressed objects within 5 object streams
- 152 named destinations out of 1000 (max. 500000)
+ 493 PDF objects out of 1000 (max. 8388607)
+ 430 compressed objects within 5 object streams
+ 147 named destinations out of 1000 (max. 500000)
  55089 words of extra memory for PDF output out of 61914 (max. 10000000)
 

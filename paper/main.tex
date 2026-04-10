@@ -127,7 +127,7 @@ The user samples a secret \(s\) and derives a wormhole address
 \[
 \WA(s) = H(H(\mathsf{salt_{wh}} \parallel s)).
 \]
-The user then funds this address through an ordinary on-chain transfer. The deposit creates a record that can later be authenticated inside the circuit.
+Because this address is derived from a hash rather than a public key, no one can spend from it via ordinary signature-based authorization—funds sent here are effectively burned. The user then deposits to this address through an ordinary on-chain transfer, creating a record that can later be authenticated inside the circuit.
 
 \paragraph{2. Witness Acquisition:}
 To withdraw, the user gathers the deposit record, a storage proof, and block header data. These form the private witness.
@@ -150,80 +150,53 @@ The blockchain verifies the aggregate proof, checks that the public \texttt{bloc
 
 \subsection{Leaf public inputs}
 
-The implemented leaf proof exposes exactly nine logical public fields. In the repository layout, these occupy 21 field elements because the nullifier, each exit account, and the block hash each consume four field elements \citep{quantusrepo}.
-
-\begin{table}[t]
-\centering
-\small
-\begin{tabularx}{\textwidth}{@{}l l X@{}}
-\toprule
-Field & Type & Meaning \\
-\midrule
-\texttt{asset\_id} & \texttt{u32} & Token identifier; \texttt{0} denotes the native asset. \\
-\texttt{output\_amount\_1} & \texttt{u32} & Primary output amount after quantization. \\
-\texttt{output\_amount\_2} & \texttt{u32} & Secondary output amount; zero if unused. \\
-\texttt{volume\_fee\_bps} & \texttt{u32} & Runtime fee parameter in basis points. \\
-\texttt{nullifier} & 4 felts & Public replay-prevention tag derived from secret and transfer counter. \\
-\texttt{exit\_account\_1} & 4 felts & Primary destination account. \\
-\texttt{exit\_account\_2} & 4 felts & Secondary destination account or all zeros. \\
-\texttt{block\_hash} & 4 felts & Public Poseidon2 commitment to structured block-header fields. \\
-\texttt{block\_number} & \texttt{u32} & Height of the block whose header is committed by \texttt{block\_hash}. \\
-\bottomrule
-\end{tabularx}
-\caption{Logical leaf public inputs. In the current implementation this logical interface occupies 21 field elements.}
-\label{tab:leafpi}
-\end{table}
+The leaf proof exposes the following public fields:
+\begin{itemize}[leftmargin=1.5em]
+    \item \texttt{asset\_id}: Token identifier.
+    \item \texttt{output\_amount\_1}, \texttt{output\_amount\_2}: Exit amounts (secondary is zero if unused).
+    \item \texttt{fee\_bps}: Fee parameter in basis points.
+    \item \texttt{nullifier}: Replay-prevention tag derived from secret and counter.
+    \item \texttt{exit\_account\_1}, \texttt{exit\_account\_2}: Destination accounts.
+    \item \texttt{block\_hash}: Commitment to block header fields.
+    \item \texttt{block\_number}: Height of the referenced block.
+\end{itemize}
 
 \subsection{Leaf private witness}
 
-The witness consists of the user's secret, the transfer counter, the funding account, the derived unspendable account, the processed storage proof, the state root, the parent hash, the extrinsics root, the encoded digest logs, and the input amount recorded in storage.
-
-\begin{table}[t]
-\centering
-\small
-\begin{tabularx}{\textwidth}{@{}l l X@{}}
-\toprule
-Field & Type & Meaning \\
-\midrule
-\texttt{secret} & 32 bytes & User secret from which both nullifier and wormhole address are derived. \\
-\texttt{transfer\_count} & \texttt{u64} & Per-transfer counter used in nullifier derivation. \\
-\texttt{funding\_account} & 4 felts & Source account associated with the transfer record. \\
-\texttt{unspendable\_account} & 4 felts & Derived wormhole address \(\WA(s)\). \\
-\texttt{storage\_proof} & structured witness & Processed inclusion proof for the transfer record under the state root. \\
-\texttt{state\_root} & 4 felts & Root authenticating the storage proof. \\
-\texttt{parent\_hash} & 4 felts & Parent block hash used in header recomputation. \\
-\texttt{extrinsics\_root} & 4 felts & Extrinsics root from the block header. \\
-\texttt{digest} & fixed bytes & Encoded digest logs. \\
-\texttt{input\_amount} & \texttt{u32}-compatible quantity & Quantized deposited amount before fee deduction. \\
-\bottomrule
-\end{tabularx}
-\caption{Private witness components used by the leaf proof.}
-\label{tab:leafwitness}
-\end{table}
+The private witness includes:
+\begin{itemize}[leftmargin=1.5em]
+    \item \texttt{secret}: User secret from which nullifier and wormhole address are derived.
+    \item \texttt{counter}: Per-deposit counter used in nullifier derivation.
+    \item \texttt{funding\_account}: Source account of the deposit.
+    \item \texttt{wormhole\_account}: Derived wormhole address \(\WA(s)\).
+    \item \texttt{storage\_proof}: Inclusion proof for the deposit record.
+    \item \texttt{block\_header}: Block header fields for commitment verification.
+    \item \texttt{input\_amount}: Deposited amount before fee deduction.
+\end{itemize}
 
 \subsection{Leaf relation}
 
 Let \(x = (a, v_1, v_2, f, n, \alpha_1, \alpha_2, h_B, b)\) denote the public input tuple and let \(w\) denote the witness described above. The leaf relation \(\mathcal{R}_{\mathrm{leaf}}\) holds when there exists a witness \(w\) such that:
 \begin{enumerate}[label=(C\arabic*),leftmargin=1.9em]
-    \item \textbf{Nullifier correctness.} \(n = \Null(s,c)\).
-    \item \textbf{Entangled-address correctness.} \(\alpha_{\mathrm{wh}} = \WA(s)\).
-    \item \textbf{Authenticated inclusion.} The processed storage proof verifies that a transfer record keyed by the relevant funding account, wormhole account, and counter exists under \(\mathsf{rt}\).
-    \item \textbf{Header binding.} The structured block-header fields hash to the public commitment \(h_B\), and the public block number equals the header's block number.
-    \item \textbf{Fee constraint.} The disclosed exits satisfy
+    \item \textbf{Nullifier Correctness:} \(n = \Null(s,c)\).
+    \item \textbf{Wormhole-Address Correctness:} \(\alpha_{\mathrm{wh}} = \WA(s)\).
+    \item \textbf{Authenticated Inclusion:} The storage proof verifies that the deposit record exists in chain state.
+    \item \textbf{Header Binding:} The block-header fields hash to the public commitment \(h_B\), and the public block number matches.
+    \item \textbf{Fee Constraint:} The disclosed exits satisfy
     \[
     (v_1 + v_2) \cdot 10000 \leq v_{\mathrm{in}} \cdot (10000 - f).
     \]
-    \item \textbf{Range constraints.} The public quantities lie within the expected ranges.
 \end{enumerate}
-
-\begin{definition}[Leaf relation]
-The relation \(\mathcal{R}_{\mathrm{leaf}}\) is the set of all \((x,w)\) satisfying conditions (C1)--(C6).
-\end{definition}
 
 \subsection{On-chain verification}
 
-The proof system does not, by itself, settle a withdrawal. The blockchain must also check: (i) the referenced block exists in chain history, (ii) the public fee parameter matches the configured rate, (iii) the nullifier has not appeared before, and (iv) any asset-specific accounting rules are satisfied. These external checks are part of the overall security argument.
-
+The proof system does not, by itself, settle a withdrawal. The blockchain must also:
+\begin{itemize}[leftmargin=1.5em]
+    \item verify the referenced block exists in chain history
+    \item check the fee parameter matches the configured rate
+    \item reject previously-seen nullifiers
+    \item credit exit accounts without increasing total supply
+\end{itemize} 
 \section{Recursive Aggregation Architecture}
 \label{sec:aggregation}
 
@@ -317,7 +290,7 @@ Assume the leaf proof system is knowledge sound. For every accepted leaf proof \
 \end{theorem}
 
 \begin{proof}[Proof sketch]
-This is the standard consequence of knowledge soundness for the leaf relation. The extractor outputs values for the secret, counter, funding account, wormhole account, storage-proof witness, header fields, and input amount that satisfy conditions (C1)--(C6) from \cref{sec:formal}. No further claim is made here about whether the committed block actually exists in canonical chain history; that is deferred to the on-chain check of the public \texttt{block\_hash}/\texttt{block\_number} pair.
+This is the standard consequence of knowledge soundness for the leaf relation. The extractor outputs values for the secret, counter, funding account, wormhole account, storage-proof witness, header fields, and input amount that satisfy conditions (C1)--(C5) from \cref{sec:formal}. No further claim is made here about whether the committed block actually exists in canonical chain history; that is deferred to the on-chain check of the public \texttt{block\_hash}/\texttt{block\_number} pair.
 \end{proof}
 
 \begin{corollary}[Authenticated-deposit binding]

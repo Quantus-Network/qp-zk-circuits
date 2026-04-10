@@ -29,10 +29,6 @@
 \newlabel{sec:overview}{{4}{3}{Protocol Overview}{section.4}{}}
 \newlabel{sec:overview@cref}{{[section][4][]4}{[1][3][]3}{}{}{}}
 \@writefile{toc}{\contentsline {paragraph}{1. Secret generation and deposit.}{3}{section*.2}\protected@file@percent }
-\citation{quantusrepo}
-\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Logical leaf public inputs. In the current implementation this logical interface occupies 21 field elements.}}{4}{table.1}\protected@file@percent }
-\newlabel{tab:leafpi}{{1}{4}{Logical leaf public inputs. In the current implementation this logical interface occupies 21 field elements}{table.1}{}}
-\newlabel{tab:leafpi@cref}{{[table][1][]1}{[1][4][]4}{}{}{}}
 \@writefile{toc}{\contentsline {paragraph}{2. Witness Acquisition:}{4}{section*.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{3. Leaf Proof Generation:}{4}{section*.4}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{4. First-Layer Aggregation:}{4}{section*.5}\protected@file@percent }
@@ -42,9 +38,6 @@
 \newlabel{sec:formal@cref}{{[section][5][]5}{[1][4][]4}{}{}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Leaf public inputs}{4}{subsection.5.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Leaf private witness}{4}{subsection.5.2}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Private witness components used by the leaf proof.}}{5}{table.2}\protected@file@percent }
-\newlabel{tab:leafwitness}{{2}{5}{Private witness components used by the leaf proof}{table.2}{}}
-\newlabel{tab:leafwitness@cref}{{[table][2][]2}{[1][4][]5}{}{}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Leaf relation}{5}{subsection.5.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {5.4}On-chain verification}{5}{subsection.5.4}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {6}Recursive Aggregation Architecture}{5}{section.6}\protected@file@percent }
@@ -56,51 +49,56 @@
 \@writefile{toc}{\contentsline {section}{\numberline {7}Security and Privacy Analysis}{6}{section.7}\protected@file@percent }
 \newlabel{sec:security}{{7}{6}{Security and Privacy Analysis}{section.7}{}}
 \newlabel{sec:security@cref}{{[section][7][]7}{[1][6][]6}{}{}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Where the security argument relies on chain-level assumptions beyond circuit correctness.}}{7}{table.3}\protected@file@percent }
-\newlabel{tab:security-assumptions}{{3}{7}{Where the security argument relies on chain-level assumptions beyond circuit correctness}{table.3}{}}
-\newlabel{tab:security-assumptions@cref}{{[table][3][]3}{[1][6][]7}{}{}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {7.1}Authenticated deposit records}{7}{subsection.7.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.1}Authenticated deposit records}{6}{subsection.7.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Where the security argument relies on chain-level assumptions beyond circuit correctness.}}{7}{table.1}\protected@file@percent }
+\newlabel{tab:security-assumptions}{{1}{7}{Where the security argument relies on chain-level assumptions beyond circuit correctness}{table.1}{}}
+\newlabel{tab:security-assumptions@cref}{{[table][1][]1}{[1][6][]7}{}{}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {7.2}Completeness}{7}{subsection.7.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {7.3}Leaf soundness and deposit binding}{8}{subsection.7.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.3}Leaf soundness and deposit binding}{7}{subsection.7.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {7.4}First-layer wrapper soundness}{8}{subsection.7.4}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {7.5}One-time withdrawal and double-spend resistance}{9}{subsection.7.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {7.6}Operational unspendability and spend-path exclusivity}{10}{subsection.7.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.6}Operational unspendability and spend-path exclusivity}{9}{subsection.7.6}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {7.7}Value conservation}{10}{subsection.7.7}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {7.8}Layer-0 anonymity sets and balance-linking difficulty}{11}{subsection.7.8}\protected@file@percent }
-\newlabel{sec:layer0privacy}{{7.8}{11}{Layer-0 anonymity sets and balance-linking difficulty}{subsection.7.8}{}}
-\newlabel{sec:layer0privacy@cref}{{[subsection][8][7]7.8}{[1][11][]11}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.8}Layer-0 anonymity sets and balance-linking difficulty}{10}{subsection.7.8}\protected@file@percent }
+\newlabel{sec:layer0privacy}{{7.8}{10}{Layer-0 anonymity sets and balance-linking difficulty}{subsection.7.8}{}}
+\newlabel{sec:layer0privacy@cref}{{[subsection][8][7]7.8}{[1][10][]10}{}{}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Measured wall-clock times for the implemented first recursive aggregation layer. All runs use same-\texttt  {block\_hash} dummy leaf proofs and report the current refactored implementation only.}}{12}{table.2}\protected@file@percent }
+\newlabel{tab:layer0-results}{{2}{12}{Measured wall-clock times for the implemented first recursive aggregation layer. All runs use same-\texttt {block\_hash} dummy leaf proofs and report the current refactored implementation only}{table.2}{}}
+\newlabel{tab:layer0-results@cref}{{[table][2][]2}{[1][12][]12}{}{}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {7.9}Privacy boundary}{12}{subsection.7.9}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {8}Evaluation}{12}{section.8}\protected@file@percent }
 \newlabel{sec:evaluation}{{8}{12}{Evaluation}{section.8}{}}
 \newlabel{sec:evaluation@cref}{{[section][8][]8}{[1][12][]12}{}{}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {8.1}Methodology}{12}{subsection.8.1}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Measured wall-clock times for the implemented first recursive aggregation layer. All runs use same-\texttt  {block\_hash} dummy leaf proofs and report the current refactored implementation only.}}{13}{table.4}\protected@file@percent }
-\newlabel{tab:layer0-results}{{4}{13}{Measured wall-clock times for the implemented first recursive aggregation layer. All runs use same-\texttt {block\_hash} dummy leaf proofs and report the current refactored implementation only}{table.4}{}}
-\newlabel{tab:layer0-results@cref}{{[table][4][]4}{[1][13][]13}{}{}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Measured wall-clock times for the current second-layer aggregation interface. These measurements are head-only because the explicit public layer-1 surface is introduced by the refactor.}}{13}{table.5}\protected@file@percent }
-\newlabel{tab:layer1-results}{{5}{13}{Measured wall-clock times for the current second-layer aggregation interface. These measurements are head-only because the explicit public layer-1 surface is introduced by the refactor}{table.5}{}}
-\newlabel{tab:layer1-results@cref}{{[table][5][]5}{[1][13][]13}{}{}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {8.2}First-layer aggregation results}{13}{subsection.8.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {8.3}Second-layer aggregation results}{13}{subsection.8.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {8.4}Forwarded payload and comparison basis}{13}{subsection.8.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.2}First-layer aggregation results}{12}{subsection.8.2}\protected@file@percent }
 \citation{eip7503}
 \citation{privacypools}
 \citation{zcash,tornadocash}
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Measured wall-clock times for the current second-layer aggregation interface. These measurements are head-only because the explicit public layer-1 surface is introduced by the refactor.}}{13}{table.3}\protected@file@percent }
+\newlabel{tab:layer1-results}{{3}{13}{Measured wall-clock times for the current second-layer aggregation interface. These measurements are head-only because the explicit public layer-1 surface is introduced by the refactor}{table.3}{}}
+\newlabel{tab:layer1-results@cref}{{[table][3][]3}{[1][13][]13}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.3}Second-layer aggregation results}{13}{subsection.8.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.4}Forwarded payload and comparison basis}{13}{subsection.8.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {9}Limitations}{13}{section.9}\protected@file@percent }
+\newlabel{sec:discussion}{{9}{13}{Limitations}{section.9}{}}
+\newlabel{sec:discussion@cref}{{[section][9][]9}{[1][13][]13}{}{}{}}
+\@writefile{toc}{\contentsline {paragraph}{Same-block scoping.}{13}{section*.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Two-output limit.}{13}{section*.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Amount quantization.}{13}{section*.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Privacy leakage.}{13}{section*.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {10}Related Work}{13}{section.10}\protected@file@percent }
+\newlabel{sec:related}{{10}{13}{Related Work}{section.10}{}}
+\newlabel{sec:related@cref}{{[section][10][]10}{[1][13][]13}{}{}{}}
+\@writefile{toc}{\contentsline {paragraph}{Wormholes and privacy pools.}{13}{section*.11}\protected@file@percent }
 \citation{halo,plonky2}
 \citation{plonky3,plonky3recursion}
 \citation{ziggy}
 \citation{mldsa}
-\@writefile{toc}{\contentsline {section}{\numberline {9}Limitations}{14}{section.9}\protected@file@percent }
-\newlabel{sec:discussion}{{9}{14}{Limitations}{section.9}{}}
-\newlabel{sec:discussion@cref}{{[section][9][]9}{[1][13][]14}{}{}{}}
-\@writefile{toc}{\contentsline {paragraph}{Same-block scoping.}{14}{section*.7}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Two-output limit.}{14}{section*.8}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Amount quantization.}{14}{section*.9}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Privacy leakage.}{14}{section*.10}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {10}Related Work}{14}{section.10}\protected@file@percent }
-\newlabel{sec:related}{{10}{14}{Related Work}{section.10}{}}
-\newlabel{sec:related@cref}{{[section][10][]10}{[1][14][]14}{}{}{}}
-\@writefile{toc}{\contentsline {paragraph}{Wormholes and privacy pools.}{14}{section*.11}\protected@file@percent }
+\bibcite{fri}{{1}{2018}{{Ben-Sasson et~al.}}{{Ben-Sasson, Bentov, Horesh, and Riabzev}}}
+\bibcite{halo}{{2}{2019}{{Bowe et~al.}}{{Bowe, Grigg, and Hopwood}}}
+\bibcite{privacypools}{{3}{2023}{{Buterin et~al.}}{{Buterin, Illum, Nadler, Sch{"a}r, and Soleimani}}}
+\bibcite{ziggy}{{4}{2020}{{Gold and Riabzev}}{{}}}
+\bibcite{poseidon2}{{5}{2023}{{Grassi et~al.}}{{Grassi, Khovratovich, and Schofnegger}}}
 \@writefile{toc}{\contentsline {paragraph}{Shielded systems.}{14}{section*.12}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{Recursive proofs.}{14}{section*.13}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{Hash-based authorization.}{14}{section*.14}\protected@file@percent }
@@ -108,11 +106,7 @@
 \@writefile{toc}{\contentsline {section}{\numberline {11}Conclusion}{14}{section.11}\protected@file@percent }
 \newlabel{sec:conclusion}{{11}{14}{Conclusion}{section.11}{}}
 \newlabel{sec:conclusion@cref}{{[section][11][]11}{[1][14][]14}{}{}{}}
-\bibcite{fri}{{1}{2018}{{Ben-Sasson et~al.}}{{Ben-Sasson, Bentov, Horesh, and Riabzev}}}
-\bibcite{halo}{{2}{2019}{{Bowe et~al.}}{{Bowe, Grigg, and Hopwood}}}
-\bibcite{privacypools}{{3}{2023}{{Buterin et~al.}}{{Buterin, Illum, Nadler, Sch{"a}r, and Soleimani}}}
-\bibcite{ziggy}{{4}{2020}{{Gold and Riabzev}}{{}}}
-\bibcite{poseidon2}{{5}{2023}{{Grassi et~al.}}{{Grassi, Khovratovich, and Schofnegger}}}
+\@writefile{toc}{\contentsline {section}{\numberline {A}Privacy-score heuristic}{14}{appendix.A}\protected@file@percent }
 \bibcite{zcash}{{6}{2023}{{Hopwood et~al.}}{{Hopwood, Bowe, Hornby, and Wilcox}}}
 \bibcite{eip7503}{{7}{2023}{{Kambakhsh et~al.}}{{Kambakhsh, Bateni, Kahoori, and Nobitex Labs}}}
 \bibcite{mldsa}{{8}{2024}{{National Institute of Standards and Technology}}{{}}}
@@ -125,5 +119,4 @@
 \bibcite{qpplonky2}{{15}{2026}{{Quantus Network, qp-plonky2}}{{}}}
 \bibcite{shor}{{16}{1997}{{Shor}}{{}}}
 \bibcite{qip5}{{17}{2025}{{Smith}}{{}}}
-\@writefile{toc}{\contentsline {section}{\numberline {A}Privacy-score heuristic}{15}{appendix.A}\protected@file@percent }
-\gdef \@abspage@last{16}
+\gdef \@abspage@last{15}
