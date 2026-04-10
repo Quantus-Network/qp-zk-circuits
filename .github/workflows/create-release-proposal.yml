@@ -157,7 +157,7 @@ jobs:
           cargo update -w
           
           # Verify workspace compiles after version changes
-          cargo check --workspace
+          cargo check --workspace --release
 
           # Install formatters
           rustup component add rustfmt --toolchain nightly
