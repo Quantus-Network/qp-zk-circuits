@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  10 APR 2026 14:06
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  10 APR 2026 14:36
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -511,38 +511,47 @@ e 7852.
 Package cleveref Info: no abbreviation of names on input line 7852.
 )
 ==> First Aid for cleveref.sty applied!
-\c@definition=\count333
-\c@theorem=\count334
-LaTeX Font Info:    Trying to load font information for T1+lmr on input line 34
+(/usr/local/texlive/2026basic/texmf-dist/tex/latex/preprint/authblk.sty
+Package: authblk 2001/02/27 1.3 (PWD)
+\affilsep=\skip71
+\@affilsep=\skip72
+\c@Maxaffil=\count333
+\c@authors=\count334
+\c@affil=\count335
+)
+\c@definition=\count336
+\c@theorem=\count337
+LaTeX Font Info:    Trying to load font information for T1+lmr on input line 37
 .
+
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/t1lmr.fd
 File: t1lmr.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/l3backend/l3backend-pdftex.d
 ef
 File: l3backend-pdftex.def 2025-10-09 L3 backend support: PDF output (pdfTeX)
-\l__color_backend_stack_int=\count335
+\l__color_backend_stack_int=\count338
 ) (./main.aux)
 \openout1 = `main.aux'.
 
-LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 34.
-LaTeX Font Info:    ... okay on input line 34.
-LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 34.
-LaTeX Font Info:    ... okay on input line 34.
-LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 34.
-LaTeX Font Info:    ... okay on input line 34.
-LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 34.
-LaTeX Font Info:    ... okay on input line 34.
-LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 34.
-LaTeX Font Info:    ... okay on input line 34.
-LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 34.
-LaTeX Font Info:    ... okay on input line 34.
-LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 34.
-LaTeX Font Info:    ... okay on input line 34.
-LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 34.
-LaTeX Font Info:    ... okay on input line 34.
-LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 34.
-LaTeX Font Info:    ... okay on input line 34.
+LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 37.
+LaTeX Font Info:    ... okay on input line 37.
+LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 37.
+LaTeX Font Info:    ... okay on input line 37.
+LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 37.
+LaTeX Font Info:    ... okay on input line 37.
+LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 37.
+LaTeX Font Info:    ... okay on input line 37.
+LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 37.
+LaTeX Font Info:    ... okay on input line 37.
+LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 37.
+LaTeX Font Info:    ... okay on input line 37.
+LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 37.
+LaTeX Font Info:    ... okay on input line 37.
+LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 37.
+LaTeX Font Info:    ... okay on input line 37.
+LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 37.
+LaTeX Font Info:    ... okay on input line 37.
 
 *geometry* driver: auto-detecting
 *geometry* detected driver: pdftex
@@ -578,13 +587,13 @@ LaTeX Font Info:    ... okay on input line 34.
 * \@reversemarginfalse
 * (1in=72.27pt=25.4mm, 1cm=28.453pt)
 
-LaTeX Info: Redefining \microtypecontext on input line 34.
-Package microtype Info: Applying patch `item' on input line 34.
-Package microtype Info: Applying patch `toc' on input line 34.
-Package microtype Info: Applying patch `eqnum' on input line 34.
-Package microtype Info: Applying patch `footnote' on input line 34.
-Package microtype Info: Applying patch `verbatim' on input line 34.
-LaTeX Info: Redefining \microtypesetup on input line 34.
+LaTeX Info: Redefining \microtypecontext on input line 37.
+Package microtype Info: Applying patch `item' on input line 37.
+Package microtype Info: Applying patch `toc' on input line 37.
+Package microtype Info: Applying patch `eqnum' on input line 37.
+Package microtype Info: Applying patch `footnote' on input line 37.
+Package microtype Info: Applying patch `verbatim' on input line 37.
+LaTeX Info: Redefining \microtypesetup on input line 37.
 Package microtype Info: Generating PDF output.
 Package microtype Info: Character protrusion enabled (level 2).
 Package microtype Info: Using default protrusion set `alltext'.
@@ -617,16 +626,16 @@ Package graphics Info: Driver file: pdftex.def on input line 106.
 \Gin@req@width=\dimen259
 ) (/usr/local/texlive/2026basic/texmf-dist/tex/context/base/mkii/supp-pdf.mkii
 [Loading MPS to PDF converter (version 2006.09.02).]
-\scratchcounter=\count336
+\scratchcounter=\count339
 \scratchdimen=\dimen260
 \scratchbox=\box62
-\nofMPsegments=\count337
-\nofMParguments=\count338
+\nofMPsegments=\count340
+\nofMParguments=\count341
 \everyMPshowfont=\toks40
-\MPscratchCnt=\count339
+\MPscratchCnt=\count342
 \MPscratchDim=\dimen261
-\MPnumerator=\count340
-\makeMPintoPDFobject=\count341
+\MPnumerator=\count343
+\makeMPintoPDFobject=\count344
 \everyMPtoPDFconversion=\toks41
 )
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/epstopdf-pkg/epstopdf-base.s
@@ -639,42 +648,42 @@ Package epstopdf-base Info: Redefining graphics rule for `.eps' on input line 4
 File: epstopdf-sys.cfg 2010/07/13 v1.3 Configuration of (r)epstopdf for TeX Liv
 e
 ))
-Package hyperref Info: Link coloring ON on input line 34.
+Package hyperref Info: Link coloring ON on input line 37.
  (./main.out) (./main.out)
 \@outlinefile=\write3
 \openout3 = `main.out'.
 
 LaTeX Font Info:    Trying to load font information for OT1+lmr on input line 3
-6.
+8.
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/ot1lmr.fd
 File: ot1lmr.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    Trying to load font information for OML+lmm on input line 3
-6.
+8.
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/omllmm.fd
 File: omllmm.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    Trying to load font information for OMS+lmsy on input line 
-36.
+38.
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/omslmsy.fd
 File: omslmsy.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    Trying to load font information for OMX+lmex on input line 
-36.
+38.
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/omxlmex.fd
 File: omxlmex.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <12> on input line 36.
+(Font)              <12> on input line 38.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <8> on input line 36.
+(Font)              <8> on input line 38.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <6> on input line 36.
-LaTeX Font Info:    Trying to load font information for U+msa on input line 36.
+(Font)              <6> on input line 38.
+LaTeX Font Info:    Trying to load font information for U+msa on input line 38.
 
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/amsfonts/umsa.fd
@@ -683,7 +692,7 @@ File: umsa.fd 2013/01/14 v3.01 AMS symbols A
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/microtype/mt-msa.cfg
 File: mt-msa.cfg 2006/02/04 v1.1 microtype config. file: AMS symbols (a) (RS)
 )
-LaTeX Font Info:    Trying to load font information for U+msb on input line 36.
+LaTeX Font Info:    Trying to load font information for U+msb on input line 38.
 
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/amsfonts/umsb.fd
@@ -693,7 +702,7 @@ File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 File: mt-msb.cfg 2005/06/01 v1.0 microtype config. file: AMS symbols (b) (RS)
 )
 LaTeX Font Info:    Trying to load font information for T1+lmtt on input line 5
-3.
+6.
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/t1lmtt.fd
 File: t1lmtt.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
@@ -707,15 +716,15 @@ Package microtype Info: Loading generic protrusion settings for font family
 {/usr/local/texlive/2026basic/texmf-var/fonts/map/pdftex/updmap/pdftex.map}{/us
 r/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc}] [2]
 LaTeX Font Info:    Trying to load font information for TS1+lmr on input line 9
-3.
+6.
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/ts1lmr.fd
 File: ts1lmr.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <10.95> on input line 102.
+(Font)              <10.95> on input line 105.
 LaTeX Font Info:    Trying to load font information for OT1+lmss on input line 
-109.
+112.
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/ot1lmss.fd
 File: ot1lmss.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
@@ -727,31 +736,16 @@ Package microtype Info: Loading generic protrusion settings for font family
  [3{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-ts1.enc}{/usr
 /local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-mathsy.enc}{/usr/loca
 l/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-mathit.enc}{/usr/local/tex
-live/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc}] [4]
-Package hyperref Info: bookmark level for unknown algorithm defaults to 0 on in
-put line 160.
-Package microtype Info: Character `029' is missing
-(microtype)             in font `T1/lmr/m/sc/10.95'.
-(microtype)             Ignoring protrusion settings for this character.
- [5] [6]
-
-LaTeX Warning: Reference `app:proofs' on page 7 undefined on input line 290.
-
-
-Underfull \hbox (badness 10000) in paragraph at lines 305--305
+live/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc}] [4] [5] [6]
+Underfull \hbox (badness 10000) in paragraph at lines 290--290
 []|\T1/lmr/m/n/10 (+20) Runtime val-i-dates that the pub-lic
  []
 
-[7]
 
-LaTeX Warning: Reference `sec:leaf' on page 1 undefined on input line 319.
+LaTeX Warning: Reference `sec:leaf' on page 1 undefined on input line 304.
 
-[8]
-
-LaTeX Warning: Reference `app:proofs' on page 1 undefined on input line 378.
-
-[9] [10] [11] [12{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm
--mathex.enc}] [13] [14] [15] [16] [17] (./main.aux)
+[7] [8] [9] [10] [11] [12{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvi
+ps/lm/lm-mathex.enc}] [13] [14] [15] [16] (./main.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
@@ -761,39 +755,37 @@ L3 programming layer <2026-01-19>
 LaTeX Warning: There were undefined references.
 
 Package rerunfilecheck Info: File `main.out' has not changed.
-(rerunfilecheck)             Checksum: 6A2C025364A8A5E09515FB2BF4508F1B;7434.
+(rerunfilecheck)             Checksum: 8E1698B2A05C8690A7E4EF3A5F2518AA;7258.
  ) 
 Here is how much of TeX's memory you used:
- 17572 strings out of 469006
- 286753 string characters out of 5454813
- 760648 words of memory out of 5000000
- 45563 multiletter control sequences out of 15000+600000
- 735462 words of font info for 247 fonts, out of 8000000 for 9000
+ 17595 strings out of 469006
+ 286996 string characters out of 5454813
+ 757648 words of memory out of 5000000
+ 45609 multiletter control sequences out of 15000+600000
+ 729254 words of font info for 240 fonts, out of 8000000 for 9000
  319 hyphenation exceptions out of 8191
- 75i,12n,79p,1105b,636s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,12n,79p,997b,735s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmbx10.pfb></u
 sr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmbx12.pfb></usr/lo
-cal/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmcsc10.pfb></usr/local/
-texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmex10.pfb></usr/local/texli
-ve/2026basic/texmf-dist/fonts/type1/public/lm/lmmi10.pfb></usr/local/texlive/20
-26basic/texmf-dist/fonts/type1/public/lm/lmmi6.pfb></usr/local/texlive/2026basi
-c/texmf-dist/fonts/type1/public/lm/lmmi8.pfb></usr/local/texlive/2026basic/texm
-f-dist/fonts/type1/public/lm/lmr10.pfb></usr/local/texlive/2026basic/texmf-dist
-/fonts/type1/public/lm/lmr12.pfb></usr/local/texlive/2026basic/texmf-dist/fonts
-/type1/public/lm/lmr17.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1
-/public/lm/lmr6.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public
-/lm/lmr8.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmr
-9.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmri10.pfb
-></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmss10.pfb></us
-r/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmsy10.pfb></usr/loc
-al/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmsy8.pfb></usr/local/tex
-live/2026basic/texmf-dist/fonts/type1/public/lm/lmtt10.pfb></usr/local/texlive/
-2026basic/texmf-dist/fonts/type1/public/lm/lmtti10.pfb></usr/local/texlive/2026
-basic/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb>
-Output written on main.pdf (17 pages, 421685 bytes).
+cal/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmex10.pfb></usr/local/t
+exlive/2026basic/texmf-dist/fonts/type1/public/lm/lmmi10.pfb></usr/local/texliv
+e/2026basic/texmf-dist/fonts/type1/public/lm/lmmi6.pfb></usr/local/texlive/2026
+basic/texmf-dist/fonts/type1/public/lm/lmmi8.pfb></usr/local/texlive/2026basic/
+texmf-dist/fonts/type1/public/lm/lmr10.pfb></usr/local/texlive/2026basic/texmf-
+dist/fonts/type1/public/lm/lmr12.pfb></usr/local/texlive/2026basic/texmf-dist/f
+onts/type1/public/lm/lmr17.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/t
+ype1/public/lm/lmr6.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/pu
+blic/lm/lmr8.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm
+/lmri10.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmss
+10.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmsy10.pf
+b></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmsy8.pfb></us
+r/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmtt10.pfb></usr/loc
+al/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmtti10.pfb></usr/local/t
+exlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb>
+Output written on main.pdf (16 pages, 373386 bytes).
 PDF statistics:
- 535 PDF objects out of 1000 (max. 8388607)
- 469 compressed objects within 5 object streams
- 169 named destinations out of 1000 (max. 500000)
- 61257 words of extra memory for PDF output out of 61914 (max. 10000000)
+ 504 PDF objects out of 1000 (max. 8388607)
+ 442 compressed objects within 5 object streams
+ 154 named destinations out of 1000 (max. 500000)
+ 57153 words of extra memory for PDF output out of 61914 (max. 10000000)
 

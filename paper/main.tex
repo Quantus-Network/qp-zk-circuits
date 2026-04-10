@@ -15,6 +15,7 @@
 \usepackage[numbers,sort&compress]{natbib}
 \usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
 \usepackage[nameinlink,noabbrev]{cleveref}
+\usepackage{authblk}
 
 \newtheorem{definition}{Definition}
 \newtheorem{theorem}{Theorem}
@@ -28,14 +29,16 @@
 \newcommand{\pkset}{\mathcal{PK}_\Sigma}
 
 \title{Wormhole Addresses: Recursive Zero-Knowledge Private Settlement for Post-Quantum Blockchains}
-\author{Christopher Smith \and Ethan Cemer}
+\author[1]{Christopher Smith}
+\author[1]{Ethan Cemer}
+\affil[1]{Quantus Labs}
 \date{March 2026}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-Post-quantum signature schemes impose large public keys and signatures, increasing on-chain costs while still leaking transaction structure. We present \emph{Quantus Wormhole}: users deposit to addresses derived from secrets, then prove in zero knowledge that (i) the deposit exists in authenticated state, (ii) the block-header commitment is valid, (iii) the nullifier is fresh, and (iv) exits satisfy fee constraints. Recursive aggregation amortizes verification across many withdrawals. The first aggregation layer pads batches with dummy proofs and shuffles locally to enlarge the explanation class for balance-linking adversaries. We formalize the leaf relation, analyze layer-0 privacy, prove deposit binding and one-time withdrawal, and report proving times for batch sizes 2--49.
+Post-quantum signature schemes impose large public keys and signatures, increasing on-chain costs while still leaking transaction structure. We present \emph{Quantus Wormhole}, a private settlement protocol where users deposit to addresses derived from secrets and later prove in zero knowledge that the deposit exists, hasn't been spent, and satisfies fee rules. Recursive aggregation amortizes verification across many withdrawals, while dummy padding and local shuffling enlarge the anonymity set for balance-linking adversaries. We formalize the withdrawal relation, analyze privacy guarantees, prove security properties, and report proving times for batch sizes up to 49.
 \end{abstract}
 
 \section{Introduction}
@@ -51,7 +54,7 @@ This design builds on EIP-7503's wormhole concept \citep{eip7503}, adapted to th
     \item Formalize the \emph{wormhole-address} spending model: deposits flow to deterministic unspendable addresses derived from a secret; withdrawals require proving knowledge of that secret plus authenticated state inclusion.
     \item Specify the leaf relation: public outputs, private witnesses, and sub-circuit constraints for nullifier derivation, unspendable-account derivation, storage-proof verification, fee-constrained dual exits, and block-header commitment.
     \item Describe the recursive aggregation architecture. The first aggregation layer batches leaf proofs sharing the same \texttt{block\_hash}, pads with dummy leaves, shuffles client-locally, and wraps with a circuit forwarding nullifiers and grouped exits.
-    \item Provide combinatorial privacy analysis of layer-0, showing how dummy padding, hidden batch order, and grouped exits enlarge the explanation class for balance-linking adversaries.
+    \item Provide combinatorial privacy analysis of layer-0, showing how dummy padding, hidden batch order, and grouped exits enlarge the anonymity set for balance-linking adversaries.
     \item Explain why the public commitment covers the full block header (not just the state root), letting the runtime validate that the witnessed state root belongs to canonical history.
     \item Report measured build, prove, and verify times using \texttt{qp-plonky2} with Poseidon2 recursion, for batch sizes 2--49 (layer-0) and fan-ins 2--32 (layer-1).
     \item State security claims for deposit binding, wrapper soundness, one-time withdrawal, spend-path exclusivity, and value conservation, separating proof-level from runtime-level assumptions.
@@ -449,26 +452,26 @@ By first-layer wrapper soundness, an accepted aggregate expands to a multiset of
 \end{proof}
 
 
-\subsection{Layer-0 explanation classes and balance-linking difficulty}
+\subsection{Layer-0 anonymity sets and balance-linking difficulty}
 \label{sec:layer0privacy}
 
 The first aggregation layer does not hide the final exits or their amounts, but it does make leaf-level linkage more ambiguous. The key point is that the layer-0 wrapper is many-to-one: multiple ordered batches of real and dummy leaves can induce the same public aggregate once dummy nullifiers are replaced and duplicate exits are grouped.
 
-\begin{definition}[Layer-0 explanation class]
-Fix a first-layer public output \(Y\). The \emph{explanation class} \(\mathcal{E}(Y)\) is the set of ordered batches of real leaves and dummy leaves, together with per-leaf two-output assignments, that are consistent with the leaf fee rule and that produce \(Y\) under the implemented layer-0 padding, shuffle, grouping, and dummy-nullifier-substitution logic.
+\begin{definition}[Layer-0 anonymity set]
+Fix a first-layer public output \(Y\). The \emph{anonymity set} \(\mathcal{A}(Y)\) is the set of ordered batches of real leaves and dummy leaves, together with per-leaf two-output assignments, that are consistent with the leaf fee rule and that produce \(Y\) under the layer-0 padding, shuffle, grouping, and dummy-nullifier-substitution logic.
 \end{definition}
 
-A balance-linking adversary who sees only \(Y\) must distinguish among the elements of \(\mathcal{E}(Y)\). By contrast, a delegated layer-0 aggregator that receives the client's raw leaf proofs before padding and shuffling learns one concrete preimage of \(Y\) and therefore collapses this ambiguity. This is the formal reason that layer-0 is privacy-sensitive and should be client-local.
+A balance-linking adversary who sees only \(Y\) must distinguish among the elements of \(\mathcal{A}(Y)\). By contrast, a delegated layer-0 aggregator that receives the client's raw leaf proofs before padding and shuffling learns one concrete preimage of \(Y\) and therefore collapses this ambiguity. This is why layer-0 should be performed client-locally.
 
 \begin{proposition}[Client-local layer-0 dominates delegated layer-0 for linkage privacy]
-Fix any first-layer public output \(Y\). A downstream observer when layer-0 is performed client-locally receives only \(Y\), whereas a delegated layer-0 aggregator receives both \(Y\) and one specific preimage \(B \in \mathcal{E}(Y)\). Under a uniform prior over \(\mathcal{E}(Y)\), the optimal exact leaf-to-output linkage success probability is \(1/|\mathcal{E}(Y)|\) for the former view and \(1\) for the latter.
+Fix any first-layer public output \(Y\). A downstream observer when layer-0 is performed client-locally receives only \(Y\), whereas a delegated layer-0 aggregator receives both \(Y\) and one specific preimage \(B \in \mathcal{A}(Y)\). Under a uniform prior over \(\mathcal{A}(Y)\), the optimal exact leaf-to-output linkage success probability is \(1/|\mathcal{A}(Y)|\) for the former view and \(1\) for the latter.
 \end{proposition}
 
 \begin{proof}
-The downstream observer receives only \(Y\), so any exact linkage guess is a guess of which element of \(\mathcal{E}(Y)\) generated the aggregate. Under the stated prior, the optimal strategy succeeds with probability \(1/|\mathcal{E}(Y)|\). A delegated layer-0 aggregator, however, observes the raw child proofs before padding and shuffling, so it knows the realized preimage \(B\) directly.
+The downstream observer receives only \(Y\), so any exact linkage guess is a guess of which element of \(\mathcal{A}(Y)\) generated the aggregate. Under the stated prior, the optimal strategy succeeds with probability \(1/|\mathcal{A}(Y)|\). A delegated layer-0 aggregator, however, observes the raw child proofs before padding and shuffling, so it knows the realized preimage \(B\) directly.
 \end{proof}
 
-The size of \(\mathcal{E}(Y)\) grows combinatorially whenever multiple hidden child outputs collapse into one grouped exit.
+The size of \(\mathcal{A}(Y)\) grows combinatorially whenever multiple hidden child outputs collapse into one grouped exit.
 
 \begin{proposition}[Combinatorial lower bound from grouped exits]
 Let \(\Delta = 0.01\) be the circuit quantization unit. Fix a grouped exit account \(a\) in \(Y\) whose public forwarded amount is \(S_a \in \Delta \mathbb{Z}_{>0}\). If that total arose from \(r_a \ge 1\) positive real child outputs to the same account, then the number of positive quantized decompositions of \(S_a\) into \(r_a\) hidden child contributions is
@@ -477,7 +480,7 @@ Let \(\Delta = 0.01\) be the circuit quantization unit. Fix a grouped exit accou
 \]
 Consequently, if \(A^+\) denotes the set of grouped exit accounts that received contributions from more than one real child output, then
 \[
-|\mathcal{E}(Y)| \ge \prod_{a \in A^+} \binom{S_a/\Delta - 1}{r_a - 1},
+|\mathcal{A}(Y)| \ge \prod_{a \in A^+} \binom{S_a/\Delta - 1}{r_a - 1},
 \]
 with additional multiplicative ambiguity coming from hidden dummy placement, private batch order, and the assignment of at most two outputs to each real leaf.
 \end{proposition}
@@ -487,7 +490,7 @@ For a fixed account \(a\), write \(S_a = m_a \Delta\) with \(m_a \in \mathbb{Z}_
 \[
 x_1 + \cdots + x_{r_a} = m_a
 \]
-gives the classical stars-and-bars count \(\binom{m_a - 1}{r_a - 1}\). Each such solution corresponds to a distinct quantized decomposition of the grouped amount into hidden child outputs. Independent grouped accounts multiply, yielding the stated lower bound. Any uncertainty about which leaves were dummy, how the client ordered the batch before wrapping, or which of a leaf's two output positions carried a given contribution can only enlarge the explanation class.
+gives the classical stars-and-bars count \(\binom{m_a - 1}{r_a - 1}\). Each such solution corresponds to a distinct quantized decomposition of the grouped amount into hidden child outputs. Independent grouped accounts multiply, yielding the stated lower bound. Any uncertainty about which leaves were dummy, how the client ordered the batch before wrapping, or which of a leaf's two output positions carried a given contribution can only enlarge the anonymity set.
 \end{proof}
 
 The implementation preserves one real child in slot~0. This reduces but does not eliminate occupancy ambiguity from shuffling.
@@ -498,7 +501,7 @@ Two privacy aspects:
 
 \emph{Proof-level witness hiding}: Secrets, funding accounts, storage paths, and header details are not public inputs. Leakage would require breaking the proof system or side channels.
 
-\emph{System-level privacy}: Output amounts, exit accounts, nullifiers, and block references are public. Layer-0 padding enlarges the explanation class, but this is not full unlinkability---amount leakage, address reuse, and timing correlation remain limitations.
+\emph{System-level privacy}: Output amounts, exit accounts, nullifiers, and block references are public. Layer-0 padding enlarges the anonymity set, but this is not full unlinkability---amount leakage, address reuse, and timing correlation remain limitations.
 
 \section{Evaluation}
 \label{sec:evaluation}
@@ -582,7 +585,7 @@ Each leaf supports two exits (spend + change), not general multi-recipient batch
 Amounts are quantized to 0.01-unit resolution to reduce circuit cost.
 
 \paragraph{Privacy leakage.}
-Output amounts, exit addresses, and timing are public. Layer-0 padding enlarges the explanation class (\cref{sec:layer0privacy}), but this is plausible deniability, not full shielding.
+Output amounts, exit addresses, and timing are public. Layer-0 padding enlarges the anonymity set (\cref{sec:layer0privacy}), but this is plausible deniability, not full shielding.
 
 \section{Related Work}
 \label{sec:related}
