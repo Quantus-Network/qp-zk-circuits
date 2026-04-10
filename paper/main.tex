@@ -200,56 +200,27 @@ The proof system does not, by itself, settle a withdrawal. The blockchain must a
 \section{Recursive Aggregation Architecture}
 \label{sec:aggregation}
 
-\subsection{First-layer policy}
+\subsection{First-layer aggregation}
 
-The first aggregation layer is privacy-sensitive. A valid batch must satisfy:
-\begin{enumerate}[leftmargin=1.9em]
-    \item Every real leaf proof in the batch shares the same public \texttt{block\_hash}.
-    \item Every real leaf proof shares the same \texttt{asset\_id} and \texttt{volume\_fee\_bps}.
+The first aggregation layer is privacy-sensitive and should be executed locally. A batch of up to \(N\) leaf proofs is aggregated as follows:
+\begin{itemize}[leftmargin=1.5em]
+    \item All real leaves must share the same \texttt{block\_hash}, \texttt{asset\_id}, and \texttt{fee\_bps}.
     \item If fewer than \(N\) real leaves are available, the batch is padded with dummy leaves.
-    \item The leaf order is shuffled before wrapping, subject to implementation-specific handling that preserves at least one real leaf in a stable position for correctness.
-    \item Duplicate exit accounts are grouped so that identical destinations accumulate a summed amount in one slot while duplicate slots are zeroed.
-    \item All nullifiers are forwarded, with dummy nullifiers replaced by fresh random values.
-\end{enumerate}
+    \item The leaf order is shuffled before wrapping.
+    \item Exits to identical accounts are grouped into a single summed output.
+    \item Real nullifiers are forwarded; dummy nullifiers are replaced by hashing prover-supplied random preimages, preventing a malicious prover from choosing a dummy nullifier that collides with a real one.
+\end{itemize}
 
-Because the padding and shuffle are part of the privacy mechanism, layer-0 should be executed locally by the wallet whenever possible; a delegated layer-0 service would observe the client's raw child proofs before they are hidden inside the wrapper and would therefore collapse much of the ambiguity quantified in \cref{sec:layer0privacy}.
-
-\subsection{Wrapper logic}
-
-At a high level, the wrapper circuit performs four tasks.
-\begin{enumerate}[leftmargin=1.9em]
-    \item It detects dummy leaves by checking whether the child \texttt{block\_hash} is all zeros.
-    \item It enforces that every non-dummy child agrees with the reference child's \texttt{block\_hash}, \texttt{asset\_id}, and \texttt{volume\_fee\_bps}.
-    \item It computes grouped exit slots by summing amounts for identical exit accounts and zeroing duplicate slots.
-    \item It forwards real nullifiers and substitutes random dummy nullifiers for dummy children.
-\end{enumerate}
+A delegated layer-0 service would observe raw child proofs before padding and shuffling, collapsing much of the anonymity set quantified in \cref{sec:layer0privacy}.
 
 \subsection{Higher-layer aggregation}
 
-Higher recursive layers operate over already aggregated proofs rather than raw leaf witnesses. This separation is important: the privacy-critical shuffle and dummy-handling logic stays local to the first layer, while later layers can be delegated because they receive opaque layer-0 aggregates rather than the client's raw proof set. In particular, a layer-1 aggregator learns only the public output of layer-0 and therefore does not observe the client's internal real-versus-dummy placement or pre-grouped exit set.
+Higher layers aggregate already-wrapped proofs. Since they operate only on public outputs, they can be safely delegated and do not require zero-knowledge, enabling faster proving.
 
 \section{Security and Privacy Analysis}
 \label{sec:security}
 
-This section separates \emph{proof-level} statements from \emph{system-level} statements. Proof-level statements concern the relations enforced by the leaf circuit and the first-layer wrapper. System-level statements additionally rely on chain-level checks outside the proof system: the public \texttt{block\_hash}/\texttt{block\_number} pair must refer to a real block in chain history, the public fee parameter must match the configured rate, nullifiers must be rejected on reuse (including duplicates inside one candidate batch), and settlement must apply exactly the forwarded exit amounts.
-
-\begin{table}[t]
-\centering
-\small
-\begin{tabularx}{\textwidth}{@{}l X@{}}
-\toprule
-Claim & Additional assumptions outside the circuit relation \\
-\midrule
-Leaf-to-deposit binding & Runtime validates that the public \texttt{block\_hash}/\texttt{block\_number} pair denotes a real block and that the processed storage proof format matches the authenticated state representation. \\
-First-layer wrapper soundness & The recursive verifier gadgets correctly enforce child-proof validity, and the wrapper implementation matches its stated grouping and forwarding logic. \\
-One-time withdrawal per authenticated deposit record & Runtime rejects reused nullifiers, including duplicates within one aggregate submission; the authenticated transfer record fixes the transfer counter used in nullifier derivation. \\
-Spend-path exclusivity for wormhole addresses & The surrounding chain only admits direct spends from addresses backed by valid external credentials, and no efficient adversary can manufacture such credentials for an wormhole address. \\
-Global value conservation & Blockchain settles exactly the forwarded public outputs and records the associated nullifiers. \\
-\bottomrule
-\end{tabularx}
-\caption{Where the security argument relies on chain-level assumptions beyond circuit correctness.}
-\label{tab:security-assumptions}
-\end{table}
+This section separates \emph{proof-level} statements from \emph{system-level} statements. Proof-level statements concern the relations enforced by the circuit. System-level statements additionally rely on chain-level checks: block validation, fee parameter matching, nullifier rejection, and correct settlement.
 
 \subsection{Authenticated deposit records}
 
