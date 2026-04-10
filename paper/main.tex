@@ -47,9 +47,9 @@ The post-quantum transition poses a dilemma for blockchains. Shor's algorithm br
 
 One response is to verify post-quantum signatures inside a zero-knowledge circuit and aggregate many such proofs, compressing the on-chain footprint. But this requires implementing post-quantum signature verification in-circuit, which is expensive.
 
-This paper takes a different approach: rather than proving signature validity, users prove knowledge of a secret tied to an unspent deposit. The approach builds on EIP-7503's ``wormhole'' concept \citep{eip7503}, where funds are sent to addresses derived from secrets and later withdrawn by proving knowledge of that secret. This sidesteps post-quantum signature verification entirely. The circuit only needs hash functions and storage-proof verification. We adapt this idea with recursive proof aggregation for scalable settlement \citep{quantusrepo}.
+This paper takes a different approach: rather than proving signature validity, users prove knowledge of a secret tied to an unspent deposit. This idea appears in Ziggy \citep{ziggy}, a STARK-based signature scheme where signers prove knowledge of a hash preimage. We apply the same principle to blockchain settlement, building on EIP-7503's ``wormhole'' concept \citep{eip7503}: funds are sent to addresses derived from secrets and later withdrawn by proving knowledge of that secret. This sidesteps post-quantum signature verification entirely. The circuit only needs hash functions and storage-proof verification. We add recursive proof aggregation for scalable settlement \citep{quantusrepo}.
 
-\paragraph{Contributions.}
+\paragraph{Contributions}
 \begin{enumerate}[leftmargin=1.5em]
     \item A formal specification of the wormhole-address withdrawal relation, covering nullifier derivation, authenticated state inclusion, and fee constraints.
     \item A two-layer recursive aggregation architecture where the first layer performs privacy-sensitive dummy padding and shuffling on the client, while subsequent layers can be delegated.
@@ -499,7 +499,7 @@ Two privacy aspects:
 
 \emph{Proof-level witness hiding}: Secrets, funding accounts, storage paths, and header details are not public inputs. Leakage would require breaking the proof system or side channels.
 
-\emph{System-level privacy}: Output amounts, exit accounts, nullifiers, and block references are public. Layer-0 padding enlarges the anonymity set, but this is not full unlinkability---amount leakage, address reuse, and timing correlation remain limitations.
+\emph{System-level privacy}: Output amounts, exit accounts, nullifiers, and block references are public. Layer-0 padding enlarges the anonymity set, but this is not full unlinkability. Amount leakage, address reuse, and timing correlation remain limitations.
 
 \section{Evaluation}
 \label{sec:evaluation}
@@ -597,6 +597,9 @@ Zcash provides strong privacy through shielded notes; Tornado Cash popularized m
 \paragraph{Recursive proofs.}
 Halo and Plonky2 are standard recursive proof systems \citep{halo,plonky2}. Plonky3 provides Poseidon2 primitives with a separate recursion track \citep{plonky3,plonky3recursion}. Quantus applies recursive composition to post-quantum private settlement using \texttt{qp-plonky2} with Poseidon2.
 
+\paragraph{Hash-based authorization.}
+The Ziggy signature scheme \citep{ziggy} uses a ZK-STARK to prove knowledge of a hash preimage, replacing lattice-based signatures with hash-based proofs. Our wormhole construction applies a similar idea to blockchain settlement: users prove knowledge of a secret whose hash determines their deposit address.
+
 \paragraph{Post-quantum blockchains.}
 ML-DSA adoption raises questions about transaction size and verification cost \citep{mldsa}. Quantus compresses authorization into ZK proofs rather than publishing large signatures on-chain.
 
@@ -631,6 +634,12 @@ Sean Bowe, Jack Grigg, and Daira Hopwood.
 Vitalik Buterin, Jacob Illum, Matthias Nadler, Fabian Sch{"a}r, and Ameen Soleimani.
 \newblock Blockchain Privacy and Regulatory Compliance: Towards a Practical Equilibrium.
 \newblock SSRN, 2023.
+
+\bibitem[Gold and Riabzev(2020)]{ziggy}
+Lior Gold and Michael Riabzev.
+\newblock Ziggy: A Zero-Knowledge Signature Scheme Based on STARKs.
+\newblock StarkWare, 2020.
+\newblock \url{https://github.com/starkware-libs/ethSTARK}
 
 \bibitem[Grassi et~al.(2023)Grassi, Khovratovich, and Schofnegger]{poseidon2}
 Lorenzo Grassi, Dmitry Khovratovich, and Markus Schofnegger.

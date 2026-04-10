@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  10 APR 2026 15:04
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  10 APR 2026 15:17
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -715,12 +715,13 @@ Package microtype Info: Loading generic protrusion settings for font family
 (microtype)             `lmtt' (encoding: T1).
 (microtype)             For optimal results, create family-specific settings.
 (microtype)             See the microtype manual for details.
+ [2]
 LaTeX Font Info:    Trying to load font information for TS1+lmr on input line 9
 4.
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/ts1lmr.fd
 File: ts1lmr.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
-) [2]
+)
 LaTeX Font Info:    External font `lmex10' loaded for size
 (Font)              <10.95> on input line 103.
 LaTeX Font Info:    Trying to load font information for OT1+lmss on input line 
@@ -758,11 +759,11 @@ Package rerunfilecheck Info: File `main.out' has not changed.
 (rerunfilecheck)             Checksum: 3BE07DA74E329F20A9FDEF3D6212CDA5;7233.
  ) 
 Here is how much of TeX's memory you used:
- 17597 strings out of 469006
- 287034 string characters out of 5454813
+ 17600 strings out of 469006
+ 287074 string characters out of 5454813
  757648 words of memory out of 5000000
- 45609 multiletter control sequences out of 15000+600000
- 729445 words of font info for 242 fonts, out of 8000000 for 9000
+ 45612 multiletter control sequences out of 15000+600000
+ 729362 words of font info for 241 fonts, out of 8000000 for 9000
  319 hyphenation exceptions out of 8191
  75i,12n,79p,997b,735s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmbx10.pfb></u
@@ -782,10 +783,10 @@ b></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmsy8.pfb></us
 r/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmtt10.pfb></usr/loc
 al/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmtti10.pfb></usr/local/t
 exlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb>
-Output written on main.pdf (16 pages, 373015 bytes).
+Output written on main.pdf (16 pages, 374411 bytes).
 PDF statistics:
- 502 PDF objects out of 1000 (max. 8388607)
- 440 compressed objects within 5 object streams
- 152 named destinations out of 1000 (max. 500000)
+ 507 PDF objects out of 1000 (max. 8388607)
+ 445 compressed objects within 5 object streams
+ 154 named destinations out of 1000 (max. 500000)
  57153 words of extra memory for PDF output out of 61914 (max. 10000000)
 
