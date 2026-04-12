@@ -21,12 +21,11 @@ use quantus_cli::{AccountId32, ChainConfig, QuantusClient};
 use serde::{Deserialize, Serialize};
 use sp_core::{Hasher, Pair, H256};
 use std::str::FromStr;
-use subxt::backend::legacy::rpc_methods::{Bytes, ReadProof};
 use subxt::blocks::Block;
 use subxt::ext::codec::Encode;
 use subxt::ext::jsonrpsee::core::client::ClientT;
 use subxt::ext::jsonrpsee::rpc_params;
-use subxt::utils::{to_hex, AccountId32 as SubxtAccountId};
+use subxt::utils::AccountId32 as SubxtAccountId;
 use subxt::OnlineClient;
 use wormhole_aggregator::aggregator::{AggregationBackend, Layer0Aggregator};
 use wormhole_circuit::inputs::{
@@ -37,8 +36,8 @@ use wormhole_prover::WormholeProver;
 use zk_circuits_common::aggregation::AggregationConfig;
 use zk_circuits_common::circuit::wormhole_leaf_circuit_config;
 use zk_circuits_common::circuit::{C, D, F};
-use zk_circuits_common::storage_proof::prepare_proof_for_circuit;
 use zk_circuits_common::utils::{digest_to_bytes, BytesDigest, Digest};
+use zk_circuits_common::zk_merkle::SIBLINGS_PER_LEVEL;
 
 const DEBUG_FILE: &str = "proof_debug.json";
 const SCALE_DOWN_FACTOR: u128 = 10_000_000_000u128; // 10^10
@@ -54,12 +53,14 @@ fn compute_output_amount(input_amount: u32, fee_bps: u32) -> u32 {
 #[derive(Serialize, Deserialize, Debug)]
 struct DebugInputs {
     secret_hex: String,
-    proof_hex: Vec<String>,
+    /// ZK trie root hash (32 bytes hex)
+    zk_trie_root_hex: String,
+    /// ZK Merkle proof siblings - each level has 3 siblings (4-ary tree) in sorted order
+    zk_merkle_siblings_hex: Vec<[String; SIBLINGS_PER_LEVEL]>,
+    /// Position hints (0-3) for each level
+    zk_merkle_positions: Vec<u8>,
     state_root_hex: String,
-    last_idx: usize,
-    leaf_hash_hex: String,
     transfer_count: u64,
-    funding_account_hex: String,
     dest_account_hex: String,
     /// The input amount from storage (before fee deduction), quantized to 2 decimal places
     input_amount: u32,
@@ -76,37 +77,24 @@ struct DebugInputs {
 
 impl From<CircuitInputs> for DebugInputs {
     fn from(inputs: CircuitInputs) -> Self {
-        type TransferKey = (u32, u64, AccountId32, AccountId32, u128);
-        let hash = qp_poseidon::PoseidonHasher::hash_storage::<TransferKey>(
-            &(
-                inputs.public.asset_id,
-                inputs.private.transfer_count,
-                AccountId32::new(*inputs.private.funding_account),
-                AccountId32::new(*inputs.private.unspendable_account),
-                (inputs.private.input_amount as u128) * SCALE_DOWN_FACTOR,
-            )
-                .encode(),
-        );
-
         DebugInputs {
             secret_hex: hex::encode(inputs.private.secret.as_ref()),
-            proof_hex: inputs
+            zk_trie_root_hex: hex::encode(inputs.private.zk_trie_root),
+            zk_merkle_siblings_hex: inputs
                 .private
-                .storage_proof
-                .proof
+                .zk_merkle_siblings
                 .iter()
-                .map(hex::encode)
+                .map(|level| {
+                    [
+                        hex::encode(level[0]),
+                        hex::encode(level[1]),
+                        hex::encode(level[2]),
+                    ]
+                })
                 .collect(),
+            zk_merkle_positions: inputs.private.zk_merkle_positions.clone(),
             state_root_hex: hex::encode(inputs.private.state_root.as_ref()),
-            last_idx: *inputs
-                .private
-                .storage_proof
-                .indices
-                .last()
-                .expect("non-empty indices; qed"),
-            leaf_hash_hex: hex::encode(hash),
             transfer_count: inputs.private.transfer_count,
-            funding_account_hex: hex::encode(inputs.private.funding_account.as_ref()),
             dest_account_hex: hex::encode(inputs.public.exit_account_1.as_ref()),
             input_amount: inputs.private.input_amount,
             output_amount: inputs.public.output_amount_1,
@@ -120,7 +108,17 @@ impl From<CircuitInputs> for DebugInputs {
     }
 }
 
-pub type TransferProofKey = (u32, u64, AccountId32, AccountId32, u128);
+/// RPC response type for zkTrie_getMerkleProof
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ZkMerkleProofRpc {
+    pub leaf_index: u64,
+    pub root: String,
+    /// Sibling hashes at each level (in sorted order, excluding current hash)
+    pub siblings: Vec<[String; SIBLINGS_PER_LEVEL]>,
+    /// Position hints (0-3) for each level indicating where current hash
+    /// should be inserted among the sorted siblings
+    pub positions: Vec<u8>,
+}
 
 impl TryFrom<DebugInputs> for CircuitInputs {
     type Error = anyhow::Error;
@@ -146,34 +144,10 @@ impl TryFrom<DebugInputs> for CircuitInputs {
                 .map_err(|_| anyhow!("invalid {name} length, expected {N} bytes, got {}", len))
         }
 
-        let proof_bytes: Vec<Bytes> = inputs
-            .proof_hex
-            .into_iter()
-            .map(|s| {
-                let s = s.trim_start_matches("0x");
-                let bytes = hex::decode(s).context("failed to decode proof_hex entry")?;
-                Ok(Bytes(bytes))
-            })
-            .collect::<anyhow::Result<_>>()?;
-
-        let leaf_hash: [u8; 32] = hex_to_array::<32>(&inputs.leaf_hash_hex, "leaf_hash_hex")?;
-
-        let processed_storage_proof = prepare_proof_for_circuit(
-            proof_bytes.iter().map(|bytes| bytes.0.clone()).collect(),
-            inputs.state_root_hex.clone(),
-            leaf_hash,
-        )
-        .context("failed to prepare storage proof for circuit")?;
-
         let secret = hex_to_bytes_digest(&inputs.secret_hex, "secret_hex")?;
         let unspendable_account =
             wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(secret)
                 .account_id;
-
-        let funding_account_bytes = hex::decode(&inputs.funding_account_hex)
-            .context("failed to decode funding_account_hex")?;
-        let funding_account = AccountId32::try_from(funding_account_bytes.as_slice())
-            .map_err(|_| anyhow!("invalid funding account length"))?;
 
         let dest_account_bytes =
             hex::decode(&inputs.dest_account_hex).context("failed to decode dest_account_hex")?;
@@ -194,18 +168,37 @@ impl TryFrom<DebugInputs> for CircuitInputs {
         let digest: [u8; 110] = hex_to_array::<110>(&inputs.digest_hex, "digest_hex")?;
         let parent_hash = hex_to_bytes_digest(&inputs.parent_hash_hex, "parent_hash_hex")?;
 
+        // Parse ZK trie root
+        let zk_trie_root: [u8; 32] =
+            hex_to_array::<32>(&inputs.zk_trie_root_hex, "zk_trie_root_hex")?;
+
+        // Parse ZK Merkle siblings
+        let zk_merkle_siblings: Vec<[[u8; 32]; SIBLINGS_PER_LEVEL]> = inputs
+            .zk_merkle_siblings_hex
+            .iter()
+            .map(|level| {
+                let s0: [u8; 32] = hex_to_array::<32>(&level[0], "sibling[0]")?;
+                let s1: [u8; 32] = hex_to_array::<32>(&level[1], "sibling[1]")?;
+                let s2: [u8; 32] = hex_to_array::<32>(&level[2], "sibling[2]")?;
+                Ok([s0, s1, s2])
+            })
+            .collect::<anyhow::Result<_>>()?;
+
+        let zk_merkle_positions = inputs.zk_merkle_positions.clone();
+
         Ok(CircuitInputs {
             private: PrivateCircuitInputs {
                 secret,
                 transfer_count: inputs.transfer_count,
-                funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
-                storage_proof: processed_storage_proof,
                 unspendable_account: digest_to_bytes(Digest::from(unspendable_account)),
                 parent_hash,
                 state_root,
                 extrinsics_root,
                 digest,
                 input_amount: inputs.input_amount,
+                zk_trie_root,
+                zk_merkle_siblings,
+                zk_merkle_positions,
             },
             public: PublicCircuitInputs {
                 asset_id: 0u32,
@@ -391,7 +384,7 @@ fn unspendable_account_from_secret(secret: BytesDigest) -> (SubxtAccountId, Dige
 async fn perform_batched_transfers(
     quantus_client: &QuantusClient,
     quantum_keypair: &QuantumKeyPair,
-    funding_account: &AccountId32,
+    _funding_account: &AccountId32, // No longer needed in circuit inputs (no `from` field in ZK leaf)
     base_secret: [u8; 32],
     exit_account_bytes: [u8; 32],
     funding_amount: u128,
@@ -504,39 +497,38 @@ async fn perform_batched_transfers(
 
         let (secret, (_, unspendable_account)) = (&secrets[i], &unspendable_accounts[i]);
 
-        // Native token transfers use asset_id = 0
-        let asset_id = 0u32;
-
-        // Convert subxt AccountId32 to sp_core AccountId32 for hash_storage
-        let from_account = AccountId32::new(event.from.0);
-        let to_account = AccountId32::new(event.to.0);
-
-        let leaf_hash = qp_poseidon::PoseidonHasher::hash_storage::<TransferProofKey>(
-            &(
-                asset_id,
-                event.transfer_count,
-                from_account.clone(),
-                to_account.clone(),
-                event.amount,
-            )
-                .encode(),
-        );
-        let proof_address = quantus_node::storage()
-            .wormhole()
-            .transfer_proof((event.to.clone(), event.transfer_count));
-        let mut final_key = proof_address.to_root_bytes();
-        final_key.extend_from_slice(&leaf_hash);
-
-        let proof_params = rpc_params![vec![to_hex(&final_key)], block_hash];
-        let read_proof: ReadProof<H256> = quantus_client
+        // Fetch ZK Merkle proof from the new zkTrie RPC
+        let proof_params = rpc_params![hex::encode(event.to.0), event.transfer_count, block_hash];
+        let zk_proof: ZkMerkleProofRpc = quantus_client
             .rpc_client()
-            .request("state_getReadProof", proof_params)
-            .await?;
+            .request("zkTrie_getMerkleProof", proof_params)
+            .await
+            .context("Failed to get ZK Merkle proof")?;
 
-        // Prepare the storage proof
-        let proof_bytes: Vec<Vec<u8>> = read_proof.proof.iter().map(|b| b.0.clone()).collect();
-        let processed_storage_proof =
-            prepare_proof_for_circuit(proof_bytes, hex::encode(header.state_root.0), leaf_hash)?;
+        // Parse the ZK Merkle proof
+        let zk_trie_root: [u8; 32] = hex::decode(&zk_proof.root)
+            .context("Failed to decode zk_trie_root")?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid zk_trie_root length"))?;
+
+        let zk_merkle_siblings: Vec<[[u8; 32]; SIBLINGS_PER_LEVEL]> = zk_proof
+            .siblings
+            .iter()
+            .map(|level| {
+                let s0: [u8; 32] = hex::decode(&level[0])?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("Invalid sibling length"))?;
+                let s1: [u8; 32] = hex::decode(&level[1])?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("Invalid sibling length"))?;
+                let s2: [u8; 32] = hex::decode(&level[2])?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("Invalid sibling length"))?;
+                Ok([s0, s1, s2])
+            })
+            .collect::<anyhow::Result<_>>()?;
+
+        let zk_merkle_positions = zk_proof.positions.clone();
 
         let input_amount = (event.amount / SCALE_DOWN_FACTOR) as u32;
         let output_amount = compute_output_amount(input_amount, VOLUME_FEE_BPS);
@@ -545,13 +537,14 @@ async fn perform_batched_transfers(
                 secret: *secret,
                 transfer_count: event.transfer_count,
                 input_amount,
-                funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
-                storage_proof: processed_storage_proof,
                 unspendable_account: digest_to_bytes(Digest::from(*unspendable_account)),
                 parent_hash,
                 state_root,
                 extrinsics_root,
                 digest,
+                zk_trie_root,
+                zk_merkle_siblings,
+                zk_merkle_positions,
             },
             public: PublicCircuitInputs {
                 asset_id: 0u32,
@@ -578,7 +571,7 @@ async fn perform_batched_transfers(
 async fn perform_transfer_and_get_inputs(
     quantus_client: &QuantusClient,
     quantum_keypair: &QuantumKeyPair,
-    funding_account: &AccountId32,
+    _funding_account: &AccountId32, // No longer needed in circuit inputs (no `from` field in ZK leaf)
     secret_bytes: [u8; 32],
     exit_account_bytes: [u8; 32],
     funding_amount: u128,
@@ -637,30 +630,38 @@ async fn perform_transfer_and_get_inputs(
         event.amount, event.transfer_count
     );
 
-    // Native token transfers use asset_id = 0
-    let asset_id = 0u32;
-    type TransferKey = (u32, u64, AccountId32, AccountId32, u128);
-    let leaf_hash = qp_poseidon::PoseidonHasher::hash_storage::<TransferKey>(
-        &(
-            asset_id,
-            event.transfer_count,
-            event.from.clone(),
-            event.to.clone(),
-            event.amount,
-        )
-            .encode(),
-    );
-    let proof_address = quantus_node::storage()
-        .wormhole()
-        .transfer_proof((event.to.clone(), event.transfer_count));
-    let mut final_key = proof_address.to_root_bytes();
-    final_key.extend_from_slice(&leaf_hash);
-
-    let proof_params = rpc_params![vec![to_hex(&final_key)], block_hash];
-    let read_proof: ReadProof<H256> = quantus_client
+    // Fetch ZK Merkle proof from the new zkTrie RPC
+    let proof_params = rpc_params![hex::encode(event.to.0), event.transfer_count, block_hash];
+    let zk_proof: ZkMerkleProofRpc = quantus_client
         .rpc_client()
-        .request("state_getReadProof", proof_params)
-        .await?;
+        .request("zkTrie_getMerkleProof", proof_params)
+        .await
+        .context("Failed to get ZK Merkle proof")?;
+
+    // Parse the ZK Merkle proof
+    let zk_trie_root: [u8; 32] = hex::decode(&zk_proof.root)
+        .context("Failed to decode zk_trie_root")?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid zk_trie_root length"))?;
+
+    let zk_merkle_siblings: Vec<[[u8; 32]; SIBLINGS_PER_LEVEL]> = zk_proof
+        .siblings
+        .iter()
+        .map(|level| {
+            let s0: [u8; 32] = hex::decode(&level[0])?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid sibling length"))?;
+            let s1: [u8; 32] = hex::decode(&level[1])?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid sibling length"))?;
+            let s2: [u8; 32] = hex::decode(&level[2])?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid sibling length"))?;
+            Ok([s0, s1, s2])
+        })
+        .collect::<anyhow::Result<_>>()?;
+
+    let zk_merkle_positions = zk_proof.positions.clone();
 
     let header = blocks.header();
 
@@ -671,11 +672,6 @@ async fn perform_transfer_and_get_inputs(
 
     let block_number = header.number;
 
-    // Prepare the storage proof with the correct accounts
-    let proof_bytes: Vec<Vec<u8>> = read_proof.proof.iter().map(|b| b.0.clone()).collect();
-    let processed_storage_proof =
-        prepare_proof_for_circuit(proof_bytes, hex::encode(header.state_root.0), leaf_hash)?;
-
     // We need to quantize the funding amount to use 2 decimal places of precision (divide by 10^10 since original uses 12)
     let input_amount = (event.amount / SCALE_DOWN_FACTOR) as u32;
     // Calculate output amount after fee deduction
@@ -685,14 +681,15 @@ async fn perform_transfer_and_get_inputs(
         private: PrivateCircuitInputs {
             secret,
             transfer_count: event.transfer_count,
-            funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
-            storage_proof: processed_storage_proof,
             unspendable_account: digest_to_bytes(Digest::from(unspendable_account)),
             parent_hash,
             state_root,
             extrinsics_root,
             digest,
             input_amount,
+            zk_trie_root,
+            zk_merkle_siblings,
+            zk_merkle_positions,
         },
         public: PublicCircuitInputs {
             asset_id: 0u32,
