@@ -485,8 +485,8 @@ impl CircuitFragment for ZkMerkleProofData {
                                 // slot 1: current if pos==1, else (sib0 if pos==0, else sib1)
                                 let not_current = builder.select(
                                     pos_is_0,
-                                    siblings[1].elements[e],
                                     siblings[0].elements[e],
+                                    siblings[1].elements[e],
                                 );
                                 builder.select(pos_is_1, current_hash.elements[e], not_current)
                             }
