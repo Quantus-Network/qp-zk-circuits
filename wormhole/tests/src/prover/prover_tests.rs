@@ -234,10 +234,10 @@ fn generate_proof(
 
         // Collect the 4 children in this group
         let mut children: [Hash256; ARITY] = [[0u8; 32]; ARITY];
-        for i in 0..ARITY {
+        for (i, child) in children.iter_mut().enumerate() {
             let idx = group_start + i;
             if idx < level.len() {
-                children[i] = level[idx];
+                *child = level[idx];
             }
         }
 
@@ -315,9 +315,8 @@ fn test_random_tree_proof_native_verification() {
     println!("Root: {}", hex::encode(root));
 
     // Test proof for each leaf
-    for leaf_index in 0..num_leaves {
+    for (leaf_index, &leaf_hash) in leaves.iter().enumerate().take(num_leaves) {
         let (siblings, positions) = generate_proof(leaf_index, &levels);
-        let leaf_hash = leaves[leaf_index];
 
         // Verify natively
         let valid = verify_proof_native(leaf_hash, &siblings, &positions, root);
@@ -373,12 +372,8 @@ fn test_random_tree_circuit_verification() {
             digest_to_bytes(UnspendableAccount::from_secret(secret_digest).account_id);
 
         // Compute leaf hash the same way the circuit does
-        let leaf_hash = compute_zk_leaf_hash(
-            &*unspendable_account,
-            transfer_count,
-            asset_id,
-            input_amount,
-        );
+        let leaf_hash =
+            compute_zk_leaf_hash(&unspendable_account, transfer_count, asset_id, input_amount);
         leaf_hashes.push(leaf_hash);
     }
 
@@ -489,12 +484,8 @@ fn test_depth_2_tree_circuit_verification() {
         let secret_digest = BytesDigest::try_from(secret).unwrap();
         let unspendable_account =
             digest_to_bytes(UnspendableAccount::from_secret(secret_digest).account_id);
-        let leaf_hash = compute_zk_leaf_hash(
-            &*unspendable_account,
-            transfer_count,
-            asset_id,
-            input_amount,
-        );
+        let leaf_hash =
+            compute_zk_leaf_hash(&unspendable_account, transfer_count, asset_id, input_amount);
         leaf_hashes.push(leaf_hash);
     }
 
@@ -592,12 +583,8 @@ fn test_depth_3_tree_circuit_verification() {
         let secret_digest = BytesDigest::try_from(secret).unwrap();
         let unspendable_account =
             digest_to_bytes(UnspendableAccount::from_secret(secret_digest).account_id);
-        let leaf_hash = compute_zk_leaf_hash(
-            &*unspendable_account,
-            transfer_count,
-            asset_id,
-            input_amount,
-        );
+        let leaf_hash =
+            compute_zk_leaf_hash(&unspendable_account, transfer_count, asset_id, input_amount);
         leaf_hashes.push(leaf_hash);
     }
 

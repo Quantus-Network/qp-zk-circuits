@@ -102,7 +102,7 @@ impl TestInputs for CircuitInputs {
         // Compute the ZK leaf hash for a single-leaf tree (depth 0)
         // For depth 0, the leaf hash IS the root
         let zk_trie_root = compute_zk_leaf_hash(
-            &*unspendable_account,
+            &unspendable_account,
             DEFAULT_TRANSFER_COUNTS[0],
             0u32, // asset_id
             DEFAULT_INPUT_AMOUNTS[0],
@@ -155,7 +155,7 @@ impl TestInputs for CircuitInputs {
 
         // Compute the ZK leaf hash for a single-leaf tree (depth 0)
         let zk_trie_root = compute_zk_leaf_hash(
-            &*unspendable_account,
+            &unspendable_account,
             DEFAULT_TRANSFER_COUNTS[1],
             0u32, // asset_id
             DEFAULT_INPUT_AMOUNTS[1],

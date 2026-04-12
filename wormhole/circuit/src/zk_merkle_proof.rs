@@ -44,6 +44,7 @@ pub use zk_circuits_common::zk_merkle::ZkMerkleProof;
 /// - 2 (transfer_count as u64, two 32-bit limbs)
 /// - 1 (asset_id as u32)
 /// - 1 (amount as quantized u32)
+///
 /// Total: 8
 ///
 /// Note: This is different from the old MPT leaf which included `from`.
