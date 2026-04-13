@@ -254,7 +254,20 @@ Since the blockchain rejects duplicate nullifiers, each deposit can be withdrawn
 
 \subsection{Spend-path exclusivity}
 
-The protocol assumes that funds sent to a wormhole address cannot be spent through ordinary signature-based authorization. Since the wormhole address is derived from a hash (not a public key), no valid signing key exists for it. The only way to move funds out is through the proof-authorized settlement path.
+A standard address is \(\mathsf{Addr}(pk) = H(pk)\) for a public key \(pk\). A wormhole address is \(\WA(s) = H(H(\mathsf{salt_{wh}} \parallel s))\).
+
+\begin{proposition}
+An adversary can withdraw funds from a wormhole address without a valid proof only with negligible probability.
+\end{proposition}
+
+\begin{proof}
+To spend from \(\WA(s)\) via signature, an adversary must find a keypair \((sk, pk)\) such that \(H(pk) = \WA(s)\). This requires either:
+\begin{enumerate}
+    \item finding \(s'\) such that \(H(\mathsf{salt_{wh}} \parallel s')\) equals a public key the adversary controls, or
+    \item finding \(pk\) such that \(H(pk) = \WA(s)\).
+\end{enumerate}
+Both reduce to preimage attacks: (1) requires finding a preimage of a target public key, and (2) requires finding a preimage of a target wormhole address. By preimage resistance, both succeed with negligible probability. Note that for post-quantum signature schemes where \(|pk| > |H|\) (e.g., Dilithium), case (1) is impossible since a hash output cannot equal a larger public key.
+\end{proof}
 
 \subsection{Value conservation}
 
