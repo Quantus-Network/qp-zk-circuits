@@ -54,6 +54,7 @@ pub struct PrivateCircuitInputs {
     /// This is used for both:
     /// - Block hash computation (as part of the header preimage)
     /// - ZK Merkle proof verification (compared against computed root)
+    ///
     /// The circuit constrains these two uses to be equal.
     pub zk_tree_root: [u8; 32],
     /// Sibling hashes at each level of the 4-ary Merkle proof.
