@@ -27,7 +27,8 @@ const GOLDILOCKS_ORDER: u64 = 0xFFFFFFFF00000001;
 ///         nullifier(4) + exit_account_1(4) + exit_account_2(4) + block_hash(4) + block_number(1)
 /// = 1 + 1 + 1 + 1 + 4 + 4 + 4 + 4 + 1 = 21
 ///
-/// Note: parent_hash is a private input to the leaf circuit (used to compute block_hash)
+/// Note: exit accounts use 4 felts (8 bytes/felt) for hash-derived accounts.
+/// parent_hash is a private input to the leaf circuit (used to compute block_hash)
 /// but is not exposed as a public input since block_hash already commits to it.
 pub const PUBLIC_INPUTS_FELTS_LEN: usize = 21;
 
@@ -49,6 +50,16 @@ pub const BLOCK_NUMBER_INDEX: usize = 20;
 /// A 32-byte digest that can be converted to/from field elements.
 #[derive(Hash, Default, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
 pub struct BytesDigest([u8; DIGEST_BYTES_LEN]);
+
+impl BytesDigest {
+    /// Create a BytesDigest without validation.
+    ///
+    /// Use this for the 4-bytes-per-felt encoding where each chunk is a u32
+    /// and doesn't need to fit in an 8-byte field element constraint.
+    pub const fn new_unchecked(bytes: [u8; DIGEST_BYTES_LEN]) -> Self {
+        BytesDigest(bytes)
+    }
+}
 
 impl fmt::Debug for BytesDigest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -190,6 +201,9 @@ pub struct BlockData {
 /// Aggregated public inputs from multiple wormhole proofs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AggregatedPublicCircuitInputs {
+    /// Number of unique exit-account groups reported by the wrapper circuit.
+    /// This is informational only; semantic validation remains the circuit's responsibility.
+    pub num_unique_exits: u32,
     /// The asset ID of the set (0 for native token).
     pub asset_id: u32,
     /// Volume fee rate in basis points (1 basis point = 0.01%).
@@ -206,10 +220,15 @@ pub struct AggregatedPublicCircuitInputs {
     pub nullifiers: Vec<BytesDigest>,
 }
 
-/// Helper to convert 4 u64 values (field elements as canonical u64) to a BytesDigest
-fn u64s_to_bytes_digest(vals: &[u64]) -> anyhow::Result<BytesDigest> {
+/// Helper to convert 4 u64 values (hash output) to a BytesDigest.
+/// Each felt contributes 8 bytes (its full u64 representation).
+/// Used for hash outputs which are native field elements.
+fn hash_u64s_to_bytes_digest(vals: &[u64]) -> anyhow::Result<BytesDigest> {
     if vals.len() != 4 {
-        bail!("Expected 4 field elements for digest, got {}", vals.len());
+        bail!(
+            "Expected 4 field elements for hash digest, got {}",
+            vals.len()
+        );
     }
     let mut bytes = [0u8; DIGEST_BYTES_LEN];
     for (i, &val) in vals.iter().enumerate() {
@@ -242,16 +261,17 @@ impl PublicCircuitInputs {
             .try_into()
             .context("failed to convert volume_fee_bps to u32")?;
 
-        let nullifier = u64s_to_bytes_digest(&pis[NULLIFIER_START_INDEX..NULLIFIER_END_INDEX])
+        let nullifier = hash_u64s_to_bytes_digest(&pis[NULLIFIER_START_INDEX..NULLIFIER_END_INDEX])
             .context("failed to parse nullifier")?;
         let exit_account_1 =
-            u64s_to_bytes_digest(&pis[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX])
+            hash_u64s_to_bytes_digest(&pis[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX])
                 .context("failed to parse exit_account_1")?;
         let exit_account_2 =
-            u64s_to_bytes_digest(&pis[EXIT_ACCOUNT_2_START_INDEX..EXIT_ACCOUNT_2_END_INDEX])
+            hash_u64s_to_bytes_digest(&pis[EXIT_ACCOUNT_2_START_INDEX..EXIT_ACCOUNT_2_END_INDEX])
                 .context("failed to parse exit_account_2")?;
-        let block_hash = u64s_to_bytes_digest(&pis[BLOCK_HASH_START_INDEX..BLOCK_HASH_END_INDEX])
-            .context("failed to parse block_hash")?;
+        let block_hash =
+            hash_u64s_to_bytes_digest(&pis[BLOCK_HASH_START_INDEX..BLOCK_HASH_END_INDEX])
+                .context("failed to parse block_hash")?;
 
         let block_number: u32 = pis[BLOCK_NUMBER_INDEX]
             .try_into()
@@ -280,7 +300,8 @@ impl AggregatedPublicCircuitInputs {
         //  nullifiers(4) * N, padding...]
         //
         // IMPORTANT: With 2 outputs per leaf, we have 2*N exit slots.
-        // The num_unique_exits is informational only.
+        // The parser validates shape/layout only. Circuit-level semantic constraints such as
+        // same-block and same-asset consistency remain enforced by the proving circuit.
 
         if pis.len() < 8 {
             bail!(
@@ -289,6 +310,19 @@ impl AggregatedPublicCircuitInputs {
             );
         }
 
+        let payload_len = pis.len() - 8;
+        if !payload_len.is_multiple_of(PUBLIC_INPUTS_FELTS_LEN) {
+            bail!(
+                "AggregatedPI: malformed length {} - expected 8 + N*{} felts for the padded aggregated layout",
+                pis.len(),
+                PUBLIC_INPUTS_FELTS_LEN
+            );
+        }
+
+        let num_unique_exits: u32 = pis[0]
+            .try_into()
+            .context("AggregatedPI: num_unique_exits at index 0 exceeds u32 range")?;
+
         let asset_id: u32 = pis[1]
             .try_into()
             .context("AggregatedPI: asset_id at index 1 exceeds u32 range")?;
@@ -296,8 +330,8 @@ impl AggregatedPublicCircuitInputs {
             .try_into()
             .context("AggregatedPI: volume_fee_bps at index 2 exceeds u32 range")?;
 
-        // Number of leaf proofs (N) is derived from the total PI length.
-        let n_leaf = pis.len() / PUBLIC_INPUTS_FELTS_LEN;
+        // Number of leaf proofs (N) is derived from the padded total PI length.
+        let n_leaf = payload_len / PUBLIC_INPUTS_FELTS_LEN;
 
         if n_leaf == 0 {
             bail!(
@@ -307,7 +341,7 @@ impl AggregatedPublicCircuitInputs {
             );
         }
 
-        let block_hash = u64s_to_bytes_digest(&pis[3..7])
+        let block_hash = hash_u64s_to_bytes_digest(&pis[3..7])
             .context("AggregatedPI: parsing block_hash from indices 3..7")?;
         let block_number: u32 = pis[7]
             .try_into()
@@ -349,7 +383,7 @@ impl AggregatedPublicCircuitInputs {
                 );
             }
             let exit_account =
-                u64s_to_bytes_digest(&pis[cursor..cursor + 4]).with_context(|| {
+                hash_u64s_to_bytes_digest(&pis[cursor..cursor + 4]).with_context(|| {
                     format!(
                         "AggregatedPI: parsing exit_account[{}] at cursor {}",
                         i, cursor
@@ -374,7 +408,7 @@ impl AggregatedPublicCircuitInputs {
                     pis.len()
                 );
             }
-            let n = u64s_to_bytes_digest(&pis[cursor..cursor + 4]).with_context(|| {
+            let n = hash_u64s_to_bytes_digest(&pis[cursor..cursor + 4]).with_context(|| {
                 format!(
                     "AggregatedPI: parsing nullifier[{}] at cursor {}",
                     i, cursor
@@ -386,7 +420,7 @@ impl AggregatedPublicCircuitInputs {
         }
 
         // Verify we consumed expected number of felts
-        // 8 metadata + 2*N*5 exit slots + N*4 nullifiers
+        // 8 metadata + 2*N*5 exit slots (1 sum + 4 account) + N*4 nullifiers
         let expected_felts = 8 + num_exit_slots * 5 + n_leaf * 4;
         if cursor != expected_felts {
             bail!(
@@ -399,11 +433,39 @@ impl AggregatedPublicCircuitInputs {
         }
 
         Ok(AggregatedPublicCircuitInputs {
+            num_unique_exits,
             asset_id,
             volume_fee_bps,
             block_data,
             account_data,
             nullifiers,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AggregatedPublicCircuitInputs, PUBLIC_INPUTS_FELTS_LEN};
+
+    #[test]
+    fn aggregated_public_inputs_reject_malformed_padded_length() {
+        let err = AggregatedPublicCircuitInputs::try_from_u64_slice(&[0u64; 9]).unwrap_err();
+        assert!(err.to_string().contains(&format!(
+            "malformed length 9 - expected 8 + N*{} felts",
+            PUBLIC_INPUTS_FELTS_LEN
+        )));
+    }
+
+    #[test]
+    fn aggregated_public_inputs_parse_num_unique_exits() {
+        let mut pis = vec![0u64; 8 + PUBLIC_INPUTS_FELTS_LEN];
+        pis[0] = 1; // num_unique_exits
+        pis[7] = 42; // block_number
+
+        let parsed = AggregatedPublicCircuitInputs::try_from_u64_slice(&pis).unwrap();
+        assert_eq!(parsed.num_unique_exits, 1);
+        assert_eq!(parsed.block_data.block_number, 42);
+        assert_eq!(parsed.account_data.len(), 2);
+        assert_eq!(parsed.nullifiers.len(), 1);
     }
 }

@@ -5,7 +5,7 @@ use plonky2::{
 };
 use zk_circuits_common::{
     circuit::{CircuitFragment, D, F},
-    utils::{digest_bytes_to_felts, BytesDigest, Digest},
+    utils::{bytes_to_digest, BytesDigest, Digest},
 };
 
 use crate::block_header::header::{HeaderInputs, HeaderTargets};
@@ -22,7 +22,7 @@ pub struct BlockHeader {
 impl BlockHeader {
     pub fn new(block_hash: BytesDigest, header: HeaderInputs) -> anyhow::Result<Self> {
         Ok(Self {
-            block_hash: digest_bytes_to_felts(block_hash),
+            block_hash: bytes_to_digest(block_hash),
             header,
         })
     }
@@ -78,13 +78,15 @@ impl CircuitFragment for BlockHeader {
         targets: Self::Targets,
     ) -> anyhow::Result<()> {
         pw.set_hash_target(targets.block_hash, self.block_hash.into())?;
-        pw.set_hash_target(targets.header.parent_hash, self.header.parent_hash.into())?;
+        // parent_hash, state_root, extrinsics_root, zk_tree_root use 4 felts (8 bytes/felt)
+        pw.set_target_arr(&targets.header.parent_hash, &self.header.parent_hash)?;
         pw.set_target(targets.header.block_number, self.header.block_number)?;
-        pw.set_hash_target(targets.header.state_root, self.header.state_root.into())?;
-        pw.set_hash_target(
-            targets.header.extrinsics_root,
-            self.header.extrinsics_root.into(),
+        pw.set_target_arr(&targets.header.state_root, &self.header.state_root)?;
+        pw.set_target_arr(
+            &targets.header.extrinsics_root,
+            &self.header.extrinsics_root,
         )?;
+        pw.set_target_arr(&targets.header.zk_tree_root, &self.header.zk_tree_root)?;
         pw.set_target_arr(&targets.header.digest, &self.header.digest)?;
         Ok(())
     }

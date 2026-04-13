@@ -7,12 +7,11 @@
 
 use anyhow::Context;
 use clap::Parser;
-use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_poseidon::PoseidonHasher;
 use qp_wormhole_inputs::{AggregatedPublicCircuitInputs, PublicCircuitInputs};
 use quantus_cli::chain::quantus_subxt::api as quantus_node;
-use quantus_cli::chain::quantus_subxt::api::runtime_types::pallet_wormhole::pallet::Call as WormholeCall;
+use quantus_cli::chain::quantus_subxt::api::runtime_types::pallet_balances::pallet::Call as BalancesCall;
 use quantus_cli::chain::quantus_subxt::api::runtime_types::quantus_runtime::RuntimeCall;
 use quantus_cli::chain::quantus_subxt::api::wormhole;
 use quantus_cli::cli::common::{submit_transaction, ExecutionMode};
@@ -20,29 +19,30 @@ use quantus_cli::qp_dilithium_crypto::DilithiumPair;
 use quantus_cli::wallet::QuantumKeyPair;
 use quantus_cli::{AccountId32, ChainConfig, QuantusClient};
 use serde::{Deserialize, Serialize};
-use sp_core::{Hasher, H256};
+use sp_core::{Hasher, Pair, H256};
 use std::str::FromStr;
-use subxt::backend::legacy::rpc_methods::{Bytes, ReadProof};
 use subxt::blocks::Block;
 use subxt::ext::codec::Encode;
 use subxt::ext::jsonrpsee::core::client::ClientT;
 use subxt::ext::jsonrpsee::rpc_params;
-use subxt::utils::{to_hex, AccountId32 as SubxtAccountId};
+use subxt::utils::AccountId32 as SubxtAccountId;
 use subxt::OnlineClient;
-use wormhole_aggregator::aggregator::WormholeProofAggregator;
+use wormhole_aggregator::aggregator::{AggregationBackend, Layer0Aggregator};
 use wormhole_circuit::inputs::{
     CircuitInputs, ParseAggregatedPublicInputs, ParsePublicInputs, PrivateCircuitInputs,
 };
 use wormhole_circuit::nullifier::Nullifier;
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::aggregation::AggregationConfig;
+use zk_circuits_common::circuit::wormhole_leaf_circuit_config;
 use zk_circuits_common::circuit::{C, D, F};
-use zk_circuits_common::storage_proof::prepare_proof_for_circuit;
-use zk_circuits_common::utils::{digest_felts_to_bytes, BytesDigest, Digest};
+use zk_circuits_common::utils::{digest_to_bytes, BytesDigest, Digest};
+use zk_circuits_common::zk_merkle::SIBLINGS_PER_LEVEL;
 
 const DEBUG_FILE: &str = "proof_debug.json";
 const SCALE_DOWN_FACTOR: u128 = 10_000_000_000u128; // 10^10
 const VOLUME_FEE_BPS: u32 = 10; // 0.1% = 10 basis points
+const BINS_DIR: &str = "../../generated-bins";
 
 /// Compute output amount after fee deduction
 /// output = input * (10000 - fee_bps) / 10000
@@ -53,12 +53,14 @@ fn compute_output_amount(input_amount: u32, fee_bps: u32) -> u32 {
 #[derive(Serialize, Deserialize, Debug)]
 struct DebugInputs {
     secret_hex: String,
-    proof_hex: Vec<String>,
+    /// ZK tree root hash (32 bytes hex)
+    zk_tree_root_hex: String,
+    /// ZK Merkle proof siblings - each level has 3 siblings (4-ary tree) in sorted order
+    zk_merkle_siblings_hex: Vec<[String; SIBLINGS_PER_LEVEL]>,
+    /// Position hints (0-3) for each level
+    zk_merkle_positions: Vec<u8>,
     state_root_hex: String,
-    last_idx: usize,
-    leaf_hash_hex: String,
     transfer_count: u64,
-    funding_account_hex: String,
     dest_account_hex: String,
     /// The input amount from storage (before fee deduction), quantized to 2 decimal places
     input_amount: u32,
@@ -75,37 +77,24 @@ struct DebugInputs {
 
 impl From<CircuitInputs> for DebugInputs {
     fn from(inputs: CircuitInputs) -> Self {
-        type TransferKey = (u32, u64, AccountId32, AccountId32, u128);
-        let hash = qp_poseidon::PoseidonHasher::hash_storage::<TransferKey>(
-            &(
-                inputs.public.asset_id,
-                inputs.private.transfer_count,
-                AccountId32::new(*inputs.private.funding_account),
-                AccountId32::new(*inputs.private.unspendable_account),
-                (inputs.private.input_amount as u128) * SCALE_DOWN_FACTOR,
-            )
-                .encode(),
-        );
-
         DebugInputs {
             secret_hex: hex::encode(inputs.private.secret.as_ref()),
-            proof_hex: inputs
+            zk_tree_root_hex: hex::encode(inputs.private.zk_tree_root),
+            zk_merkle_siblings_hex: inputs
                 .private
-                .storage_proof
-                .proof
+                .zk_merkle_siblings
                 .iter()
-                .map(hex::encode)
+                .map(|level| {
+                    [
+                        hex::encode(level[0]),
+                        hex::encode(level[1]),
+                        hex::encode(level[2]),
+                    ]
+                })
                 .collect(),
+            zk_merkle_positions: inputs.private.zk_merkle_positions.clone(),
             state_root_hex: hex::encode(inputs.private.state_root.as_ref()),
-            last_idx: *inputs
-                .private
-                .storage_proof
-                .indices
-                .last()
-                .expect("non-empty indices; qed"),
-            leaf_hash_hex: hex::encode(hash),
             transfer_count: inputs.private.transfer_count,
-            funding_account_hex: hex::encode(inputs.private.funding_account.as_ref()),
             dest_account_hex: hex::encode(inputs.public.exit_account_1.as_ref()),
             input_amount: inputs.private.input_amount,
             output_amount: inputs.public.output_amount_1,
@@ -119,7 +108,17 @@ impl From<CircuitInputs> for DebugInputs {
     }
 }
 
-pub type TransferProofKey = (u32, u64, AccountId32, AccountId32, u128);
+/// RPC response type for zkTree_getMerkleProof
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ZkMerkleProofRpc {
+    pub leaf_index: u64,
+    pub root: String,
+    /// Sibling hashes at each level (in sorted order, excluding current hash)
+    pub siblings: Vec<[String; SIBLINGS_PER_LEVEL]>,
+    /// Position hints (0-3) for each level indicating where current hash
+    /// should be inserted among the sorted siblings
+    pub positions: Vec<u8>,
+}
 
 impl TryFrom<DebugInputs> for CircuitInputs {
     type Error = anyhow::Error;
@@ -145,34 +144,10 @@ impl TryFrom<DebugInputs> for CircuitInputs {
                 .map_err(|_| anyhow!("invalid {name} length, expected {N} bytes, got {}", len))
         }
 
-        let proof_bytes: Vec<Bytes> = inputs
-            .proof_hex
-            .into_iter()
-            .map(|s| {
-                let s = s.trim_start_matches("0x");
-                let bytes = hex::decode(s).context("failed to decode proof_hex entry")?;
-                Ok(Bytes(bytes))
-            })
-            .collect::<anyhow::Result<_>>()?;
-
-        let leaf_hash: [u8; 32] = hex_to_array::<32>(&inputs.leaf_hash_hex, "leaf_hash_hex")?;
-
-        let processed_storage_proof = prepare_proof_for_circuit(
-            proof_bytes.iter().map(|bytes| bytes.0.clone()).collect(),
-            inputs.state_root_hex.clone(),
-            leaf_hash,
-        )
-        .context("failed to prepare storage proof for circuit")?;
-
         let secret = hex_to_bytes_digest(&inputs.secret_hex, "secret_hex")?;
         let unspendable_account =
             wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(secret)
                 .account_id;
-
-        let funding_account_bytes = hex::decode(&inputs.funding_account_hex)
-            .context("failed to decode funding_account_hex")?;
-        let funding_account = AccountId32::try_from(funding_account_bytes.as_slice())
-            .map_err(|_| anyhow!("invalid funding account length"))?;
 
         let dest_account_bytes =
             hex::decode(&inputs.dest_account_hex).context("failed to decode dest_account_hex")?;
@@ -193,25 +168,44 @@ impl TryFrom<DebugInputs> for CircuitInputs {
         let digest: [u8; 110] = hex_to_array::<110>(&inputs.digest_hex, "digest_hex")?;
         let parent_hash = hex_to_bytes_digest(&inputs.parent_hash_hex, "parent_hash_hex")?;
 
+        // Parse ZK tree root
+        let zk_tree_root: [u8; 32] =
+            hex_to_array::<32>(&inputs.zk_tree_root_hex, "zk_tree_root_hex")?;
+
+        // Parse ZK Merkle siblings
+        let zk_merkle_siblings: Vec<[[u8; 32]; SIBLINGS_PER_LEVEL]> = inputs
+            .zk_merkle_siblings_hex
+            .iter()
+            .map(|level| {
+                let s0: [u8; 32] = hex_to_array::<32>(&level[0], "sibling[0]")?;
+                let s1: [u8; 32] = hex_to_array::<32>(&level[1], "sibling[1]")?;
+                let s2: [u8; 32] = hex_to_array::<32>(&level[2], "sibling[2]")?;
+                Ok([s0, s1, s2])
+            })
+            .collect::<anyhow::Result<_>>()?;
+
+        let zk_merkle_positions = inputs.zk_merkle_positions.clone();
+
         Ok(CircuitInputs {
             private: PrivateCircuitInputs {
                 secret,
                 transfer_count: inputs.transfer_count,
-                funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
-                storage_proof: processed_storage_proof,
-                unspendable_account: digest_felts_to_bytes(Digest::from(unspendable_account)),
+                unspendable_account: digest_to_bytes(Digest::from(unspendable_account)),
                 parent_hash,
                 state_root,
                 extrinsics_root,
                 digest,
                 input_amount: inputs.input_amount,
+                zk_tree_root,
+                zk_merkle_siblings,
+                zk_merkle_positions,
             },
             public: PublicCircuitInputs {
                 asset_id: 0u32,
                 output_amount_1: inputs.output_amount,
                 output_amount_2: 0u32, // No second output in example
                 volume_fee_bps: inputs.volume_fee_bps,
-                nullifier: digest_felts_to_bytes(
+                nullifier: digest_to_bytes(
                     Nullifier::from_preimage(secret, inputs.transfer_count).hash,
                 ),
                 exit_account_1: BytesDigest::try_from(dest_account_id.as_ref() as &[u8])?,
@@ -225,9 +219,9 @@ impl TryFrom<DebugInputs> for CircuitInputs {
 
 /// Generate a proof from the given inputs
 fn generate_zk_proof(inputs: CircuitInputs) -> anyhow::Result<ProofWithPublicInputs<F, C, D>> {
-    println!("Generating ZK proof...");
-    // Must use zk_config to match the aggregator's dummy proof
-    let config = CircuitConfig::standard_recursion_zk_config();
+    println!("Generating leaf proof...");
+    // Leaf proofs use non-ZK config (only aggregated proofs need ZK for on-chain verification)
+    let config = wormhole_leaf_circuit_config();
     let prover = WormholeProver::new(config);
     let prover_next = prover.commit(&inputs)?;
     let proof: ProofWithPublicInputs<F, C, D> = prover_next.prove().expect("proof failed; qed");
@@ -264,31 +258,27 @@ fn load_proof(
 }
 
 /// Aggregate multiple proofs from files
-fn aggregate_proofs(
-    proof_files: Vec<String>,
-    output_file: &str,
-    aggregation_config: AggregationConfig,
-) -> anyhow::Result<()> {
+fn aggregate_proofs(proof_files: Vec<String>, output_file: &str) -> anyhow::Result<()> {
     println!("\n=== Starting Proof Aggregation ===");
     println!("Loading {} proof files...", proof_files.len());
 
-    // Build the wormhole prover circuit data
-    let config = CircuitConfig::standard_recursion_zk_config();
+    // Build the wormhole prover circuit data (leaf proofs use non-ZK config)
+    let config = wormhole_leaf_circuit_config();
     let prover = WormholeProver::new(config.clone());
     let common_data = &prover.circuit_data.common;
 
-    let mut aggregator = WormholeProofAggregator::from_circuit_config(config, aggregation_config);
+    let mut aggregator = Layer0Aggregator::new(BINS_DIR)?;
 
     println!(
         "Aggregator configured for {} leaf proofs",
-        aggregator.config.num_leaf_proofs,
+        aggregator.batch_size(),
     );
 
-    if proof_files.len() > aggregator.config.num_leaf_proofs {
+    if proof_files.len() > aggregator.batch_size() {
         anyhow::bail!(
             "Too many proof files provided: {} (max: {})",
             proof_files.len(),
-            aggregator.config.num_leaf_proofs
+            aggregator.batch_size()
         );
     }
 
@@ -311,26 +301,22 @@ fn aggregate_proofs(
 fn aggregate_proofs_direct(
     proofs: Vec<ProofWithPublicInputs<F, C, D>>,
     output_file: &str,
-    aggregation_config: AggregationConfig,
 ) -> anyhow::Result<()> {
     println!("\n=== Starting Proof Aggregation ===");
     println!("Aggregating {} proofs...", proofs.len());
 
-    // Build the wormhole aggregator from circuit config
-    let config = CircuitConfig::standard_recursion_zk_config();
-
-    let mut aggregator = WormholeProofAggregator::from_circuit_config(config, aggregation_config);
+    let mut aggregator = Layer0Aggregator::new(BINS_DIR)?;
 
     println!(
         "Aggregator configured for {} leaf proofs",
-        aggregator.config.num_leaf_proofs,
+        aggregator.batch_size(),
     );
 
-    if proofs.len() > aggregator.config.num_leaf_proofs {
+    if proofs.len() > aggregator.batch_size() {
         anyhow::bail!(
             "Too many proofs provided: {} (max: {})",
             proofs.len(),
-            aggregator.config.num_leaf_proofs
+            aggregator.batch_size()
         );
     }
 
@@ -343,29 +329,25 @@ fn aggregate_proofs_direct(
 }
 
 /// Common aggregation logic - aggregate and save
-fn aggregate_and_save(
-    mut aggregator: WormholeProofAggregator,
-    output_file: &str,
-) -> anyhow::Result<()> {
+fn aggregate_and_save(mut aggregator: Layer0Aggregator, output_file: &str) -> anyhow::Result<()> {
     println!("\nRunning aggregation...");
     let aggregated_proof = aggregator.aggregate()?;
 
     // Parse and display aggregated public inputs
-    let aggregated_public_inputs = AggregatedPublicCircuitInputs::try_from_felts(
-        aggregated_proof.proof.public_inputs.as_slice(),
-    )?;
+    let aggregated_public_inputs =
+        AggregatedPublicCircuitInputs::try_from_felts(aggregated_proof.public_inputs.as_slice())?;
     println!("\n=== Aggregated Public Inputs ===");
     println!("{:#?}", aggregated_public_inputs);
 
     // Verify the aggregated proof
     println!("\nVerifying aggregated proof...");
-    aggregated_proof
-        .circuit_data
-        .verify(aggregated_proof.proof.clone())?;
+    aggregator
+        .verify(aggregated_proof.clone())
+        .with_context(|| "Aggregated proof verification failed")?;
     println!("Aggregated proof verified successfully!");
 
     // Save aggregated proof
-    save_proof(&aggregated_proof.proof, output_file)?;
+    save_proof(&aggregated_proof, output_file)?;
     println!("\n=== Aggregation Complete ===");
     println!("Aggregated proof saved to: {}", output_file);
 
@@ -382,29 +364,27 @@ fn derive_secret(base_secret: [u8; 32], index: usize) -> [u8; 32] {
     secret
 }
 
-/// Gets unspendable account from secret
-fn get_unspendable_account(
-    secret_bytes: [u8; 32],
-) -> anyhow::Result<(BytesDigest, SubxtAccountId, Digest)> {
-    let secret: BytesDigest = secret_bytes.try_into()?;
-    let unspendable_account =
+/// Computes the unspendable account from a secret.
+///
+/// Returns both:
+/// - `SubxtAccountId`: For on-chain transfers
+/// - `Digest`: For circuit inputs (field element representation)
+fn unspendable_account_from_secret(secret: BytesDigest) -> (SubxtAccountId, Digest) {
+    let digest =
         wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(secret).account_id;
-
-    let unspendable_account_bytes_digest = digest_felts_to_bytes(unspendable_account);
-    let unspendable_account_bytes: [u8; 32] = unspendable_account_bytes_digest
+    let bytes_digest = digest_to_bytes(digest);
+    let bytes: [u8; 32] = bytes_digest
         .as_ref()
         .try_into()
         .expect("BytesDigest is always 32 bytes");
-    let unspendable_account_id = SubxtAccountId(unspendable_account_bytes);
-
-    Ok((secret, unspendable_account_id, unspendable_account))
+    (SubxtAccountId(bytes), digest)
 }
 
 /// Performs batched transfers and returns circuit inputs for all of them
 async fn perform_batched_transfers(
     quantus_client: &QuantusClient,
     quantum_keypair: &QuantumKeyPair,
-    funding_account: &AccountId32,
+    _funding_account: &AccountId32, // No longer needed in circuit inputs (no `from` field in ZK leaf)
     base_secret: [u8; 32],
     exit_account_bytes: [u8; 32],
     funding_amount: u128,
@@ -422,8 +402,10 @@ async fn perform_batched_transfers(
 
     for i in 0..num_transfers {
         let secret_bytes = derive_secret(base_secret, i);
-        let (secret, unspendable_account_id, unspendable_account) =
-            get_unspendable_account(secret_bytes)?;
+        let secret: BytesDigest = secret_bytes
+            .try_into()
+            .expect("secret_bytes is always 32 bytes");
+        let (unspendable_account_id, unspendable_account) = unspendable_account_from_secret(secret);
 
         println!(
             "Transfer {}: unspendable account {:?}",
@@ -432,9 +414,9 @@ async fn perform_batched_transfers(
         );
 
         // Create transfer call
-        let call = RuntimeCall::Wormhole(WormholeCall::transfer_native {
+        let call = RuntimeCall::Balances(BalancesCall::transfer_allow_death {
             dest: subxt::ext::subxt_core::utils::MultiAddress::Id(unspendable_account_id.clone()),
-            amount: funding_amount,
+            value: funding_amount,
         });
 
         secrets.push(secret);
@@ -515,43 +497,38 @@ async fn perform_batched_transfers(
 
         let (secret, (_, unspendable_account)) = (&secrets[i], &unspendable_accounts[i]);
 
-        // Native token transfers use asset_id = 0
-        let asset_id = 0u32;
-
-        // Convert subxt AccountId32 to sp_core AccountId32 for hash_storage
-        let from_account = AccountId32::new(event.from.0);
-        let to_account = AccountId32::new(event.to.0);
-
-        let leaf_hash = qp_poseidon::PoseidonHasher::hash_storage::<TransferProofKey>(
-            &(
-                asset_id,
-                event.transfer_count,
-                from_account.clone(),
-                to_account.clone(),
-                event.amount,
-            )
-                .encode(),
-        );
-        let proof_address = quantus_node::storage().wormhole().transfer_proof((
-            asset_id,
-            event.transfer_count,
-            event.from.clone(),
-            event.to.clone(),
-            event.amount,
-        ));
-        let mut final_key = proof_address.to_root_bytes();
-        final_key.extend_from_slice(&leaf_hash);
-
-        let proof_params = rpc_params![vec![to_hex(&final_key)], block_hash];
-        let read_proof: ReadProof<H256> = quantus_client
+        // Fetch ZK Merkle proof from the new zkTree RPC
+        let proof_params = rpc_params![hex::encode(event.to.0), event.transfer_count, block_hash];
+        let zk_proof: ZkMerkleProofRpc = quantus_client
             .rpc_client()
-            .request("state_getReadProof", proof_params)
-            .await?;
+            .request("zkTree_getMerkleProof", proof_params)
+            .await
+            .context("Failed to get ZK Merkle proof")?;
 
-        // Prepare the storage proof
-        let proof_bytes: Vec<Vec<u8>> = read_proof.proof.iter().map(|b| b.0.clone()).collect();
-        let processed_storage_proof =
-            prepare_proof_for_circuit(proof_bytes, hex::encode(header.state_root.0), leaf_hash)?;
+        // Parse the ZK Merkle proof
+        let zk_tree_root: [u8; 32] = hex::decode(&zk_proof.root)
+            .context("Failed to decode zk_tree_root")?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid zk_tree_root length"))?;
+
+        let zk_merkle_siblings: Vec<[[u8; 32]; SIBLINGS_PER_LEVEL]> = zk_proof
+            .siblings
+            .iter()
+            .map(|level| {
+                let s0: [u8; 32] = hex::decode(&level[0])?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("Invalid sibling length"))?;
+                let s1: [u8; 32] = hex::decode(&level[1])?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("Invalid sibling length"))?;
+                let s2: [u8; 32] = hex::decode(&level[2])?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("Invalid sibling length"))?;
+                Ok([s0, s1, s2])
+            })
+            .collect::<anyhow::Result<_>>()?;
+
+        let zk_merkle_positions = zk_proof.positions.clone();
 
         let input_amount = (event.amount / SCALE_DOWN_FACTOR) as u32;
         let output_amount = compute_output_amount(input_amount, VOLUME_FEE_BPS);
@@ -560,20 +537,21 @@ async fn perform_batched_transfers(
                 secret: *secret,
                 transfer_count: event.transfer_count,
                 input_amount,
-                funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
-                storage_proof: processed_storage_proof,
-                unspendable_account: digest_felts_to_bytes(Digest::from(*unspendable_account)),
+                unspendable_account: digest_to_bytes(Digest::from(*unspendable_account)),
                 parent_hash,
                 state_root,
                 extrinsics_root,
                 digest,
+                zk_tree_root,
+                zk_merkle_siblings,
+                zk_merkle_positions,
             },
             public: PublicCircuitInputs {
                 asset_id: 0u32,
                 volume_fee_bps: VOLUME_FEE_BPS,
                 output_amount_1: output_amount,
                 output_amount_2: 0u32, // No second output in example
-                nullifier: digest_felts_to_bytes(
+                nullifier: digest_to_bytes(
                     Nullifier::from_preimage(*secret, event.transfer_count).hash,
                 ),
                 exit_account_1: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
@@ -593,7 +571,7 @@ async fn perform_batched_transfers(
 async fn perform_transfer_and_get_inputs(
     quantus_client: &QuantusClient,
     quantum_keypair: &QuantumKeyPair,
-    funding_account: &AccountId32,
+    _funding_account: &AccountId32, // No longer needed in circuit inputs (no `from` field in ZK leaf)
     secret_bytes: [u8; 32],
     exit_account_bytes: [u8; 32],
     funding_amount: u128,
@@ -603,16 +581,7 @@ async fn perform_transfer_and_get_inputs(
 
     // Secret from input
     let secret: BytesDigest = secret_bytes.try_into()?;
-    let unspendable_account =
-        wormhole_circuit::unspendable_account::UnspendableAccount::from_secret(secret).account_id;
-
-    // Convert Digest (field elements) to BytesDigest (bytes)
-    let unspendable_account_bytes_digest = digest_felts_to_bytes(unspendable_account);
-    let unspendable_account_bytes: [u8; 32] = unspendable_account_bytes_digest
-        .as_ref()
-        .try_into()
-        .expect("BytesDigest is always 32 bytes");
-    let unspendable_account_id = SubxtAccountId(unspendable_account_bytes);
+    let (unspendable_account_id, unspendable_account) = unspendable_account_from_secret(secret);
 
     // Exit account from input
     let exit_account_id = SubxtAccountId(exit_account_bytes);
@@ -620,10 +589,10 @@ async fn perform_transfer_and_get_inputs(
     println!("\n=== Transfer {} ===", proof_index + 1);
     println!("Unspendable account: {:?}", &unspendable_account_id);
 
-    // Make the transfer TO the unspendable account using wormhole pallet
+    // Make the transfer TO the unspendable account using balances pallet
     let transfer_tx = quantus_cli::chain::quantus_subxt::api::tx()
-        .wormhole()
-        .transfer_native(
+        .balances()
+        .transfer_allow_death(
             subxt::ext::subxt_core::utils::MultiAddress::Id(unspendable_account_id.clone()),
             funding_amount,
         );
@@ -661,34 +630,38 @@ async fn perform_transfer_and_get_inputs(
         event.amount, event.transfer_count
     );
 
-    // Native token transfers use asset_id = 0
-    let asset_id = 0u32;
-    type TransferKey = (u32, u64, AccountId32, AccountId32, u128);
-    let leaf_hash = qp_poseidon::PoseidonHasher::hash_storage::<TransferKey>(
-        &(
-            asset_id,
-            event.transfer_count,
-            event.from.clone(),
-            event.to.clone(),
-            event.amount,
-        )
-            .encode(),
-    );
-    let proof_address = quantus_node::storage().wormhole().transfer_proof((
-        asset_id,
-        event.transfer_count,
-        event.from.clone(),
-        event.to.clone(),
-        event.amount,
-    ));
-    let mut final_key = proof_address.to_root_bytes();
-    final_key.extend_from_slice(&leaf_hash);
-
-    let proof_params = rpc_params![vec![to_hex(&final_key)], block_hash];
-    let read_proof: ReadProof<H256> = quantus_client
+    // Fetch ZK Merkle proof from the new zkTree RPC
+    let proof_params = rpc_params![hex::encode(event.to.0), event.transfer_count, block_hash];
+    let zk_proof: ZkMerkleProofRpc = quantus_client
         .rpc_client()
-        .request("state_getReadProof", proof_params)
-        .await?;
+        .request("zkTree_getMerkleProof", proof_params)
+        .await
+        .context("Failed to get ZK Merkle proof")?;
+
+    // Parse the ZK Merkle proof
+    let zk_tree_root: [u8; 32] = hex::decode(&zk_proof.root)
+        .context("Failed to decode zk_tree_root")?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid zk_tree_root length"))?;
+
+    let zk_merkle_siblings: Vec<[[u8; 32]; SIBLINGS_PER_LEVEL]> = zk_proof
+        .siblings
+        .iter()
+        .map(|level| {
+            let s0: [u8; 32] = hex::decode(&level[0])?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid sibling length"))?;
+            let s1: [u8; 32] = hex::decode(&level[1])?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid sibling length"))?;
+            let s2: [u8; 32] = hex::decode(&level[2])?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid sibling length"))?;
+            Ok([s0, s1, s2])
+        })
+        .collect::<anyhow::Result<_>>()?;
+
+    let zk_merkle_positions = zk_proof.positions.clone();
 
     let header = blocks.header();
 
@@ -699,11 +672,6 @@ async fn perform_transfer_and_get_inputs(
 
     let block_number = header.number;
 
-    // Prepare the storage proof with the correct accounts
-    let proof_bytes: Vec<Vec<u8>> = read_proof.proof.iter().map(|b| b.0.clone()).collect();
-    let processed_storage_proof =
-        prepare_proof_for_circuit(proof_bytes, hex::encode(header.state_root.0), leaf_hash)?;
-
     // We need to quantize the funding amount to use 2 decimal places of precision (divide by 10^10 since original uses 12)
     let input_amount = (event.amount / SCALE_DOWN_FACTOR) as u32;
     // Calculate output amount after fee deduction
@@ -713,23 +681,22 @@ async fn perform_transfer_and_get_inputs(
         private: PrivateCircuitInputs {
             secret,
             transfer_count: event.transfer_count,
-            funding_account: BytesDigest::try_from(funding_account.as_ref() as &[u8])?,
-            storage_proof: processed_storage_proof,
-            unspendable_account: digest_felts_to_bytes(Digest::from(unspendable_account)),
+            unspendable_account: digest_to_bytes(Digest::from(unspendable_account)),
             parent_hash,
             state_root,
             extrinsics_root,
             digest,
             input_amount,
+            zk_tree_root,
+            zk_merkle_siblings,
+            zk_merkle_positions,
         },
         public: PublicCircuitInputs {
             asset_id: 0u32,
             output_amount_1: output_amount,
             output_amount_2: 0u32, // No second output in example
             volume_fee_bps: VOLUME_FEE_BPS,
-            nullifier: digest_felts_to_bytes(
-                Nullifier::from_preimage(secret, event.transfer_count).hash,
-            ),
+            nullifier: digest_to_bytes(Nullifier::from_preimage(secret, event.transfer_count).hash),
             exit_account_1: BytesDigest::try_from(exit_account_id.as_ref() as &[u8])?,
             exit_account_2: BytesDigest::default(), // No second exit account
             block_hash: BytesDigest::try_from(block_hash.as_ref())?,
@@ -819,9 +786,13 @@ struct Cli {
     #[arg(long)]
     generate_and_aggregate: bool,
 
-    /// Number of leaf proofs for aggregation (required for aggregation modes)
+    /// Number of leaf proofs for first layer of aggregation (required for aggregation modes)
     #[arg(long)]
     num_leaf_proofs: Option<usize>,
+
+    /// Number of leaf proofs for first layer of aggregation (required for aggregation modes)
+    #[arg(long)]
+    num_layer0_proofs: Option<usize>,
 
     /// Number of proofs to generate (for --generate-and-aggregate mode)
     /// Defaults to num_leaf_proofs from aggregation config
@@ -857,7 +828,8 @@ async fn main() -> anyhow::Result<()> {
         let num_leaf_proofs = cli
             .num_leaf_proofs
             .context("--num-leaf-proofs is required for aggregation modes")?;
-        Ok(AggregationConfig::new(num_leaf_proofs))
+        let num_layer0_proofs = cli.num_layer0_proofs;
+        Ok(AggregationConfig::new(num_leaf_proofs, num_layer0_proofs))
     };
 
     // Aggregation-only mode (from files)
@@ -865,12 +837,7 @@ async fn main() -> anyhow::Result<()> {
         let proof_files = cli
             .proof_files
             .context("Missing proof files for aggregation")?;
-        let aggregation_config = get_aggregation_config()?;
-        return aggregate_proofs(
-            proof_files,
-            &cli.aggregated_proof_output,
-            aggregation_config,
-        );
+        return aggregate_proofs(proof_files, &cli.aggregated_proof_output);
     }
 
     // Offline debug mode
@@ -904,8 +871,8 @@ async fn main() -> anyhow::Result<()> {
         DilithiumPair::from_seed(&seed).expect("valid dev account seed for DilithiumPair");
 
     let quantum_keypair = QuantumKeyPair {
-        public_key: funding_pair.public().0.to_vec(),
-        private_key: funding_pair.secret.to_vec(),
+        public_key: funding_pair.public().as_ref().to_vec(),
+        private_key: funding_pair.secret_bytes().to_vec(),
     };
 
     let funding_account = AccountId32::new(PoseidonHasher::hash(funding_pair.public().as_ref()).0);
@@ -993,7 +960,7 @@ async fn main() -> anyhow::Result<()> {
             "Using aggregation config: num_leaf_proofs={}",
             config.num_leaf_proofs
         );
-        aggregate_proofs_direct(proofs, &cli.aggregated_proof_output, config)?;
+        aggregate_proofs_direct(proofs, &cli.aggregated_proof_output)?;
     }
 
     Ok(())

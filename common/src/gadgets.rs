@@ -6,8 +6,26 @@ use plonky2::{
     plonk::circuit_builder::CircuitBuilder,
 };
 
+fn assert_comparison_width(left: usize, n_log: usize) {
+    assert!(n_log > 0, "comparison bit width must be greater than zero");
+
+    let exclusive_upper_bound = if n_log >= usize::BITS as usize {
+        usize::MAX
+    } else {
+        1usize << n_log
+    };
+
+    assert!(
+        left < exclusive_upper_bound,
+        "left constant {left} does not fit in comparison width {n_log} bits"
+    );
+}
+
 /// Compares a constant integer `left` with a variable `right` in a circuit, and returns whether
 /// or not `left < right`.
+///
+/// `n_log` must be wide enough to represent `left`, and it also range-constrains `right` to
+/// `n_log` bits via `split_le`.
 ///
 /// # Returns
 /// - `BoolTarget`: True if `left < right`, false otherwise.
@@ -17,6 +35,8 @@ pub fn is_const_less_than<F: RichField + Extendable<D>, const D: usize>(
     right: Target,
     n_log: usize,
 ) -> BoolTarget {
+    assert_comparison_width(left, n_log);
+
     let right_bits = builder.split_le(right, n_log);
     let left_bits: Vec<bool> = (0..n_log).map(|i| ((left >> i) & 1) != 0).collect();
 
@@ -40,6 +60,26 @@ pub fn is_const_less_than<F: RichField + Extendable<D>, const D: usize>(
     lt
 }
 
+/// Enforce `target < upper_bound_exclusive`.
+///
+/// This helper also constrains `target` to the minimum bit width implied by `n_log`.
+pub fn enforce_target_less_than_const<F: RichField + Extendable<D>, const D: usize>(
+    builder: &mut CircuitBuilder<F, D>,
+    target: Target,
+    upper_bound_exclusive: usize,
+    n_log: usize,
+) {
+    assert!(
+        upper_bound_exclusive > 0,
+        "exclusive upper bound must be greater than zero"
+    );
+    assert_comparison_width(upper_bound_exclusive - 1, n_log);
+
+    let overflow = is_const_less_than(builder, upper_bound_exclusive - 1, target, n_log);
+    let zero = builder.zero();
+    builder.connect(overflow.target, zero);
+}
+
 /// Computes the XOR of two boolean values in a circuit.
 ///
 /// The following mathematical expression is used:
@@ -50,7 +90,7 @@ pub fn is_const_less_than<F: RichField + Extendable<D>, const D: usize>(
 ///
 /// # Returns
 /// - `BoolTarget`: The value given by XORing `a` and `b`.
-pub fn xor<F: RichField + Extendable<D>, const D: usize>(
+fn xor<F: RichField + Extendable<D>, const D: usize>(
     builder: &mut CircuitBuilder<F, D>,
     a: BoolTarget,
     b: BoolTarget,
@@ -64,15 +104,7 @@ pub fn xor<F: RichField + Extendable<D>, const D: usize>(
     BoolTarget::new_unsafe(xor)
 }
 
-#[inline]
-pub fn range32<F: RichField + Extendable<D>, const D: usize>(
-    b: &mut CircuitBuilder<F, D>,
-    x: Target,
-) {
-    // Constrain x < 2^32
-    b.range_check(x, 32);
-}
-
+/// Compare two 4-element arrays (e.g., hash outputs) for equality.
 #[inline]
 pub fn bytes_digest_eq<F: RichField + Extendable<D>, const D: usize>(
     b: &mut CircuitBuilder<F, D>,
@@ -97,6 +129,7 @@ pub fn limbs4_at_offset<const LEAF_PI_LEN: usize, const KEY_OFFSET: usize>(
     let base = index * LEAF_PI_LEN + KEY_OFFSET;
     [pis[base], pis[base + 1], pis[base + 2], pis[base + 3]]
 }
+
 #[inline]
 pub fn limb1_at_offset<const LEAF_PI_LEN: usize, const KEY_OFFSET: usize>(
     pis: &[Target],
@@ -104,40 +137,6 @@ pub fn limb1_at_offset<const LEAF_PI_LEN: usize, const KEY_OFFSET: usize>(
 ) -> Target {
     let base = index * LEAF_PI_LEN + KEY_OFFSET;
     pis[base]
-}
-
-/// Count unique 4x32-bit keys (big-endian limbs) among N leaves each of LEAF_PI_LEN:
-/// KEY_OFFSET is the offset of the 4x32-bit key within each leaf's public inputs.
-/// For each i, flag[i] = 1 if key[i] != key[j] for all j<i, else 0.
-/// Returns sum(flag) as a Target.
-pub fn count_unique_4x32_keys<
-    F: RichField + Extendable<D>,
-    const D: usize,
-    const LEAF_PI_LEN: usize,
-    const KEY_OFFSET: usize,
->(
-    b: &mut CircuitBuilder<F, D>,
-    pis: &[Target],
-    n: usize,
-) -> Target {
-    let one = b.one();
-    let mut first_flags: Vec<Target> = Vec::with_capacity(n);
-
-    for i in 0..n {
-        // seen_any = OR_{j<i} (keys[i] == keys[j])
-        let mut seen_any = BoolTarget::new_unsafe(b.zero());
-        for j in 0..i {
-            let key_i = limbs4_at_offset::<LEAF_PI_LEN, KEY_OFFSET>(pis, i);
-            let key_j = limbs4_at_offset::<LEAF_PI_LEN, KEY_OFFSET>(pis, j);
-            let eq = bytes_digest_eq(b, key_i, key_j); // BoolTarget
-            seen_any = b.or(seen_any, eq);
-        }
-        // first_i = 1 - seen_any
-        let first_i = b.sub(one, seen_any.target);
-        first_flags.push(first_i);
-    }
-
-    b.add_many(&first_flags)
 }
 
 /// Pack two 32-bit limbs (little-endian) into one felt: `lo + hi * 2^32`.

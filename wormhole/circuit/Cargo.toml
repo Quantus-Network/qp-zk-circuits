@@ -11,17 +11,22 @@ version.workspace = true
 anyhow = { workspace = true }
 hex = { workspace = true, features = ["alloc"] }
 qp-plonky2 = { workspace = true }
-qp-wormhole-inputs = { version = "1.0.7", path = "../inputs", default-features = false }
-zk-circuits-common = { package = "qp-zk-circuits-common", version = "1.0.7", path = "../../common", default-features = false }
+qp-wormhole-inputs = { version = "2.0.0", path = "../inputs", default-features = false }
+zk-circuits-common = { package = "qp-zk-circuits-common", version = "2.0.0", path = "../../common", default-features = false }
 
 [features]
 default = ["std"]
+profile = ["qp-plonky2/rand", "qp-plonky2/timing", "std"]
 std = [
 	"anyhow/std",
 	"qp-plonky2/std",
 	"qp-wormhole-inputs/std",
 	"zk-circuits-common/std",
 ]
+
+[dev-dependencies]
+env_logger = "0.9"
+qp-rusty-crystals-hdwallet = { version = "2.1.0" }
 
 [lints]
 workspace = true

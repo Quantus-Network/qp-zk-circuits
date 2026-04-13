@@ -1,14 +1,13 @@
 use alloc::vec::Vec;
 use core::array;
 use core::mem::size_of;
-use zk_circuits_common::utils::digest_bytes_to_felts;
-use zk_circuits_common::utils::digest_felts_to_bytes;
+use zk_circuits_common::utils::bytes_to_digest;
+use zk_circuits_common::utils::digest_to_bytes;
 use zk_circuits_common::utils::felts_to_u64;
 use zk_circuits_common::utils::DIGEST_BYTES_LEN;
-use zk_circuits_common::utils::DIGEST_NUM_FIELD_ELEMENTS;
 use zk_circuits_common::utils::FELTS_PER_U128;
 use zk_circuits_common::utils::FELTS_PER_U64;
-use zk_circuits_common::utils::INJECTIVE_BYTES_LIMB;
+use zk_circuits_common::utils::POSEIDON2_OUTPUT;
 
 use crate::inputs::CircuitInputs;
 use plonky2::{
@@ -21,7 +20,7 @@ use plonky2::{
 };
 use zk_circuits_common::circuit::{CircuitFragment, D, F};
 use zk_circuits_common::codec::{ByteCodec, FieldElementCodec};
-use zk_circuits_common::utils::{injective_string_to_felt, u64_to_felts, BytesDigest, Digest};
+use zk_circuits_common::utils::{string_to_felts, u64_to_felts, BytesDigest, Digest};
 
 pub const SALT_BYTES_LEN: usize = 8;
 pub const NULLIFIER_SALT: &str = "~nullif~";
@@ -34,26 +33,32 @@ const _: () = {
     );
 };
 pub const SECRET_BYTES_LEN: usize = 32;
-pub const SECRET_NUM_TARGETS: usize = DIGEST_NUM_FIELD_ELEMENTS;
+/// Number of field elements for the secret (32 bytes with 8 bytes/felt encoding)
+pub const SECRET_NUM_TARGETS: usize = POSEIDON2_OUTPUT; // 4
 pub const SALT_NUM_TARGETS: usize = 3;
 pub const FUNDING_ACCOUNT_NUM_TARGETS: usize = FELTS_PER_U128;
 pub const TRANSFER_COUNT_NUM_TARGETS: usize = FELTS_PER_U64;
 pub const PREIMAGE_NUM_TARGETS: usize =
     SECRET_NUM_TARGETS + SALT_NUM_TARGETS + FUNDING_ACCOUNT_NUM_TARGETS;
 pub const NULLIFIER_SIZE_FELTS: usize =
-    DIGEST_NUM_FIELD_ELEMENTS + SECRET_NUM_TARGETS + TRANSFER_COUNT_NUM_TARGETS;
-pub const NULLIFIER_SIZE_BYTES: usize = NULLIFIER_SIZE_FELTS * INJECTIVE_BYTES_LIMB; // 4 + 8 + 2 = 14 field elements
+    POSEIDON2_OUTPUT + SECRET_NUM_TARGETS + TRANSFER_COUNT_NUM_TARGETS;
+
+/// Type alias for the secret as a fixed-size array (4 field elements for 32 bytes)
+pub type Secret = Digest;
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Nullifier {
     pub hash: Digest,
-    pub secret: Digest,
+    /// Secret encoded with 8 bytes/felt (4 field elements for 32 bytes)
+    pub secret: Secret,
     transfer_count: [F; TRANSFER_COUNT_NUM_TARGETS],
 }
 
 impl Nullifier {
     pub fn new(digest: BytesDigest, secret: BytesDigest, transfer_count: u64) -> Self {
-        let hash = digest_bytes_to_felts(digest);
-        let secret = digest_bytes_to_felts(secret);
+        let hash = bytes_to_digest(digest);
+        // Use 8 bytes/felt encoding.
+        let secret = bytes_to_digest(secret);
         let transfer_count = u64_to_felts(transfer_count);
 
         Self {
@@ -66,13 +71,13 @@ impl Nullifier {
     pub fn from_preimage(secret: BytesDigest, transfer_count: u64) -> Self {
         let mut preimage = Vec::new();
 
-        let salt = injective_string_to_felt(NULLIFIER_SALT);
-        let secret = digest_bytes_to_felts(secret);
-        let transfer_count = u64_to_felts(transfer_count);
+        let salt = string_to_felts(NULLIFIER_SALT);
+        let secret_felts = bytes_to_digest(secret);
+        let transfer_count_felts = u64_to_felts(transfer_count);
 
         preimage.extend(salt);
-        preimage.extend(secret);
-        preimage.extend(transfer_count);
+        preimage.extend(secret_felts);
+        preimage.extend(transfer_count_felts);
 
         let inner_hash = Poseidon2Hash::hash_no_pad(&preimage).elements;
         let outer_hash = Poseidon2Hash::hash_no_pad(&inner_hash).elements;
@@ -80,8 +85,8 @@ impl Nullifier {
 
         Self {
             hash,
-            secret,
-            transfer_count,
+            secret: secret_felts,
+            transfer_count: transfer_count_felts,
         }
     }
 }
@@ -89,8 +94,8 @@ impl Nullifier {
 impl ByteCodec for Nullifier {
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
-        bytes.extend(*digest_felts_to_bytes(self.hash));
-        bytes.extend(*digest_felts_to_bytes(self.secret));
+        bytes.extend(*digest_to_bytes(self.hash));
+        bytes.extend(*digest_to_bytes(self.secret));
         let transfer_count_uint = felts_to_u64(self.transfer_count).unwrap();
         bytes.extend(transfer_count_uint.to_le_bytes());
         bytes
@@ -115,24 +120,17 @@ impl ByteCodec for Nullifier {
         let digest = slice[offset..offset + hash_size].try_into().map_err(|e| {
             anyhow::anyhow!("Failed to deserialize nullifier hash with error: {:?}", e)
         })?;
-        let hash = digest_bytes_to_felts(digest);
+        let hash = bytes_to_digest(digest);
         offset += hash_size;
 
-        // Deserialize secret
-        let secret = slice[offset..offset + secret_size]
-            .try_into()
-            .map_err(|e| {
-                anyhow::anyhow!("Failed to deserialize nullifier secret with error: {:?}", e)
-            })?;
-        let secret = digest_bytes_to_felts(secret);
-        if secret.len() != SECRET_NUM_TARGETS {
-            return Err(anyhow::anyhow!(
-                "Expected {} field elements for secret, got: {}",
-                SECRET_NUM_TARGETS,
-                secret.len()
-            ));
-        }
-
+        // Deserialize secret (32 bytes -> 4 field elements)
+        let secret_bytes: BytesDigest =
+            slice[offset..offset + secret_size]
+                .try_into()
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to deserialize nullifier secret with error: {:?}", e)
+                })?;
+        let secret = bytes_to_digest(secret_bytes);
         offset += secret_size;
 
         // Deserialize transfer_count
@@ -177,18 +175,18 @@ impl FieldElementCodec for Nullifier {
 
         let mut offset = 0;
         // Deserialize hash
-        let hash = elements[offset..offset + DIGEST_NUM_FIELD_ELEMENTS]
+        let hash: Digest = elements[offset..offset + POSEIDON2_OUTPUT]
             .try_into()
             .map_err(|_| anyhow::anyhow!("Failed to deserialize nullifier hash"))?;
-        offset += DIGEST_NUM_FIELD_ELEMENTS;
+        offset += POSEIDON2_OUTPUT;
 
-        // Deserialize secret
-        let secret = elements[offset..offset + SECRET_NUM_TARGETS]
+        // Deserialize secret (4 field elements)
+        let secret: Secret = elements[offset..offset + SECRET_NUM_TARGETS]
             .try_into()
             .map_err(|_| anyhow::anyhow!("Failed to deserialize nullifier secret"))?;
         offset += SECRET_NUM_TARGETS;
 
-        // Deserialize funding_nonce
+        // Deserialize transfer_count
         let transfer_count = elements[offset..offset + TRANSFER_COUNT_NUM_TARGETS]
             .try_into()
             .map_err(|_| anyhow::anyhow!("Failed to deserialize nullifier transfer_count"))?;
@@ -214,6 +212,7 @@ impl From<&CircuitInputs> for Nullifier {
 #[derive(Debug, Clone)]
 pub struct NullifierTargets {
     pub hash: HashOutTarget,
+    /// Secret targets
     pub secret: HashOutTarget,
     pub transfer_count: [Target; TRANSFER_COUNT_NUM_TARGETS],
 }
@@ -264,14 +263,14 @@ impl CircuitFragment for Nullifier {
 /// a conditional version in connect_shared_targets() to support dummy proofs.
 pub fn add_nullifier_validation(targets: &NullifierTargets, builder: &mut CircuitBuilder<F, D>) {
     use plonky2::hash::poseidon2::Poseidon2Hash;
-    use zk_circuits_common::utils::injective_string_to_felt;
+    use zk_circuits_common::utils::string_to_felts;
 
-    let salt_felts = injective_string_to_felt(NULLIFIER_SALT);
+    let salt_felts = string_to_felts(NULLIFIER_SALT);
     let mut nullifier_preimage = Vec::new();
     for &f in salt_felts.iter() {
         nullifier_preimage.push(builder.constant(f));
     }
-    nullifier_preimage.extend(targets.secret.elements.iter());
+    nullifier_preimage.extend(targets.secret.elements.iter().copied());
     nullifier_preimage.extend(targets.transfer_count.iter());
 
     let inner_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(nullifier_preimage);

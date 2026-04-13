@@ -6,9 +6,11 @@ pub mod block_header;
 pub mod circuit;
 pub mod inputs;
 pub mod nullifier;
-pub mod storage_proof;
+#[cfg(feature = "profile")]
+pub mod profile;
 pub mod substrate_account;
 pub mod unspendable_account;
+pub mod zk_merkle_proof; // 4-ary Poseidon Merkle proof
 
 // Re-export codec traits from common for convenience
 pub use zk_circuits_common::codec::{ByteCodec, FieldElementCodec};

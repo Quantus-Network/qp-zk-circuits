@@ -1,13 +1,13 @@
 #![allow(clippy::new_without_default)]
 use crate::block_header::header::DIGEST_LOGS_SIZE;
-use crate::storage_proof::ProcessedStorageProof;
 use alloc::vec::Vec;
 use anyhow::{bail, Context};
 use plonky2::field::goldilocks_field::GoldilocksField;
 use plonky2::field::types::PrimeField64;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use zk_circuits_common::circuit::{C, D, F};
-use zk_circuits_common::utils::{try_felts_slice_to_bytes_digest, BytesDigest, DIGEST_BYTES_LEN};
+use zk_circuits_common::utils::{try_4_felts_to_bytes, BytesDigest};
+use zk_circuits_common::zk_merkle::SIBLINGS_PER_LEVEL;
 
 // Import public input types and constants from wormhole_inputs (single source of truth)
 use qp_wormhole_inputs::{
@@ -25,26 +25,18 @@ pub struct CircuitInputs {
     pub private: PrivateCircuitInputs,
 }
 
-pub const BLOCK_HEADER_PADDING_FELTS: usize = 53;
-pub const BLOCK_HEADER_SIZE: usize = (DIGEST_BYTES_LEN * 3) + 4 + DIGEST_LOGS_SIZE; // 32 bytes each for parent hash, state root, extrinsics root + 4 bytes for block number + digest logs
-
 /// All of the private inputs required for the circuit.
 #[derive(Debug, Clone)]
 pub struct PrivateCircuitInputs {
     /// Raw bytes of the secret of the nullifier and the unspendable account
     pub secret: BytesDigest,
-    /// A sequence of key-value nodes representing the storage proof.
-    ///
-    /// Each element is a tuple where the items are the left and right splits of a proof node split
-    /// in half at the expected childs hash index.
-    pub storage_proof: ProcessedStorageProof,
+    /// Transfer count for this recipient
     pub transfer_count: u64,
-    pub funding_account: BytesDigest,
-    /// The unspendable account hash.
+    /// The unspendable account hash (recipient of the transfer).
     pub unspendable_account: BytesDigest,
     /// The parent hash of the block header (private - used to compute block_hash)
     pub parent_hash: BytesDigest,
-    /// The state root of the storage proof
+    /// The state root of the block (still needed for block hash computation)
     pub state_root: BytesDigest,
     /// The extrinsics root of the block header
     pub extrinsics_root: BytesDigest,
@@ -53,6 +45,21 @@ pub struct PrivateCircuitInputs {
     /// The input amount from storage (before fee deduction). This value is quantized with 0.01 units of precision.
     /// The circuit verifies that output_amount <= input_amount - (input_amount * volume_fee_bps / 10000).
     pub input_amount: u32,
+
+    // === ZK Merkle Proof fields (replaces old MPT storage_proof) ===
+    /// Root of the ZK tree (from block header's zk_tree_root field).
+    /// This is used for both:
+    /// - Block hash computation (as part of the header preimage)
+    /// - ZK Merkle proof verification (compared against computed root)
+    ///
+    /// The circuit constrains these two uses to be equal.
+    pub zk_tree_root: [u8; 32],
+    /// Sibling hashes at each level of the 4-ary Merkle proof.
+    /// Each level has 3 siblings in **sorted order** (excluding current hash).
+    pub zk_merkle_siblings: Vec<[[u8; 32]; SIBLINGS_PER_LEVEL]>,
+    /// Position hints (0-3) for each level indicating where current hash
+    /// should be inserted among the sorted siblings.
+    pub zk_merkle_positions: Vec<u8>,
 }
 
 // ============================================================================
@@ -72,14 +79,14 @@ pub trait ParsePublicInputs {
 
 impl ParsePublicInputs for PublicCircuitInputs {
     fn try_from_felts(pis: &[GoldilocksField]) -> anyhow::Result<PublicCircuitInputs> {
-        // Public inputs are ordered as follows:
+        // Public inputs are ordered as follows (total 21 felts):
         // asset_id: 1 felt
         // output_amount_1: 1 felt (spend)
         // output_amount_2: 1 felt (change)
         // volume_fee_bps: 1 felt
         // Nullifier.hash: 4 felts
-        // ExitAccount1.address: 4 felts (spend destination)
-        // ExitAccount2.address: 4 felts (change destination)
+        // ExitAccount1.address: 4 felts (8 bytes/felt for hash-derived accounts)
+        // ExitAccount2.address: 4 felts (8 bytes/felt for hash-derived accounts)
         // BlockHeader.block_hash: 4 felts
         // BlockHeader.block_number: 1 felt
         if pis.len() != PUBLIC_INPUTS_FELTS_LEN {
@@ -105,21 +112,17 @@ impl ParsePublicInputs for PublicCircuitInputs {
             .to_canonical_u64()
             .try_into()
             .context("failed to convert volume_fee_bps felt to u32")?;
-        let nullifier =
-            try_felts_slice_to_bytes_digest(&pis[NULLIFIER_START_INDEX..NULLIFIER_END_INDEX])
-                .context("failed to deserialize nullifier hash")?;
-        let block_hash =
-            try_felts_slice_to_bytes_digest(&pis[BLOCK_HASH_START_INDEX..BLOCK_HASH_END_INDEX])
-                .context("failed to deserialize block hash")?;
+        let nullifier = try_4_felts_to_bytes(&pis[NULLIFIER_START_INDEX..NULLIFIER_END_INDEX])
+            .context("failed to deserialize nullifier hash")?;
+        let block_hash = try_4_felts_to_bytes(&pis[BLOCK_HASH_START_INDEX..BLOCK_HASH_END_INDEX])
+            .context("failed to deserialize block hash")?;
 
-        let exit_account_1 = try_felts_slice_to_bytes_digest(
-            &pis[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX],
-        )
-        .context("failed to deserialize exit_account_1")?;
-        let exit_account_2 = try_felts_slice_to_bytes_digest(
-            &pis[EXIT_ACCOUNT_2_START_INDEX..EXIT_ACCOUNT_2_END_INDEX],
-        )
-        .context("failed to deserialize exit_account_2")?;
+        let exit_account_1 =
+            try_4_felts_to_bytes(&pis[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX])
+                .context("failed to deserialize exit_account_1")?;
+        let exit_account_2 =
+            try_4_felts_to_bytes(&pis[EXIT_ACCOUNT_2_START_INDEX..EXIT_ACCOUNT_2_END_INDEX])
+                .context("failed to deserialize exit_account_2")?;
         let block_number_felt = pis[BLOCK_NUMBER_INDEX];
         let block_number = block_number_felt
             .to_canonical_u64()
@@ -157,13 +160,16 @@ impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
     fn try_from_felts(pis: &[GoldilocksField]) -> anyhow::Result<AggregatedPublicCircuitInputs> {
         // Layout in the FINAL (deduped) wrapper proof PIs:
         // [num_unique_exits, asset_id, volume_fee_bps, block_data(5),
-        //  [output_sum(1), exit_account(4)] * 2*N,  <-- 2 outputs per leaf
+        //  [output_sum(1), exit_account(8)] * 2*N,  <-- 2 outputs per leaf, 8 felts per exit account
         //  nullifiers(4) * N, padding...]
         //
         // IMPORTANT: With 2 outputs per leaf, we have 2*N exit slots.
         // The num_unique_exits is informational only.
         // Slots with matching exit accounts will have their amounts summed.
-        let _num_unique_exits = pis[0].to_canonical_u64() as usize;
+        let num_unique_exits: u32 = pis[0]
+            .to_canonical_u64()
+            .try_into()
+            .context("AggregatedPI: num_unique_exits at index 0 exceeds u32 range")?;
         let asset_id: u32 = pis[1]
             .to_canonical_u64()
             .try_into()
@@ -180,12 +186,18 @@ impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
 
         // Helpers
         #[inline]
-        fn read_digest(slice: &[F]) -> anyhow::Result<BytesDigest> {
-            try_felts_slice_to_bytes_digest(slice).context("failed to deserialize BytesDigest")
+        fn read_hash(slice: &[F]) -> anyhow::Result<BytesDigest> {
+            // Hash outputs use 4 felts (8 bytes/felt)
+            try_4_felts_to_bytes(slice).context("failed to deserialize hash")
+        }
+        #[inline]
+        fn read_account(slice: &[F]) -> anyhow::Result<BytesDigest> {
+            // Account IDs use 4 felts (8 bytes/felt) for hash-derived accounts
+            try_4_felts_to_bytes(slice).context("failed to deserialize account")
         }
 
         let block_data = BlockData {
-            block_hash: read_digest(&pis[3..7]).context("parsing block_hash")?,
+            block_hash: read_hash(&pis[3..7]).context("parsing block_hash")?,
             block_number: pis[7]
                 .to_canonical_u64()
                 .try_into()
@@ -210,9 +222,9 @@ impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
                 })?;
             cursor += 1;
 
-            // exit_account (4 felts)
+            // exit_account (4 felts, 8 bytes/felt for hash-derived accounts)
             let exit_account =
-                read_digest(&pis[cursor..cursor + 4]).context("parsing exit_account")?;
+                read_account(&pis[cursor..cursor + 4]).context("parsing exit_account")?;
             cursor += 4;
             account_data.push(PublicInputsByAccount {
                 summed_output_amount,
@@ -223,13 +235,13 @@ impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
         // Read N nullifiers (one per leaf proof)
         let mut nullifiers: Vec<BytesDigest> = Vec::with_capacity(n_leaf);
         for _ in 0..n_leaf {
-            let n = read_digest(&pis[cursor..cursor + 4]).context("parsing nullifier")?;
+            let n = read_hash(&pis[cursor..cursor + 4]).context("parsing nullifier")?;
             cursor += 4;
             nullifiers.push(n);
         }
 
         // Compute expected felts consumed
-        // 8 metadata + 2*N*5 exit slots (2 outputs per leaf) + N*4 nullifiers
+        // 8 metadata + 2*N*5 exit slots (2 outputs per leaf, 1 sum + 4 account) + N*4 nullifiers
         let expected_felts = 8 + num_exit_slots * 5 + n_leaf * 4;
         if cursor != expected_felts {
             bail!(
@@ -242,6 +254,7 @@ impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
         }
 
         Ok(AggregatedPublicCircuitInputs {
+            num_unique_exits,
             asset_id,
             volume_fee_bps,
             block_data,

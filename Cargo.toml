@@ -18,8 +18,9 @@ resolver = "2"
 anyhow = { version = "1.0.98", default-features = false }
 criterion = { version = "0.5.1", default-features = false }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
-qp-plonky2 = { version = "1.1.5", default-features = false, features = ["std"] }
-qp-poseidon-core = { version = "1.0.7", default-features = false, features = ["p2", "p3"] }
+qp-plonky2 = { version = "1.4.1", default-features = false, features = ["std"] }
+qp-poseidon-core = { version = "1.4.0", default-features = false }
+quantus-cli = { version = "1.1.1", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 
 [workspace.package]
@@ -30,12 +31,7 @@ edition = "2021"
 keywords = ["circuits", "plonky2", "quantus-network", "wormhole", "zk"]
 license = "MIT"
 repository = "https://github.com/Quantus-Network/qp-zk-circuits"
-version = "1.0.7"
+version = "2.0.0"
 
 [workspace.lints.clippy]
 uninlined_format_args = "allow"
-
-# Force updated versions for security advisories
-[patch.crates-io]
-qp-poseidon-core = { path = "../qp-poseidon/core" }
-time = { git = "https://github.com/time-rs/time", tag = "v0.3.47" }

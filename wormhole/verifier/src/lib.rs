@@ -84,8 +84,6 @@ pub struct WormholeVerifier {
 
 impl WormholeVerifier {
     /// Creates a new [`WormholeVerifier`] from verifier and common data bytes.
-    ///
-    /// This is the primary constructor for no_std environments like on-chain verification.
     pub fn new_from_bytes(
         verifier_bytes: &[u8],
         common_bytes: &[u8],
@@ -105,8 +103,6 @@ impl WormholeVerifier {
     }
 
     /// Creates a new [`WormholeVerifier`] from a verifier and common data files.
-    ///
-    /// This is a convenience method for std environments.
     #[cfg(feature = "std")]
     pub fn new_from_files(
         verifier_data_path: &Path,
@@ -145,9 +141,18 @@ impl WormholeVerifier {
     /// # Errors
     ///
     /// Returns an error if the proof is not valid.
-    pub fn verify(&self, proof: ProofWithPublicInputs<F, C, D>) -> anyhow::Result<()> {
+    pub fn verify_ref(&self, proof: &ProofWithPublicInputs<F, C, D>) -> anyhow::Result<()> {
         self.circuit_data
-            .verify(proof)
+            .verify(proof.clone())
             .map_err(|e| anyhow!("proof verification failed: {}", e))
+    }
+
+    /// Verify a [`ProofWithPublicInputs`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the proof is not valid.
+    pub fn verify(&self, proof: ProofWithPublicInputs<F, C, D>) -> anyhow::Result<()> {
+        self.verify_ref(&proof)
     }
 }

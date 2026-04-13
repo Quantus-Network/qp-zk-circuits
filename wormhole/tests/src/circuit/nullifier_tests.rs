@@ -3,9 +3,9 @@ use test_helpers::{DEFAULT_SECRETS, DEFAULT_TRANSFER_COUNTS};
 use wormhole_circuit::nullifier::{add_nullifier_validation, Nullifier, NullifierTargets};
 use zk_circuits_common::{
     circuit::{CircuitFragment, C, D, F},
-    utils::digest_bytes_to_felts,
+    codec::FieldElementCodec,
+    utils::{bytes_to_digest, BytesDigest},
 };
-use zk_circuits_common::{codec::FieldElementCodec, utils::BytesDigest};
 
 #[cfg(test)]
 fn run_test(nullifier: &Nullifier) -> anyhow::Result<ProofWithPublicInputs<F, C, D>> {
@@ -45,8 +45,8 @@ fn invalid_secret_fails_proof() {
     // Flip the first byte of the preimage.
     let mut invalid_bytes = hex::decode(DEFAULT_SECRETS[0]).unwrap();
     invalid_bytes[0] ^= 0xFF;
-    let invalid_bytes = invalid_bytes[..32].try_into().unwrap();
-    valid_nullifier.secret = digest_bytes_to_felts(invalid_bytes);
+    let invalid_bytes: [u8; 32] = invalid_bytes[..32].try_into().unwrap();
+    valid_nullifier.secret = bytes_to_digest(BytesDigest::try_from(invalid_bytes).unwrap());
 
     let res = run_test(&valid_nullifier);
     assert!(res.is_err());
@@ -68,6 +68,7 @@ fn nullifier_codec() {
     );
 
     // Encode the account as field elements and compare.
+    // 4 (hash) + 4 (secret) + 2 (transfer_count) = 10
     let field_elements = nullifier.to_field_elements();
     assert_eq!(field_elements.len(), 10);
 

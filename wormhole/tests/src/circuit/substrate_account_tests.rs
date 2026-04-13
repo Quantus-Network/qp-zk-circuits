@@ -1,12 +1,10 @@
-use plonky2::{
-    field::types::{Field, Field64},
-    plonk::proof::ProofWithPublicInputs,
-};
+use plonky2::{field::types::Field, plonk::proof::ProofWithPublicInputs};
 use wormhole_circuit::substrate_account::{ExitAccountTargets, SubstrateAccount};
 use zk_circuits_common::circuit::{CircuitFragment, C, D, F};
 use zk_circuits_common::{
+    codec::ByteCodec,
     codec::FieldElementCodec,
-    utils::{digest_felts_to_bytes, ZERO_DIGEST},
+    utils::{POSEIDON2_OUTPUT, ZERO_DIGEST},
 };
 
 #[cfg(test)]
@@ -29,7 +27,11 @@ fn run_circuit() {
 fn test_exit_account_round_trip() -> anyhow::Result<()> {
     let exit_account = SubstrateAccount::new(&[42u8; 32])?;
     let elements = exit_account.to_field_elements();
-    assert_eq!(elements.len(), 4, "Expected 4 field elements");
+    assert_eq!(
+        elements.len(),
+        POSEIDON2_OUTPUT,
+        "Expected 4 field elements"
+    );
     let decoded = SubstrateAccount::from_field_elements(&elements)?;
     assert_eq!(exit_account, decoded, "Round-trip failed");
     Ok(())
@@ -39,7 +41,11 @@ fn test_exit_account_round_trip() -> anyhow::Result<()> {
 fn test_exit_account_zero_address() -> anyhow::Result<()> {
     let exit_account = SubstrateAccount::new(&[0u8; 32])?;
     let elements = exit_account.to_field_elements();
-    assert_eq!(elements.len(), 4, "Expected 4 field elements");
+    assert_eq!(
+        elements.len(),
+        POSEIDON2_OUTPUT,
+        "Expected 4 field elements"
+    );
     assert_eq!(
         elements,
         ZERO_DIGEST.to_vec(),
@@ -52,18 +58,28 @@ fn test_exit_account_zero_address() -> anyhow::Result<()> {
 
 #[test]
 fn test_exit_account_max_address() -> anyhow::Result<()> {
-    // The max address is the byte encoding of the [F::ORDER; 4] where each field element is u64::MAX.
-    let felts = [F::from_noncanonical_u64(F::ORDER - 1); 4];
-    let digest_felts_to_bytes = digest_felts_to_bytes(felts);
-    let exit_account = SubstrateAccount::new(&*digest_felts_to_bytes)?;
+    // With 8 bytes/felt encoding, we need values that fit in Goldilocks field.
+    // The max valid 8-byte chunk is just under 2^64 - 2^32 + 1 (Goldilocks order).
+    // Use a pattern that produces valid field elements (each 8-byte chunk < field order).
+    // 0x00FFFFFFFFFFFFFF is safely below field order for each chunk.
+    let mut max_valid_bytes = [0u8; 32];
+    for i in 0..4 {
+        // Each 8-byte chunk: 0x00FFFFFFFFFFFFFF (little-endian)
+        max_valid_bytes[i * 8] = 0xFF;
+        max_valid_bytes[i * 8 + 1] = 0xFF;
+        max_valid_bytes[i * 8 + 2] = 0xFF;
+        max_valid_bytes[i * 8 + 3] = 0xFF;
+        max_valid_bytes[i * 8 + 4] = 0xFF;
+        max_valid_bytes[i * 8 + 5] = 0xFF;
+        max_valid_bytes[i * 8 + 6] = 0xFF;
+        max_valid_bytes[i * 8 + 7] = 0x00; // Keep high byte zero to stay under field order
+    }
+    let exit_account = SubstrateAccount::new(&max_valid_bytes)?;
     let elements = exit_account.to_field_elements();
-    assert_eq!(elements.len(), 4, "Expected 4 field elements");
-    // Each element should be u64::MAX (0xFFFFFFFFFFFFFFFF)
-    let expected_value = F::from_noncanonical_u64(F::ORDER - 1);
     assert_eq!(
-        elements,
-        vec![expected_value; 4],
-        "Max address encoding incorrect"
+        elements.len(),
+        POSEIDON2_OUTPUT,
+        "Expected 4 field elements"
     );
     let decoded = SubstrateAccount::from_field_elements(&elements)?;
     assert_eq!(exit_account, decoded, "Max address round-trip failed");
@@ -72,7 +88,7 @@ fn test_exit_account_max_address() -> anyhow::Result<()> {
 
 #[test]
 fn test_exit_account_insufficient_elements() {
-    let elements = vec![F::ZERO; 3]; // Too few elements
+    let elements = vec![F::ZERO; 3]; // Too few elements (needs 4)
     let result = SubstrateAccount::from_field_elements(&elements);
     assert!(
         result.is_err(),
@@ -91,9 +107,14 @@ fn test_exit_account_specific_address() -> anyhow::Result<()> {
     address[31] = 255; // Non-zero first and last bytes
     let exit_account = SubstrateAccount::new(&address)?;
     let elements = exit_account.to_field_elements();
-    assert_eq!(elements.len(), 4, "Expected 4 field elements");
-    // First element: 0x0000000000000001 (little-endian)
-    // Last element: 0xFF00000000000000
+    assert_eq!(
+        elements.len(),
+        POSEIDON2_OUTPUT,
+        "Expected 4 field elements"
+    );
+    // With 8 bytes/felt (little-endian):
+    // First element (bytes 0-7): 0x0000000000000001
+    // Last element (bytes 24-31): 0xFF00000000000000
     let expected_first = F::from_canonical_u64(1);
     let expected_last = F::from_canonical_u64(255u64 << 56);
     assert_eq!(elements[0], expected_first, "First element incorrect");
@@ -113,11 +134,12 @@ fn exit_account_codec() {
 
     // Encode the account's address into field elements.
     let field_elements = account.to_field_elements();
-    assert_eq!(field_elements.len(), 4);
+    assert_eq!(field_elements.len(), POSEIDON2_OUTPUT);
 
     // Reconstruct the original bytes from the field elements.
+    // With 8 bytes/felt encoding:
     let mut expected_elements = Vec::new();
-    for i in 0..4 {
+    for i in 0..POSEIDON2_OUTPUT {
         let mut bytes = [0u8; 8];
         bytes.copy_from_slice(&address_bytes[i * 8..(i + 1) * 8]);
         let value = u64::from_le_bytes(bytes);
@@ -194,4 +216,14 @@ fn codec_different_byte_patterns() {
     let field_elements_varied = account_varied.to_field_elements();
     let recovered_varied = SubstrateAccount::from_field_elements(&field_elements_varied).unwrap();
     assert_eq!(account_varied, recovered_varied);
+}
+
+#[test]
+fn from_bytes_round_trip() {
+    // Test that from_bytes and to_bytes round-trip correctly
+    let address_bytes = [42u8; 32];
+    let account = SubstrateAccount::new(&address_bytes).unwrap();
+    let encoded = account.to_bytes();
+    let decoded = SubstrateAccount::from_bytes(&encoded).unwrap();
+    assert_eq!(account, decoded);
 }

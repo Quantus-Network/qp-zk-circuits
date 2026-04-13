@@ -11,20 +11,21 @@ version.workspace = true
 anyhow = { workspace = true, default-features = false }
 hex = { workspace = true }
 qp-plonky2 = { workspace = true, default-features = false }
-qp-poseidon-core = { workspace = true, default-features = false, features = [
-	"p2",
-	"p3",
-] }
-qp-wormhole-inputs = { version = "1.0.7", path = "../wormhole/inputs", default-features = false }
-rand = "0.8"
+qp-poseidon-constants = { version = "1.0", default-features = false }
+qp-poseidon-core = { workspace = true, default-features = false }
+qp-wormhole-inputs = { version = "2.0.0", path = "../wormhole/inputs", default-features = false }
+rand = { version = "0.8", default-features = false, features = ["alloc"], optional = true }
 serde = { workspace = true }
 
 [features]
 default = ["std"]
 std = [
 	"anyhow/std",
+	"dep:rand",
 	"qp-plonky2/std",
 	"qp-poseidon-core/std",
 	"qp-wormhole-inputs/std",
+	"rand/std",
+	"rand/std_rng",
 	"serde/std",
 ]

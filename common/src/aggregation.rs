@@ -52,12 +52,23 @@ pub struct AggregatedProof {
 pub struct AggregationConfig {
     /// Number of inner proofs aggregated into a single proof.
     pub num_leaf_proofs: usize,
+
+    /// Number of layer0 proofs aggregated into a single layer1 proof.
+    /// Set to none if no layer1 aggregation is desired.
+    pub num_layer0_proofs: Option<usize>,
 }
 
 impl AggregationConfig {
-    pub fn new(num_leaf_proofs: usize) -> Self {
+    pub fn new(num_leaf_proofs: usize, num_layer0_proofs: Option<usize>) -> Self {
         assert!(num_leaf_proofs > 0, "num_leaf_proofs must be > 0");
-        Self { num_leaf_proofs }
+        assert!(
+            num_layer0_proofs.is_none_or(|n| n > 0),
+            "num_layer0_proofs must be > 0 if specified"
+        );
+        Self {
+            num_leaf_proofs,
+            num_layer0_proofs,
+        }
     }
 }
 
@@ -72,7 +83,8 @@ impl AggregationConfig {
 /// # Dummy Proof Detection
 ///
 /// Each domain defines its own sentinel for dummy proofs. For example, the wormhole
-/// domain uses `block_hash == [0,0,0,0]` as the dummy sentinel. The [`is_dummy`] method
+/// domain uses `block_hash == [0,0,0,0]` as the dummy sentinel. The
+/// [`AggregationWrapper::is_dummy`] method
 /// allows the orchestration layer to identify dummies for shuffling and padding logic
 /// without hardcoding domain-specific knowledge.
 pub trait AggregationWrapper {
@@ -114,6 +126,10 @@ pub fn aggregate_chunk(
     common_data: &CommonCircuitData<F, D>,
     verifier_data: &VerifierOnlyCircuitData<C, D>,
 ) -> anyhow::Result<AggregatedProof> {
+    if proofs.is_empty() {
+        anyhow::bail!("aggregate_chunk requires at least one proof");
+    }
+
     let mut builder = CircuitBuilder::new(common_data.config.clone());
     let verifier_data_t =
         builder.add_virtual_verifier_data(common_data.fri_params.config.cap_height);
@@ -167,6 +183,7 @@ pub fn aggregate_with_wrapper<W: AggregationWrapper>(
 ///
 /// This hides dummy proof positions while maintaining valid circuit semantics
 /// (slot 0 must contain a real proof for reference value extraction).
+#[cfg(feature = "std")]
 pub fn shuffle_proofs_preserving_first_real<W: AggregationWrapper>(
     proofs: &mut [ProofWithPublicInputs<F, C, D>],
     wrapper: &W,
@@ -185,5 +202,24 @@ pub fn shuffle_proofs_preserving_first_real<W: AggregationWrapper>(
     if proofs.len() > 1 {
         let mut rng = rand::thread_rng();
         proofs[1..].shuffle(&mut rng);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::aggregate_chunk;
+    use crate::circuit::{C, D, F};
+    use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
+
+    #[test]
+    fn aggregate_chunk_rejects_empty_input() {
+        let builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+        let data = builder.build::<C>();
+
+        let err = aggregate_chunk(&[], &data.common, &data.verifier_only).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "aggregate_chunk requires at least one proof"
+        );
     }
 }
