@@ -10,7 +10,7 @@ version.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 qp-plonky2-verifier = { version = "1.4.1", default-features = false }
-qp-wormhole-inputs = { version = "1.4.2", path = "../inputs", default-features = false }
+qp-wormhole-inputs = { path = "../inputs", default-features = false }
 
 [dev-dependencies]
 criterion = { workspace = true }
