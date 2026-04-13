@@ -50,8 +50,11 @@ pub struct PrivateCircuitInputs {
     pub input_amount: u32,
 
     // === ZK Merkle Proof fields (replaces old MPT storage_proof) ===
-    /// Root of the ZK trie (from block digest).
-    /// Note: This is different from state_root - it's embedded in the digest logs.
+    /// Root of the ZK trie (from block header's zk_trie_root field).
+    /// This is used for both:
+    /// - Block hash computation (as part of the header preimage)
+    /// - ZK Merkle proof verification (compared against computed root)
+    /// The circuit constrains these two uses to be equal.
     pub zk_trie_root: [u8; 32],
     /// Sibling hashes at each level of the 4-ary Merkle proof.
     /// Each level has 3 siblings in **sorted order** (excluding current hash).

@@ -271,22 +271,28 @@ pub mod block_header {
     impl TestInputs for HeaderInputs {
         fn test_inputs_0() -> Self {
             let parent_hash = BytesDigest::try_from(DEFAULT_PARENT_HASHES[0]).unwrap();
+            // Use zero ZK trie root for standalone header tests (dummy proof scenario)
+            let zk_trie_root = BytesDigest::try_from([0u8; 32]).unwrap();
             HeaderInputs::new(
                 parent_hash,
                 DEFAULT_BLOCK_NUMBERS[0],
                 BytesDigest::try_from(DEFAULT_STATE_ROOTS[0]).unwrap(),
                 DEFAULT_EXTRINSICS_ROOTS[0].try_into().unwrap(),
+                zk_trie_root,
                 &DEFAULT_DIGESTS[0],
             )
             .unwrap()
         }
         fn test_inputs_1() -> Self {
             let parent_hash = BytesDigest::try_from(DEFAULT_PARENT_HASHES[1]).unwrap();
+            // Use zero ZK trie root for standalone header tests (dummy proof scenario)
+            let zk_trie_root = BytesDigest::try_from([0u8; 32]).unwrap();
             HeaderInputs::new(
                 parent_hash,
                 DEFAULT_BLOCK_NUMBERS[1],
                 BytesDigest::try_from(DEFAULT_STATE_ROOTS[1]).unwrap(),
                 DEFAULT_EXTRINSICS_ROOTS[1].try_into().unwrap(),
+                zk_trie_root,
                 &DEFAULT_DIGESTS[1],
             )
             .unwrap()
