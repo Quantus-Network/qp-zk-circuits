@@ -37,7 +37,7 @@
 //!         digest: [0u8; 110],
 //!         input_amount: 1000,
 //!         // ZK Merkle proof fields (empty for depth-0 tree where leaf IS root)
-//!         zk_trie_root: [0u8; 32],
+//!         zk_tree_root: [0u8; 32],
 //!         zk_merkle_siblings: vec![],
 //!         zk_merkle_positions: vec![],
 //!     },

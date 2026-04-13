@@ -1,7 +1,7 @@
-//! 4-ary Poseidon Merkle proof verification for the ZK trie.
+//! 4-ary Poseidon Merkle proof verification for the ZK tree.
 //!
 //! This module implements circuit logic for verifying Merkle proofs from the
-//! 4-ary sorted Poseidon tree used by pallet-zk-trie.
+//! 4-ary sorted Poseidon tree used by pallet-zk-tree.
 //!
 //! ## Key differences from MPT storage proofs:
 //!
@@ -39,7 +39,7 @@ use zk_circuits_common::{
 // Re-export for convenience
 pub use zk_circuits_common::zk_merkle::ZkMerkleProof;
 
-/// Number of field elements in the ZK trie leaf preimage:
+/// Number of field elements in the ZK tree leaf preimage:
 /// - 4 (to_account, 8 bytes/felt for compact encoding)
 /// - 2 (transfer_count as u64, two 32-bit limbs)
 /// - 1 (asset_id as u32)
@@ -48,7 +48,7 @@ pub use zk_circuits_common::zk_merkle::ZkMerkleProof;
 /// Total: 8
 ///
 /// Note: This is different from the old MPT leaf which included `from`.
-/// The ZK trie leaf is: (to, transfer_count, asset_id, amount)
+/// The ZK tree leaf is: (to, transfer_count, asset_id, amount)
 pub const NUM_LEAF_FELTS: usize = HASH_NUM_FELTS + 2 + 1 + 1;
 
 // ============================================================================
@@ -380,7 +380,7 @@ impl TryFrom<&CircuitInputs> for ZkMerkleProofData {
         );
 
         Ok(Self::new(
-            inputs.private.zk_trie_root,
+            inputs.private.zk_tree_root,
             inputs.private.zk_merkle_siblings.clone(),
             inputs.private.zk_merkle_positions.clone(),
             leaf,

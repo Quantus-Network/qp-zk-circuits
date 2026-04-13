@@ -316,21 +316,21 @@ pub mod circuit_logic {
             builder.connect(result, zero);
         }
 
-        // ZK trie root validation: header.zk_trie_root == zk_merkle_proof.root_hash
+        // ZK tree root validation: header.zk_tree_root == zk_merkle_proof.root_hash
         // This is the CRITICAL constraint that binds the Merkle proof to the block header.
         // Without this, a malicious prover could supply any valid Merkle proof unrelated
         // to the claimed block header.
         //
         // The security chain is:
-        // 1. block_hash commits to zk_trie_root (via header preimage)
-        // 2. zk_trie_root == zk_merkle_proof.root_hash (this constraint)
+        // 1. block_hash commits to zk_tree_root (via header preimage)
+        // 2. zk_tree_root == zk_merkle_proof.root_hash (this constraint)
         // 3. zk_merkle_proof.root_hash == computed merkle root (in ZkMerkleProofData::circuit)
         // 4. computed merkle root is derived from leaf data
         //
         // Skip this validation for dummy proofs (block_hash == 0 AND outputs == 0).
         for i in 0..4 {
             let diff = builder.sub(
-                targets.block_header.header.zk_trie_root[i],
+                targets.block_header.header.zk_tree_root[i],
                 targets.zk_merkle_proof.root_hash.elements[i],
             );
             let result = builder.mul(diff, is_not_dummy);

@@ -101,7 +101,7 @@ impl TestInputs for CircuitInputs {
 
         // Compute the ZK leaf hash for a single-leaf tree (depth 0)
         // For depth 0, the leaf hash IS the root
-        let zk_trie_root = compute_zk_leaf_hash(
+        let zk_tree_root = compute_zk_leaf_hash(
             &unspendable_account,
             DEFAULT_TRANSFER_COUNTS[0],
             0u32, // asset_id
@@ -134,7 +134,7 @@ impl TestInputs for CircuitInputs {
                 extrinsics_root: DEFAULT_EXTRINSICS_ROOTS[0].try_into().unwrap(),
                 digest: DEFAULT_DIGESTS[0],
                 input_amount: DEFAULT_INPUT_AMOUNTS[0],
-                zk_trie_root,
+                zk_tree_root,
                 zk_merkle_siblings,
                 zk_merkle_positions,
             },
@@ -154,7 +154,7 @@ impl TestInputs for CircuitInputs {
         let exit_account = BytesDigest::try_from(DEFAULT_EXIT_ACCOUNT).unwrap();
 
         // Compute the ZK leaf hash for a single-leaf tree (depth 0)
-        let zk_trie_root = compute_zk_leaf_hash(
+        let zk_tree_root = compute_zk_leaf_hash(
             &unspendable_account,
             DEFAULT_TRANSFER_COUNTS[1],
             0u32, // asset_id
@@ -184,7 +184,7 @@ impl TestInputs for CircuitInputs {
                 extrinsics_root: DEFAULT_EXTRINSICS_ROOTS[1].try_into().unwrap(),
                 digest: DEFAULT_DIGESTS[1],
                 input_amount: DEFAULT_INPUT_AMOUNTS[1],
-                zk_trie_root,
+                zk_tree_root,
                 zk_merkle_siblings,
                 zk_merkle_positions,
             },
@@ -271,28 +271,28 @@ pub mod block_header {
     impl TestInputs for HeaderInputs {
         fn test_inputs_0() -> Self {
             let parent_hash = BytesDigest::try_from(DEFAULT_PARENT_HASHES[0]).unwrap();
-            // Use zero ZK trie root for standalone header tests (dummy proof scenario)
-            let zk_trie_root = BytesDigest::try_from([0u8; 32]).unwrap();
+            // Use zero ZK tree root for standalone header tests (dummy proof scenario)
+            let zk_tree_root = BytesDigest::try_from([0u8; 32]).unwrap();
             HeaderInputs::new(
                 parent_hash,
                 DEFAULT_BLOCK_NUMBERS[0],
                 BytesDigest::try_from(DEFAULT_STATE_ROOTS[0]).unwrap(),
                 DEFAULT_EXTRINSICS_ROOTS[0].try_into().unwrap(),
-                zk_trie_root,
+                zk_tree_root,
                 &DEFAULT_DIGESTS[0],
             )
             .unwrap()
         }
         fn test_inputs_1() -> Self {
             let parent_hash = BytesDigest::try_from(DEFAULT_PARENT_HASHES[1]).unwrap();
-            // Use zero ZK trie root for standalone header tests (dummy proof scenario)
-            let zk_trie_root = BytesDigest::try_from([0u8; 32]).unwrap();
+            // Use zero ZK tree root for standalone header tests (dummy proof scenario)
+            let zk_tree_root = BytesDigest::try_from([0u8; 32]).unwrap();
             HeaderInputs::new(
                 parent_hash,
                 DEFAULT_BLOCK_NUMBERS[1],
                 BytesDigest::try_from(DEFAULT_STATE_ROOTS[1]).unwrap(),
                 DEFAULT_EXTRINSICS_ROOTS[1].try_into().unwrap(),
-                zk_trie_root,
+                zk_tree_root,
                 &DEFAULT_DIGESTS[1],
             )
             .unwrap()

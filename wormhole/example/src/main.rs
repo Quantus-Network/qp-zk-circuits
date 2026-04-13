@@ -53,8 +53,8 @@ fn compute_output_amount(input_amount: u32, fee_bps: u32) -> u32 {
 #[derive(Serialize, Deserialize, Debug)]
 struct DebugInputs {
     secret_hex: String,
-    /// ZK trie root hash (32 bytes hex)
-    zk_trie_root_hex: String,
+    /// ZK tree root hash (32 bytes hex)
+    zk_tree_root_hex: String,
     /// ZK Merkle proof siblings - each level has 3 siblings (4-ary tree) in sorted order
     zk_merkle_siblings_hex: Vec<[String; SIBLINGS_PER_LEVEL]>,
     /// Position hints (0-3) for each level
@@ -79,7 +79,7 @@ impl From<CircuitInputs> for DebugInputs {
     fn from(inputs: CircuitInputs) -> Self {
         DebugInputs {
             secret_hex: hex::encode(inputs.private.secret.as_ref()),
-            zk_trie_root_hex: hex::encode(inputs.private.zk_trie_root),
+            zk_tree_root_hex: hex::encode(inputs.private.zk_tree_root),
             zk_merkle_siblings_hex: inputs
                 .private
                 .zk_merkle_siblings
@@ -108,7 +108,7 @@ impl From<CircuitInputs> for DebugInputs {
     }
 }
 
-/// RPC response type for zkTrie_getMerkleProof
+/// RPC response type for zkTree_getMerkleProof
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ZkMerkleProofRpc {
     pub leaf_index: u64,
@@ -168,9 +168,9 @@ impl TryFrom<DebugInputs> for CircuitInputs {
         let digest: [u8; 110] = hex_to_array::<110>(&inputs.digest_hex, "digest_hex")?;
         let parent_hash = hex_to_bytes_digest(&inputs.parent_hash_hex, "parent_hash_hex")?;
 
-        // Parse ZK trie root
-        let zk_trie_root: [u8; 32] =
-            hex_to_array::<32>(&inputs.zk_trie_root_hex, "zk_trie_root_hex")?;
+        // Parse ZK tree root
+        let zk_tree_root: [u8; 32] =
+            hex_to_array::<32>(&inputs.zk_tree_root_hex, "zk_tree_root_hex")?;
 
         // Parse ZK Merkle siblings
         let zk_merkle_siblings: Vec<[[u8; 32]; SIBLINGS_PER_LEVEL]> = inputs
@@ -196,7 +196,7 @@ impl TryFrom<DebugInputs> for CircuitInputs {
                 extrinsics_root,
                 digest,
                 input_amount: inputs.input_amount,
-                zk_trie_root,
+                zk_tree_root,
                 zk_merkle_siblings,
                 zk_merkle_positions,
             },
@@ -497,19 +497,19 @@ async fn perform_batched_transfers(
 
         let (secret, (_, unspendable_account)) = (&secrets[i], &unspendable_accounts[i]);
 
-        // Fetch ZK Merkle proof from the new zkTrie RPC
+        // Fetch ZK Merkle proof from the new zkTree RPC
         let proof_params = rpc_params![hex::encode(event.to.0), event.transfer_count, block_hash];
         let zk_proof: ZkMerkleProofRpc = quantus_client
             .rpc_client()
-            .request("zkTrie_getMerkleProof", proof_params)
+            .request("zkTree_getMerkleProof", proof_params)
             .await
             .context("Failed to get ZK Merkle proof")?;
 
         // Parse the ZK Merkle proof
-        let zk_trie_root: [u8; 32] = hex::decode(&zk_proof.root)
-            .context("Failed to decode zk_trie_root")?
+        let zk_tree_root: [u8; 32] = hex::decode(&zk_proof.root)
+            .context("Failed to decode zk_tree_root")?
             .try_into()
-            .map_err(|_| anyhow::anyhow!("Invalid zk_trie_root length"))?;
+            .map_err(|_| anyhow::anyhow!("Invalid zk_tree_root length"))?;
 
         let zk_merkle_siblings: Vec<[[u8; 32]; SIBLINGS_PER_LEVEL]> = zk_proof
             .siblings
@@ -542,7 +542,7 @@ async fn perform_batched_transfers(
                 state_root,
                 extrinsics_root,
                 digest,
-                zk_trie_root,
+                zk_tree_root,
                 zk_merkle_siblings,
                 zk_merkle_positions,
             },
@@ -630,19 +630,19 @@ async fn perform_transfer_and_get_inputs(
         event.amount, event.transfer_count
     );
 
-    // Fetch ZK Merkle proof from the new zkTrie RPC
+    // Fetch ZK Merkle proof from the new zkTree RPC
     let proof_params = rpc_params![hex::encode(event.to.0), event.transfer_count, block_hash];
     let zk_proof: ZkMerkleProofRpc = quantus_client
         .rpc_client()
-        .request("zkTrie_getMerkleProof", proof_params)
+        .request("zkTree_getMerkleProof", proof_params)
         .await
         .context("Failed to get ZK Merkle proof")?;
 
     // Parse the ZK Merkle proof
-    let zk_trie_root: [u8; 32] = hex::decode(&zk_proof.root)
-        .context("Failed to decode zk_trie_root")?
+    let zk_tree_root: [u8; 32] = hex::decode(&zk_proof.root)
+        .context("Failed to decode zk_tree_root")?
         .try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid zk_trie_root length"))?;
+        .map_err(|_| anyhow::anyhow!("Invalid zk_tree_root length"))?;
 
     let zk_merkle_siblings: Vec<[[u8; 32]; SIBLINGS_PER_LEVEL]> = zk_proof
         .siblings
@@ -687,7 +687,7 @@ async fn perform_transfer_and_get_inputs(
             extrinsics_root,
             digest,
             input_amount,
-            zk_trie_root,
+            zk_tree_root,
             zk_merkle_siblings,
             zk_merkle_positions,
         },

@@ -131,7 +131,7 @@ pub fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
 
     // For dummy proofs, we use an empty ZK Merkle proof (depth 0)
     // The circuit skips validation when block_hash == 0 and outputs == 0
-    let zk_trie_root = [0u8; 32];
+    let zk_tree_root = [0u8; 32];
     let zk_merkle_siblings: Vec<[[u8; 32]; SIBLINGS_PER_LEVEL]> = vec![];
     let zk_merkle_positions: Vec<u8> = vec![];
 
@@ -158,7 +158,7 @@ pub fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
             extrinsics_root: BytesDigest::try_from(DEFAULT_EXTRINSICS_ROOT)?,
             digest: DEFAULT_DIGEST,
             input_amount: DEFAULT_INPUT_AMOUNT,
-            zk_trie_root,
+            zk_tree_root,
             zk_merkle_siblings,
             zk_merkle_positions,
         },
