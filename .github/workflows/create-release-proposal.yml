@@ -137,9 +137,10 @@ jobs:
           git checkout "$SOURCE_BRANCH"
           git checkout -b "$branch_name"
 
-          # Update workspace package version in root Cargo.toml
+          echo "Updating version fields in internal path dependencies"
+          find . -name "Cargo.toml" -exec sed -i -E "s/(version = \")[0-9]+\\.[0-9]+\\.[0-9]+(\", path = )/\\1$new_cargo_version\\2/g" {} \;
+
           echo "Updating [workspace.package] version in Cargo.toml to: $new_cargo_version"
-          # Portable regex: avoid capturing groups and \s; use POSIX classes
           sed -i -E 's/^version[[:space:]]*=[[:space:]]*"[^"]*"/version = "'$new_cargo_version'"/' Cargo.toml
 
           echo "Installing cargo-edit for version management"
@@ -147,11 +148,6 @@ jobs:
 
           echo "Setting workspace version to $new_cargo_version"
           cargo set-version $new_cargo_version --workspace
-
-          echo "Updating version fields in internal dependencies"
-          # Update version field in existing dependencies that have both version and path
-          # Use sed to update version = "old" to version = "new" in dependency lines
-          find . -name "Cargo.toml" -exec sed -i -E "s/(version = \")[0-9]+\\.[0-9]+\\.[0-9]+(\", path = )/\\1$new_cargo_version\\2/g" {} \;
 
           # Update lockfile for workspace packages only
           cargo update -w
