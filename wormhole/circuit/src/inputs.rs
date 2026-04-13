@@ -26,7 +26,7 @@ pub struct CircuitInputs {
 }
 
 pub const BLOCK_HEADER_PADDING_FELTS: usize = 53;
-pub const BLOCK_HEADER_SIZE: usize = (DIGEST_BYTES_LEN * 3) + 4 + DIGEST_LOGS_SIZE; // 32 bytes each for parent hash, state root, extrinsics root + 4 bytes for block number + digest logs
+pub const BLOCK_HEADER_SIZE: usize = (DIGEST_BYTES_LEN * 4) + 4 + DIGEST_LOGS_SIZE; // 32 bytes each for parent_hash, state_root, extrinsics_root, zk_tree_root + 4 bytes for block_number + digest logs
 
 /// All of the private inputs required for the circuit.
 #[derive(Debug, Clone)]
