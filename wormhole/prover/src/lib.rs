@@ -19,7 +19,6 @@
 //! use qp_wormhole_inputs::PublicCircuitInputs;
 //! use wormhole_circuit::inputs::{CircuitInputs, PrivateCircuitInputs};
 //! use wormhole_circuit::nullifier::Nullifier;
-//! use wormhole_circuit::storage_proof::ProcessedStorageProof;
 //! use wormhole_circuit::substrate_account::SubstrateAccount;
 //! use wormhole_circuit::unspendable_account::UnspendableAccount;
 //! use qp_wormhole_prover::WormholeProver;
@@ -31,14 +30,16 @@
 //!     private: PrivateCircuitInputs {
 //!         secret: [1u8; 32].try_into().unwrap(),
 //!         transfer_count: 0,
-//!         funding_account: [2u8; 32].try_into().unwrap(),
-//!         storage_proof: ProcessedStorageProof::new(vec![], vec![]).unwrap(),
 //!         unspendable_account: [1u8; 32].try_into().unwrap(),
 //!         parent_hash: [5u8; 32].try_into().unwrap(),
 //!         state_root: [3u8; 32].try_into().unwrap(),
 //!         extrinsics_root: [4u8; 32].try_into().unwrap(),
 //!         digest: [0u8; 110],
 //!         input_amount: 1000,
+//!         // ZK Merkle proof fields (empty for depth-0 tree where leaf IS root)
+//!         zk_tree_root: [0u8; 32],
+//!         zk_merkle_siblings: vec![],
+//!         zk_merkle_positions: vec![],
 //!     },
 //!     public: PublicCircuitInputs {
 //!         asset_id: 0_u32,
@@ -86,11 +87,13 @@ use wormhole_circuit::{
 };
 use wormhole_circuit::{
     inputs::CircuitInputs,
-    storage_proof::MAX_SUPPORTED_PROOF_LEN,
     substrate_account::{DualExitAccount, SubstrateAccount},
 };
-use wormhole_circuit::{storage_proof::StorageProof, unspendable_account::UnspendableAccount};
+use wormhole_circuit::{
+    unspendable_account::UnspendableAccount, zk_merkle_proof::ZkMerkleProofData,
+};
 use zk_circuits_common::circuit::{CircuitFragment, C, D, F};
+use zk_circuits_common::zk_merkle::MAX_DEPTH;
 
 #[derive(Debug)]
 pub struct WormholeProver {
@@ -281,17 +284,17 @@ pub fn fill_witness(
     circuit_inputs: &CircuitInputs,
     targets: &CircuitTargets,
 ) -> anyhow::Result<()> {
-    let proof_len = circuit_inputs.private.storage_proof.proof.len();
-    if proof_len > MAX_SUPPORTED_PROOF_LEN {
+    let proof_depth = circuit_inputs.private.zk_merkle_siblings.len();
+    if proof_depth > MAX_DEPTH {
         bail!(
-            "storage proof length {} exceeds maximum supported length {}",
-            proof_len,
-            MAX_SUPPORTED_PROOF_LEN
+            "ZK Merkle proof depth {} exceeds maximum supported depth {}",
+            proof_depth,
+            MAX_DEPTH
         );
     }
 
     let nullifier = Nullifier::from(circuit_inputs);
-    let storage_proof = StorageProof::try_from(circuit_inputs)?;
+    let zk_merkle_proof = ZkMerkleProofData::try_from(circuit_inputs)?;
     let unspendable_account = UnspendableAccount::from(circuit_inputs);
     let exit_accounts = DualExitAccount {
         exit_account_1: SubstrateAccount::from_bytes(
@@ -305,7 +308,7 @@ pub fn fill_witness(
 
     nullifier.fill_targets(pw, targets.nullifier.clone())?;
     unspendable_account.fill_targets(pw, targets.unspendable_account.clone())?;
-    storage_proof.fill_targets(pw, targets.storage_proof.clone())?;
+    zk_merkle_proof.fill_targets(pw, targets.zk_merkle_proof.clone())?;
     exit_accounts.fill_targets(pw, targets.exit_accounts)?;
     block_header.fill_targets(pw, targets.block_header.clone())?;
 

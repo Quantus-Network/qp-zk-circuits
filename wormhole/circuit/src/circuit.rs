@@ -32,9 +32,9 @@ pub fn circuit_data_from_bytes(
 pub mod circuit_logic {
     use crate::block_header::BlockHeaderTargets;
     use crate::nullifier::{Nullifier, NullifierTargets};
-    use crate::storage_proof::{StorageProof, StorageProofTargets};
     use crate::substrate_account::{DualExitAccount, DualExitAccountTargets};
     use crate::unspendable_account::{UnspendableAccount, UnspendableAccountTargets};
+    use crate::zk_merkle_proof::{ZkMerkleProofData, ZkMerkleProofTargets};
     use plonky2::{
         plonk::circuit_data::{CircuitData, ProverCircuitData, VerifierCircuitData},
         plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig},
@@ -45,20 +45,20 @@ pub mod circuit_logic {
     pub struct CircuitTargets {
         pub nullifier: NullifierTargets,
         pub unspendable_account: UnspendableAccountTargets,
-        pub storage_proof: StorageProofTargets,
+        pub zk_merkle_proof: ZkMerkleProofTargets,
         pub exit_accounts: DualExitAccountTargets,
         pub block_header: BlockHeaderTargets,
     }
 
     impl CircuitTargets {
         pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
-            // storage_proof must be created first so asset_id is registered as public input at index 0
-            let storage_proof = StorageProofTargets::new(builder);
+            // zk_merkle_proof must be created first so asset_id is registered as public input at index 0
+            let zk_merkle_proof = ZkMerkleProofTargets::new(builder);
 
             Self {
                 nullifier: NullifierTargets::new(builder),
                 unspendable_account: UnspendableAccountTargets::new(builder),
-                storage_proof,
+                zk_merkle_proof,
                 exit_accounts: DualExitAccountTargets::new(builder),
                 block_header: BlockHeaderTargets::new(builder),
             }
@@ -71,8 +71,8 @@ pub mod circuit_logic {
 
             println!("\n=== Target Creation Gates ===");
 
-            let storage_proof = StorageProofTargets::new(builder);
-            profiler.checkpoint("StorageProofTargets::new", builder.num_gates());
+            let zk_merkle_proof = ZkMerkleProofTargets::new(builder);
+            profiler.checkpoint("ZkMerkleProofTargets::new", builder.num_gates());
 
             let nullifier = NullifierTargets::new(builder);
             profiler.checkpoint("NullifierTargets::new", builder.num_gates());
@@ -89,7 +89,7 @@ pub mod circuit_logic {
             Self {
                 nullifier,
                 unspendable_account,
-                storage_proof,
+                zk_merkle_proof,
                 exit_accounts,
                 block_header,
             }
@@ -132,7 +132,7 @@ pub mod circuit_logic {
             use crate::block_header::BlockHeader;
             Nullifier::circuit(&targets.nullifier, &mut builder);
             UnspendableAccount::circuit(&targets.unspendable_account, &mut builder);
-            StorageProof::circuit(&targets.storage_proof, &mut builder);
+            ZkMerkleProofData::circuit(&targets.zk_merkle_proof, &mut builder);
             DualExitAccount::circuit(&targets.exit_accounts, &mut builder);
             BlockHeader::circuit(&targets.block_header, &mut builder);
 
@@ -164,8 +164,8 @@ pub mod circuit_logic {
             UnspendableAccount::circuit(&targets.unspendable_account, &mut builder);
             profiler.checkpoint("UnspendableAccount::circuit", builder.num_gates());
 
-            StorageProof::circuit(&targets.storage_proof, &mut builder);
-            profiler.checkpoint("StorageProof::circuit", builder.num_gates());
+            ZkMerkleProofData::circuit(&targets.zk_merkle_proof, &mut builder);
+            profiler.checkpoint("ZkMerkleProofData::circuit", builder.num_gates());
 
             DualExitAccount::circuit(&targets.exit_accounts, &mut builder);
             profiler.checkpoint("DualExitAccount::circuit", builder.num_gates());
@@ -226,12 +226,13 @@ pub mod circuit_logic {
         use zk_circuits_common::utils::string_to_felts;
 
         builder.connect_hashes(targets.nullifier.secret, targets.unspendable_account.secret);
-        // Transfer count.
+
+        // Transfer count: connect nullifier's transfer_count to zk_merkle_proof's
         for (&a, &b) in targets
             .nullifier
             .transfer_count
             .iter()
-            .zip(&targets.storage_proof.leaf_inputs.transfer_count)
+            .zip(&targets.zk_merkle_proof.leaf.transfer_count)
         {
             builder.connect(a, b);
         }
@@ -242,7 +243,7 @@ pub mod circuit_logic {
             .account_id
             .elements
             .iter()
-            .zip(&targets.storage_proof.leaf_inputs.to_account.elements)
+            .zip(&targets.zk_merkle_proof.leaf.to_account.elements)
         {
             builder.connect(a, b);
         }
@@ -265,7 +266,7 @@ pub mod circuit_logic {
         let block_hash_is_zero = builder.and(bh01_zero, bh23_zero);
 
         // Check if both output amounts are individually zero
-        let leaf = &targets.storage_proof.leaf_inputs;
+        let leaf = &targets.zk_merkle_proof.leaf;
         let output_1_is_zero = builder.is_equal(leaf.output_amount_1, zero);
         let output_2_is_zero = builder.is_equal(leaf.output_amount_2, zero);
         let both_outputs_zero = builder.and(output_1_is_zero, output_2_is_zero);
@@ -274,9 +275,9 @@ pub mod circuit_logic {
         let is_dummy = builder.and(block_hash_is_zero, both_outputs_zero);
         let is_not_dummy = builder.sub(one, is_dummy.target);
 
-        // Connect is_not_dummy in storage_proof.
-        // This allows the storage proof circuit to detect dummy proofs (block_hash == 0).
-        builder.connect(targets.storage_proof.is_not_dummy.target, is_not_dummy);
+        // Connect is_not_dummy in zk_merkle_proof.
+        // This allows the ZK Merkle proof circuit to detect dummy proofs (block_hash == 0).
+        builder.connect(targets.zk_merkle_proof.is_not_dummy.target, is_not_dummy);
 
         // Nullifier validation: nullifier == H(H(salt + secret + transfer_count))
         // Skip this validation for dummy proofs (block_hash == 0 AND outputs == 0).
@@ -315,13 +316,22 @@ pub mod circuit_logic {
             builder.connect(result, zero);
         }
 
-        // The state_root from the block_header must be the same as the root_hash for the storage_proof.
-        // Both are now 4 felts (8 bytes/felt), so we can directly compare them.
+        // ZK tree root validation: header.zk_tree_root == zk_merkle_proof.root_hash
+        // This is the CRITICAL constraint that binds the Merkle proof to the block header.
+        // Without this, a malicious prover could supply any valid Merkle proof unrelated
+        // to the claimed block header.
+        //
+        // The security chain is:
+        // 1. block_hash commits to zk_tree_root (via header preimage)
+        // 2. zk_tree_root == zk_merkle_proof.root_hash (this constraint)
+        // 3. zk_merkle_proof.root_hash == computed merkle root (in ZkMerkleProofData::circuit)
+        // 4. computed merkle root is derived from leaf data
+        //
         // Skip this validation for dummy proofs (block_hash == 0 AND outputs == 0).
         for i in 0..4 {
             let diff = builder.sub(
-                targets.block_header.header.state_root[i],
-                targets.storage_proof.root_hash.elements[i],
+                targets.block_header.header.zk_tree_root[i],
+                targets.zk_merkle_proof.root_hash.elements[i],
             );
             let result = builder.mul(diff, is_not_dummy);
             builder.connect(result, zero);

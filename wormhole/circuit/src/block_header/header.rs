@@ -25,6 +25,9 @@ pub struct HeaderTargets {
     pub state_root: [Target; POSEIDON2_OUTPUT],
     /// extrinsics_root uses 4 felts (8 bytes/felt) for hash outputs
     pub extrinsics_root: [Target; POSEIDON2_OUTPUT],
+    /// zk_tree_root uses 4 felts (8 bytes/felt) for hash outputs
+    /// Placed before digest to ensure fixed offset regardless of digest content
+    pub zk_tree_root: [Target; POSEIDON2_OUTPUT],
     pub digest: [Target; DIGEST_LOGS_FELTS],
 }
 
@@ -48,15 +51,24 @@ impl HeaderTargets {
                 .add_virtual_targets(POSEIDON2_OUTPUT)
                 .try_into()
                 .unwrap(),
+            // zk_tree_root is private - verified against zk_merkle_proof.root_hash
+            zk_tree_root: builder
+                .add_virtual_targets(POSEIDON2_OUTPUT)
+                .try_into()
+                .unwrap(),
             digest: array::from_fn(|_| builder.add_virtual_target()),
         }
     }
+
+    /// Collect header fields for block hash computation.
+    /// Order matches chain: parent_hash, block_number, state_root, extrinsics_root, zk_tree_root, digest
     pub fn collect_to_vec(&self) -> Vec<Target> {
         self.parent_hash
             .iter()
             .chain(core::iter::once(&self.block_number))
             .chain(self.state_root.iter())
             .chain(self.extrinsics_root.iter())
+            .chain(self.zk_tree_root.iter())
             .chain(self.digest.iter())
             .cloned()
             .collect()
@@ -72,6 +84,8 @@ pub struct HeaderInputs {
     pub state_root: Digest,
     /// extrinsics_root uses 4 felts (8 bytes/felt) for hash outputs
     pub extrinsics_root: Digest,
+    /// zk_tree_root uses 4 felts (8 bytes/felt) for hash outputs
+    pub zk_tree_root: Digest,
     pub digest: [F; DIGEST_LOGS_FELTS],
 }
 
@@ -81,6 +95,7 @@ impl HeaderInputs {
         block_number: u32,
         state_root: BytesDigest,
         extrinsics_root: BytesDigest,
+        zk_tree_root: BytesDigest,
         digest: &[u8; DIGEST_LOGS_SIZE],
     ) -> anyhow::Result<Self> {
         Ok(Self {
@@ -89,6 +104,7 @@ impl HeaderInputs {
             block_number: F::from_noncanonical_u64(block_number as u64),
             state_root: bytes_to_digest(state_root),
             extrinsics_root: bytes_to_digest(extrinsics_root),
+            zk_tree_root: bytes_to_digest(zk_tree_root),
             digest: bytes_to_felts(digest).try_into().unwrap(),
         })
     }
@@ -98,6 +114,7 @@ impl HeaderInputs {
         pre_image.push(self.block_number);
         pre_image.extend_from_slice(&self.state_root);
         pre_image.extend_from_slice(&self.extrinsics_root);
+        pre_image.extend_from_slice(&self.zk_tree_root);
         pre_image.extend_from_slice(&self.digest);
         hash_no_pad_bytes(&pre_image).try_into().unwrap()
     }
@@ -112,6 +129,7 @@ impl TryFrom<&CircuitInputs> for HeaderInputs {
             inputs.public.block_number,
             inputs.private.state_root,
             inputs.private.extrinsics_root,
+            inputs.private.zk_tree_root.try_into()?,
             &inputs.private.digest,
         )
     }

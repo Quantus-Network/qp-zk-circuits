@@ -7,5 +7,5 @@ pub mod circuit;
 pub mod codec;
 pub mod gadgets;
 pub mod serialization;
-pub mod storage_proof;
 pub mod utils;
+pub mod zk_merkle;

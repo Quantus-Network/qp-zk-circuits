@@ -1,13 +1,13 @@
 #![allow(clippy::new_without_default)]
 use crate::block_header::header::DIGEST_LOGS_SIZE;
-use crate::storage_proof::ProcessedStorageProof;
 use alloc::vec::Vec;
 use anyhow::{bail, Context};
 use plonky2::field::goldilocks_field::GoldilocksField;
 use plonky2::field::types::PrimeField64;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use zk_circuits_common::circuit::{C, D, F};
-use zk_circuits_common::utils::{try_4_felts_to_bytes, BytesDigest, DIGEST_BYTES_LEN};
+use zk_circuits_common::utils::{try_4_felts_to_bytes, BytesDigest};
+use zk_circuits_common::zk_merkle::SIBLINGS_PER_LEVEL;
 
 // Import public input types and constants from wormhole_inputs (single source of truth)
 use qp_wormhole_inputs::{
@@ -25,26 +25,18 @@ pub struct CircuitInputs {
     pub private: PrivateCircuitInputs,
 }
 
-pub const BLOCK_HEADER_PADDING_FELTS: usize = 53;
-pub const BLOCK_HEADER_SIZE: usize = (DIGEST_BYTES_LEN * 3) + 4 + DIGEST_LOGS_SIZE; // 32 bytes each for parent hash, state root, extrinsics root + 4 bytes for block number + digest logs
-
 /// All of the private inputs required for the circuit.
 #[derive(Debug, Clone)]
 pub struct PrivateCircuitInputs {
     /// Raw bytes of the secret of the nullifier and the unspendable account
     pub secret: BytesDigest,
-    /// A sequence of key-value nodes representing the storage proof.
-    ///
-    /// Each element is a tuple where the items are the left and right splits of a proof node split
-    /// in half at the expected childs hash index.
-    pub storage_proof: ProcessedStorageProof,
+    /// Transfer count for this recipient
     pub transfer_count: u64,
-    pub funding_account: BytesDigest,
-    /// The unspendable account hash.
+    /// The unspendable account hash (recipient of the transfer).
     pub unspendable_account: BytesDigest,
     /// The parent hash of the block header (private - used to compute block_hash)
     pub parent_hash: BytesDigest,
-    /// The state root of the storage proof
+    /// The state root of the block (still needed for block hash computation)
     pub state_root: BytesDigest,
     /// The extrinsics root of the block header
     pub extrinsics_root: BytesDigest,
@@ -53,6 +45,21 @@ pub struct PrivateCircuitInputs {
     /// The input amount from storage (before fee deduction). This value is quantized with 0.01 units of precision.
     /// The circuit verifies that output_amount <= input_amount - (input_amount * volume_fee_bps / 10000).
     pub input_amount: u32,
+
+    // === ZK Merkle Proof fields (replaces old MPT storage_proof) ===
+    /// Root of the ZK tree (from block header's zk_tree_root field).
+    /// This is used for both:
+    /// - Block hash computation (as part of the header preimage)
+    /// - ZK Merkle proof verification (compared against computed root)
+    ///
+    /// The circuit constrains these two uses to be equal.
+    pub zk_tree_root: [u8; 32],
+    /// Sibling hashes at each level of the 4-ary Merkle proof.
+    /// Each level has 3 siblings in **sorted order** (excluding current hash).
+    pub zk_merkle_siblings: Vec<[[u8; 32]; SIBLINGS_PER_LEVEL]>,
+    /// Position hints (0-3) for each level indicating where current hash
+    /// should be inserted among the sorted siblings.
+    pub zk_merkle_positions: Vec<u8>,
 }
 
 // ============================================================================

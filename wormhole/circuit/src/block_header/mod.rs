@@ -78,7 +78,7 @@ impl CircuitFragment for BlockHeader {
         targets: Self::Targets,
     ) -> anyhow::Result<()> {
         pw.set_hash_target(targets.block_hash, self.block_hash.into())?;
-        // parent_hash, state_root, extrinsics_root use 4 felts (8 bytes/felt)
+        // parent_hash, state_root, extrinsics_root, zk_tree_root use 4 felts (8 bytes/felt)
         pw.set_target_arr(&targets.header.parent_hash, &self.header.parent_hash)?;
         pw.set_target(targets.header.block_number, self.header.block_number)?;
         pw.set_target_arr(&targets.header.state_root, &self.header.state_root)?;
@@ -86,6 +86,7 @@ impl CircuitFragment for BlockHeader {
             &targets.header.extrinsics_root,
             &self.header.extrinsics_root,
         )?;
+        pw.set_target_arr(&targets.header.zk_tree_root, &self.header.zk_tree_root)?;
         pw.set_target_arr(&targets.header.digest, &self.header.digest)?;
         Ok(())
     }
