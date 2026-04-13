@@ -203,14 +203,16 @@ pub mod block_header {
     use wormhole_circuit::block_header::{header::HeaderInputs, BlockHeader};
     use zk_circuits_common::utils::BytesDigest;
 
+    /// Block hashes computed from header inputs with zk_tree_root = [0; 32].
+    /// Recompute with: cargo test -p test-helpers --lib -- compute_expected_block_hashes --nocapture --ignored
     pub const DEFAULT_BLOCK_HASHES: [[u8; 32]; 2] = [
         [
-            235, 49, 203, 25, 8, 72, 136, 122, 45, 22, 127, 70, 234, 35, 28, 89, 136, 121, 149, 38,
-            96, 98, 213, 3, 110, 94, 216, 104, 36, 15, 130, 72,
+            41, 121, 200, 114, 64, 33, 135, 21, 222, 235, 173, 167, 111, 217, 87, 68, 46, 165, 205,
+            243, 3, 7, 81, 12, 41, 10, 36, 214, 38, 141, 199, 160,
         ],
         [
-            2, 183, 100, 99, 168, 110, 130, 191, 150, 131, 245, 43, 33, 13, 226, 140, 126, 3, 170,
-            145, 203, 11, 147, 179, 80, 25, 24, 207, 73, 209, 191, 116,
+            38, 25, 3, 20, 38, 119, 31, 217, 10, 35, 145, 19, 235, 69, 79, 98, 99, 92, 90, 146,
+            245, 234, 228, 68, 125, 205, 20, 92, 178, 28, 153, 61,
         ],
     ];
 
@@ -327,6 +329,37 @@ pub mod nullifier {
                 .try_into()
                 .unwrap();
             Self::from_preimage(secret, DEFAULT_TRANSFER_COUNTS[0])
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::block_header::*;
+    use wormhole_circuit::block_header::header::HeaderInputs;
+    use zk_circuits_common::utils::BytesDigest;
+
+    /// Helper test to compute the expected block hashes when the header structure changes.
+    /// Run with: cargo test -p test-helpers --lib -- compute_expected_block_hashes --nocapture
+    #[test]
+    #[ignore] // Only run manually when updating DEFAULT_BLOCK_HASHES
+    fn compute_expected_block_hashes() {
+        for i in 0..2 {
+            let parent_hash = BytesDigest::try_from(DEFAULT_PARENT_HASHES[i]).unwrap();
+            // Use zero ZK tree root for standalone header tests (dummy proof scenario)
+            let zk_tree_root = BytesDigest::try_from([0u8; 32]).unwrap();
+            let header = HeaderInputs::new(
+                parent_hash,
+                DEFAULT_BLOCK_NUMBERS[i],
+                BytesDigest::try_from(DEFAULT_STATE_ROOTS[i]).unwrap(),
+                DEFAULT_EXTRINSICS_ROOTS[i].try_into().unwrap(),
+                zk_tree_root,
+                &DEFAULT_DIGESTS[i],
+            )
+            .unwrap();
+
+            let block_hash = header.block_hash();
+            println!("DEFAULT_BLOCK_HASHES[{}] = {:?},", i, block_hash.as_ref());
         }
     }
 }
