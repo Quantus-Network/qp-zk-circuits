@@ -114,7 +114,7 @@ The protocol relies on the following assumptions.
     \item \textbf{Hash Security:} The Poseidon2 instantiation used by the system remains collision resistant and preimage resistant for the relevant security level \citep{poseidon2}.
     \item \textbf{Proof Soundness:} The configured Plonky2 recursion stack remains knowledge sound under its standard assumptions \citep{plonky2,fri}.
     \item \textbf{Authenticated History:} The blockchain can check that the public block hash and block number correspond to a valid block in chain history.
-    \item \textbf{Witness Availability:} Honest users can obtain the storage proof and block-header data needed to build a witness for their deposit.
+    \item \textbf{Witness Availability:} Honest users can obtain the storage proof needed to build a witness for their deposit.
 \end{enumerate}
 
 \section{Protocol Overview}
@@ -130,14 +130,14 @@ The user samples a secret \(s\) and derives a wormhole address
 Because this address is derived from a hash rather than a public key, no one can spend from it via ordinary signature-based authorization—funds sent here are effectively burned. The user then deposits to this address through an ordinary on-chain transfer, creating a record that can later be authenticated inside the circuit.
 
 \paragraph{2. Witness Acquisition:}
-To withdraw, the user gathers the deposit record, a storage proof, and block header data. These form the private witness.
+To withdraw, the user gathers the deposit record and a storage proof. These form the private witness.
 
 \paragraph{3. Leaf Proof Generation:}
 The user chooses up to two exit outputs, computes a nullifier
 \[
 \Null(s,c) = H(H(\mathsf{salt_{null}} \parallel s \parallel c)),
 \]
-and produces a leaf proof. The proof reveals the nullifier, the exits, the output amounts, the asset identifier, the fee basis points, the public block hash, and the block number, while keeping the secret, funding account, storage proof, and transfer-specific raw details private. Leaf proofs are not zero-knowledge. They are only seen by the user who generated them.
+and produces a leaf proof. The proof reveals the nullifier, the exits, the output amounts, the asset identifier, the fee basis points, the block hash, and the block number, while keeping the secret and storage proof private. Leaf proofs are not zero-knowledge. They are only seen by the user who generated them and then included in the first aggregation layer as private inputs.
 
 \paragraph{4. First-Layer Aggregation:}
 The user batches leaf proofs that share the same \texttt{block\_hash}, pads with dummy leaves if needed, shuffles the order, and produces a zero-knowledge wrapper proof that forwards grouped exits and nullifiers. This step should be performed locally to preserve privacy.
@@ -167,10 +167,8 @@ The private witness includes:
 \begin{itemize}[leftmargin=1.5em]
     \item \texttt{secret}: User secret from which nullifier and wormhole address are derived.
     \item \texttt{counter}: Per-deposit counter used in nullifier derivation.
-    \item \texttt{funding\_account}: Source account of the deposit.
     \item \texttt{wormhole\_account}: Derived wormhole address \(\WA(s)\).
     \item \texttt{storage\_proof}: Inclusion proof for the deposit record.
-    \item \texttt{block\_header}: Block header fields for commitment verification.
     \item \texttt{input\_amount}: Deposited amount before fee deduction.
 \end{itemize}
 
@@ -181,7 +179,7 @@ Let \(x = (a, v_1, v_2, f, n, \alpha_1, \alpha_2, h_B, b)\) denote the public in
     \item \textbf{Nullifier Correctness:} \(n = \Null(s,c)\).
     \item \textbf{Wormhole-Address Correctness:} \(\alpha_{\mathrm{wh}} = \WA(s)\).
     \item \textbf{Authenticated Inclusion:} The storage proof verifies that the deposit record exists in chain state.
-    \item \textbf{Header Binding:} The block-header fields hash to the public commitment \(h_B\), and the public block number matches.
+    \item \textbf{Block Binding:} The storage proof is bound to the public block hash \(h_B\) and block number \(b\).
     \item \textbf{Fee Constraint:} The disclosed exits satisfy
     \[
     (v_1 + v_2) \cdot 10000 \leq v_{\mathrm{in}} \cdot (10000 - f).
@@ -229,9 +227,9 @@ To tighten the security argument, it is useful to name the object that the proof
 \begin{definition}[Authenticated deposit record]
 An \emph{authenticated deposit record} is a tuple
 \[
-d = (a, v_{\mathrm{in}}, c, \alpha_{\mathrm{fund}}, \alpha_{\mathrm{wh}}, h_B, b)
+d = (\alpha_{\mathrm{wh}}, c, a, v_{\mathrm{in}}, h_B, b)
 \]
-for which there exists witness data \(w\) such that \((x,w) \in \mathcal{R}_{\mathrm{leaf}}\), where \(x\) exposes asset identifier \(a\), block hash \(h_B\), block number \(b\), and exits satisfying the fee constraint against \(v_{\mathrm{in}}\).
+for which there exists witness data \(w\) such that \((x,w) \in \mathcal{R}_{\mathrm{leaf}}\), where \(\alpha_{\mathrm{wh}}\) is the wormhole address, \(c\) is the counter, \(a\) is the asset identifier, \(v_{\mathrm{in}}\) is the deposit amount, and \((h_B, b)\) are the block hash and number.
 \end{definition}
 
 A \emph{real} leaf is a leaf whose public \texttt{block\_hash} is nonzero. A \emph{dummy} leaf is a padding object identified by the sentinel \texttt{block\_hash} \(=0^{32}\).
@@ -242,7 +240,7 @@ Every accepted leaf proof binds to an authenticated deposit record: by knowledge
 
 \subsection{One-time withdrawal}
 
-A deposit creates a transfer record on-chain, keyed by \((a, c, \alpha_{\mathrm{fund}}, \alpha_{\mathrm{wh}}, v)\) where \(a\) is the asset, \(c\) is a counter, \(\alpha_{\mathrm{fund}}\) is the funding account, \(\alpha_{\mathrm{wh}}\) is the wormhole address, and \(v\) is the amount. To withdraw, a prover must know a secret \(s\) such that \(\WA(s) = \alpha_{\mathrm{wh}}\); by collision resistance, this secret is unique. The nullifier is \(\Null(s, c)\).
+A deposit creates a transfer record on-chain, keyed by \((\alpha_{\mathrm{wh}}, c, a, v)\) where \(\alpha_{\mathrm{wh}}\) is the wormhole address, \(c\) is a counter, \(a\) is the asset, and \(v\) is the amount. To withdraw, a prover must know a secret \(s\) such that \(\WA(s) = \alpha_{\mathrm{wh}}\); by collision resistance, this secret is unique. The nullifier is \(\Null(s, c)\).
 
 \begin{proposition}
 If two accepted withdrawals have different nullifiers, they correspond to different transfer records.
@@ -312,7 +310,7 @@ gives the classical stars-and-bars count \(\binom{m_a - 1}{r_a - 1}\). Each such
 
 \subsection{Privacy boundary}
 
-The proof system hides secrets, funding accounts, and storage proofs—these are witness data, not public inputs. However, output amounts, exit accounts, nullifiers, and block references are public. Layer-0 padding enlarges the anonymity set but does not provide full unlinkability; amount patterns, address reuse, and timing correlation remain potential vectors for deanonymization.
+The proof system hides secrets and storage proofs—these are witness data, not public inputs. However, output amounts, exit accounts, nullifiers, and block references are public. Layer-0 padding enlarges the anonymity set but does not provide full unlinkability; amount patterns, address reuse, and timing correlation remain potential vectors for deanonymization.
 
 \section{Evaluation}
 \label{sec:evaluation}
