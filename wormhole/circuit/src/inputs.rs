@@ -6,7 +6,7 @@ use plonky2::field::goldilocks_field::GoldilocksField;
 use plonky2::field::types::PrimeField64;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use zk_circuits_common::circuit::{C, D, F};
-use zk_circuits_common::utils::{try_4_felts_to_bytes, BytesDigest, DIGEST_BYTES_LEN};
+use zk_circuits_common::utils::{try_4_felts_to_bytes, BytesDigest};
 use zk_circuits_common::zk_merkle::SIBLINGS_PER_LEVEL;
 
 // Import public input types and constants from wormhole_inputs (single source of truth)
