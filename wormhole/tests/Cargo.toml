@@ -16,7 +16,7 @@ circuit-builder = { package = "qp-wormhole-circuit-builder", version = "2.0.0", 
 hex = { workspace = true }
 libc = "0.2"
 qp-plonky2 = { workspace = true, default-features = true }
-qp-wormhole-inputs = { path = "../inputs" }
+qp-wormhole-inputs = { version = "2.0.0", path = "../inputs" }
 rand = { version = "0.9.1", default-features = false, features = [
 	"thread_rng",
 ] }
