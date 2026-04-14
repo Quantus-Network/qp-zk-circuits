@@ -18,6 +18,7 @@ zk-circuits-common = { package = "qp-zk-circuits-common", version = "2.0.0", pat
 criterion = { workspace = true }
 test-helpers = { path = "../tests/test-helpers" }
 wormhole-aggregator = { package = "qp-wormhole-aggregator", version = "2.0.0", path = "../aggregator" }
+qp-wormhole-verifier = { version = "2.0.0", path = "../verifier" }
 
 [features]
 default = ["std"]

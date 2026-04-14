@@ -4081,6 +4081,7 @@ dependencies = [
  "qp-wormhole-aggregator 2.0.0",
  "qp-wormhole-circuit 2.0.0",
  "qp-wormhole-inputs 2.0.0",
+ "qp-wormhole-verifier 2.0.0",
  "qp-zk-circuits-common 2.0.0",
  "test-helpers",
 ]

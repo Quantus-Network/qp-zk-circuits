@@ -38,7 +38,7 @@
 \maketitle
 
 \begin{abstract}
-Post-quantum signature schemes impose large public keys and signatures, increasing on-chain costs while still leaking transaction structure. We present \emph{Quantus Wormhole}, a private settlement protocol where users deposit to addresses derived from secrets and later prove in zero knowledge that the deposit exists, hasn't been spent, and satisfies fee rules. Recursive aggregation amortizes verification across many withdrawals, while dummy padding and local shuffling enlarge the anonymity set for balance-linking adversaries. We formalize the withdrawal relation, analyze privacy guarantees, prove security properties, and report proving times for batch sizes up to 49.
+Post-quantum signature schemes impose large public keys and signatures, increasing on-chain costs while still leaking transaction structure. We present \emph{Quantus Wormhole}, a private settlement protocol where users deposit to addresses derived from secrets and later prove in zero knowledge that the deposit exists, hasn't been spent, and satisfies fee rules. Recursive aggregation amortizes verification across many withdrawals, while dummy padding and local shuffling enlarge the anonymity set for balance-linking adversaries. We formalize the withdrawal relation, analyze privacy guarantees, prove security properties, and report benchmarks for two-layer aggregation of up to 256 leaf proofs.
 \end{abstract}
 
 \section{Introduction}
@@ -49,13 +49,13 @@ One response is to verify post-quantum signatures inside a zero-knowledge circui
 
 This paper takes a different approach: rather than proving signature validity, users prove knowledge of a secret tied to an unspent deposit. This idea appears in Ziggy \citep{ziggy}, a STARK-based signature scheme where signers prove knowledge of a hash preimage. We apply the same principle to blockchain settlement, building on EIP-7503's ``wormhole'' concept \citep{eip7503}: funds are sent to addresses derived from secrets and later withdrawn by proving knowledge of that secret. This sidesteps post-quantum signature verification entirely. The circuit only needs hash functions and storage-proof verification. We add recursive proof aggregation for scalable settlement \citep{quantusrepo}.
 
-\paragraph{Contributions}
+\paragraph{Contributions:}
 \begin{enumerate}[leftmargin=1.5em]
     \item A formal specification of the wormhole-address withdrawal relation, covering nullifier derivation, authenticated state inclusion, and fee constraints.
     \item A two-layer recursive aggregation architecture where the first layer performs privacy-sensitive dummy padding and shuffling on the client, while subsequent layers can be delegated.
     \item Combinatorial analysis of anonymity set size under the first-layer grouping rules.
     \item Security proofs for deposit binding, one-time withdrawal, and value conservation, with explicit separation of proof-level and chain-level assumptions.
-    \item Benchmarks showing sub-second proving and sub-20ms verification for batches up to 49 withdrawals.
+    \item Benchmarks demonstrating 20~ms leaf proving, sub-4~ms verification, and two-layer aggregation scaling to 256 leaves.
 \end{enumerate}
 
 \section{Background and Design Goals}
@@ -122,7 +122,7 @@ The protocol relies on the following assumptions.
 
 The protocol consists of five stages.
 
-\paragraph{1. Secret generation and deposit.}
+\paragraph{1. Secret Generation and Deposit:}
 The user samples a secret \(s\) and derives a wormhole address
 \[
 \WA(s) = H(H(\mathsf{salt_{wh}} \parallel s)).
@@ -194,7 +194,8 @@ The proof system does not, by itself, settle a withdrawal. The blockchain must a
     \item check the fee parameter matches the configured rate
     \item reject previously-seen nullifiers
     \item credit exit accounts without increasing total supply
-\end{itemize} 
+\end{itemize}
+
 \section{Recursive Aggregation Architecture}
 \label{sec:aggregation}
 
@@ -250,7 +251,7 @@ To spend from \(\WA(s)\) via signature, an adversary must find a keypair \((sk, 
     \item finding \(s'\) such that \(H(\mathsf{salt_{wh}} \parallel s')\) equals a public key the adversary controls, or
     \item finding \(pk\) such that \(H(pk) = \WA(s)\).
 \end{enumerate}
-Both reduce to preimage attacks: (1) requires finding a preimage of a target public key, and (2) requires finding a preimage of a target wormhole address. By preimage resistance, both succeed with negligible probability. Note that for post-quantum signature schemes where \(|pk| > |H|\) (e.g., Dilithium), case (1) is impossible since a hash output cannot equal a larger public key. In this case, a user can prove an address is a wormhole by revealing the inner hash \(H(\mathsf{salt_{wh}} \parallel s)\): its length proves it is not a valid public key, without revealing \(s\).
+Both reduce to preimage attacks: (1) requires finding a preimage of a target public key, and (2) requires finding a preimage of a target wormhole address. By preimage resistance, both succeed with negligible probability. Note that for post-quantum signature schemes where \(|pk| > |H|\) (e.g., ML-DSA), case (1) is impossible since a hash output cannot equal a larger public key. In this case, a user can prove an address is a wormhole by revealing the inner hash \(H(\mathsf{salt_{wh}} \parallel s)\): its length proves it is not a valid public key, without revealing \(s\).
 \end{proof}
 
 \subsection{Value conservation}
@@ -277,7 +278,7 @@ Fix a first-layer aggregate \(Y\) with total exit amount \(S\) and fee rate \(f\
 Computing \(|\mathcal{A}(Y)|\) is an instance of \textsc{\#SubsetSum}: given \(M\) integers, count subsets whose sum meets a target.
 \end{definition}
 
-\paragraph{Complexity of \textsc{\#SubsetSum}.}
+\paragraph{Complexity of \textsc{\#SubsetSum}:}
 The decision version of subset sum (does any subset sum to exactly \(T\)?) is NP-complete. The counting version \textsc{\#SubsetSum} is \#P-complete \citep{subsetsum}, and no polynomial-time algorithm is known.
 
 Our setting requires counting subsets of size at most \(N\) summing to at least \(T = S/(1-f)\). The size of \(|\mathcal{A}(Y)|\) depends on the distribution of deposit amounts relative to \(T\); when many deposits have amounts in the range of typical withdrawals, the anonymity set grows combinatorially. As long as \(|\mathcal{A}(Y)| > 1\), an adversary cannot determine which subset is correct without knowing the secret.
@@ -294,6 +295,10 @@ Output amounts, exit addresses, nullifiers, and timing are public. First-layer p
 Benchmarks were executed on an Apple M2 Max with 12 CPU cores and 32~GB of RAM. Circuit artifacts were pre-generated; reported times measure only proving and verification. Prove times include witness assignment and proof generation. Verify times measure verification of a pre-generated proof.
 
 All first-layer measurements use repeated identical dummy leaf proofs with the same \texttt{block\_hash}. Second-layer benchmarks use repeated first-layer proofs.
+
+\subsection{Leaf proofs}
+
+Individual leaf proof generation takes approximately 20~ms, with verification in 1.6~ms. These times are dominated by proving; witness assignment is negligible.
 
 \subsection{First-layer aggregation}
 
@@ -342,19 +347,19 @@ Second-layer verification time is effectively constant regardless of the number 
 \section{Related Work}
 \label{sec:related}
 
-\paragraph{Wormholes and privacy pools.}
+\paragraph{Wormholes and Privacy Pools:}
 EIP-7503 proposes proof-of-burn reminting via secret-derived addresses \citep{eip7503}. Privacy Pools adds compliance-aware privacy sets \citep{privacypools}. Quantus implements recursive proofs over authenticated chain state.
 
-\paragraph{Shielded systems.}
+\paragraph{Shielded Systems:}
 Zcash provides strong privacy through shielded notes; Tornado Cash popularized mixer-style privacy on Ethereum \citep{zcash,tornadocash}. Quantus offers lighter-weight private settlement anchored in native chain state.
 
-\paragraph{Recursive proofs.}
+\paragraph{Recursive Proofs:}
 Halo and Plonky2 are standard recursive proof systems \citep{halo,plonky2}. Plonky3 provides Poseidon2 primitives with a separate recursion track \citep{plonky3}. We use Plonky2 with Poseidon2 for recursive composition.
 
-\paragraph{Hash-based authorization.}
+\paragraph{Hash-Based Authorization:}
 The Ziggy signature scheme \citep{ziggy} uses a ZK-STARK to prove knowledge of a hash preimage, replacing lattice-based signatures with hash-based proofs.
 
-\paragraph{Post-quantum blockchains.}
+\paragraph{Post-Quantum Blockchains:}
 Adoption of post-quantum signatures like ML-DSA and SLH-DSA raises questions about transaction size and verification cost \citep{mldsa}. Quantus compresses authorization into ZK proofs rather than publishing large signatures on-chain.
 
 \section{Conclusion}
@@ -368,6 +373,7 @@ Wormhole addresses let a post-quantum blockchain move authorization off-chain wh
 Eli Ben-Sasson, Iddo Bentov, Yinon Horesh, and Michael Riabzev.
 \newblock Fast Reed-Solomon Interactive Oracle Proofs of Proximity.
 \newblock In \emph{45th International Colloquium on Automata, Languages, and Programming (ICALP)}, 2018.
+\newblock \url{https://eprint.iacr.org/2017/568}
 
 \bibitem[Bowe et~al.(2019)Bowe, Grigg, and Hopwood]{halo}
 Sean Bowe, Jack Grigg, and Daira Hopwood.
