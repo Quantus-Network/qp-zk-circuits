@@ -285,69 +285,55 @@ Our setting requires counting subsets of size at most \(N\) summing to at least 
 \section{Evaluation}
 \label{sec:evaluation}
 
-We report wall-clock times for the current implementation.
-
 \subsection{Methodology}
 
-Benchmarks were executed on an Apple M2 Max with 12 CPU cores and 32~GB of RAM.
+Benchmarks were executed on an Apple M2 Max with 12 CPU cores and 32~GB of RAM. Circuit artifacts were pre-generated; reported times measure only proving and verification. Prove times include witness assignment and proof generation. Verify times measure verification of a pre-generated proof.
 
-For the first aggregation layer, we evaluated same-\texttt{block\_hash} batches with \(N \in \{2,4,8,9,16,25,32,36,49\}\) leaf proofs. For the second layer, we fixed each first-layer proof to aggregate eight leaves and varied the number of input first-layer proofs \(M \in \{2,4,8,16,32\}\).
+All first-layer measurements use repeated identical dummy leaf proofs with the same \texttt{block\_hash}. Second-layer benchmarks use repeated first-layer proofs.
 
-All first-layer measurements use repeated identical dummy leaf proofs with the same \texttt{block\_hash}. The second-layer runs use repeated first-layer proofs with full batches.
+\subsection{First-layer aggregation}
 
-Reported build times are builder wall-clock times. For the first layer, build includes leaf and first-layer artifact generation plus configuration hashing. For the second layer, build measures second-layer artifact generation only, with prerequisite first-layer artifacts generated separately. Reported prove times include backend load/deserialization and the \texttt{commit()} stage. Reported verify times isolate verification from proof generation, but still include verifier load/deserialization from serialized circuit binaries.
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}rrr@{}}
+\toprule
+\(N\) leaf proofs & Prove (s) & Verify (ms) \\
+\midrule
+2  & 1.55 & 2.75 \\
+4  & 2.81 & 2.88 \\
+8  & 5.39 & 3.02 \\
+16 & 10.74 & 3.16 \\
+32 & 21.71 & 3.55 \\
+\bottomrule
+\end{tabular}
+\caption{First-layer aggregation times for \(N\) leaf proofs.}
+\label{tab:layer0-results}
+\end{table}
 
-\subsection{First-layer aggregation results}
+Proving time scales with batch size, while verification remains in the millisecond range across all tested configurations.
+
+\subsection{Second-layer aggregation}
 
 \begin{table}[t]
 \centering
 \small
 \begin{tabular}{@{}rrrr@{}}
 \toprule
-\(N\) leaf proofs & Build (s) & Prove (s) & Verify (ms) \\
+\(M\) first-layer proofs & Total leaves & Prove (s) & Verify (ms) \\
 \midrule
-2  & 9.20  & 3.83  & 4.50 \\
-4  & 7.46  & 3.72  & 4.71 \\
-8  & 11.30 & 7.32  & 5.53 \\
-9  & 11.20 & 7.97  & 5.17 \\
-16 & 16.69 & 13.47 & 9.26 \\
-25 & 16.02 & 16.34 & 11.71 \\
-32 & 29.45 & 30.84 & 7.51 \\
-36 & 28.21 & 32.42 & 7.26 \\
-49 & 30.93 & 26.66 & 19.58 \\
+2  & 16  & 0.92 & 2.72 \\
+4  & 32  & 1.88 & 2.86 \\
+8  & 64  & 3.84 & 3.03 \\
+16 & 128 & 7.97 & 3.24 \\
+32 & 256 & 16.69 & 3.74 \\
 \bottomrule
 \end{tabular}
-\caption{Measured wall-clock times for first-layer aggregation. All runs use same-\texttt{block\_hash} dummy leaf proofs.}
-\label{tab:layer0-results}
-\end{table}
-
-Across the tested range, first-layer build times lie between 7.46~s and 30.93~s, proving times between 3.72~s and 32.42~s, and verification times between 4.50~ms and 19.58~ms. Verification remains below 12~ms for all tested sizes up to \(N=36\), with the largest tested batch (\(N=49\)) verifying in 19.58~ms. The verifier footprint remains small even as proving time grows into the tens-of-seconds regime.
-
-\subsection{Second-layer aggregation results}
-
-\begin{table}[t]
-\centering
-\small
-\begin{tabular}{@{}rrrrr@{}}
-\toprule
-\(M\) first-layer proofs & Leaves per first-layer proof & Build (s) & Prove (s) & Verify (ms) \\
-\midrule
-2  & 8 & 5.56 & 3.52 & 5.18 \\
-4  & 8 & 5.54 & 4.23 & 5.34 \\
-8  & 8 & 9.22 & 7.21 & 5.94 \\
-16 & 8 & 13.27 & 13.86 & 6.39 \\
-32 & 8 & 25.78 & 21.32 & 6.88 \\
-\bottomrule
-\end{tabular}
-\caption{Measured wall-clock times for second-layer aggregation with 8 leaves per input first-layer proof.}
+\caption{Second-layer aggregation times. Each first-layer proof aggregates 8 leaf proofs.}
 \label{tab:layer1-results}
 \end{table}
 
-For second-layer aggregation with eight leaves per input first-layer proof, build times range from 5.54~s to 25.78~s, proving times from 3.52~s to 21.32~s, and verification times from 5.18~ms to 6.88~ms across \(M \in \{2,4,8,16,32\}\). Verification is effectively flat across the tested fan-ins, while proving and artifact generation scale with the number of recursive inputs.
-
-\subsection{Amortization}
-
-For a first-layer batch of size \(N\), the public output contains approximately \(14 + 8/N\) field elements per withdrawal. This is the relevant metric for comparing on-chain cost against direct post-quantum signature verification.
+Second-layer verification time is effectively constant regardless of the number of aggregated proofs, demonstrating the benefit of recursive composition.
 
 \section{Limitations}
 \label{sec:discussion}

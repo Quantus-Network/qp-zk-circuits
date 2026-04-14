@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  14 APR 2026 15:09
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  14 APR 2026 20:37
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -749,25 +749,12 @@ LaTeX Font Warning: Font shape `T1/lmr/bx/sc' undefined
 Package microtype Info: Character `029' is missing
 (microtype)             in font `T1/lmr/m/sc/10.95'.
 (microtype)             Ignoring protrusion settings for this character.
-
-Overfull \hbox (45.75563pt too wide) in paragraph at lines 294--295
-[]\T1/lmr/m/n/10.95 (-20) For the first ag-gre-ga-tion layer, we eval-u-ated sa
-me-\T1/lmtt/m/n/10.95 block_hash \T1/lmr/m/n/10.95 (-20) batches with $\OML/lmm
-/m/it/10.95 N \OMS/lmsy/m/n/10.95 2 f\OT1/lmr/m/n/10.95 (-20) 2\OML/lmm/m/it/10
-.95 ; \OT1/lmr/m/n/10.95 (-20) 4\OML/lmm/m/it/10.95 ; \OT1/lmr/m/n/10.95 (-20) 
-8\OML/lmm/m/it/10.95 ; \OT1/lmr/m/n/10.95 (-20) 9\OML/lmm/m/it/10.95 ; \OT1/lmr
-/m/n/10.95 (-20) 16\OML/lmm/m/it/10.95 ; \OT1/lmr/m/n/10.95 (-20) 25\OML/lmm/m/
-it/10.95 ; \OT1/lmr/m/n/10.95 (-20) 32\OML/lmm/m/it/10.95 ; \OT1/lmr/m/n/10.95 
-(-20) 36\OML/lmm/m/it/10.95 ; \OT1/lmr/m/n/10.95 (-20) 49\OMS/lmsy/m/n/10.95 g$
-
- []
-
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <10> on input line 305.
+(Font)              <10> on input line 299.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <7> on input line 305.
+(Font)              <7> on input line 299.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <5> on input line 305.
+(Font)              <5> on input line 299.
 [7{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-mathex.enc}]
 [8] [9] [10] (./main.aux)
  ***********
@@ -779,14 +766,14 @@ L3 programming layer <2026-01-19>
 LaTeX Font Warning: Some font shapes were not available, defaults substituted.
 
 Package rerunfilecheck Info: File `main.out' has not changed.
-(rerunfilecheck)             Checksum: F24AB2CF472C46E5E276487E44A47557;5131.
+(rerunfilecheck)             Checksum: AD81E64D25672C9DBF27C55B933B8269;4927.
  ) 
 Here is how much of TeX's memory you used:
- 17485 strings out of 469006
- 285701 string characters out of 5454813
+ 17479 strings out of 469006
+ 285629 string characters out of 5454813
  756648 words of memory out of 5000000
- 45591 multiletter control sequences out of 15000+600000
- 737754 words of font info for 220 fonts, out of 8000000 for 9000
+ 45590 multiletter control sequences out of 15000+600000
+ 737588 words of font info for 218 fonts, out of 8000000 for 9000
  319 hyphenation exceptions out of 8191
  75i,9n,79p,997b,625s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmbx10.pfb></u
@@ -805,10 +792,10 @@ m/lmss10.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lms
 s8.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmsy10.pf
 b></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmsy8.pfb></us
 r/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmtt10.pfb>
-Output written on main.pdf (10 pages, 374107 bytes).
+Output written on main.pdf (10 pages, 371604 bytes).
 PDF statistics:
- 395 PDF objects out of 1000 (max. 8388607)
- 342 compressed objects within 4 object streams
- 102 named destinations out of 1000 (max. 500000)
- 62217 words of extra memory for PDF output out of 74296 (max. 10000000)
+ 391 PDF objects out of 1000 (max. 8388607)
+ 338 compressed objects within 4 object streams
+ 101 named destinations out of 1000 (max. 500000)
+ 62209 words of extra memory for PDF output out of 74296 (max. 10000000)
 
