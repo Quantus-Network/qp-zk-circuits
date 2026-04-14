@@ -218,36 +218,20 @@ Higher layers aggregate already-wrapped proofs. Since they operate only on publi
 \section{Security and Privacy Analysis}
 \label{sec:security}
 
-This section separates \emph{proof-level} statements from \emph{system-level} statements. Proof-level statements concern the relations enforced by the circuit. System-level statements additionally rely on chain-level checks: block validation, fee parameter matching, nullifier rejection, and correct settlement.
-
-\subsection{Authenticated deposit records}
-
-To tighten the security argument, it is useful to name the object that the proof is actually certifying.
-
-\begin{definition}[Authenticated deposit record]
-An \emph{authenticated deposit record} is a tuple
-\[
-d = (\alpha_{\mathrm{wh}}, c, a, v_{\mathrm{in}}, h_B, b)
-\]
-for which there exists witness data \(w\) such that \((x,w) \in \mathcal{R}_{\mathrm{leaf}}\), where \(\alpha_{\mathrm{wh}}\) is the wormhole address, \(c\) is the counter, \(a\) is the asset identifier, \(v_{\mathrm{in}}\) is the deposit amount, and \((h_B, b)\) are the block hash and number.
-\end{definition}
-
-A \emph{real} leaf is a leaf whose public \texttt{block\_hash} is nonzero. A \emph{dummy} leaf is a padding object identified by the sentinel \texttt{block\_hash} \(=0^{32}\).
-
 \subsection{Deposit binding}
 
-Every accepted leaf proof binds to an authenticated deposit record: by knowledge soundness of the proof system, there exists a witness satisfying conditions (C1)--(C5), which include storage-proof verification and header binding. The blockchain validates that the public \texttt{block\_hash}/\texttt{block\_number} pair refers to a real block, completing the chain of authentication from proof to on-chain state.
+Every accepted leaf proof binds to an on-chain deposit: by knowledge soundness of the proof system, there exists a witness satisfying conditions (C1)--(C5), which include storage-proof verification and block binding. The blockchain validates that the public \texttt{block\_hash}/\texttt{block\_number} pair refers to a real block, completing the chain of authentication from proof to on-chain state.
 
 \subsection{One-time withdrawal}
 
-A deposit creates a transfer record on-chain, keyed by \((\alpha_{\mathrm{wh}}, c, a, v)\) where \(\alpha_{\mathrm{wh}}\) is the wormhole address, \(c\) is a counter, \(a\) is the asset, and \(v\) is the amount. To withdraw, a prover must know a secret \(s\) such that \(\WA(s) = \alpha_{\mathrm{wh}}\); by collision resistance, this secret is unique. The nullifier is \(\Null(s, c)\).
+A deposit to a wormhole address creates a transfer record on-chain. To withdraw, a prover must know a secret \(s\) such that \(\WA(s)\) equals the deposit address; by collision resistance, this secret is unique.
 
 \begin{proposition}
-If two accepted withdrawals have different nullifiers, they correspond to different transfer records.
+If two accepted withdrawals have different nullifiers, they correspond to different deposits.
 \end{proposition}
 
 \begin{proof}
-Let \(n = \Null(s, c)\) and \(n' = \Null(s', c')\) be the nullifiers for two withdrawals corresponding to transfer records \(d\) and \(d'\). Suppose \(n \neq n'\). If \(d = d'\), then both records fix the same wormhole address \(\alpha_{\mathrm{wh}}\) and counter \(c = c'\). Since \(\WA(s) = \alpha_{\mathrm{wh}} = \WA(s')\), collision resistance implies \(s = s'\). But then \(n = \Null(s, c) = \Null(s', c') = n'\), a contradiction. Therefore \(d \neq d'\).
+Suppose two withdrawals with nullifiers \(n = \Null(s, c)\) and \(n' = \Null(s', c')\) correspond to the same deposit. Then both share the same wormhole address and counter, so \(\WA(s) = \WA(s')\) and \(c = c'\). By collision resistance, \(s = s'\). But then \(n = n'\), contradicting the assumption.
 \end{proof}
 
 Since the blockchain rejects duplicate nullifiers, each deposit can be withdrawn at most once.
@@ -266,7 +250,7 @@ To spend from \(\WA(s)\) via signature, an adversary must find a keypair \((sk, 
     \item finding \(s'\) such that \(H(\mathsf{salt_{wh}} \parallel s')\) equals a public key the adversary controls, or
     \item finding \(pk\) such that \(H(pk) = \WA(s)\).
 \end{enumerate}
-Both reduce to preimage attacks: (1) requires finding a preimage of a target public key, and (2) requires finding a preimage of a target wormhole address. By preimage resistance, both succeed with negligible probability. Note that for post-quantum signature schemes where \(|pk| > |H|\) (e.g., Dilithium), case (1) is impossible since a hash output cannot equal a larger public key.
+Both reduce to preimage attacks: (1) requires finding a preimage of a target public key, and (2) requires finding a preimage of a target wormhole address. By preimage resistance, both succeed with negligible probability. Note that for post-quantum signature schemes where \(|pk| > |H|\) (e.g., Dilithium), case (1) is impossible since a hash output cannot equal a larger public key. In this case, a user can prove an address is a wormhole by revealing the inner hash \(H(\mathsf{salt_{wh}} \parallel s)\): its length proves it is not a valid public key, without revealing \(s\).
 \end{proof}
 
 \subsection{Value conservation}
@@ -283,14 +267,7 @@ Together with correct on-chain settlement, these ensure that total settled value
 \subsection{Anonymity sets}
 \label{sec:layer0privacy}
 
-The first aggregation layer does not hide exits or their amounts, but it does make deposit-to-exit linkage ambiguous. An adversary observing a first-layer aggregate sees:
-\begin{itemize}[leftmargin=1.5em]
-    \item \(N\) nullifiers, some corresponding to real deposits and some to dummies,
-    \item grouped exits, where contributions to the same account are summed.
-\end{itemize}
-
-\paragraph{Nullifier indistinguishability.}
-Real nullifiers have the form \(\Null(s,c) = H(H(\mathsf{salt_{null}} \parallel s \parallel c))\). Dummy nullifiers are computed as \(H(H(r))\) for a random preimage \(r\) supplied by the prover. Both are double hashes of high-entropy inputs, so they are computationally indistinguishable to an observer who does not know the preimages. The adversary cannot determine which of the \(N\) nullifiers correspond to real deposits.
+An adversary observing a first-layer aggregate sees \(N\) nullifiers (some real, some dummies) and grouped exits. Real and dummy nullifiers are both double hashes of high-entropy inputs and are computationally indistinguishable. The adversary cannot determine which nullifiers correspond to real deposits.
 
 \begin{definition}[Anonymity set]
 Fix a first-layer aggregate \(Y\) with total exit amount \(S\) and fee rate \(f\). Let \(a_1, \ldots, a_M\) be the amounts of all deposits to addresses that have never had an outgoing transaction. The \emph{anonymity set} \(\mathcal{A}(Y)\) is
