@@ -282,6 +282,10 @@ The decision version of subset sum (does any subset sum to exactly \(T\)?) is NP
 
 Our setting requires counting subsets of size at most \(N\) summing to at least \(T = S/(1-f)\). The size of \(|\mathcal{A}(Y)|\) depends on the distribution of deposit amounts relative to \(T\); when many deposits have amounts in the range of typical withdrawals, the anonymity set grows combinatorially. As long as \(|\mathcal{A}(Y)| > 1\), an adversary cannot determine which subset is correct without knowing the secret.
 
+\subsection{Privacy leakage}
+
+Output amounts, exit addresses, nullifiers, and timing are public. First-layer padding enlarges the anonymity set, but this is plausible deniability, not full shielding. Amount patterns, address reuse, and timing correlation remain potential deanonymization vectors.
+
 \section{Evaluation}
 \label{sec:evaluation}
 
@@ -335,21 +339,6 @@ Proving time scales with batch size, while verification remains in the milliseco
 
 Second-layer verification time is effectively constant regardless of the number of aggregated proofs, demonstrating the benefit of recursive composition.
 
-\section{Limitations}
-\label{sec:discussion}
-
-\paragraph{Same-block scoping.}
-The first layer batches proofs sharing the same \texttt{block\_hash}. Cross-block aggregation is future work.
-
-\paragraph{Two-output limit.}
-Each leaf supports two exits (spend + change), not general multi-recipient batching.
-
-\paragraph{Amount quantization.}
-Amounts are quantized to 0.01-unit resolution to reduce circuit cost.
-
-\paragraph{Privacy leakage.}
-Output amounts, exit addresses, nullifiers, and timing are public. First-layer padding enlarges the anonymity set (\cref{sec:layer0privacy}), but this is plausible deniability, not full shielding. Amount patterns, address reuse, and timing correlation remain potential deanonymization vectors.
-
 \section{Related Work}
 \label{sec:related}
 
@@ -360,28 +349,18 @@ EIP-7503 proposes proof-of-burn reminting via secret-derived addresses \citep{ei
 Zcash provides strong privacy through shielded notes; Tornado Cash popularized mixer-style privacy on Ethereum \citep{zcash,tornadocash}. Quantus offers lighter-weight private settlement anchored in native chain state.
 
 \paragraph{Recursive proofs.}
-Halo and Plonky2 are standard recursive proof systems \citep{halo,plonky2}. Plonky3 provides Poseidon2 primitives with a separate recursion track \citep{plonky3,plonky3recursion}. We use Plonky2 with Poseidon2 for recursive composition.
+Halo and Plonky2 are standard recursive proof systems \citep{halo,plonky2}. Plonky3 provides Poseidon2 primitives with a separate recursion track \citep{plonky3}. We use Plonky2 with Poseidon2 for recursive composition.
 
 \paragraph{Hash-based authorization.}
-The Ziggy signature scheme \citep{ziggy} uses a ZK-STARK to prove knowledge of a hash preimage, replacing lattice-based signatures with hash-based proofs. Our wormhole construction applies a similar idea to blockchain settlement: users prove knowledge of a secret whose hash determines their deposit address.
+The Ziggy signature scheme \citep{ziggy} uses a ZK-STARK to prove knowledge of a hash preimage, replacing lattice-based signatures with hash-based proofs.
 
 \paragraph{Post-quantum blockchains.}
-ML-DSA adoption raises questions about transaction size and verification cost \citep{mldsa}. Quantus compresses authorization into ZK proofs rather than publishing large signatures on-chain.
+Adoption of post-quantum signatures like ML-DSA and SLH-DSA raises questions about transaction size and verification cost \citep{mldsa}. Quantus compresses authorization into ZK proofs rather than publishing large signatures on-chain.
 
 \section{Conclusion}
 \label{sec:conclusion}
 
 Wormhole addresses let a post-quantum blockchain move authorization off-chain while preserving authenticated settlement. Users deposit to secret-derived addresses, prove the deposit exists and hasn't been spent, and reveal only settlement outputs. Recursive aggregation amortizes verification. We formalized the leaf relation, analyzed first-layer privacy, proved security properties, and reported benchmark timings.
-
-
-\appendix
-
-\section{Privacy-score heuristic}
-
-A wallet-side heuristic (not a formal guarantee): for candidate deposits \(\mathcal{D}\) and withdrawal amount \(V\),
-\[
-\mathsf{Score}(V,\mathcal{D}) = \log_2 \left| \left\{ S \subseteq \mathcal{D} : \sum_{d\in S} d\cdot (1-f) \approx V \right\} \right|.
-\]
 
 \begin{thebibliography}{99}
 
@@ -394,11 +373,13 @@ Eli Ben-Sasson, Iddo Bentov, Yinon Horesh, and Michael Riabzev.
 Sean Bowe, Jack Grigg, and Daira Hopwood.
 \newblock Recursive Proof Composition without a Trusted Setup.
 \newblock Cryptology ePrint Archive, Report 2019/1021, 2019.
+\newblock \url{https://eprint.iacr.org/2019/1021}
 
-\bibitem[Buterin et~al.(2023)Buterin, Illum, Nadler, Sch{"a}r, and Soleimani]{privacypools}
-Vitalik Buterin, Jacob Illum, Matthias Nadler, Fabian Sch{"a}r, and Ameen Soleimani.
+\bibitem[Buterin et~al.(2023)Buterin, Illum, Nadler, Sch\"{a}r, and Soleimani]{privacypools}
+Vitalik Buterin, Jacob Illum, Matthias Nadler, Fabian Sch\"{a}r, and Ameen Soleimani.
 \newblock Blockchain Privacy and Regulatory Compliance: Towards a Practical Equilibrium.
 \newblock SSRN, 2023.
+\newblock \url{https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4563364}
 
 \bibitem[Gold and Riabzev(2020)]{ziggy}
 Lior Gold and Michael Riabzev.
@@ -410,46 +391,49 @@ Lior Gold and Michael Riabzev.
 Lorenzo Grassi, Dmitry Khovratovich, and Markus Schofnegger.
 \newblock Poseidon2: A Faster Version of the Poseidon Hash Function.
 \newblock Cryptology ePrint Archive, Report 2023/323, 2023.
+\newblock \url{https://eprint.iacr.org/2023/323}
 
 \bibitem[Hopwood et~al.(2023)Hopwood, Bowe, Hornby, and Wilcox]{zcash}
 Daira Hopwood, Sean Bowe, Taylor Hornby, and Nathan Wilcox.
 \newblock Zcash Protocol Specification.
 \newblock Protocol specification, 2023.
+\newblock \url{https://zips.z.cash/protocol/protocol.pdf}
 
 \bibitem[Kambakhsh et~al.(2023)Kambakhsh, Bateni, Kahoori, and Nobitex Labs]{eip7503}
 Keyvan Kambakhsh, Hamid Bateni, Amir Kahoori, and Nobitex Labs.
 \newblock EIP-7503: Zero-Knowledge Wormholes.
 \newblock Ethereum Improvement Proposal, 2023.
+\newblock \url{https://eips.ethereum.org/EIPS/eip-7503}
 
 \bibitem[National Institute of Standards and Technology(2024)]{mldsa}
 National Institute of Standards and Technology.
 \newblock Module-Lattice-Based Digital Signature Standard (FIPS 204).
 \newblock Federal Information Processing Standards Publication 204, 2024.
+\newblock \url{https://csrc.nist.gov/pubs/fips/204/final}
 
 \bibitem[Polygon Zero Team(2022)]{plonky2}
 Polygon Zero Team.
 \newblock Plonky2: Fast Recursive Arguments with PLONK and FRI.
 \newblock Software repository, 2022.
+\newblock \url{https://github.com/0xPolygonZero/plonky2}
 
 \bibitem[Pertsev et~al.(2019)Pertsev, Semenov, and Storm]{tornadocash}
 Alexey Pertsev, Roman Semenov, and Roman Storm.
 \newblock Tornado Cash Privacy Solution.
 \newblock Project documentation, 2019.
+\newblock \url{https://tornado.cash}
 
-\bibitem[Plonky3 Contributors(2026a)]{plonky3}
+\bibitem[Plonky3 Contributors(2026)]{plonky3}
 Plonky3 Contributors.
 \newblock Plonky3.
 \newblock Software repository, 2026.
-
-\bibitem[Plonky3 Contributors(2026b)]{plonky3recursion}
-Plonky3 Contributors.
-\newblock Plonky3-recursion.
-\newblock Software repository, 2026.
+\newblock \url{https://github.com/Plonky3/Plonky3}
 
 \bibitem[Quantus Network(2026)]{quantusrepo}
 Quantus Network.
 \newblock qp-zk-circuits.
 \newblock Software repository, 2026.
+\newblock \url{https://github.com/quantus-network/qp-zk-circuits}
 
 \bibitem[Garey and Johnson(1979)]{subsetsum}
 Michael~R. Garey and David~S. Johnson.
@@ -460,11 +444,6 @@ Michael~R. Garey and David~S. Johnson.
 Peter~W. Shor.
 \newblock Polynomial-Time Algorithms for Prime Factorization and Discrete Logarithms on a Quantum Computer.
 \newblock \emph{SIAM Journal on Computing}, 26(5):1484--1509, 1997.
-
-\bibitem[Smith(2025)]{qip5}
-Christopher Smith.
-\newblock QIP-0005: Entangled Addresses: Scalable Post-Quantum ZK-Signatures.
-\newblock Quantus Improvement Proposal draft, 2025.
 
 \end{thebibliography}
 
