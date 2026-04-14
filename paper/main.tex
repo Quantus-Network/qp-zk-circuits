@@ -53,7 +53,7 @@ This paper takes a different approach: rather than proving signature validity, u
 \begin{enumerate}[leftmargin=1.5em]
     \item A formal specification of the wormhole-address withdrawal relation, covering nullifier derivation, authenticated state inclusion, and fee constraints.
     \item A two-layer recursive aggregation architecture where the first layer performs privacy-sensitive dummy padding and shuffling on the client, while subsequent layers can be delegated.
-    \item Combinatorial analysis of anonymity set size under the layer-0 grouping rules.
+    \item Combinatorial analysis of anonymity set size under the first-layer grouping rules.
     \item Security proofs for deposit binding, one-time withdrawal, and value conservation, with explicit separation of proof-level and chain-level assumptions.
     \item Benchmarks showing sub-second proving and sub-20ms verification for batches up to 49 withdrawals.
 \end{enumerate}
@@ -209,7 +209,7 @@ The first aggregation layer is privacy-sensitive and should be executed locally.
     \item Real nullifiers are forwarded; dummy nullifiers are replaced by hashing prover-supplied random preimages, preventing a malicious prover from choosing a dummy nullifier that collides with a real one.
 \end{itemize}
 
-A delegated layer-0 service would observe raw child proofs before padding and shuffling, collapsing much of the anonymity set quantified in \cref{sec:layer0privacy}.
+A delegated first-layer service would observe raw child proofs before padding and shuffling, collapsing much of the anonymity set quantified in \cref{sec:layer0privacy}.
 
 \subsection{Higher-layer aggregation}
 
@@ -291,11 +291,11 @@ We report wall-clock times for the current implementation.
 
 Benchmarks were executed on an Apple M2 Max with 12 CPU cores and 32~GB of RAM.
 
-For the implemented first aggregation layer, we evaluated same-\texttt{block\_hash} batches with \(N \in \{2,4,8,9,16,25,32,36,49\}\) leaf proofs. For the next recursive layer, we fixed each layer-0 proof to aggregate eight leaves and varied the number of input layer-0 proofs \(M \in \{2,4,8,16,32\}\).
+For the first aggregation layer, we evaluated same-\texttt{block\_hash} batches with \(N \in \{2,4,8,9,16,25,32,36,49\}\) leaf proofs. For the second layer, we fixed each first-layer proof to aggregate eight leaves and varied the number of input first-layer proofs \(M \in \{2,4,8,16,32\}\).
 
-All first-layer measurements use repeated identical dummy leaf proofs with the same \texttt{block\_hash}. The second-layer runs use repeated layer-0 proofs with full batches.
+All first-layer measurements use repeated identical dummy leaf proofs with the same \texttt{block\_hash}. The second-layer runs use repeated first-layer proofs with full batches.
 
-Reported build times are builder wall-clock times. For layer~0, build includes leaf and layer-0 artifact generation plus configuration hashing. For layer~1, build measures layer-1 artifact generation only, with prerequisite layer-0 artifacts generated separately. Reported prove times include backend load/deserialization and the \texttt{commit()} stage. Reported verify times isolate verification from proof generation, but still include verifier load/deserialization from serialized circuit binaries.
+Reported build times are builder wall-clock times. For the first layer, build includes leaf and first-layer artifact generation plus configuration hashing. For the second layer, build measures second-layer artifact generation only, with prerequisite first-layer artifacts generated separately. Reported prove times include backend load/deserialization and the \texttt{commit()} stage. Reported verify times isolate verification from proof generation, but still include verifier load/deserialization from serialized circuit binaries.
 
 \subsection{First-layer aggregation results}
 
@@ -330,7 +330,7 @@ Across the tested range, first-layer build times lie between 7.46~s and 30.93~s,
 \small
 \begin{tabular}{@{}rrrrr@{}}
 \toprule
-\(M\) layer-0 proofs & Leaves per layer-0 proof & Build (s) & Prove (s) & Verify (ms) \\
+\(M\) first-layer proofs & Leaves per first-layer proof & Build (s) & Prove (s) & Verify (ms) \\
 \midrule
 2  & 8 & 5.56 & 3.52 & 5.18 \\
 4  & 8 & 5.54 & 4.23 & 5.34 \\
@@ -339,11 +339,11 @@ Across the tested range, first-layer build times lie between 7.46~s and 30.93~s,
 32 & 8 & 25.78 & 21.32 & 6.88 \\
 \bottomrule
 \end{tabular}
-\caption{Measured wall-clock times for second-layer aggregation with 8 leaves per input layer-0 proof.}
+\caption{Measured wall-clock times for second-layer aggregation with 8 leaves per input first-layer proof.}
 \label{tab:layer1-results}
 \end{table}
 
-For second-layer aggregation with eight leaves per input layer-0 proof, build times range from 5.54~s to 25.78~s, proving times from 3.52~s to 21.32~s, and verification times from 5.18~ms to 6.88~ms across \(M \in \{2,4,8,16,32\}\). Verification is effectively flat across the tested fan-ins, while proving and artifact generation scale with the number of recursive inputs.
+For second-layer aggregation with eight leaves per input first-layer proof, build times range from 5.54~s to 25.78~s, proving times from 3.52~s to 21.32~s, and verification times from 5.18~ms to 6.88~ms across \(M \in \{2,4,8,16,32\}\). Verification is effectively flat across the tested fan-ins, while proving and artifact generation scale with the number of recursive inputs.
 
 \subsection{Amortization}
 
@@ -353,7 +353,7 @@ For a first-layer batch of size \(N\), the public output contains approximately 
 \label{sec:discussion}
 
 \paragraph{Same-block scoping.}
-Layer-0 batches proofs sharing the same \texttt{block\_hash}. Cross-block aggregation is future work.
+The first layer batches proofs sharing the same \texttt{block\_hash}. Cross-block aggregation is future work.
 
 \paragraph{Two-output limit.}
 Each leaf supports two exits (spend + change), not general multi-recipient batching.
@@ -362,7 +362,7 @@ Each leaf supports two exits (spend + change), not general multi-recipient batch
 Amounts are quantized to 0.01-unit resolution to reduce circuit cost.
 
 \paragraph{Privacy leakage.}
-Output amounts, exit addresses, nullifiers, and timing are public. Layer-0 padding enlarges the anonymity set (\cref{sec:layer0privacy}), but this is plausible deniability, not full shielding. Amount patterns, address reuse, and timing correlation remain potential deanonymization vectors.
+Output amounts, exit addresses, nullifiers, and timing are public. First-layer padding enlarges the anonymity set (\cref{sec:layer0privacy}), but this is plausible deniability, not full shielding. Amount patterns, address reuse, and timing correlation remain potential deanonymization vectors.
 
 \section{Related Work}
 \label{sec:related}
@@ -385,7 +385,7 @@ ML-DSA adoption raises questions about transaction size and verification cost \c
 \section{Conclusion}
 \label{sec:conclusion}
 
-Wormhole addresses let a post-quantum blockchain move authorization off-chain while preserving authenticated settlement. Users deposit to secret-derived addresses, prove the deposit exists and hasn't been spent, and reveal only settlement outputs. Recursive aggregation amortizes verification. We formalized the leaf relation, analyzed layer-0 privacy, proved security properties, and reported benchmark timings.
+Wormhole addresses let a post-quantum blockchain move authorization off-chain while preserving authenticated settlement. Users deposit to secret-derived addresses, prove the deposit exists and hasn't been spent, and reveal only settlement outputs. Recursive aggregation amortizes verification. We formalized the leaf relation, analyzed first-layer privacy, proved security properties, and reported benchmark timings.
 
 
 \appendix
