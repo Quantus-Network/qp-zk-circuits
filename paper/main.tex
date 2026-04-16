@@ -68,7 +68,7 @@ Related systems include privacy pools and shielded ledgers like Zcash and Tornad
 
 \subsection{Transparent Recursion}
 
-We use Plonky2, combining PLONK arithmetization with FRI commitments for recursive verification without trusted setup \citep{plonky2,fri}. Poseidon2 provides efficient in-circuit hashing over prime fields \citep{poseidon2}.
+We use Plonky2, combining PLONK arithmetization with FRI commitments for recursive verification without trusted setup \citep{plonky2,fri}. FRI is based on hash functions rather than elliptic curves, making it plausibly post-quantum secure. No known quantum algorithm offers more than a quadratic speedup against hash preimage or collision resistance. Poseidon2 provides efficient in-circuit hashing over prime fields \citep{poseidon2}.
 
 \subsection{Design goals}
 
@@ -127,7 +127,7 @@ The user samples a secret \(s\) and derives a wormhole address
 \[
 \WA(s) = H(H(\mathsf{salt_{wh}} \parallel s)).
 \]
-Because this address is derived from a hash rather than a public key, no one can spend from it via ordinary signature-based authorization—funds sent here are effectively burned. The user then deposits to this address through an ordinary on-chain transfer, creating a record that can later be authenticated inside the circuit.
+Because this address is derived from a hash rather than a public key, no one can spend from it via ordinary signature-based authorization. Funds sent here are effectively burned. Anyone can deposit to a wormhole address through an ordinary on-chain transfer, creating a record that can later be authenticated inside the circuit. A user may receive funds from their own prior transfers or from third-party payments to wormhole addresses derived from secrets the user controls.
 
 \paragraph{2. Witness Acquisition:}
 To withdraw, the user gathers the deposit record and a storage proof. These form the private witness.
@@ -140,7 +140,7 @@ The user chooses up to two exit outputs, computes a nullifier
 and produces a leaf proof. The proof reveals the nullifier, the exits, the output amounts, the asset identifier, the fee basis points, the block hash, and the block number, while keeping the secret and storage proof private. Leaf proofs are not zero-knowledge. They are only seen by the user who generated them and then included in the first aggregation layer as private inputs.
 
 \paragraph{4. First-Layer Aggregation:}
-The user batches leaf proofs that share the same \texttt{block\_hash}, pads with dummy leaves if needed, shuffles the order, and produces a zero-knowledge wrapper proof that forwards grouped exits and nullifiers. This step should be performed locally to preserve privacy.
+The user batches leaf proofs that share the same \texttt{block\_hash}, pads with dummy leaves if needed, shuffles the order, and produces a zero-knowledge wrapper proof that forwards grouped exits and nullifiers. A user may combine multiple deposits from distinct wormhole addresses (each derived from a different secret) into a single aggregated withdrawal. This step should be performed locally to preserve privacy.
 
 \paragraph{5. Settlement:}
 The blockchain verifies the aggregate proof, checks that the public \texttt{block\_hash} matches the referenced block number, verifies that the fee parameter matches the configured rate, rejects reused nullifiers, and settles the exits.
@@ -185,6 +185,8 @@ Let \(x = (a, v_1, v_2, f, n, \alpha_1, \alpha_2, h_B, b)\) denote the public in
     (v_1 + v_2) \cdot 10000 \leq v_{\mathrm{in}} \cdot (10000 - f).
     \]
 \end{enumerate}
+
+The inequality in (C5) allows users to withdraw less than their full balance. This provides a privacy benefit: by forfeiting some value, a user can choose output amounts that blend with more deposits, enlarging their anonymity set. The difference between the deposit and the sum of outputs (beyond fees) is effectively burned.
 
 \subsection{On-chain verification}
 
@@ -278,10 +280,15 @@ Fix a first-layer aggregate \(Y\) with total exit amount \(S\) and fee rate \(f\
 Computing \(|\mathcal{A}(Y)|\) is an instance of \textsc{\#SubsetSum}: given \(M\) integers, count subsets whose sum meets a target.
 \end{definition}
 
+Because the proof system enforces an inequality rather than exact equality (condition C5), the adversary must consider any subset of deposits whose sum is \emph{at least} the required threshold \(T = S/(1-f)\). This is a feature: by withdrawing less than their full balance, users can select output amounts that match more potential deposit combinations, enlarging the anonymity set at the cost of burned value.
+
 \paragraph{Complexity of \textsc{\#SubsetSum}:}
 The decision version of subset sum (does any subset sum to exactly \(T\)?) is NP-complete. The counting version \textsc{\#SubsetSum} is \#P-complete \citep{subsetsum}, and no polynomial-time algorithm is known.
 
-Our setting requires counting subsets of size at most \(N\) summing to at least \(T = S/(1-f)\). The size of \(|\mathcal{A}(Y)|\) depends on the distribution of deposit amounts relative to \(T\); when many deposits have amounts in the range of typical withdrawals, the anonymity set grows combinatorially. As long as \(|\mathcal{A}(Y)| > 1\), an adversary cannot determine which subset is correct without knowing the secret.
+Our setting requires counting subsets of size at most \(N\) summing to at least \(T\). The size of \(|\mathcal{A}(Y)|\) depends on the distribution of deposit amounts relative to \(T\); when many deposits have amounts in the range of typical withdrawals, the anonymity set grows combinatorially. As long as \(|\mathcal{A}(Y)| > 1\), an adversary cannot determine which subset is correct without knowing the secret.
+
+\paragraph{Burn Cost and Bounded Rationality:}
+A rational adversary may assume users are unwilling to burn significant value for privacy. Under bounded rationality, the effective anonymity set shrinks to subsets summing to at most \(T \cdot (1 + \delta)\) for some small \(\delta\) (e.g., 1\%). Even with this constraint, the anonymity set remains combinatorially large when deposit amounts cluster near typical withdrawal sizes. The protocol does not enforce any upper bound; users may choose their privacy-value tradeoff freely.
 
 \subsection{Privacy leakage}
 
