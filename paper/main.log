@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  16 APR 2026 11:22
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  17 APR 2026 11:05
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -701,16 +701,31 @@ File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/microtype/mt-msb.cfg
 File: mt-msb.cfg 2005/06/01 v1.0 microtype config. file: AMS symbols (b) (RS)
 )
-[1
-
-{/usr/local/texlive/2026basic/texmf-var/fonts/map/pdftex/updmap/pdftex.map}{/us
-r/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc}]
-LaTeX Font Info:    Trying to load font information for TS1+lmr on input line 8
-9.
+LaTeX Font Info:    Trying to load font information for TS1+lmr on input line 3
+8.
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/ts1lmr.fd
 File: ts1lmr.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
-) [2{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-ts1.enc}]
+)
+LaTeX Font Info:    External font `lmex10' loaded for size
+(Font)              <9> on input line 38.
+LaTeX Font Info:    External font `lmex10' loaded for size
+(Font)              <5> on input line 38.
+LaTeX Font Info:    Trying to load font information for T1+lmtt on input line 3
+8.
+
+(/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/t1lmtt.fd
+File: t1lmtt.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
+)
+Package microtype Info: Loading generic protrusion settings for font family
+(microtype)             `lmtt' (encoding: T1).
+(microtype)             For optimal results, create family-specific settings.
+(microtype)             See the microtype manual for details.
+ [1
+
+{/usr/local/texlive/2026basic/texmf-var/fonts/map/pdftex/updmap/pdftex.map}{/us
+r/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc}{/usr/local/t
+exlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-ts1.enc}] [2]
 LaTeX Font Info:    External font `lmex10' loaded for size
 (Font)              <10.95> on input line 126.
 LaTeX Font Info:    Trying to load font information for OT1+lmss on input line 
@@ -723,25 +738,14 @@ Package microtype Info: Loading generic protrusion settings for font family
 (microtype)             `lmss' (encoding: OT1).
 (microtype)             For optimal results, create family-specific settings.
 (microtype)             See the microtype manual for details.
- [3{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-mathit.enc}{/
-usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc}{/usr/local
-/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-mathsy.enc}]
-LaTeX Font Info:    Trying to load font information for T1+lmtt on input line 1
-43.
-
-(/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/t1lmtt.fd
-File: t1lmtt.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
-)
-Package microtype Info: Loading generic protrusion settings for font family
-(microtype)             `lmtt' (encoding: T1).
-(microtype)             For optimal results, create family-specific settings.
-(microtype)             See the microtype manual for details.
- [4] [5]
-[6]
+ [3] [4{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-mathit.en
+c}{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc}{/usr/l
+ocal/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-mathsy.enc}] [5] [6]
 
 LaTeX Font Warning: Font shape `T1/lmr/m/scit' undefined
 (Font)              using `T1/lmr/m/scsl' instead on input line 280.
 
+[7{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-mathex.enc}]
 
 LaTeX Font Warning: Font shape `T1/lmr/bx/sc' undefined
 (Font)              using `T1/lmr/bx/n' instead on input line 286.
@@ -749,15 +753,11 @@ LaTeX Font Warning: Font shape `T1/lmr/bx/sc' undefined
 Package microtype Info: Character `029' is missing
 (microtype)             in font `T1/lmr/m/sc/10.95'.
 (microtype)             Ignoring protrusion settings for this character.
-[7{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-mathex.enc}]
 LaTeX Font Info:    External font `lmex10' loaded for size
 (Font)              <10> on input line 315.
 LaTeX Font Info:    External font `lmex10' loaded for size
 (Font)              <7> on input line 315.
-LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <5> on input line 315.
-
-[8] [9] [10] (./main.aux)
+[8] [9] [10] [11] (./main.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
@@ -770,13 +770,13 @@ Package rerunfilecheck Info: File `main.out' has not changed.
 (rerunfilecheck)             Checksum: 834586671B9A79C5E226C908BF9BCE71;4916.
  ) 
 Here is how much of TeX's memory you used:
- 17460 strings out of 469006
- 285369 string characters out of 5454813
+ 17514 strings out of 469006
+ 286072 string characters out of 5454813
  756648 words of memory out of 5000000
- 45582 multiletter control sequences out of 15000+600000
- 737317 words of font info for 215 fonts, out of 8000000 for 9000
+ 45607 multiletter control sequences out of 15000+600000
+ 749164 words of font info for 235 fonts, out of 8000000 for 9000
  319 hyphenation exceptions out of 8191
- 75i,9n,79p,997b,625s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,9n,79p,997b,619s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmbx10.pfb></u
 sr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmbx12.pfb></usr/lo
 cal/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmcsc10.pfb></usr/local/
@@ -787,16 +787,18 @@ asic/texmf-dist/fonts/type1/public/lm/lmmi8.pfb></usr/local/texlive/2026basic/t
 exmf-dist/fonts/type1/public/lm/lmr10.pfb></usr/local/texlive/2026basic/texmf-d
 ist/fonts/type1/public/lm/lmr12.pfb></usr/local/texlive/2026basic/texmf-dist/fo
 nts/type1/public/lm/lmr17.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/ty
-pe1/public/lm/lmr8.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/pub
-lic/lm/lmri10.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/l
-m/lmss10.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lms
-s8.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmsy10.pf
-b></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmsy8.pfb></us
-r/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmtt10.pfb>
-Output written on main.pdf (10 pages, 374061 bytes).
+pe1/public/lm/lmr6.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/pub
+lic/lm/lmr8.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/
+lmri10.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmss1
+0.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmss8.pfb>
+</usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmsy10.pfb></usr
+/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmsy8.pfb></usr/local
+/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmtt10.pfb></usr/local/texl
+ive/2026basic/texmf-dist/fonts/type1/public/lm/lmtt9.pfb>
+Output written on main.pdf (11 pages, 417632 bytes).
 PDF statistics:
- 401 PDF objects out of 1000 (max. 8388607)
- 348 compressed objects within 4 object streams
- 96 named destinations out of 1000 (max. 500000)
- 62209 words of extra memory for PDF output out of 74296 (max. 10000000)
+ 419 PDF objects out of 1000 (max. 8388607)
+ 360 compressed objects within 4 object streams
+ 97 named destinations out of 1000 (max. 500000)
+ 72961 words of extra memory for PDF output out of 74296 (max. 10000000)
 
