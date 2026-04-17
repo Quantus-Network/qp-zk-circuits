@@ -227,50 +227,99 @@ Higher layers aggregate already-wrapped proofs. Since they operate only on publi
 \section{Security and Privacy Analysis}
 \label{sec:security}
 
+We formalize security via three games capturing the properties a wormhole system must satisfy. Let \(\mathcal{B}\) denote a probabilistic polynomial-time adversary, \(H\) a hash function, and \(\Pi = (\mathsf{Prove}, \mathsf{Verify})\) the proof system with knowledge soundness error \(\epsilon_{\mathrm{ks}}\).
+
 \subsection{Deposit binding}
 
-Every accepted leaf proof binds to an on-chain deposit: by knowledge soundness of the proof system, there exists a witness satisfying conditions (C1)--(C5), which include storage-proof verification and block binding. The blockchain validates that the public \texttt{block\_hash}/\texttt{block\_number} pair refers to a real block, completing the chain of authentication from proof to on-chain state.
+\begin{definition}[Deposit Binding Game]
+The \emph{deposit binding game} \(\mathsf{Game}_{\mathrm{bind}}^{\mathcal{B}}\) proceeds as follows:
+\begin{enumerate}
+    \item \(\mathcal{B}\) is given access to the blockchain state and may create arbitrary deposits.
+    \item \(\mathcal{B}\) outputs a proof \(\pi\) and public inputs \(x = (a, v_1, v_2, f, n, \alpha_1, \alpha_2, h_B, b)\).
+    \item \(\mathcal{B}\) wins if \(\mathsf{Verify}(\pi, x) = 1\) and no deposit to address \(\WA(s)\) for any \(s\) exists in the block referenced by \((h_B, b)\).
+\end{enumerate}
+We say the system satisfies \emph{deposit binding} if \(\Pr[\mathsf{Game}_{\mathrm{bind}}^{\mathcal{B}} = 1] \leq \epsilon_{\mathrm{ks}}\) for all PPT \(\mathcal{B}\).
+\end{definition}
+
+\begin{theorem}[Deposit Binding]
+The wormhole protocol satisfies deposit binding under knowledge soundness of \(\Pi\).
+\end{theorem}
+
+\begin{proof}
+By knowledge soundness, if \(\mathsf{Verify}(\pi, x) = 1\), there exists an extractor that outputs a witness \(w\) satisfying conditions (C1)--(C5) with probability \(1 - \epsilon_{\mathrm{ks}}\). Condition (C3) requires the witness to include a valid storage proof for a deposit at address \(\WA(s)\), and (C4) binds this proof to the block \((h_B, b)\). If no such deposit exists, the extractor fails, contradicting knowledge soundness. The blockchain's validation that \((h_B, b)\) refers to a real block completes the binding.
+\end{proof}
 
 \subsection{One-time withdrawal}
 
-A deposit to a wormhole address creates a transfer record on-chain. To withdraw, a prover must know a secret \(s\) such that \(\WA(s)\) equals the deposit address; by collision resistance, this secret is unique.
+\begin{definition}[Double-Spend Game]
+The \emph{double-spend game} \(\mathsf{Game}_{\mathrm{double}}^{\mathcal{B}}\) proceeds as follows:
+\begin{enumerate}
+    \item \(\mathcal{B}\) creates a single deposit of amount \(v\) to address \(\WA(s)\) for adversarially chosen \(s\).
+    \item \(\mathcal{B}\) outputs two proofs \((\pi_1, x_1)\) and \((\pi_2, x_2)\) with nullifiers \(n_1 \neq n_2\).
+    \item \(\mathcal{B}\) wins if both proofs verify and both claim outputs from the same deposit.
+\end{enumerate}
+We say the system satisfies \emph{one-time withdrawal} if \(\Pr[\mathsf{Game}_{\mathrm{double}}^{\mathcal{B}} = 1] \leq \epsilon_{\mathrm{ks}} + \epsilon_{\mathrm{coll}}\), where \(\epsilon_{\mathrm{coll}}\) is the collision probability of \(H\).
+\end{definition}
 
-\begin{proposition}
-If two accepted withdrawals have different nullifiers, they correspond to different deposits.
-\end{proposition}
+\begin{theorem}[One-Time Withdrawal]
+The wormhole protocol satisfies one-time withdrawal under knowledge soundness of \(\Pi\) and collision resistance of \(H\).
+\end{theorem}
 
 \begin{proof}
-Suppose two withdrawals with nullifiers \(n = \Null(s, c)\) and \(n' = \Null(s', c')\) correspond to the same deposit. Then both share the same wormhole address and counter, so \(\WA(s) = \WA(s')\) and \(c = c'\). By collision resistance, \(s = s'\). But then \(n = n'\), contradicting the assumption.
+Suppose \(\mathcal{B}\) wins. By knowledge soundness, there exist witnesses \(w_1, w_2\) with secrets \(s_1, s_2\) and counters \(c_1, c_2\) such that both proofs reference the same deposit. Since both reference the same deposit address, \(\WA(s_1) = \WA(s_2)\), which by collision resistance implies \(s_1 = s_2\). The counter \(c\) is stored in the on-chain deposit record and verified by the storage proof; since both proofs reference the same deposit, they must use the same counter \(c_1 = c_2\). But then \(n_1 = \Null(s_1, c_1) = \Null(s_2, c_2) = n_2\), contradicting \(n_1 \neq n_2\). Thus \(\mathcal{B}\) can only win by breaking knowledge soundness or finding a collision.
 \end{proof}
 
-Since the blockchain rejects duplicate nullifiers, each deposit can be withdrawn at most once.
+Since the blockchain maintains a nullifier set and rejects duplicates, each deposit can be withdrawn at most once.
 
 \subsection{Spend-path exclusivity}
 
-A standard address is \(\mathsf{Addr}(pk) = H(pk)\) for a public key \(pk\). A wormhole address is \(\WA(s) = H(H(\mathsf{salt_{wh}} \parallel s))\).
+\begin{definition}[Signature Forgery Game]
+The \emph{signature forgery game} \(\mathsf{Game}_{\mathrm{sig}}^{\mathcal{B}}\) proceeds as follows:
+\begin{enumerate}
+    \item Challenger samples \(s \gets \{0,1\}^{256}\) and publishes \(\WA(s)\).
+    \item \(\mathcal{B}\) outputs a keypair \((sk, pk)\) and a signature \(\sigma\) on an arbitrary message \(m\).
+    \item \(\mathcal{B}\) wins if \(H(pk) = \WA(s)\) and \(\mathsf{SigVerify}(pk, m, \sigma) = 1\).
+\end{enumerate}
+We say the system satisfies \emph{spend-path exclusivity} if \(\Pr[\mathsf{Game}_{\mathrm{sig}}^{\mathcal{B}} = 1] \leq \epsilon_{\mathrm{pre}}\), where \(\epsilon_{\mathrm{pre}}\) is the preimage resistance of \(H\).
+\end{definition}
 
-\begin{proposition}
-An adversary can withdraw funds from a wormhole address without a valid proof only with negligible probability.
-\end{proposition}
+\begin{theorem}[Spend-Path Exclusivity]
+The wormhole protocol satisfies spend-path exclusivity under preimage resistance of \(H\).
+\end{theorem}
 
 \begin{proof}
-To spend from \(\WA(s)\) via signature, an adversary must find a keypair \((sk, pk)\) such that \(H(pk) = \WA(s)\). This requires either:
+To win, \(\mathcal{B}\) must find \(pk\) such that \(H(pk) = \WA(s) = H(H(\mathsf{salt_{wh}} \parallel s))\). This requires either:
 \begin{enumerate}
-    \item finding \(s'\) such that \(H(\mathsf{salt_{wh}} \parallel s')\) equals a public key the adversary controls, or
-    \item finding \(pk\) such that \(H(pk) = \WA(s)\).
+    \item finding \(s'\) such that \(H(\mathsf{salt_{wh}} \parallel s')\) equals a public key \(\mathcal{B}\) controls, or
+    \item finding \(pk\) such that \(H(pk)\) equals the target address.
 \end{enumerate}
-Both reduce to preimage attacks: (1) requires finding a preimage of a target public key, and (2) requires finding a preimage of a target wormhole address. By preimage resistance, both succeed with negligible probability. Note that for post-quantum signature schemes where \(|pk| > |H|\) (e.g., ML-DSA), case (1) is impossible since a hash output cannot equal a larger public key. In this case, a user can prove an address is a wormhole by revealing the inner hash \(H(\mathsf{salt_{wh}} \parallel s)\): its length proves it is not a valid public key, without revealing \(s\).
+Both are preimage attacks. For post-quantum schemes where \(|pk| > |H|\) (e.g., ML-DSA), case (1) is impossible since a hash output cannot equal a larger public key. In either case, success probability is bounded by \(\epsilon_{\mathrm{pre}}\).
 \end{proof}
 
 \subsection{Value conservation}
 
+\begin{definition}[Inflation Game]
+The \emph{inflation game} \(\mathsf{Game}_{\mathrm{infl}}^{\mathcal{B}}\) proceeds as follows:
+\begin{enumerate}
+    \item \(\mathcal{B}\) creates deposits totaling value \(V\).
+    \item \(\mathcal{B}\) submits a sequence of valid proofs resulting in withdrawals totaling value \(W\).
+    \item \(\mathcal{B}\) wins if \(W > V \cdot (1 - f)\), where \(f\) is the fee rate.
+\end{enumerate}
+\end{definition}
+
+\begin{theorem}[Value Conservation]
+The wormhole protocol satisfies value conservation: no adversary can win \(\mathsf{Game}_{\mathrm{infl}}\) except with negligible probability.
+\end{theorem}
+
+\begin{proof}
 Value conservation follows from three properties:
-\begin{itemize}[leftmargin=1.5em]
-    \item Each leaf proof enforces the fee constraint (C5): outputs cannot exceed the deposit amount minus fees.
-    \item The wrapper's exit grouping preserves total amounts. It only combines outputs to the same destination.
-    \item One-time withdrawal (above) prevents double-counting the same deposit.
+\begin{itemize}
+    \item Each leaf proof enforces (C5): outputs satisfy \((v_1 + v_2) \cdot 10000 \leq v_{\mathrm{in}} \cdot (10000 - f)\).
+    \item Aggregation preserves output sums; the wrapper only groups outputs to identical destinations.
+    \item One-time withdrawal (Theorem 2) prevents double-counting any deposit.
 \end{itemize}
-Together with correct on-chain settlement, these ensure that total settled value never exceeds total deposited value minus fees.
+Together with the blockchain's nullifier check, total settled value never exceeds total deposited value minus fees.
+\end{proof}
 
 
 \subsection{Anonymity sets}
