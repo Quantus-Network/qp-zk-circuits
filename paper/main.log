@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  17 APR 2026 11:05
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  17 APR 2026 11:12
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -521,7 +521,7 @@ Package: authblk 2001/02/27 1.3 (PWD)
 )
 \c@definition=\count336
 \c@theorem=\count337
-LaTeX Font Info:    Trying to load font information for T1+lmr on input line 37
+LaTeX Font Info:    Trying to load font information for T1+lmr on input line 40
 .
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/t1lmr.fd
@@ -534,24 +534,24 @@ File: l3backend-pdftex.def 2025-10-09 L3 backend support: PDF output (pdfTeX)
 ) (./main.aux)
 \openout1 = `main.aux'.
 
-LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 37.
-LaTeX Font Info:    ... okay on input line 37.
-LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 37.
-LaTeX Font Info:    ... okay on input line 37.
-LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 37.
-LaTeX Font Info:    ... okay on input line 37.
-LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 37.
-LaTeX Font Info:    ... okay on input line 37.
-LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 37.
-LaTeX Font Info:    ... okay on input line 37.
-LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 37.
-LaTeX Font Info:    ... okay on input line 37.
-LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 37.
-LaTeX Font Info:    ... okay on input line 37.
-LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 37.
-LaTeX Font Info:    ... okay on input line 37.
-LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 37.
-LaTeX Font Info:    ... okay on input line 37.
+LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 40.
+LaTeX Font Info:    ... okay on input line 40.
+LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 40.
+LaTeX Font Info:    ... okay on input line 40.
+LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 40.
+LaTeX Font Info:    ... okay on input line 40.
+LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 40.
+LaTeX Font Info:    ... okay on input line 40.
+LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 40.
+LaTeX Font Info:    ... okay on input line 40.
+LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 40.
+LaTeX Font Info:    ... okay on input line 40.
+LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 40.
+LaTeX Font Info:    ... okay on input line 40.
+LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 40.
+LaTeX Font Info:    ... okay on input line 40.
+LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 40.
+LaTeX Font Info:    ... okay on input line 40.
 
 *geometry* driver: auto-detecting
 *geometry* detected driver: pdftex
@@ -587,13 +587,13 @@ LaTeX Font Info:    ... okay on input line 37.
 * \@reversemarginfalse
 * (1in=72.27pt=25.4mm, 1cm=28.453pt)
 
-LaTeX Info: Redefining \microtypecontext on input line 37.
-Package microtype Info: Applying patch `item' on input line 37.
-Package microtype Info: Applying patch `toc' on input line 37.
-Package microtype Info: Applying patch `eqnum' on input line 37.
-Package microtype Info: Applying patch `footnote' on input line 37.
-Package microtype Info: Applying patch `verbatim' on input line 37.
-LaTeX Info: Redefining \microtypesetup on input line 37.
+LaTeX Info: Redefining \microtypecontext on input line 40.
+Package microtype Info: Applying patch `item' on input line 40.
+Package microtype Info: Applying patch `toc' on input line 40.
+Package microtype Info: Applying patch `eqnum' on input line 40.
+Package microtype Info: Applying patch `footnote' on input line 40.
+Package microtype Info: Applying patch `verbatim' on input line 40.
+LaTeX Info: Redefining \microtypesetup on input line 40.
 Package microtype Info: Generating PDF output.
 Package microtype Info: Character protrusion enabled (level 2).
 Package microtype Info: Using default protrusion set `alltext'.
@@ -648,42 +648,42 @@ Package epstopdf-base Info: Redefining graphics rule for `.eps' on input line 4
 File: epstopdf-sys.cfg 2010/07/13 v1.3 Configuration of (r)epstopdf for TeX Liv
 e
 ))
-Package hyperref Info: Link coloring ON on input line 37.
+Package hyperref Info: Link coloring ON on input line 40.
  (./main.out) (./main.out)
 \@outlinefile=\write3
 \openout3 = `main.out'.
 
-LaTeX Font Info:    Trying to load font information for OT1+lmr on input line 3
-8.
+LaTeX Font Info:    Trying to load font information for OT1+lmr on input line 4
+1.
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/ot1lmr.fd
 File: ot1lmr.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
-LaTeX Font Info:    Trying to load font information for OML+lmm on input line 3
-8.
+LaTeX Font Info:    Trying to load font information for OML+lmm on input line 4
+1.
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/omllmm.fd
 File: omllmm.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    Trying to load font information for OMS+lmsy on input line 
-38.
+41.
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/omslmsy.fd
 File: omslmsy.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    Trying to load font information for OMX+lmex on input line 
-38.
+41.
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/omxlmex.fd
 File: omxlmex.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <12> on input line 38.
+(Font)              <12> on input line 41.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <8> on input line 38.
+(Font)              <8> on input line 41.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <6> on input line 38.
-LaTeX Font Info:    Trying to load font information for U+msa on input line 38.
+(Font)              <6> on input line 41.
+LaTeX Font Info:    Trying to load font information for U+msa on input line 41.
 
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/amsfonts/umsa.fd
@@ -692,7 +692,7 @@ File: umsa.fd 2013/01/14 v3.01 AMS symbols A
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/microtype/mt-msa.cfg
 File: mt-msa.cfg 2006/02/04 v1.1 microtype config. file: AMS symbols (a) (RS)
 )
-LaTeX Font Info:    Trying to load font information for U+msb on input line 38.
+LaTeX Font Info:    Trying to load font information for U+msb on input line 41.
 
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/amsfonts/umsb.fd
@@ -701,18 +701,18 @@ File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/microtype/mt-msb.cfg
 File: mt-msb.cfg 2005/06/01 v1.0 microtype config. file: AMS symbols (b) (RS)
 )
-LaTeX Font Info:    Trying to load font information for TS1+lmr on input line 3
-8.
+LaTeX Font Info:    Trying to load font information for TS1+lmr on input line 4
+1.
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/ts1lmr.fd
 File: ts1lmr.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <9> on input line 38.
+(Font)              <9> on input line 41.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <5> on input line 38.
-LaTeX Font Info:    Trying to load font information for T1+lmtt on input line 3
-8.
+(Font)              <5> on input line 41.
+LaTeX Font Info:    Trying to load font information for T1+lmtt on input line 4
+1.
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/t1lmtt.fd
 File: t1lmtt.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
@@ -727,9 +727,9 @@ Package microtype Info: Loading generic protrusion settings for font family
 r/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc}{/usr/local/t
 exlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-ts1.enc}] [2]
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <10.95> on input line 126.
+(Font)              <10.95> on input line 129.
 LaTeX Font Info:    Trying to load font information for OT1+lmss on input line 
-128.
+131.
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/ot1lmss.fd
 File: ot1lmss.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
@@ -743,20 +743,20 @@ c}{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc}{/usr/l
 ocal/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-mathsy.enc}] [5] [6]
 
 LaTeX Font Warning: Font shape `T1/lmr/m/scit' undefined
-(Font)              using `T1/lmr/m/scsl' instead on input line 280.
+(Font)              using `T1/lmr/m/scsl' instead on input line 283.
 
 [7{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-mathex.enc}]
 
 LaTeX Font Warning: Font shape `T1/lmr/bx/sc' undefined
-(Font)              using `T1/lmr/bx/n' instead on input line 286.
+(Font)              using `T1/lmr/bx/n' instead on input line 289.
 
 Package microtype Info: Character `029' is missing
 (microtype)             in font `T1/lmr/m/sc/10.95'.
 (microtype)             Ignoring protrusion settings for this character.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <10> on input line 315.
+(Font)              <10> on input line 318.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <7> on input line 315.
+(Font)              <7> on input line 318.
 [8] [9] [10] [11] (./main.aux)
  ***********
 LaTeX2e <2025-11-01>
@@ -770,10 +770,10 @@ Package rerunfilecheck Info: File `main.out' has not changed.
 (rerunfilecheck)             Checksum: 834586671B9A79C5E226C908BF9BCE71;4916.
  ) 
 Here is how much of TeX's memory you used:
- 17514 strings out of 469006
- 286072 string characters out of 5454813
+ 17510 strings out of 469006
+ 285999 string characters out of 5454813
  756648 words of memory out of 5000000
- 45607 multiletter control sequences out of 15000+600000
+ 45604 multiletter control sequences out of 15000+600000
  749164 words of font info for 235 fonts, out of 8000000 for 9000
  319 hyphenation exceptions out of 8191
  75i,9n,79p,997b,619s stack positions out of 10000i,1000n,20000p,200000b,200000s
@@ -795,10 +795,10 @@ lmri10.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmss1
 /local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmsy8.pfb></usr/local
 /texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmtt10.pfb></usr/local/texl
 ive/2026basic/texmf-dist/fonts/type1/public/lm/lmtt9.pfb>
-Output written on main.pdf (11 pages, 417632 bytes).
+Output written on main.pdf (11 pages, 417326 bytes).
 PDF statistics:
- 419 PDF objects out of 1000 (max. 8388607)
- 360 compressed objects within 4 object streams
- 97 named destinations out of 1000 (max. 500000)
+ 414 PDF objects out of 1000 (max. 8388607)
+ 355 compressed objects within 4 object streams
+ 96 named destinations out of 1000 (max. 500000)
  72961 words of extra memory for PDF output out of 74296 (max. 10000000)
 

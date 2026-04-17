@@ -17,6 +17,9 @@
 \usepackage[nameinlink,noabbrev]{cleveref}
 \usepackage{authblk}
 
+% Page numbers
+\pagestyle{plain}
+
 \newtheorem{definition}{Definition}
 \newtheorem{theorem}{Theorem}
 \newtheorem{lemma}[theorem]{Lemma}
@@ -32,7 +35,7 @@
 \author[1]{Christopher Smith\thanks{\texttt{chris@quantus.com}}}
 \author[1]{Ethan Cemer\thanks{\texttt{ethan@quantus.com}}}
 \affil[1]{Quantus Labs}
-\date{March 2026}
+\date{\today}
 
 \begin{document}
 \maketitle
@@ -47,7 +50,7 @@ The post-quantum transition poses a dilemma for blockchains. Shor's algorithm br
 
 One response is to verify post-quantum signatures inside a zero-knowledge circuit and aggregate many such proofs, compressing the on-chain footprint. But this requires implementing post-quantum signature verification in-circuit, which is expensive.
 
-This paper takes a different approach: rather than proving signature validity, users prove knowledge of a secret tied to an unspent deposit. This idea appears in Ziggy \citep{ziggy}, a STARK-based signature scheme where signers prove knowledge of a hash preimage. We apply the same principle to blockchain settlement, building on EIP-7503's ``wormhole'' concept \citep{eip7503}: funds are sent to addresses derived from secrets and later withdrawn by proving knowledge of that secret. This sidesteps post-quantum signature verification entirely. The circuit only needs hash functions and storage-proof verification. We add recursive proof aggregation for scalable settlement \citep{quantusrepo}.
+This paper takes a different approach: rather than proving signature validity, users prove knowledge of a secret tied to an unspent deposit. This idea appears in Ziggy \citep{ziggy}, a STARK-based signature scheme where signers prove knowledge of a hash preimage. We apply the same principle to blockchain settlement, building on EIP-7503's ``wormhole'' concept \citep{eip7503}: funds are sent to addresses derived from secrets and later withdrawn by proving knowledge of that secret. This sidesteps post-quantum signature verification entirely. The circuit only needs hash functions and storage-proof verification. We add recursive proof aggregation for scalable settlement.
 
 \paragraph{Contributions:}
 \begin{enumerate}[leftmargin=1.5em]
@@ -436,17 +439,11 @@ Alexey Pertsev, Roman Semenov, and Roman Storm.
 \newblock Project documentation, 2019.
 \newblock \url{https://tornado.cash}
 
-\bibitem[Plonky3 Contributors(2026)]{plonky3}
+\bibitem[Plonky3 Contributors(2024)]{plonky3}
 Plonky3 Contributors.
 \newblock Plonky3.
-\newblock Software repository, 2026.
+\newblock Software repository, 2024.
 \newblock \url{https://github.com/Plonky3/Plonky3}
-
-\bibitem[Quantus Network(2026)]{quantusrepo}
-Quantus Network.
-\newblock qp-zk-circuits.
-\newblock Software repository, 2026.
-\newblock \url{https://github.com/quantus-network/qp-zk-circuits}
 
 \bibitem[Garey and Johnson(1979)]{subsetsum}
 Michael~R. Garey and David~S. Johnson.
