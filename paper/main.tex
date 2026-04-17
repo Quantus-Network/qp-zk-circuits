@@ -13,6 +13,7 @@
 \usepackage{algpseudocode}
 \usepackage{xcolor}
 \usepackage[numbers,sort&compress]{natbib}
+\usepackage{url}
 \usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
 \usepackage[nameinlink,noabbrev]{cleveref}
 \usepackage{authblk}
@@ -28,8 +29,6 @@
 
 \newcommand{\WA}{\mathsf{WA}}
 \newcommand{\Null}{\mathsf{Null}}
-\newcommand{\BlockHash}{\mathsf{BH}}
-\newcommand{\pkset}{\mathcal{PK}_\Sigma}
 
 \title{Wormhole Aggregation: Recursive Zero-Knowledge Settlement for Post-Quantum Blockchains}
 \author[1]{Christopher Smith\thanks{\texttt{chris@quantus.com}}}
@@ -41,7 +40,7 @@
 \maketitle
 
 \begin{abstract}
-Post-quantum signature schemes impose large public keys and signatures, increasing on-chain costs while still leaking transaction structure. We present \emph{Quantus Wormhole}, a private settlement protocol where users deposit to addresses derived from secrets and later prove in zero knowledge that the deposit exists, hasn't been spent, and satisfies fee rules. Recursive aggregation amortizes verification across many withdrawals, while dummy padding and local shuffling enlarge the anonymity set for balance-linking adversaries. We formalize the withdrawal relation, analyze privacy guarantees, prove security properties, and report benchmarks for two-layer aggregation of up to 256 leaf proofs.
+Post-quantum signature schemes impose large public keys and signatures, increasing on-chain costs while still leaking transaction structure. We present \emph{Quantus Wormhole}, a private settlement protocol where users deposit to addresses derived from secrets and later prove in zero knowledge that the deposit exists, hasn't been spent, and satisfies fee rules. Recursive aggregation amortizes verification across many withdrawals, while dummy padding and local shuffling enlarge the anonymity set for balance-linking adversaries. We formalize the withdrawal relation and provide game-based security proofs for deposit binding, one-time withdrawal, spend-path exclusivity, and value conservation. We also prove nullifier indistinguishability and transaction unlinkability, bounding adversarial advantage in terms of the anonymity set size. Benchmarks demonstrate 20~ms leaf proving with sub-4~ms verification, scaling to 256 leaves via two-layer aggregation.
 \end{abstract}
 
 \section{Introduction}
@@ -262,6 +261,7 @@ We say the system satisfies \emph{one-time withdrawal} if \(\Pr[\mathsf{Game}_{\
 \end{definition}
 
 \begin{theorem}[One-Time Withdrawal]
+\label{thm:one-time}
 The wormhole protocol satisfies one-time withdrawal under knowledge soundness of \(\Pi\) and collision resistance of \(H\).
 \end{theorem}
 
@@ -316,7 +316,7 @@ Value conservation follows from three properties:
 \begin{itemize}
     \item Each leaf proof enforces (C5): outputs satisfy \((v_1 + v_2) \cdot 10000 \leq v_{\mathrm{in}} \cdot (10000 - f)\).
     \item Aggregation preserves output sums; the wrapper only groups outputs to identical destinations.
-    \item One-time withdrawal (Theorem 2) prevents double-counting any deposit.
+    \item One-time withdrawal (\cref{thm:one-time}) prevents double-counting any deposit.
 \end{itemize}
 Together with the blockchain's nullifier check, total settled value never exceeds total deposited value minus fees.
 \end{proof}
@@ -340,6 +340,7 @@ We say nullifiers are \emph{indistinguishable} if \(|\Pr[\mathsf{Game}_{\mathrm{
 \end{definition}
 
 \begin{theorem}[Nullifier Indistinguishability]
+\label{thm:nullifier-indist}
 If \(H\) is a pseudorandom function, then real and dummy nullifiers are computationally indistinguishable.
 \end{theorem}
 
@@ -360,7 +361,7 @@ Let \(Y\) be a first-layer aggregate with anonymity set \(\mathcal{A}(Y)\) where
 \end{theorem}
 
 \begin{proof}
-An adversary attempting to identify the funding deposits must first determine which of the \(N\) nullifiers correspond to real deposits. By Theorem 5 (nullifier indistinguishability), the adversary cannot distinguish real from dummy nullifiers except with advantage \(\epsilon_{\mathrm{prf}}\). Conditioned on not distinguishing nullifiers, the adversary sees only the total exit amount \(S\) and must guess among all subsets in \(\mathcal{A}(Y)\) that could produce this sum. With \(k\) equally plausible subsets, random guessing succeeds with probability \(1/k\). Any strategy exceeding this probability implies either (1) distinguishing nullifiers, contradicting Theorem 5, or (2) information-theoretic leakage beyond what is revealed, which is impossible since the proof is zero-knowledge. Thus the adversary's success probability is at most \(1/k + \epsilon_{\mathrm{prf}}\).
+An adversary attempting to identify the funding deposits must first determine which of the \(N\) nullifiers correspond to real deposits. By \cref{thm:nullifier-indist} (nullifier indistinguishability), the adversary cannot distinguish real from dummy nullifiers except with advantage \(\epsilon_{\mathrm{prf}}\). Conditioned on not distinguishing nullifiers, the adversary sees only the total exit amount \(S\) and must guess among all subsets in \(\mathcal{A}(Y)\) that could produce this sum. With \(k\) equally plausible subsets, random guessing succeeds with probability \(1/k\). Any strategy exceeding this probability implies either (1) distinguishing nullifiers, contradicting \cref{thm:nullifier-indist}, or (2) information-theoretic leakage beyond what is revealed, which is impossible since the proof is zero-knowledge. Thus the adversary's success probability is at most \(1/k + \epsilon_{\mathrm{prf}}\).
 \end{proof}
 
 Because the proof system enforces an inequality rather than exact equality (condition C5), the adversary must consider any subset of deposits whose sum is \emph{at least} the required threshold \(T = S/(1-f)\). This is a feature: by withdrawing less than their full balance, users can select output amounts that match more potential deposit combinations, enlarging the anonymity set at the cost of burned value.
