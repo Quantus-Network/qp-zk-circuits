@@ -71,7 +71,10 @@ Related systems include privacy pools and shielded ledgers like Zcash and Tornad
 
 \subsection{Transparent Recursion}
 
-We use Plonky2, combining PLONK arithmetization with FRI commitments for recursive verification without trusted setup \citep{plonky2,fri}. FRI is based on hash functions rather than elliptic curves, making it plausibly post-quantum secure. No known quantum algorithm offers more than a quadratic speedup against hash preimage or collision resistance. Poseidon2 provides efficient in-circuit hashing over prime fields \citep{poseidon2}.
+We use Plonky2, combining PLONK arithmetization with FRI commitments for recursive verification without trusted setup \citep{plonky2,fri}. FRI is based on hash functions rather than elliptic curves, making it plausibly post-quantum secure—no known quantum algorithm offers more than a quadratic speedup against hash preimage or collision resistance. Poseidon2 provides efficient in-circuit hashing over prime fields \citep{poseidon2}.
+
+\paragraph{Security Parameters:}
+Our instantiation uses the Goldilocks field (\(p = 2^{64} - 2^{32} + 1\)) with a quadratic extension for 100-bit soundness. FRI is configured with 28 query rounds, rate \(2^3\), and 16 bits of proof-of-work grinding, yielding \(28 \times 3 + 16 = 100\) bits of security against proof forgery. Poseidon2 outputs 4 field elements (256 bits), providing approximately 128-bit collision resistance. Under Grover's algorithm, hash security degrades to roughly 64 bits against a quantum adversary with sufficient qubits; increasing to a larger field or more rounds would restore the classical margin.
 
 \subsection{Design goals}
 
