@@ -44,3 +44,7 @@ workspace = true
 [[bench]]
 harness = false
 name = "aggregator"
+
+[[bin]]
+name = "generate_bench_circuits"
+path = "src/bin/generate_bench_circuits.rs"

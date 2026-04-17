@@ -35,3 +35,7 @@ version = "2.0.1"
 
 [workspace.lints.clippy]
 uninlined_format_args = "allow"
+
+# Security fix: Force rustls-webpki upgrade to address RUSTSEC-2026-0098 and RUSTSEC-2026-0099
+[workspace.dependencies.rustls-webpki]
+version = "0.103.12"

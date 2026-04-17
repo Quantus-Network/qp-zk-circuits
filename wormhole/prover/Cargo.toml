@@ -16,6 +16,7 @@ zk-circuits-common = { package = "qp-zk-circuits-common", version = "2.0.1", pat
 
 [dev-dependencies]
 criterion = { workspace = true }
+qp-wormhole-verifier = { version = "2.0.1", path = "../verifier" }
 test-helpers = { path = "../tests/test-helpers" }
 wormhole-aggregator = { package = "qp-wormhole-aggregator", version = "2.0.1", path = "../aggregator" }
 
