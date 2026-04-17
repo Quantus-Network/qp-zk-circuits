@@ -133,7 +133,7 @@ The user samples a secret \(s\) and derives a wormhole address
 \[
 \WA(s) = H(H(\mathsf{salt_{wh}} \parallel s)).
 \]
-Because this address is derived from a hash rather than a public key, no one can spend from it via ordinary signature-based authorization. Funds sent here are effectively burned. Anyone can deposit to a wormhole address through an ordinary on-chain transfer, creating a record that can later be authenticated inside the circuit. A user may receive funds from their own prior transfers or from third-party payments to wormhole addresses derived from secrets the user controls.
+Because this address is derived from a hash rather than a public key, no one can spend from it via ordinary signature-based authorization—wormhole addresses can receive funds but never have outgoing transactions. Anyone can deposit to a wormhole address through an ordinary on-chain transfer, creating a record that can later be authenticated inside the circuit. A user may receive funds from their own prior transfers or from third-party payments to wormhole addresses derived from secrets the user controls.
 
 \paragraph{2. Witness Acquisition:}
 To withdraw, the user gathers the deposit record and a storage proof. These form the private witness.
@@ -325,22 +325,50 @@ Together with the blockchain's nullifier check, total settled value never exceed
 \subsection{Anonymity sets}
 \label{sec:layer0privacy}
 
-An adversary observing a first-layer aggregate sees \(N\) nullifiers (some real, some dummies) and grouped exits. Real and dummy nullifiers are both double hashes of high-entropy inputs and are computationally indistinguishable. The adversary cannot determine which nullifiers correspond to real deposits.
+An adversary observing a first-layer aggregate sees \(N\) nullifiers (some real, some dummies) and grouped exits. We formalize privacy through two properties: nullifier indistinguishability and transaction unlinkability.
+
+\begin{definition}[Nullifier Indistinguishability Game]
+The \emph{nullifier indistinguishability game} \(\mathsf{Game}_{\mathrm{null}}^{\mathcal{B}}\) proceeds as follows:
+\begin{enumerate}
+    \item Challenger samples secret \(s \gets \{0,1\}^{256}\), counter \(c\), and random \(r \gets \{0,1\}^{256}\).
+    \item Challenger computes \(n_0 = \Null(s, c) = H(H(\mathsf{salt_{null}} \parallel s \parallel c))\) and \(n_1 = H(H(r))\).
+    \item Challenger flips \(b \gets \{0,1\}\) and sends \(n_b\) to \(\mathcal{B}\).
+    \item \(\mathcal{B}\) outputs guess \(b'\).
+    \item \(\mathcal{B}\) wins if \(b' = b\).
+\end{enumerate}
+We say nullifiers are \emph{indistinguishable} if \(|\Pr[\mathsf{Game}_{\mathrm{null}}^{\mathcal{B}} = 1] - 1/2| \leq \epsilon_{\mathrm{prf}}\) for all PPT \(\mathcal{B}\), where \(\epsilon_{\mathrm{prf}}\) is the PRF advantage against \(H\).
+\end{definition}
+
+\begin{theorem}[Nullifier Indistinguishability]
+If \(H\) is a pseudorandom function, then real and dummy nullifiers are computationally indistinguishable.
+\end{theorem}
+
+\begin{proof}
+Both \(n_0 = H(H(\mathsf{salt_{null}} \parallel s \parallel c))\) and \(n_1 = H(H(r))\) are outputs of \(H\) applied to uniformly random inputs (the inner hashes). If \(\mathcal{B}\) distinguishes with advantage \(\epsilon\), we construct a PRF distinguisher with the same advantage: given oracle access to either \(H\) or a random function, query on a random input and use \(\mathcal{B}\) to distinguish. Thus \(\epsilon \leq \epsilon_{\mathrm{prf}}\).
+\end{proof}
 
 \begin{definition}[Anonymity set]
-Fix a first-layer aggregate \(Y\) with total exit amount \(S\) and fee rate \(f\). Let \(a_1, \ldots, a_M\) be the amounts of all deposits to addresses that have never had an outgoing transaction. The \emph{anonymity set} \(\mathcal{A}(Y)\) is
+Fix a first-layer aggregate \(Y\) with total exit amount \(S\) and fee rate \(f\). Let \(a_1, \ldots, a_M\) be the amounts of all deposits to addresses that have never had an outgoing transaction. Since wormhole addresses cannot have outgoing transactions by construction, all wormhole deposits are included in this set. The \emph{anonymity set} \(\mathcal{A}(Y)\) is
 \[
 \mathcal{A}(Y) = \left\{ I \subseteq \{1,\ldots,M\} \;\middle|\; |I| \leq N \text{ and } \sum_{i \in I} a_i \geq \frac{S}{1 - f} \right\}.
 \]
 Computing \(|\mathcal{A}(Y)|\) is an instance of \textsc{\#SubsetSum}: given \(M\) integers, count subsets whose sum meets a target.
 \end{definition}
 
+\begin{theorem}[Transaction Unlinkability]
+Let \(Y\) be a first-layer aggregate with anonymity set \(\mathcal{A}(Y)\) where \(|\mathcal{A}(Y)| = k \geq 1\). No PPT adversary can identify the true deposit subset with probability greater than \(1/k + \epsilon_{\mathrm{prf}}\).
+\end{theorem}
+
+\begin{proof}
+An adversary attempting to identify the funding deposits must first determine which of the \(N\) nullifiers correspond to real deposits. By Theorem 5 (nullifier indistinguishability), the adversary cannot distinguish real from dummy nullifiers except with advantage \(\epsilon_{\mathrm{prf}}\). Conditioned on not distinguishing nullifiers, the adversary sees only the total exit amount \(S\) and must guess among all subsets in \(\mathcal{A}(Y)\) that could produce this sum. With \(k\) equally plausible subsets, random guessing succeeds with probability \(1/k\). Any strategy exceeding this probability implies either (1) distinguishing nullifiers, contradicting Theorem 5, or (2) information-theoretic leakage beyond what is revealed, which is impossible since the proof is zero-knowledge. Thus the adversary's success probability is at most \(1/k + \epsilon_{\mathrm{prf}}\).
+\end{proof}
+
 Because the proof system enforces an inequality rather than exact equality (condition C5), the adversary must consider any subset of deposits whose sum is \emph{at least} the required threshold \(T = S/(1-f)\). This is a feature: by withdrawing less than their full balance, users can select output amounts that match more potential deposit combinations, enlarging the anonymity set at the cost of burned value.
 
 \paragraph{Complexity of \textsc{\#SubsetSum}:}
 The decision version of subset sum (does any subset sum to exactly \(T\)?) is NP-complete. The counting version \textsc{\#SubsetSum} is \#P-complete \citep{subsetsum}, and no polynomial-time algorithm is known.
 
-Our setting requires counting subsets of size at most \(N\) summing to at least \(T\). The size of \(|\mathcal{A}(Y)|\) depends on the distribution of deposit amounts relative to \(T\); when many deposits have amounts in the range of typical withdrawals, the anonymity set grows combinatorially. As long as \(|\mathcal{A}(Y)| > 1\), an adversary cannot determine which subset is correct without knowing the secret.
+Our setting requires counting subsets of size at most \(N\) summing to at least \(T\). The size of \(|\mathcal{A}(Y)|\) depends on the distribution of deposit amounts relative to \(T\); when many deposits have amounts in the range of typical withdrawals, the anonymity set grows combinatorially.
 
 \paragraph{Burn Cost and Bounded Rationality:}
 A rational adversary may assume users are unwilling to burn significant value for privacy. Under bounded rationality, the effective anonymity set shrinks to subsets summing to at most \(T \cdot (1 + \delta)\) for some small \(\delta\) (e.g., 1\%). Even with this constraint, the anonymity set remains combinatorially large when deposit amounts cluster near typical withdrawal sizes. The protocol does not enforce any upper bound; users may choose their privacy-value tradeoff freely.

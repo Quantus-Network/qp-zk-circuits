@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  17 APR 2026 12:36
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  17 APR 2026 13:17
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -742,25 +742,25 @@ Package microtype Info: Loading generic protrusion settings for font family
 (microtype)             For optimal results, create family-specific settings.
 (microtype)             See the microtype manual for details.
  [4] [5]
-[6] [7]
+[6] [7] [8]
 
 LaTeX Font Warning: Font shape `T1/lmr/m/scit' undefined
-(Font)              using `T1/lmr/m/scsl' instead on input line 335.
+(Font)              using `T1/lmr/m/scsl' instead on input line 355.
 
 
 LaTeX Font Warning: Font shape `T1/lmr/bx/sc' undefined
-(Font)              using `T1/lmr/bx/n' instead on input line 341.
+(Font)              using `T1/lmr/bx/n' instead on input line 369.
 
 Package microtype Info: Character `029' is missing
 (microtype)             in font `T1/lmr/m/sc/10.95'.
 (microtype)             Ignoring protrusion settings for this character.
-[8{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-mathex.enc}]
+[9{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-mathex.enc}]
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <10> on input line 370.
+(Font)              <10> on input line 398.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <7> on input line 370.
+(Font)              <7> on input line 398.
 
-[9] [10] [11] (./main.aux)
+[10] [11] [12] (./main.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
@@ -773,11 +773,11 @@ Package rerunfilecheck Info: File `main.out' has not changed.
 (rerunfilecheck)             Checksum: 834586671B9A79C5E226C908BF9BCE71;4916.
  ) 
 Here is how much of TeX's memory you used:
- 17537 strings out of 469006
- 286230 string characters out of 5454813
- 757648 words of memory out of 5000000
+ 17564 strings out of 469006
+ 286498 string characters out of 5454813
+ 758648 words of memory out of 5000000
  45604 multiletter control sequences out of 15000+600000
- 749565 words of font info for 239 fonts, out of 8000000 for 9000
+ 750417 words of font info for 248 fonts, out of 8000000 for 9000
  319 hyphenation exceptions out of 8191
  75i,9n,79p,997b,720s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmbx10.pfb></u
@@ -798,10 +798,10 @@ lmri10.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmss1
 /local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmsy8.pfb></usr/local
 /texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmtt10.pfb></usr/local/texl
 ive/2026basic/texmf-dist/fonts/type1/public/lm/lmtt9.pfb>
-Output written on main.pdf (11 pages, 430742 bytes).
+Output written on main.pdf (12 pages, 436054 bytes).
 PDF statistics:
- 438 PDF objects out of 1000 (max. 8388607)
- 379 compressed objects within 4 object streams
- 115 named destinations out of 1000 (max. 500000)
+ 451 PDF objects out of 1000 (max. 8388607)
+ 391 compressed objects within 4 object streams
+ 124 named destinations out of 1000 (max. 500000)
  72961 words of extra memory for PDF output out of 74296 (max. 10000000)
 
