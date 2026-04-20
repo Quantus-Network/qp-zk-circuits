@@ -220,7 +220,7 @@ fn build_outer_wrapper_constraints(
         builder.range_check(final_sum, 32);
 
         output_pis.push(final_sum);
-        for  exit_limb in a_exits[i].iter().take(4) {
+        for exit_limb in a_exits[i].iter().take(4) {
             output_pis.push(builder.select(a_is_zero[i], zero, *exit_limb));
         }
     }
