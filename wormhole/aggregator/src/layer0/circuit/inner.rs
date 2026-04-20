@@ -227,10 +227,12 @@ fn build_inner_wrapper_constraints(
         builder.connect(valid_block_relation.target, one);
 
         let asset_i = limb1_at_offset::<LEAF_PI_LEN, ASSET_ID_START>(pis_i, 0);
-        builder.connect(asset_i, asset_ref);
+        let asset_or_ref = builder.select(is_dummy_i, asset_ref, asset_i);
+        builder.connect(asset_or_ref, asset_ref);
 
         let volume_fee_bps_i = limb1_at_offset::<LEAF_PI_LEN, VOLUME_FEE_BPS_START>(pis_i, 0);
-        builder.connect(volume_fee_bps_i, volume_fee_bps_ref);
+        let fee_or_ref = builder.select(is_dummy_i, volume_fee_bps_ref, volume_fee_bps_i);
+        builder.connect(fee_or_ref, volume_fee_bps_ref);
     }
 
     let mut output_pis = vec![

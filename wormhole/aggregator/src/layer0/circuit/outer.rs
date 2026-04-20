@@ -178,8 +178,6 @@ fn build_outer_wrapper_constraints(
 
     let asset_b = proof_b[aggregated_output::ASSET_ID_OFFSET];
     let fee_b = proof_b[aggregated_output::VOLUME_FEE_BPS_OFFSET];
-    builder.connect(asset_b, asset_ref);
-    builder.connect(fee_b, fee_ref);
 
     let block_b: [Target; 4] =
         core::array::from_fn(|i| proof_b[aggregated_output::BLOCK_HASH_OFFSET + i]);
@@ -188,6 +186,10 @@ fn build_outer_wrapper_constraints(
     let valid_block_relation = builder.or(block_b_is_dummy, block_b_matches);
     let one = builder.one();
     builder.connect(valid_block_relation.target, one);
+    let asset_b_or_ref = builder.select(block_b_is_dummy, asset_ref, asset_b);
+    builder.connect(asset_b_or_ref, asset_ref);
+    let fee_b_or_ref = builder.select(block_b_is_dummy, fee_ref, fee_b);
+    builder.connect(fee_b_or_ref, fee_ref);
 
     let mut output_pis = Vec::with_capacity(OUTER_OUTPUT_PI_LEN);
     output_pis.push(builder.constant(F::from_canonical_usize(OUTER_FINAL_EXIT_SLOTS)));
@@ -218,8 +220,8 @@ fn build_outer_wrapper_constraints(
         builder.range_check(final_sum, 32);
 
         output_pis.push(final_sum);
-        for limb in 0..4 {
-            output_pis.push(builder.select(a_is_zero[i], zero, a_exits[i][limb]));
+        for  exit_limb in a_exits[i].iter().take(4) {
+            output_pis.push(builder.select(a_is_zero[i], zero, *exit_limb));
         }
     }
 
@@ -233,8 +235,8 @@ fn build_outer_wrapper_constraints(
         builder.range_check(final_sum, 32);
 
         output_pis.push(final_sum);
-        for limb in 0..4 {
-            output_pis.push(builder.select(zero_out, zero, b_exits[j][limb]));
+        for exit_limb in b_exits[j].iter().take(4) {
+            output_pis.push(builder.select(zero_out, zero, *exit_limb));
         }
     }
 
