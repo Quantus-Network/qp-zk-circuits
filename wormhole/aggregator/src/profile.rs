@@ -40,7 +40,9 @@ pub fn print_circuit_metrics(label: &str, common: &CommonCircuitData<F, D>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layer0::circuit::circuit_logic::Layer0AggregationCircuit;
+    use crate::layer0::circuit::{
+        constants::TOTAL_NUM_LEAVES, InnerAggregationCircuit, OuterAggregationCircuit,
+    };
     use crate::layer1::circuit::circuit_logic::Layer1AggregationCircuit;
     use plonky2::plonk::{
         circuit_builder::CircuitBuilder,
@@ -73,44 +75,36 @@ mod tests {
         let _ = env_logger::builder().is_test(true).try_init();
 
         println!("\n========================================");
-        println!("   LAYER-0 AGGREGATION CIRCUIT PROFILE");
+        println!("   SHIPPING LAYER-0 CIRCUIT PROFILE");
         println!("========================================\n");
 
-        // Test with different numbers of leaf proofs
-        for num_leaves in [2, 4, 8] {
-            println!("\n--- Layer-0 with {} leaf proofs ---", num_leaves);
+        let leaf_data = build_fake_leaf_circuit();
+        let leaf_common = leaf_data.common.clone();
+        println!("Leaf circuit degree bits: {}", leaf_common.degree_bits());
 
-            // Build fake leaf circuit to get common data
-            let leaf_data = build_fake_leaf_circuit();
-            let leaf_common = leaf_data.common.clone();
+        let start = std::time::Instant::now();
+        let inner_circuit = InnerAggregationCircuit::new(leaf_common);
+        println!("Inner gates before build: {}", inner_circuit.num_gates());
+        let inner_data = inner_circuit.build_circuit_profiled();
+        let inner_build_time = start.elapsed();
+        println!("Inner build time: {:?}", inner_build_time);
+        print_circuit_metrics("Layer-0 Inner (8 leaves)", &inner_data.common);
+        println!(
+            "\nInner gates per leaf proof: ~{}",
+            (1 << inner_data.common.degree_bits()) / 8
+        );
 
-            println!("Leaf circuit degree bits: {}", leaf_common.degree_bits());
-
-            // Build layer-0 aggregation circuit
-            let start = std::time::Instant::now();
-            let l0_circuit = Layer0AggregationCircuit::new(
-                wormhole_aggregator_circuit_config(),
-                leaf_common,
-                num_leaves,
-            );
-
-            // Print gate counts before building
-            println!("Gates before build: {}", l0_circuit.num_gates());
-
-            // Build with profiling (prints gate instance counts via debug!)
-            let l0_data = l0_circuit.build_circuit_profiled();
-            let build_time = start.elapsed();
-
-            println!("Build time: {:?}", build_time);
-
-            // Print metrics
-            print_circuit_metrics(&format!("Layer-0 (n={})", num_leaves), &l0_data.common);
-
-            // Calculate gates per leaf
-            let total_gates = 1 << l0_data.common.degree_bits();
-            let gates_per_leaf = total_gates / num_leaves;
-            println!("\nGates per leaf proof: ~{}", gates_per_leaf);
-        }
+        let start = std::time::Instant::now();
+        let outer_circuit = OuterAggregationCircuit::new(inner_data.common.clone());
+        println!("Outer gates before build: {}", outer_circuit.num_gates());
+        let outer_data = outer_circuit.build_circuit_profiled();
+        let outer_build_time = start.elapsed();
+        println!("Outer build time: {:?}", outer_build_time);
+        print_circuit_metrics("Layer-0 Outer (2x8 wrapper)", &outer_data.common);
+        println!(
+            "\nOuter effective gates per leaf proof: ~{}",
+            (1 << outer_data.common.degree_bits()) / TOTAL_NUM_LEAVES
+        );
 
         println!("\n========================================\n");
     }
@@ -124,41 +118,31 @@ mod tests {
         println!("   LAYER-1 AGGREGATION CIRCUIT PROFILE");
         println!("========================================\n");
 
-        // Fixed layer0 leaf count for layer1 testing
-        let layer0_num_leaves = 4;
-
-        // Build fake leaf circuit to get common data for layer0
         let leaf_data = build_fake_leaf_circuit();
-
-        // Build layer-0 circuit to get its common data for layer1
-        let l0_circuit = Layer0AggregationCircuit::new(
-            wormhole_aggregator_circuit_config(),
-            leaf_data.common.clone(),
-            layer0_num_leaves,
-        );
-        let l0_data = l0_circuit.build_circuit();
-        let l0_common = l0_data.common.clone();
+        let inner_data = InnerAggregationCircuit::new(leaf_data.common.clone()).build_circuit();
+        let outer_data = OuterAggregationCircuit::new(inner_data.common.clone()).build_circuit();
+        let layer0_common = outer_data.common.clone();
 
         println!(
-            "Layer-0 circuit (n={}) degree bits: {}",
-            layer0_num_leaves,
-            l0_common.degree_bits()
+            "Shipping layer-0 outer circuit (leaves={}) degree bits: {}",
+            TOTAL_NUM_LEAVES,
+            layer0_common.degree_bits()
         );
 
         // Test with different numbers of layer-0 proofs
         for num_l0_proofs in [2, 4] {
             println!(
                 "\n--- Layer-1 with {} layer-0 proofs (each with {} leaves) ---",
-                num_l0_proofs, layer0_num_leaves
+                num_l0_proofs, TOTAL_NUM_LEAVES
             );
 
             // Build layer-1 aggregation circuit
             let start = std::time::Instant::now();
             let l1_circuit = Layer1AggregationCircuit::new(
                 wormhole_aggregator_circuit_config(),
-                l0_common.clone(),
+                layer0_common.clone(),
                 num_l0_proofs,
-                layer0_num_leaves,
+                TOTAL_NUM_LEAVES,
             );
 
             // Print gate counts before building
@@ -174,18 +158,18 @@ mod tests {
             print_circuit_metrics(
                 &format!(
                     "Layer-1 (n_l0={}, leaves={})",
-                    num_l0_proofs, layer0_num_leaves
+                    num_l0_proofs, TOTAL_NUM_LEAVES
                 ),
                 &l1_data.common,
             );
 
             // Calculate effective leaf coverage
-            let total_leaves = num_l0_proofs * layer0_num_leaves;
+            let total_leaves = num_l0_proofs * TOTAL_NUM_LEAVES;
             let total_gates = 1 << l1_data.common.degree_bits();
             let gates_per_leaf = total_gates / total_leaves;
             println!(
                 "\nTotal leaf proofs covered: {} ({} l0 proofs x {} leaves each)",
-                total_leaves, num_l0_proofs, layer0_num_leaves
+                total_leaves, num_l0_proofs, TOTAL_NUM_LEAVES
             );
             println!("Effective gates per original leaf: ~{}", gates_per_leaf);
         }
@@ -200,29 +184,44 @@ mod tests {
         println!("========================================\n");
 
         let leaf_data = build_fake_leaf_circuit();
-        let leaf_common = leaf_data.common.clone();
+        let inner_data = InnerAggregationCircuit::new(leaf_data.common.clone()).build_circuit();
+        let outer_data = OuterAggregationCircuit::new(inner_data.common.clone()).build_circuit();
 
-        println!("Leaf circuit:");
-        println!("  Degree bits: {}", leaf_common.degree_bits());
-        println!("  Public inputs: {}", leaf_common.num_public_inputs);
+        println!("\n| Stage | Degree | Gates | PI Len |");
+        println!("|-------|--------|-------|--------|");
+        println!(
+            "| Leaf | {:>6} | {:>5} | {:>6} |",
+            leaf_data.common.degree_bits(),
+            1 << leaf_data.common.degree_bits(),
+            leaf_data.common.num_public_inputs
+        );
+        println!(
+            "| L0 Inner (8 leaves) | {:>6} | {:>5} | {:>6} |",
+            inner_data.common.degree_bits(),
+            1 << inner_data.common.degree_bits(),
+            inner_data.common.num_public_inputs
+        );
+        println!(
+            "| L0 Outer (16 leaves) | {:>6} | {:>5} | {:>6} |",
+            outer_data.common.degree_bits(),
+            1 << outer_data.common.degree_bits(),
+            outer_data.common.num_public_inputs
+        );
 
-        println!("\n| Leaves | L0 Degree | L0 Gates | L0 PI Len |");
-        println!("|--------|-----------|----------|-----------|");
-
-        for num_leaves in [2, 4, 8, 16] {
-            let l0_circuit = Layer0AggregationCircuit::new(
+        for num_l0_proofs in [2, 4] {
+            let l1_data = Layer1AggregationCircuit::new(
                 wormhole_aggregator_circuit_config(),
-                leaf_common.clone(),
-                num_leaves,
-            );
-            let l0_data = l0_circuit.build_circuit();
-
+                outer_data.common.clone(),
+                num_l0_proofs,
+                TOTAL_NUM_LEAVES,
+            )
+            .build_circuit();
             println!(
-                "| {:>6} | {:>9} | {:>8} | {:>9} |",
-                num_leaves,
-                l0_data.common.degree_bits(),
-                1 << l0_data.common.degree_bits(),
-                l0_data.common.num_public_inputs
+                "| L1 ({} x 16 leaves) | {:>6} | {:>5} | {:>6} |",
+                num_l0_proofs,
+                l1_data.common.degree_bits(),
+                1 << l1_data.common.degree_bits(),
+                l1_data.common.num_public_inputs
             );
         }
 
