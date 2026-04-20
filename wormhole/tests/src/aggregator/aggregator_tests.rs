@@ -11,7 +11,11 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use test_helpers::TestInputs;
-use wormhole_aggregator::aggregator::{AggregationBackend, Layer0Aggregator};
+use wormhole_aggregator::{
+    aggregator::{AggregationBackend, Layer0Aggregator},
+    dummy_proof::load_dummy_proof,
+    layer0::circuit::constants::INNER_NUM_LEAVES,
+};
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::circuit::{C, D, F};
@@ -49,6 +53,23 @@ fn make_leaf_proof(inputs: &CircuitInputs) -> ProofWithPublicInputs<F, C, D> {
         .expect("Failed to create prover from binaries");
     prover.commit(inputs).unwrap().prove().unwrap()
 }
+
+fn load_leaf_dummy_proof() -> ProofWithPublicInputs<F, C, D> {
+    setup_test_binaries();
+
+    let prover_path = format!("{}/prover.bin", TEST_OUTPUT_DIR);
+    let common_path = format!("{}/common.bin", TEST_OUTPUT_DIR);
+    let dummy_proof_path = format!("{}/dummy_proof.bin", TEST_OUTPUT_DIR);
+
+    let prover = WormholeProver::new_from_files(Path::new(&prover_path), Path::new(&common_path))
+        .expect("Failed to create prover from binaries");
+    let dummy_proof_bytes =
+        fs::read(Path::new(&dummy_proof_path)).expect("Failed to read serialized dummy proof");
+
+    load_dummy_proof(dummy_proof_bytes, &prover.circuit_data.common)
+        .expect("Failed to deserialize dummy proof")
+}
+
 fn make_aggregator() -> Layer0Aggregator {
     setup_test_binaries();
     Layer0Aggregator::new(TEST_OUTPUT_DIR).unwrap()
@@ -190,6 +211,25 @@ fn aggregate_rejects_nonzero_asset_id_when_dummy_padding_is_needed() {
     assert!(err
         .to_string()
         .contains("dummy padding requires all real proofs to use asset_id=0"));
+}
+
+#[test]
+fn aggregate_allows_real_proof_after_dummy_prefill_across_inner_split() {
+    setup_test_binaries();
+    let mut aggregator = make_aggregator();
+    let dummy_proof = load_leaf_dummy_proof();
+
+    for _ in 0..INNER_NUM_LEAVES {
+        aggregator.push_proof(dummy_proof.clone()).unwrap();
+    }
+    aggregator
+        .push_proof(make_leaf_proof(&CircuitInputs::test_inputs_0()))
+        .unwrap();
+
+    let aggregated = aggregator.aggregate().unwrap();
+    aggregator
+        .verify(aggregated)
+        .expect("Aggregated proof should verify");
 }
 
 #[test]

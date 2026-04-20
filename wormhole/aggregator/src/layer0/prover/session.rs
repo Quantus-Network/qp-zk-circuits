@@ -15,16 +15,19 @@ use std::{
 };
 use zk_circuits_common::circuit::{C, D, F};
 
-use crate::layer0::{
-    circuit::constants::{INNER_NUM_LEAVES, TOTAL_NUM_LEAVES},
-    prover::{
-        inner::{
-            load_inner_verifier_from_binaries_dir, InnerAggregationArtifacts,
-            InnerAggregationInputs,
-        },
-        outer::{
-            load_outer_verifier_from_binaries_dir, OuterAggregationArtifacts,
-            OuterAggregationInputs,
+use crate::{
+    common::utils::is_dummy_leaf_proof,
+    layer0::{
+        circuit::constants::{INNER_NUM_LEAVES, TOTAL_NUM_LEAVES},
+        prover::{
+            inner::{
+                load_inner_verifier_from_binaries_dir, InnerAggregationArtifacts,
+                InnerAggregationInputs,
+            },
+            outer::{
+                load_outer_verifier_from_binaries_dir, OuterAggregationArtifacts,
+                OuterAggregationInputs,
+            },
         },
     },
 };
@@ -194,6 +197,8 @@ fn aggregate_with_artifacts(
         );
     }
 
+    let mut proofs = proofs;
+    normalize_proofs_for_inner_split(&mut proofs);
     let (group_a, group_b) = split_proofs(proofs);
     let start = Instant::now();
     let (inner_a_proof, inner_a_timing, inner_b_proof, inner_b_timing) = match mode {
@@ -235,6 +240,15 @@ fn aggregate_with_artifacts(
             total_ms: start.elapsed().as_secs_f64() * 1000.0,
         },
     })
+}
+
+fn normalize_proofs_for_inner_split(proofs: &mut [Proof]) {
+    if let Some(first_real_idx) = proofs
+        .iter()
+        .position(|proof| !is_dummy_leaf_proof(proof).unwrap_or(false))
+    {
+        proofs.swap(0, first_real_idx);
+    }
 }
 
 fn split_proofs(proofs: Vec<Proof>) -> (Vec<Proof>, Vec<Proof>) {
