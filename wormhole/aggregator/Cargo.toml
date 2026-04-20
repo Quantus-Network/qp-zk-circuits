@@ -23,7 +23,7 @@ zk-circuits-common = { package = "qp-zk-circuits-common", version = "2.0.1", pat
 [dev-dependencies]
 circuit-builder = { package = "qp-wormhole-circuit-builder", path = "../circuit-builder" }
 criterion = { workspace = true }
-env_logger = "0.9"
+env_logger = "0.11"
 test-helpers = { path = "../tests/test-helpers", default-features = false }
 
 [[bench]]
