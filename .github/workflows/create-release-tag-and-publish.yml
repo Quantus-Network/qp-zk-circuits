@@ -83,10 +83,11 @@ jobs:
         with:
           ref: ${{ needs.create-tag.outputs.version }}
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@master
         with:
-          components: clippy, rust-src
+          toolchain: "1.93.0"
+          components: clippy, rustfmt, rust-src
 
       - name: Cache cargo registry
         uses: actions/cache@v3

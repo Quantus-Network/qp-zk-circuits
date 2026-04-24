@@ -1,5 +1,5 @@
 {
-  description = "Nightly Rust developer shell";
+  description = "Rust developer shell pinned to rust-toolchain.toml";
 
   inputs = {
     nixpkgs.url      = "github:NixOS/nixpkgs/nixos-unstable";
@@ -14,9 +14,11 @@
         pkgs = import nixpkgs {
           inherit system overlays;
         };
-        rust = pkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default.override {
+        # Honor the version pinned in rust-toolchain.toml (currently 1.93.0)
+        # so local dev shell matches CI exactly.
+        rust = (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml).override {
           extensions = [ "rust-src" "rust-analyzer" ];
-        });
+        };
       in
       {
         devShells.default = with pkgs; mkShell {

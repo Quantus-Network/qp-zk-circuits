@@ -51,14 +51,13 @@
             os:
               - ubuntu-latest
               - macos-latest
-            rust:
-              - stable
         steps:
           - uses: actions/checkout@v4
-          - name: Install Rust ${{ matrix.rust }}
+          - name: Install Rust toolchain (from rust-toolchain.toml)
             uses: dtolnay/rust-toolchain@master
             with:
-              toolchain: ${{ matrix.rust }}
+              toolchain: "1.93.0"
+              components: clippy, rustfmt
           - name: Cache Rust dependencies
             uses: Swatinem/rust-cache@v2
           - name: Test workspace (release, fast tests)
@@ -73,10 +72,11 @@
         timeout-minutes: 20
         steps:
           - uses: actions/checkout@v4
-          - name: Install Rust stable
-            uses: dtolnay/rust-toolchain@stable
+          - name: Install Rust toolchain (from rust-toolchain.toml)
+            uses: dtolnay/rust-toolchain@master
             with:
-              components: clippy, rust-src
+              toolchain: "1.93.0"
+              components: clippy, rustfmt, rust-src
           - name: Cache Rust dependencies
             uses: Swatinem/rust-cache@v2
           - name: Run clippy (workspace)
@@ -91,8 +91,11 @@
         timeout-minutes: 60
         steps:
           - uses: actions/checkout@v4
-          - name: Install Rust stable
-            uses: dtolnay/rust-toolchain@stable
+          - name: Install Rust toolchain (from rust-toolchain.toml)
+            uses: dtolnay/rust-toolchain@master
+            with:
+              toolchain: "1.93.0"
+              components: clippy, rustfmt
           - name: Cache Rust dependencies
             uses: Swatinem/rust-cache@v2
           - name: Build circuit binaries
