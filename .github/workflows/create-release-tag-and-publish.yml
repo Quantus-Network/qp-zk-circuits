@@ -10,6 +10,11 @@ on:
     branches:
       - main
 
+# Default to read-only; jobs that need to push tags or create releases
+# override this with explicit `contents: write` (see create-tag, create-github-release-and-publish).
+permissions:
+  contents: read
+
 jobs:
   create-tag:
     name: Create Workspace Tag
