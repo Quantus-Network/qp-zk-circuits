@@ -88,11 +88,7 @@ jobs:
         with:
           ref: ${{ needs.create-tag.outputs.version }}
 
-      - name: Install Rust toolchain (from rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.93.0"
-          components: clippy, rustfmt, rust-src
+      - uses: ./.github/actions/ubuntu
 
       - name: Cache cargo registry
         uses: actions/cache@v3
@@ -148,6 +144,11 @@ jobs:
           ref: ${{ needs.create-tag.outputs.version }}
           fetch-depth: 0
           fetch-tags: true
+
+      # `cargo publish` needs the toolchain pinned in rust-toolchain.toml to be
+      # actually installed on the runner; the composite action handles that
+      # (rustup >=1.28 no longer auto-installs the active toolchain).
+      - uses: ./.github/actions/ubuntu
 
       - name: Create GitHub Release
         env:
