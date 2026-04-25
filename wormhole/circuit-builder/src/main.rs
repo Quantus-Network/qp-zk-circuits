@@ -12,7 +12,7 @@ struct Args {
     #[arg(short, long, default_value = "generated-bins")]
     output: String,
 
-    /// Retained for API compatibility; shipping aggregated output stays fixed at 16 leaf proofs.
+    /// Retained for API compatibility; shipping compact-child 2x8 layer-0 artifacts are fixed at 16 leaf proofs.
     #[arg(short, long, default_value_t = 16)]
     num_leaf_proofs: usize,
 
@@ -30,7 +30,7 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     println!(
-        "Generating circuit binaries (shipping 2x8 aggregated output fixed at 16 leaves, num_leaf_proofs={}, num_layer0_proofs={})",
+        "Generating circuit binaries (shipping compact-child 2x8 layer-0 artifacts fixed at 16 leaves, num_leaf_proofs={}, num_layer0_proofs={})",
         args.num_leaf_proofs,
         args.num_layer0_proofs.unwrap_or(0),
     );

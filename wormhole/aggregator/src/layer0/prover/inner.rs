@@ -65,8 +65,9 @@ impl InnerAggregationArtifacts {
         let expected_leaf_pi_len = leaf_common.num_public_inputs;
         let circuit = InnerAggregationCircuit::new(leaf_common.clone());
         let targets = circuit.targets();
-        let circuit_data = Arc::new(circuit.build_prover());
-        let verifier_data = Arc::new(InnerAggregationCircuit::new(leaf_common).build_verifier());
+        let built_circuit = circuit.build_circuit();
+        let verifier_data = Arc::new(built_circuit.verifier_data());
+        let circuit_data = Arc::new(built_circuit.prover_data());
 
         Self {
             circuit_data,
@@ -282,7 +283,7 @@ impl InnerAggregationProver {
             proofs.push((*self.dummy_proof_template).clone());
         }
 
-        shuffle_proofs_preserving_first_real_inner(&mut proofs);
+        canonicalize_proofs_preserving_first_real_inner(&mut proofs);
         let dummy_nullifier_pre_images =
             generate_dummy_nullifier_pre_images_for_slots(proofs.len());
 
@@ -344,7 +345,15 @@ pub fn load_inner_verifier_from_binaries_dir(
     })
 }
 
-fn shuffle_proofs_preserving_first_real_inner(proofs: &mut [Proof]) {
+/// Canonicalizes inner proof ordering for the shipping compact-child 2x8 topology.
+///
+/// The deterministic ordering is intentional. When a real proof is present, slot `0` preserves one
+/// for legacy slot-0 behavior, while the remaining slots are sorted by canonical public inputs so
+/// witness construction stays deterministic and reproducible. These non-ZK inner proofs are an
+/// internal proving stage consumed by the final outer ZK wrapper, so proof order must not be
+/// treated as a privacy boundary. If inner proofs ever become externally exposed, this ordering
+/// decision must be revisited.
+fn canonicalize_proofs_preserving_first_real_inner(proofs: &mut [Proof]) {
     if let Some(first_real_idx) = proofs
         .iter()
         .position(|p| !is_dummy_leaf_proof(p).unwrap_or(false))

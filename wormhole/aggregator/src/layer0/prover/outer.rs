@@ -51,8 +51,9 @@ impl OuterAggregationArtifacts {
     ) -> Self {
         let circuit = OuterAggregationCircuit::new(inner_common.clone());
         let targets = circuit.targets();
-        let circuit_data = Arc::new(circuit.build_prover());
-        let verifier_data = Arc::new(OuterAggregationCircuit::new(inner_common).build_verifier());
+        let built_circuit = circuit.build_circuit();
+        let verifier_data = Arc::new(built_circuit.verifier_data());
+        let circuit_data = Arc::new(built_circuit.prover_data());
 
         Self {
             circuit_data,

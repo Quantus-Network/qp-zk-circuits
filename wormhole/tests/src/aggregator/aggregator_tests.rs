@@ -14,7 +14,7 @@ use test_helpers::TestInputs;
 use wormhole_aggregator::{
     aggregator::{AggregationBackend, Layer0Aggregator},
     dummy_proof::load_dummy_proof,
-    layer0::circuit::constants::INNER_NUM_LEAVES,
+    layer0::circuit::constants::{INNER_NUM_LEAVES, TOTAL_NUM_LEAVES},
 };
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_prover::WormholeProver;
@@ -33,7 +33,7 @@ extern "C" fn cleanup_test_output_dir() {
 
 fn setup_test_binaries() {
     TEST_INIT.call_once(|| {
-        generate_all_circuit_binaries(TEST_OUTPUT_DIR, true, 2, None)
+        generate_all_circuit_binaries(TEST_OUTPUT_DIR, true, TOTAL_NUM_LEAVES, None)
             .expect("Failed to generate test circuit binaries");
 
         // Register a process-exit cleanup so the directory is removed once all tests finish.

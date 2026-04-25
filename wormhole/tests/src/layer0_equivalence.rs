@@ -381,6 +381,7 @@ fn normalize_aggregated(label: &str, proof: &Proof) -> Result<CanonicalAggregate
         nullifiers,
     })
 }
+
 fn assert_views_match(left: &CanonicalAggregatedView, right: &CanonicalAggregatedView) {
     assert_eq!(left.public_input_len, FINAL_PUBLIC_INPUT_LEN);
     assert_eq!(right.public_input_len, FINAL_PUBLIC_INPUT_LEN);

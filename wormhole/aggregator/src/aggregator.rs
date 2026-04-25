@@ -314,6 +314,9 @@ impl AggregationBackend for Layer0Aggregator {
         let prover = self
             .artifacts
             .new_session()
+            // Callers can verify explicitly via `verify`; skipping the implicit post-prove check
+            // avoids duplicate verification work in the production hot path.
+            .with_output_verification(false)
             .commit(proofs)
             .context("failed to commit leaf proofs to layer-0 aggregation prover")?;
 

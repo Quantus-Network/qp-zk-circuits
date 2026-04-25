@@ -76,6 +76,7 @@ pub struct Layer0AggregationProver {
     artifacts: Layer0AggregationArtifacts,
     proofs: Option<Vec<Proof>>,
     mode: InnerExecutionMode,
+    verify_output: bool,
 }
 
 impl Layer0AggregationArtifacts {
@@ -129,6 +130,7 @@ impl Layer0AggregationProver {
             artifacts: artifacts.clone(),
             proofs: None,
             mode: InnerExecutionMode::Parallel,
+            verify_output: true,
         }
     }
 
@@ -138,6 +140,11 @@ impl Layer0AggregationProver {
 
     pub fn with_inner_execution_mode(mut self, mode: InnerExecutionMode) -> Self {
         self.mode = mode;
+        self
+    }
+
+    pub fn with_output_verification(mut self, verify_output: bool) -> Self {
+        self.verify_output = verify_output;
         self
     }
 
@@ -162,10 +169,11 @@ impl Layer0AggregationProver {
             artifacts,
             proofs,
             mode,
+            verify_output,
         } = self;
         let proofs =
             proofs.ok_or_else(|| anyhow::anyhow!("layer-0 prover has no committed proofs"))?;
-        Ok(aggregate_with_artifacts(&artifacts, proofs, mode)?.proof)
+        Ok(aggregate_with_artifacts(&artifacts, proofs, mode, verify_output)?.proof)
     }
 
     pub fn verify(&self, proof: Proof) -> Result<()> {
@@ -177,7 +185,7 @@ impl Layer0AggregationProver {
         proofs: Vec<Proof>,
         mode: InnerExecutionMode,
     ) -> Result<Layer0AggregateOutput> {
-        aggregate_with_artifacts(&self.artifacts, proofs, mode)
+        aggregate_with_artifacts(&self.artifacts, proofs, mode, self.verify_output)
     }
 }
 
@@ -185,6 +193,7 @@ fn aggregate_with_artifacts(
     artifacts: &Layer0AggregationArtifacts,
     proofs: Vec<Proof>,
     mode: InnerExecutionMode,
+    verify_output: bool,
 ) -> Result<Layer0AggregateOutput> {
     if proofs.is_empty() {
         bail!("there are no leaf proofs to aggregate");
@@ -226,7 +235,9 @@ fn aggregate_with_artifacts(
     let (proof, outer_prove_ms) =
         time_operation(|| outer_session.prove().context("outer prove failed"))?;
 
-    artifacts.verify(proof.clone())?;
+    if verify_output {
+        artifacts.verify(proof.clone())?;
+    }
 
     Ok(Layer0AggregateOutput {
         proof,

@@ -10,6 +10,11 @@ The shipping layer-0 implementation lives in `src/layer0/**` and uses the fixed 
 - Fixed batch capacity of `16` leaf proofs.
 - Stable final public contract: `344` total felts, `232` semantic felts, `112` zero-tail felts.
 
+Inner proof ordering is canonical and deterministic by design: slot `0` keeps a real proof when
+one is present, the remaining inner slots are ordered by public inputs, and the stable public
+interface is the final outer ZK wrapper. The old random shuffle is not treated as a privacy
+primitive in this topology.
+
 `Layer0Aggregator` is the production hot path. It warm-loads cached artifacts from the binaries
 directory, pads short batches with the shipping dummy-proof behavior, and returns the same final
 `aggregated_*` proof contract used by chain integration.
