@@ -63,8 +63,6 @@ jobs:
       - name: Setup macOS
         if: matrix.os == 'macos-latest'
         uses: ./.github/actions/macos
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
       - name: Test workspace (release, fast tests)
         run: |
           cargo test --workspace --locked --release --lib --bins -- --skip aggregator_tests --skip circuit_data_tests --skip prover_tests --skip verifier_tests
@@ -78,8 +76,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ubuntu
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
       - name: Run clippy (workspace)
         run: cargo clippy --workspace --all-targets --all-features --locked --release -- -D warnings
       - name: Check documentation
@@ -93,8 +89,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ubuntu
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
       - name: Build circuit binaries
         run: ./scripts/build-circuits.sh
       - name: Run slow crypto tests
