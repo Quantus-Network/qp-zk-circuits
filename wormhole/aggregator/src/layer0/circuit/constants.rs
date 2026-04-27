@@ -1,5 +1,8 @@
 //! Layer-0 aggregation constants and public-input layout helpers.
 
+use plonky2::plonk::circuit_data::CircuitConfig;
+use zk_circuits_common::circuit::wormhole_aggregator_circuit_config;
+
 /// Public inputs per leaf proof (Bitcoin-style 2-output layout)
 ///
 /// Layout:
@@ -84,4 +87,51 @@ pub mod aggregated_output {
     pub const fn pi_len(num_leaves: usize) -> usize {
         LEAF_PI_LEN * num_leaves + 8
     }
+}
+
+/// Fixed inner batch size for the shipping 2x8 layer-0 path.
+pub const INNER_NUM_LEAVES: usize = 8;
+
+/// Final production leaf capacity.
+pub const TOTAL_NUM_LEAVES: usize = INNER_NUM_LEAVES * 2;
+
+/// Inner artifact filenames.
+pub const INNER_COMMON_FILENAME: &str = "inner_common.bin";
+pub const INNER_VERIFIER_FILENAME: &str = "inner_verifier.bin";
+pub const INNER_PROVER_FILENAME: &str = "inner_prover.bin";
+pub const INNER_TARGETS_FILENAME: &str = "inner_targets.bin";
+
+/// Outer artifact filenames.
+pub const OUTER_COMMON_FILENAME: &str = "outer_common.bin";
+pub const OUTER_VERIFIER_FILENAME: &str = "outer_verifier.bin";
+pub const OUTER_PROVER_FILENAME: &str = "outer_prover.bin";
+pub const OUTER_TARGETS_FILENAME: &str = "outer_targets.bin";
+
+/// Shared compact-child PI accounting for the shipping 2x8 topology.
+pub const INNER_EXIT_SLOTS: usize = aggregated_output::exit_slots_count(INNER_NUM_LEAVES);
+pub const INNER_OUTPUT_PI_LEN: usize = aggregated_output::HEADER_LEN
+    + INNER_EXIT_SLOTS * aggregated_output::EXIT_SLOT_LEN
+    + INNER_NUM_LEAVES * 4;
+
+pub const OUTER_INNER_PROOFS: usize = 2;
+pub const OUTER_CHILD_NUM_LEAVES: usize = INNER_NUM_LEAVES;
+pub const OUTER_CHILD_EXIT_SLOTS: usize =
+    aggregated_output::exit_slots_count(OUTER_CHILD_NUM_LEAVES);
+pub const OUTER_CHILD_NULLIFIERS: usize =
+    aggregated_output::nullifiers_count(OUTER_CHILD_NUM_LEAVES);
+pub const OUTER_CHILD_HEADER_LEN: usize = aggregated_output::HEADER_LEN;
+pub const OUTER_CHILD_EXIT_SLOT_LEN: usize = aggregated_output::EXIT_SLOT_LEN;
+pub const OUTER_CHILD_EXIT_SLOTS_START: usize = OUTER_CHILD_HEADER_LEN;
+pub const OUTER_CHILD_NULLIFIERS_START: usize =
+    OUTER_CHILD_EXIT_SLOTS_START + OUTER_CHILD_EXIT_SLOTS * OUTER_CHILD_EXIT_SLOT_LEN;
+pub const OUTER_CHILD_PI_LEN: usize = OUTER_CHILD_NULLIFIERS_START + OUTER_CHILD_NULLIFIERS * 4;
+pub const OUTER_OUTPUT_PI_LEN: usize = aggregated_output::pi_len(TOTAL_NUM_LEAVES);
+pub const OUTER_FINAL_EXIT_SLOTS: usize = aggregated_output::exit_slots_count(TOTAL_NUM_LEAVES);
+
+pub fn inner_circuit_config() -> CircuitConfig {
+    CircuitConfig::standard_recursion_config()
+}
+
+pub fn outer_circuit_config() -> CircuitConfig {
+    wormhole_aggregator_circuit_config()
 }

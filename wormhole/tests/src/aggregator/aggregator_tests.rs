@@ -4,10 +4,18 @@ use circuit_builder::generate_all_circuit_binaries;
 use plonky2::field::types::Field;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_inputs::PublicCircuitInputs;
-use std::path::Path;
-use std::sync::Once;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::Once,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use test_helpers::TestInputs;
-use wormhole_aggregator::aggregator::{AggregationBackend, Layer0Aggregator};
+use wormhole_aggregator::{
+    aggregator::{AggregationBackend, Layer0Aggregator},
+    dummy_proof::load_dummy_proof,
+    layer0::circuit::constants::{INNER_NUM_LEAVES, TOTAL_NUM_LEAVES},
+};
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::circuit::{C, D, F};
@@ -25,7 +33,7 @@ extern "C" fn cleanup_test_output_dir() {
 
 fn setup_test_binaries() {
     TEST_INIT.call_once(|| {
-        generate_all_circuit_binaries(TEST_OUTPUT_DIR, true, 2, None)
+        generate_all_circuit_binaries(TEST_OUTPUT_DIR, true, TOTAL_NUM_LEAVES, None)
             .expect("Failed to generate test circuit binaries");
 
         // Register a process-exit cleanup so the directory is removed once all tests finish.
@@ -45,9 +53,47 @@ fn make_leaf_proof(inputs: &CircuitInputs) -> ProofWithPublicInputs<F, C, D> {
         .expect("Failed to create prover from binaries");
     prover.commit(inputs).unwrap().prove().unwrap()
 }
+
+fn load_leaf_dummy_proof() -> ProofWithPublicInputs<F, C, D> {
+    setup_test_binaries();
+
+    let prover_path = format!("{}/prover.bin", TEST_OUTPUT_DIR);
+    let common_path = format!("{}/common.bin", TEST_OUTPUT_DIR);
+    let dummy_proof_path = format!("{}/dummy_proof.bin", TEST_OUTPUT_DIR);
+
+    let prover = WormholeProver::new_from_files(Path::new(&prover_path), Path::new(&common_path))
+        .expect("Failed to create prover from binaries");
+    let dummy_proof_bytes =
+        fs::read(Path::new(&dummy_proof_path)).expect("Failed to read serialized dummy proof");
+
+    load_dummy_proof(dummy_proof_bytes, &prover.circuit_data.common)
+        .expect("Failed to deserialize dummy proof")
+}
+
 fn make_aggregator() -> Layer0Aggregator {
     setup_test_binaries();
     Layer0Aggregator::new(TEST_OUTPUT_DIR).unwrap()
+}
+
+fn temp_bins_copy(name: &str) -> PathBuf {
+    setup_test_binaries();
+
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("qp-layer0-{name}-{suffix}"));
+    fs::create_dir_all(&dir).unwrap();
+
+    for entry in fs::read_dir(TEST_OUTPUT_DIR).unwrap() {
+        let entry = entry.unwrap();
+        let file_type = entry.file_type().unwrap();
+        if file_type.is_file() {
+            fs::copy(entry.path(), dir.join(entry.file_name())).unwrap();
+        }
+    }
+
+    dir
 }
 
 #[test]
@@ -139,7 +185,7 @@ fn aggregate_proofs_into_tree() {
 #[test]
 fn aggregate_half_full_proof_array_into_tree() {
     setup_test_binaries();
-    // Intentionally only push one proof into a 2-proof aggregator to exercise padding.
+    // Intentionally only push one proof into the shipping 2x8 aggregator to exercise padding.
     let proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
 
     let mut aggregator = make_aggregator();
@@ -165,6 +211,54 @@ fn aggregate_rejects_nonzero_asset_id_when_dummy_padding_is_needed() {
     assert!(err
         .to_string()
         .contains("dummy padding requires all real proofs to use asset_id=0"));
+}
+
+#[test]
+fn aggregate_allows_real_proof_after_dummy_prefill_across_inner_split() {
+    setup_test_binaries();
+    let mut aggregator = make_aggregator();
+    let dummy_proof = load_leaf_dummy_proof();
+
+    for _ in 0..INNER_NUM_LEAVES {
+        aggregator.push_proof(dummy_proof.clone()).unwrap();
+    }
+    aggregator
+        .push_proof(make_leaf_proof(&CircuitInputs::test_inputs_0()))
+        .unwrap();
+
+    let aggregated = aggregator.aggregate().unwrap();
+    aggregator
+        .verify(aggregated)
+        .expect("Aggregated proof should verify");
+}
+
+#[test]
+fn aggregate_uses_cached_layer0_artifacts() {
+    let bins_dir = temp_bins_copy("cached-warm-path");
+    let proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
+
+    let mut aggregator = Layer0Aggregator::new(&bins_dir).unwrap();
+
+    fs::remove_file(bins_dir.join("inner_prover.bin")).unwrap();
+    fs::remove_file(bins_dir.join("inner_common.bin")).unwrap();
+    fs::remove_file(bins_dir.join("inner_verifier.bin")).unwrap();
+    fs::remove_file(bins_dir.join("inner_targets.bin")).unwrap();
+    fs::remove_file(bins_dir.join("outer_prover.bin")).unwrap();
+    fs::remove_file(bins_dir.join("outer_common.bin")).unwrap();
+    fs::remove_file(bins_dir.join("outer_verifier.bin")).unwrap();
+    fs::remove_file(bins_dir.join("outer_targets.bin")).unwrap();
+    fs::remove_file(bins_dir.join("aggregated_prover.bin")).unwrap();
+    fs::remove_file(bins_dir.join("aggregated_targets.bin")).unwrap();
+    fs::remove_file(bins_dir.join("common.bin")).unwrap();
+    fs::remove_file(bins_dir.join("verifier.bin")).unwrap();
+    fs::remove_file(bins_dir.join("dummy_proof.bin")).unwrap();
+    fs::remove_file(bins_dir.join("config.json")).unwrap();
+
+    aggregator.push_proof(proof).unwrap();
+    let aggregated = aggregator.aggregate().unwrap();
+    aggregator.verify(aggregated).unwrap();
+
+    fs::remove_dir_all(bins_dir).unwrap();
 }
 
 /// This simulates a CLI-ish flow without prebuilt binaries:

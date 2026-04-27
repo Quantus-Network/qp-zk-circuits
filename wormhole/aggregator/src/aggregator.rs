@@ -1,7 +1,7 @@
 //! High-level aggregation orchestrator backends.
 //!
-//! - Layer0Aggregator: client/privacy-preserving aggregation (pads/shuffles inside Layer0AggregationProver::commit).
-//! - Layer1Aggregator: delegated aggregation ( expects full batches of layer-0 proofs).
+//! - `Layer0Aggregator`: production layer-0 aggregation over the shipping compact-child 2x8 path.
+//! - `Layer1Aggregator`: delegated aggregation (expects full batches of layer-0 proofs).
 //!
 //! Shared utilities:
 //! - verifier loading from {common.bin, verifier.bin}
@@ -23,7 +23,7 @@ use zk_circuits_common::circuit::{C, D, F};
 use crate::layer1::prover::{Layer1AggregationInputs, Layer1AggregationProver};
 use crate::{
     common::utils::{ensure_proof_public_input_len, leaf_proof_asset_id},
-    layer0::prover::Layer0AggregationProver,
+    layer0::prover::Layer0AggregationArtifacts,
     CircuitBinsConfig,
 };
 
@@ -244,34 +244,29 @@ impl AggregationBackend for Layer1Aggregator {
 }
 
 // ============================================================================
-// Layer 0 backend (client-side aggregation)
+// Layer 0 backend (production aggregation)
 // ============================================================================
 
 pub struct Layer0Aggregator {
     bins_dir: PathBuf,
     buf: ProofBuffer,
     expected_leaf_pi_len: usize,
+    artifacts: Layer0AggregationArtifacts,
 }
 
 impl Layer0Aggregator {
     pub fn new<P: AsRef<Path>>(bins_dir: P) -> Result<Self> {
         let bins_dir = bins_dir.as_ref().to_path_buf();
-
-        // Load config
-        let config = CircuitBinsConfig::load(&bins_dir)?;
-        let expected_leaf_pi_len =
-            load_common_from_bins(&bins_dir, "common.bin")?.num_public_inputs;
+        let artifacts = Layer0AggregationArtifacts::new_from_binaries_dir(&bins_dir)
+            .context("failed to load shipping 2x8 artifacts from binaries dir")?;
+        let expected_leaf_pi_len = artifacts.expected_leaf_pi_len();
 
         Ok(Self {
             bins_dir,
-            buf: ProofBuffer::new(config.num_leaf_proofs),
+            buf: ProofBuffer::new(artifacts.num_leaf_proofs()),
             expected_leaf_pi_len,
+            artifacts,
         })
-    }
-
-    fn build_prover(&self) -> Result<Layer0AggregationProver> {
-        Layer0AggregationProver::new_from_binaries_dir(&self.bins_dir)
-            .context("failed to load prebuilt layer-0 prover from binaries dir")
     }
 
     fn load_verifier(&self) -> Result<VerifierCircuitData<F, C, D>> {
@@ -294,7 +289,7 @@ impl AggregationBackend for Layer0Aggregator {
     }
 
     fn batch_size(&self) -> usize {
-        self.buf.cap()
+        self.artifacts.num_leaf_proofs()
     }
 
     fn aggregate(&mut self) -> Result<Proof> {
@@ -302,10 +297,6 @@ impl AggregationBackend for Layer0Aggregator {
             bail!("there are no leaf proofs to aggregate");
         }
 
-        // Layer-0 prover commit does padding/shuffling/dummy-nullifier-preimage handling,
-        // so we can pass any non-empty batch. The wrapper's same-block / same-asset invariants are
-        // intentional protocol rules and remain enforced in-circuit; this preflight only rejects
-        // malformed or dummy-padding-incompatible inputs earlier.
         let proofs = self.buf.take_all();
         if proofs.len() < self.batch_size() {
             for (idx, proof) in proofs.iter().enumerate() {
@@ -320,8 +311,12 @@ impl AggregationBackend for Layer0Aggregator {
             }
         }
 
-        let prover = self.build_prover()?;
-        let prover = prover
+        let prover = self
+            .artifacts
+            .new_session()
+            // Callers can verify explicitly via `verify`; skipping the implicit post-prove check
+            // avoids duplicate verification work in the production hot path.
+            .with_output_verification(false)
             .commit(proofs)
             .context("failed to commit leaf proofs to layer-0 aggregation prover")?;
 

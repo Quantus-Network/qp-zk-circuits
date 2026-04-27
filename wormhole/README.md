@@ -3,7 +3,8 @@
 ## Overview
 
 Provides the Wormhole ZK circuit and proof aggregation system for verifying and batching
-wormhole transactions.
+wormhole transactions. The production layer-0 aggregation path is the in-place compact-child
+`2x8` design under `aggregator/src/layer0/**`.
 
 ### ZK Circuit Details
 
@@ -74,26 +75,26 @@ wormhole transactions.
      - `extrinsics_root` (private)
      - `digest` (private, 110 bytes mapped injectively to field elements)
    - Steps:
-     1. **Range-check `block_number`**:  
+     1. **Range-check `block_number`**:
         The circuit constrains `block_number` to be a 32-bit value to ensure it matches the canonical encoding used outside the circuit.
-     2. **Build header preimage**:  
+     2. **Build header preimage**:
         The above fields are collected into a vector of field elements:
         ```text
         preimage = parent_hash || block_number || state_root || extrinsics_root || digest
         ```
-     3. **Poseidon2 hash**:  
+     3. **Poseidon2 hash**:
         The circuit computes:
         ```text
         computed_hash = Poseidon2Hash(preimage)
         ```
         using `hash_n_to_hash_no_pad_p2::<Poseidon2Hash>`.
-     4. **Connect to public `block_hash`**:  
+     4. **Connect to public `block_hash`**:
         The circuit enforces:
         ```text
         block_hash == computed_hash
         ```
         where `block_hash` is a public input (`HashOutTarget`).
-   
+
    As a result:
    - Once an on-chain verifier or aggregator checks that the public `block_hash` corresponds to a real block in the underlying chain,
    - all of the internal header fields (`parent_hash`, `block_number`, `state_root`, `extrinsics_root`, `digest`) are cryptographically bound to that real header via Poseidon2.
@@ -101,13 +102,22 @@ wormhole transactions.
 
 ## Aggregation System
 
-The aggregator combines `N` leaf proofs into a single proof with a fixed public input layout. Key behaviors:
+The production layer-0 aggregator is the fixed shipping compact-child `2x8` design:
+
+- Two non-ZK inner `8`-leaf proofs.
+- One final public ZK wrapper proof.
+- Fixed capacity of `16` leaf proofs per aggregated proof.
+- Stable final public contract of `344` felts: `232` semantic felts plus a `112`-felt zero tail.
+
+Key behaviors:
 
 - **Single-block storage proof constraint**: All real proofs (non-zero `block_hash`) must reference the same block for storage proofs.
-- **Two outputs per proof**: Each leaf supports `exit_account_1`/`output_amount_1` and `exit_account_2`/`output_amount_2`. Aggregation outputs 2\*`N` exit slots.
+- **Two outputs per proof**: Each leaf supports `exit_account_1`/`output_amount_1` and `exit_account_2`/`output_amount_2`. Aggregation preserves the parsed account-slot semantics used by the existing public contract.
 - **Privacy via dummy hiding**: Proofs are shuffled before aggregation while keeping one real proof in slot 0 for reference values. Duplicate exit slots are zeroed (both sum and `exit_account`), making them indistinguishable from dummy padding slots.
-- **Dynamic dummy proofs**: Dummy proofs are generated on-the-fly for padding. They use sentinel values (`block_hash = 0`, `output_amount_1 = 0`, `output_amount_2 = 0`, `exit_account = 0`) so the leaf circuit can bypass validation. No dummy proof binaries are checked in.
+- **Dynamic dummy proofs**: Dummy proofs are generated on-the-fly for padding, so batches smaller than `16` still use the same shipping layer-0 wrapper. They use sentinel values (`block_hash = 0`, `output_amount_1 = 0`, `output_amount_2 = 0`, `exit_account = 0`) so the leaf circuit can bypass validation. No dummy proof binaries are checked in.
+- **Stable public input contract**: Parsed account-slot semantics, parsed nullifier semantics, and the legacy slot-0 behavior are preserved exactly.
 - **Public input types**: Public input parsing and aggregated outputs live in `wormhole/inputs` (`qp-wormhole-inputs`) and are shared by the circuit, prover, verifier, and aggregator.
+- **Legacy path removal**: The old single-stage layer-0 path is no longer present in the production namespace or test support code. The current checkout carries only the shipping `2x8` path.
 
 ## Testing
 
@@ -115,16 +125,27 @@ To run the tests for this circuit, please follow the instructions in the [tests]
 
 ## Building the Circuit Binaries
 
-The circuit builder generates leaf and aggregated circuit binaries alongside a `config.json` with aggregation configuration.
-Re-run this after any circuit changes.
+The circuit builder generates leaf binaries, the shipping layer-0 inner/outer binaries, the
+stable `aggregated_*` aliases used by chain integration, and a `config.json` with aggregation
+configuration. Re-run this after any circuit changes.
 
-The `num_leaf-proofs` and `num-layer0-proofs` parameters control the number of proofs aggregated at each layer. For example, if you want to aggregate 16 leaf proofs per layer-1 proof, and then aggregate 4 layer-1 proofs per layer-2 proof, you would set `num-leaf-proofs` to 16 and `num-layer0-proofs` to 4. The `num-layer0-proofs` param is optional if you only need layer-0 aggregation support. 
+`--num-leaf-proofs` is retained for API compatibility, but the production layer-0 aggregated
+output is fixed at `16` leaves. Leave it at `16` for normal shipping builds. `--num-layer0-proofs`
+is optional and only needed when also generating layer-1 artifacts.
 
-To build the circuit binary, run the following command from the root of the workspace:
+To build the layer-0 binary set, run the following command from the root of the workspace:
 
 ```sh
-cargo run --release -p qp-wormhole-circuit-builder -- --num-leaf-proofs <N> -- --num-layer0-proofs <N> --output generated-bins
+cargo run --release -p qp-wormhole-circuit-builder -- --num-leaf-proofs 16 --output generated-bins
 ```
 
-This creates `common.bin`, `verifier.bin`, `prover.bin` (unless `--skip-prover`), `aggregated_common.bin`, `aggregated_verifier.bin`, `dummy_proof.bin`,
-and `config.json` inside `generated-bins/`.
+To also generate layer-1 artifacts:
+
+```sh
+cargo run --release -p qp-wormhole-circuit-builder -- --num-leaf-proofs 16 --num-layer0-proofs 4 --output generated-bins
+```
+
+This creates `common.bin`, `verifier.bin`, `prover.bin` (unless `--skip-prover`),
+`dummy_proof.bin`, shipping `inner_*` and `outer_*` layer-0 binaries, stable
+`aggregated_common.bin`, `aggregated_verifier.bin`, `aggregated_prover.bin`,
+`aggregated_targets.bin`, and `config.json` inside `generated-bins/`.
