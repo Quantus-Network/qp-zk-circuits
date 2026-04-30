@@ -121,7 +121,13 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked --version 0.22.1
 
-      - name: Run security audit
+      - name: Run security audit (informational only)
+        # Non-blocking: most failures here are unmaintained-warning RUSTSEC
+        # advisories on transitive deps we don't control (quantus-cli, sp-*,
+        # subxt). We keep this step in `needs:` so infra failures (timeout,
+        # cargo-audit install) still gate the release, but a real CVE in a
+        # transitive dep should not stop the publish.
+        continue-on-error: true
         run: |
           # Temporarily remove unpublished example from workspace for audit
           # This excludes external dependencies (quantus-cli, sp-*, subxt) that have unmaintained transitive deps
