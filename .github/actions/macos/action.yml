@@ -17,7 +17,12 @@ runs:
         if [ "$OK" -ne 1 ]; then echo "::error::brew install protobuf llvm failed after 3 attempts"; exit 1; fi
         curl https://sh.rustup.rs -sSf | sh -s -- -y
         brew uninstall cmake
-        brew install openssl cmake 2>&1 | sed '/already installed and up-to-date/d'; exit "${PIPESTATUS[0]:-$?}"
+        # `set -o pipefail` propagates the brew exit code through the sed pipe,
+        # which preserves the original intent (don't mask brew failure) without
+        # the trailing `exit` that previously killed the shell and skipped every
+        # rustup command below.
+        set -o pipefail
+        brew install openssl cmake 2>&1 | sed '/already installed and up-to-date/d'
         # Unconditionally install the toolchain pinned in rust-toolchain.toml
         # (rustup >=1.28 no longer auto-installs the active toolchain, and
         # `rustup update` only refreshes already-installed toolchains).
