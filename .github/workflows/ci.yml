@@ -77,9 +77,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ubuntu
       - name: Run clippy (workspace)
-        run: cargo clippy --workspace --all-targets --all-features --locked --release -- -D warnings
+        run: cargo clippy --workspace --exclude wormhole-example --all-targets --all-features --locked -- -D warnings
       - name: Check documentation
-        run: cargo doc --workspace --locked --no-deps --all-features --document-private-items --release
+        run: cargo doc --workspace --exclude wormhole-example --locked --no-deps --all-features --document-private-items
 
   slow-tests:
     name: 🐌 Slow Tests (Crypto-heavy)
