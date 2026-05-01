@@ -383,7 +383,14 @@ Because the proof system enforces an inequality rather than exact equality (cond
 \paragraph{Complexity of \textsc{\#SubsetSum}:}
 The decision version of subset sum (does any subset sum to exactly \(T\)?) is NP-complete. The counting version \textsc{\#SubsetSum} is \#P-complete \cite{subsetsum}, and no polynomial-time algorithm is known.
 
-Our setting requires counting subsets of size at most \(N\) summing to at least \(T\). The size of \(|\mathcal{A}(Y)|\) depends on the distribution of deposit amounts relative to \(T\); when many deposits have amounts in the range of typical withdrawals, the anonymity set grows combinatorially.
+\begin{theorem}[Hardness of Anonymity Set Computation]
+\label{thm:hardness}
+Computing \(|\mathcal{A}(Y)|\) is \#P-hard.
+\end{theorem}
+
+\begin{proof}
+We give a Turing reduction from \textsc{\#SubsetSum}. Given an instance \((a_1, \ldots, a_M, T)\), let \(f(t)\) denote the number of subsets of \(\{a_1, \ldots, a_M\}\) summing to at least \(t\). Observe that \(f(t) - f(t+1)\) equals the number of subsets summing to exactly \(t\). Construct an anonymity set instance with the same amounts and set \(N = M\) (imposing no effective size restriction). Two oracle calls to \(|\mathcal{A}(Y)|\) then suffice to compute \textsc{\#SubsetSum}. Since \textsc{\#SubsetSum} is \#P-complete, computing \(|\mathcal{A}(Y)|\) is \#P-hard.
+\end{proof}
 
 \paragraph{Burn Cost and Bounded Rationality:}
 A rational adversary may assume users are unwilling to burn significant value for privacy. Under bounded rationality, the effective anonymity set shrinks to subsets summing to at most \(T \cdot (1 + \delta)\) for some small \(\delta\) (e.g., 1\%). Even with this constraint, the anonymity set remains combinatorially large when deposit amounts cluster near typical withdrawal sizes. The protocol does not enforce any upper bound; users may choose their privacy-value tradeoff freely.
