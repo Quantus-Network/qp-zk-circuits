@@ -39,7 +39,7 @@ Post-quantum signature schemes such as ML-DSA impose public keys and signatures 
 
 We formalize this approach as a \emph{wormhole proof system}: funds are committed to addresses derived from secret preimages, then later claimed by proving knowledge of the preimage without revealing it. We construct a recursive proof architecture using Plonky2 with FRI commitments, enabling aggregation of many authorization proofs into a single succinct proof. To provide privacy against balance-linking adversaries, we introduce dummy padding with local shuffling at the first aggregation layer, enlarging the effective anonymity set.
 
-We provide game-based security proofs for six properties: deposit binding, one-time withdrawal, spend-path exclusivity, value conservation, nullifier indistinguishability, and transaction unlinkability. Our analysis bounds adversarial advantage in terms of anonymity set size and shows that computing this size is \#P-hard. Benchmarks demonstrate 20\,ms proving time per authorization with 1.6\,ms verification, scaling to 256 authorizations via two-layer aggregation with constant-time (~3.7\,ms) final verification.
+We provide game-based security proofs for six properties: deposit binding, one-time withdrawal, spend-path exclusivity, value conservation, nullifier indistinguishability, and transaction unlinkability. Our analysis bounds adversarial advantage in terms of anonymity set size and shows that computing this size is \#P-hard. Benchmarks demonstrate 20\,ms proving time per authorization with 1.6\,ms verification, scaling to 256 authorizations via two-layer aggregation with constant-time (~3.7\,ms) final verification. The marginal on-chain cost is just 96 bytes per authorization---over 50$\times$ smaller than a single ML-DSA signature.
 \end{abstract}
 
 % Text-only abstract required for IACR final version
@@ -48,7 +48,7 @@ Post-quantum signature schemes such as ML-DSA impose public keys and signatures 
 
 We formalize this approach as a wormhole proof system: funds are committed to addresses derived from secret preimages, then later claimed by proving knowledge of the preimage without revealing it. We construct a recursive proof architecture using Plonky2 with FRI commitments, enabling aggregation of many authorization proofs into a single succinct proof. To provide privacy against balance-linking adversaries, we introduce dummy padding with local shuffling at the first aggregation layer, enlarging the effective anonymity set.
 
-We provide game-based security proofs for six properties: deposit binding, one-time withdrawal, spend-path exclusivity, value conservation, nullifier indistinguishability, and transaction unlinkability. Our analysis bounds adversarial advantage in terms of anonymity set size and shows that computing this size is #P-hard. Benchmarks demonstrate 20ms proving time per authorization with 1.6ms verification, scaling to 256 authorizations via two-layer aggregation with constant-time (3.7ms) final verification.
+We provide game-based security proofs for six properties: deposit binding, one-time withdrawal, spend-path exclusivity, value conservation, nullifier indistinguishability, and transaction unlinkability. Our analysis bounds adversarial advantage in terms of anonymity set size and shows that computing this size is #P-hard. Benchmarks demonstrate 20ms proving time per authorization with 1.6ms verification, scaling to 256 authorizations via two-layer aggregation with constant-time (3.7ms) final verification. The marginal on-chain cost is just 96 bytes per authorization—over 50x smaller than a single ML-DSA signature.
 \end{textabstract}
 
 \section{Introduction}
@@ -59,22 +59,28 @@ One response is to verify post-quantum signatures inside a zero-knowledge circui
 
 This paper takes a different approach: rather than proving signature validity, users prove knowledge of a secret tied to an unspent deposit. This idea appears in Ziggy \cite{ziggy}, a STARK-based signature scheme where signers prove knowledge of a hash preimage. We apply the same principle to blockchain settlement, building on EIP-7503's ``wormhole'' concept \cite{eip7503}: funds are sent to addresses derived from secrets and later withdrawn by proving knowledge of that secret. This sidesteps post-quantum signature verification entirely. The circuit only needs hash functions and storage-proof verification. We add recursive proof aggregation for scalable settlement.
 
-\paragraph{Contributions:}
-\begin{enumerate}[leftmargin=1.5em]
+\subsection*{Our Contributions}
+
+\begin{itemize}[leftmargin=1.5em]
     \item A formal specification of the wormhole-address withdrawal relation, covering nullifier derivation, authenticated state inclusion, and fee constraints.
     \item A two-layer recursive aggregation architecture where the first layer performs privacy-sensitive dummy padding and shuffling on the client, while subsequent layers can be delegated.
-    \item Combinatorial analysis of anonymity set size under the first-layer grouping rules.
-    \item Security proofs for deposit binding, one-time withdrawal, and value conservation, with explicit separation of proof-level and chain-level assumptions.
-    \item Benchmarks demonstrating 20~ms leaf proving, sub-4~ms verification, and two-layer aggregation scaling to 256 leaves.
-\end{enumerate}
+    \item Combinatorial analysis of anonymity set size under the first-layer grouping rules, with a proof that computing the anonymity set size is \#P-hard.
+    \item Game-based security proofs for deposit binding, one-time withdrawal, spend-path exclusivity, value conservation, nullifier indistinguishability, and transaction unlinkability.
+    \item Implementation and benchmarks demonstrating practical performance on commodity hardware.
+\end{itemize}
+
+\subsection*{Paper Organization}
+
+\Cref{sec:background} reviews background on wormholes and transparent recursion. \Cref{sec:model} defines the system model and adversarial capabilities. \Cref{sec:overview} provides a protocol overview, followed by the formal specification in \Cref{sec:formal}. \Cref{sec:aggregation} describes the recursive aggregation architecture. \Cref{sec:security} presents security definitions and proofs. \Cref{sec:evaluation} reports benchmarks, and \Cref{sec:related} discusses related work.
 
 \section{Background and Design Goals}
+\label{sec:background}
 
 \subsection{Wormholes and Privacy Pools}
 
 EIP-7503 proposes \emph{zero-knowledge wormholes}: deposit to secret-derived addresses, then prove knowledge of the secret to withdraw \cite{eip7503}. We extend this concept with post-quantum proving and recursive aggregation with dummy padding for privacy.
 
-Related systems include privacy pools and shielded ledgers like Zcash and Tornado Cash \cite{eip7503,privacypools,zcash,tornadocash}. Unlike fully shielded ledgers, Quantus proves against native chain state without a separate note commitment tree. Importantly, no ciphertexts are stored on-chain, so a future break in cryptographic assumptions cannot retroactively compromise transaction privacy.
+Related systems include privacy pools and shielded ledgers like Zcash and Tornado Cash \cite{eip7503,privacypools,zcash,tornadocash}. Unlike fully shielded ledgers, our approach proves against native state without a separate note commitment tree. Importantly, no ciphertexts are stored, so a future break in cryptographic assumptions cannot retroactively compromise transaction privacy.
 
 \subsection{Transparent Recursion}
 
@@ -443,14 +449,18 @@ Proving time scales with batch size, while verification remains in the milliseco
 
 Second-layer verification time is effectively constant regardless of the number of aggregated proofs, demonstrating the benefit of recursive composition.
 
+\subsection{On-chain footprint}
+
+The final aggregate proof is constant-size regardless of the number of authorizations. The marginal cost per authorization consists only of the public outputs that must be published: one exit address (32 bytes), one amount (32 bytes), and one nullifier (32 bytes), totaling \textbf{96 bytes per authorization}. For comparison, an ML-DSA-65 signature alone is 3,309 bytes, and a full post-quantum transaction with public key would exceed 5~KB. Our approach thus achieves a $>$50$\times$ reduction in per-authorization data while providing privacy guarantees that signatures cannot offer.
+
 \section{Related Work}
 \label{sec:related}
 
 \paragraph{Wormholes and Privacy Pools:}
-EIP-7503 proposes proof-of-burn reminting via secret-derived addresses \cite{eip7503}. Privacy Pools adds compliance-aware privacy sets \cite{privacypools}. Quantus implements recursive proofs over authenticated chain state.
+EIP-7503 proposes proof-of-burn reminting via secret-derived addresses \cite{eip7503}. Privacy Pools adds compliance-aware privacy sets \cite{privacypools}. Our work extends this line with recursive proofs over authenticated state.
 
 \paragraph{Shielded Systems:}
-Zcash provides strong privacy through shielded notes; Tornado Cash popularized mixer-style privacy on Ethereum \cite{zcash,tornadocash}. Quantus offers lighter-weight private settlement anchored in native chain state.
+Zcash provides strong privacy through shielded notes; Tornado Cash popularized mixer-style privacy on Ethereum \cite{zcash,tornadocash}. Our approach offers lighter-weight private settlement anchored in native state without a separate commitment tree.
 
 \paragraph{Recursive Proofs:}
 Halo and Plonky2 are standard recursive proof systems \cite{halo,plonky2}. Plonky3 provides Poseidon2 primitives with a separate recursion track \cite{plonky3}. We use Plonky2 with Poseidon2 for recursive composition.
@@ -458,13 +468,17 @@ Halo and Plonky2 are standard recursive proof systems \cite{halo,plonky2}. Plonk
 \paragraph{Hash-Based Authorization:}
 The Ziggy signature scheme \cite{ziggy} uses a ZK-STARK to prove knowledge of a hash preimage, replacing lattice-based signatures with hash-based proofs.
 
-\paragraph{Post-Quantum Blockchains:}
-Adoption of post-quantum signatures like ML-DSA and SLH-DSA raises questions about transaction size and verification cost \cite{mldsa}. Quantus compresses authorization into ZK proofs rather than publishing large signatures on-chain.
+\paragraph{Post-Quantum Signatures:}
+Adoption of post-quantum signatures like ML-DSA and SLH-DSA raises questions about communication and verification cost \cite{mldsa}. Our approach compresses authorization into ZK proofs rather than publishing large signatures.
 
 \section{Conclusion}
 \label{sec:conclusion}
 
-Wormhole addresses let a post-quantum blockchain move authorization off-chain while preserving authenticated settlement. Users deposit to secret-derived addresses, prove the deposit exists and hasn't been spent, and reveal only settlement outputs. Recursive aggregation amortizes verification. We formalized the leaf relation, analyzed first-layer privacy, proved security properties, and reported benchmark timings.
+We presented a hash-based authorization scheme where users commit funds to addresses derived from secret preimages and later claim them by proving knowledge of the preimage in zero knowledge. This approach sidesteps post-quantum signature verification entirely, requiring only hash evaluations and membership proofs inside the circuit. Recursive aggregation via Plonky2/FRI amortizes verification cost, while first-layer dummy padding enlarges anonymity sets against balance-linking attacks. We formalized the withdrawal relation, proved six security properties via game-based definitions, showed that computing anonymity set size is \#P-hard, and demonstrated practical performance on commodity hardware.
+
+\section*{Acknowledgments}
+
+We thank the anonymous reviewers for their helpful feedback.
 
 \begin{thebibliography}{BBHR18}
 

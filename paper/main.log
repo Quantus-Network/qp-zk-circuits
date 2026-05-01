@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  1 MAY 2026 16:23
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  1 MAY 2026 16:32
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -1542,6 +1542,8 @@ LaTeX Font Info:    External font `lmex10' loaded for size
 LaTeX Font Info:    External font `lmex10' loaded for size
 (Font)              <7> on input line 32.
 \c@IACR@cnt=\count397
+LaTeX Font Info:    External font `lmex10' loaded for size
+(Font)              <9> on input line 42.
 LaTeX Font Info:    Trying to load font information for TS1+lmr on input line 4
 3.
 iacrcc:opened as ts1lmr.fd
@@ -1552,7 +1554,7 @@ File: ts1lmr.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 iacrcc:closed as ts1lmr.fd
 \openout5 = `main.abstract'.
 
-<doclicense-CC-by-88x31.pdf, id=147, 90.3375pt x 31.61812pt>
+<doclicense-CC-by-88x31.pdf, id=151, 90.3375pt x 31.61812pt>
 File: doclicense-CC-by-88x31.pdf Graphic file (type pdf)
 <use doclicense-CC-by-88x31.pdf>
 Package pdftex.def Info: doclicense-CC-by-88x31.pdf  used on input line 61.
@@ -1561,13 +1563,13 @@ Package pdftex.def Info: doclicense-CC-by-88x31.pdf  used on input line 61.
 
 {/usr/local/texlive/2026basic/texmf-var/fonts/map/pdftex/updmap/pdftex.map}{/us
 r/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc}{/usr/local/t
-exlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-ts1.enc} </usr/local/texlive/
-2026basic/texmf-dist/tex/latex/doclicense/images/doclicense-CC-by-88x31.pdf>] [
-2{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-mathit.enc}{/us
-r/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc}{/usr/local/t
-exlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-mathsy.enc}] [3]
+exlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-mathsy.enc}{/usr/local/texliv
+e/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-ts1.enc} </usr/local/texlive/2026b
+asic/texmf-dist/tex/latex/doclicense/images/doclicense-CC-by-88x31.pdf>] [2] [3
+{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-mathit.enc}{/usr
+/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc}]
 LaTeX Font Info:    Trying to load font information for OT1+lmss on input line 
-141.
+147.
 iacrcc:opened as ot1lmss.fd
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/ot1lmss.fd
@@ -1586,12 +1588,9 @@ Package microtype Info: Character `029' is missing
 
 
 LaTeX Font Warning: Font shape `T1/lmr/bx/sc' undefined
-(Font)              using `T1/lmr/bx/n' instead on input line 378.
+(Font)              using `T1/lmr/bx/n' instead on input line 384.
 
 [9{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-mathex.enc}]
-LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <9> on input line 407.
-
 [10] [11] [12] (./main.aux)
  ***********
 LaTeX2e <2025-11-01>
@@ -1602,14 +1601,14 @@ L3 programming layer <2020/03/25>
 LaTeX Font Warning: Some font shapes were not available, defaults substituted.
 
 Package rerunfilecheck Info: File `main.out' has not changed.
-(rerunfilecheck)             Checksum: B180D0B088D049CECB5B2B5E0ECA4CC1;5000.
+(rerunfilecheck)             Checksum: CCD0DA8022564ED0DFAA4B6A45551BD3;5151.
  ) 
 Here is how much of TeX's memory you used:
- 30906 strings out of 469006
- 574019 string characters out of 5454813
- 1047545 words of memory out of 5000000
- 58606 multiletter control sequences out of 15000+600000
- 744965 words of font info for 249 fonts, out of 8000000 for 9000
+ 30911 strings out of 469006
+ 574113 string characters out of 5454813
+ 1048545 words of memory out of 5000000
+ 58609 multiletter control sequences out of 15000+600000
+ 745142 words of font info for 251 fonts, out of 8000000 for 9000
  319 hyphenation exceptions out of 8191
  125i,14n,121p,1001b,709s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmbx10.pfb></u
@@ -1630,12 +1629,13 @@ r/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmss8.pfb></usr/loca
 l/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmssbx10.pfb></usr/local/t
 exlive/2026basic/texmf-dist/fonts/type1/public/lm/lmsy10.pfb></usr/local/texliv
 e/2026basic/texmf-dist/fonts/type1/public/lm/lmsy7.pfb></usr/local/texlive/2026
-basic/texmf-dist/fonts/type1/public/lm/lmtt10.pfb></usr/local/texlive/2026basic
-/texmf-dist/fonts/type1/public/lm/lmtt8.pfb>
-Output written on main.pdf (12 pages, 467847 bytes).
+basic/texmf-dist/fonts/type1/public/lm/lmsy9.pfb></usr/local/texlive/2026basic/
+texmf-dist/fonts/type1/public/lm/lmtt10.pfb></usr/local/texlive/2026basic/texmf
+-dist/fonts/type1/public/lm/lmtt8.pfb>
+Output written on main.pdf (12 pages, 473115 bytes).
 PDF statistics:
- 475 PDF objects out of 1000 (max. 8388607)
- 410 compressed objects within 5 object streams
- 125 named destinations out of 1000 (max. 500000)
- 70938 words of extra memory for PDF output out of 74296 (max. 10000000)
+ 489 PDF objects out of 1000 (max. 8388607)
+ 422 compressed objects within 5 object streams
+ 123 named destinations out of 1000 (max. 500000)
+ 70946 words of extra memory for PDF output out of 74296 (max. 10000000)
 
