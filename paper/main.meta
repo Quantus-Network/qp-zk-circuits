@@ -13,5 +13,5 @@ affiliation:
   name: Quantus Labs
   country: USA
 version: preprint
-title: Wormhole Aggregation: Recursive Zero-Knowledge Settlement for Post-Quantum Blockchains
-keywords: zero-knowledge proofs, post-quantum cryptography, recursive aggregation, privacy, blockchain
+title: Recursive Zero-Knowledge Proofs for Post-Quantum Private Settlement
+keywords: zero-knowledge proofs, post-quantum cryptography, recursive aggregation, privacy, hash-based authorization
