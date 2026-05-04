@@ -51,25 +51,24 @@ We give game-based security definitions and complete proofs for deposit binding,
 
 \section{Introduction}
 
-The post-quantum transition poses a dilemma for blockchains. Shor's algorithm breaks elliptic-curve signatures \cite{shor}, but post-quantum replacements like ML-DSA impose keys and signatures an order of magnitude larger \cite{mldsa}. A na\"ive swap increases bandwidth and state growth while doing nothing for privacy. Every transaction still reveals sender, recipient, and amount.
+The post-quantum transition poses a fundamental dilemma for blockchains. While Shor's algorithm breaks elliptic-curve signatures, the standardized post-quantum replacements such as ML-DSA have signatures and public keys an order of magnitude larger than their classical counterparts. Naively substituting them increases on-chain bandwidth and state growth dramatically, without addressing transaction privacy.
 
-One response is to verify post-quantum signatures inside a zero-knowledge circuit and aggregate many such proofs, compressing the on-chain footprint. But this requires implementing post-quantum signature verification in-circuit, which is expensive.
+Verifying post-quantum signatures inside a zero-knowledge circuit and recursively aggregating them is one path, but the circuit cost remains substantial. This paper takes a different approach: users prove *knowledge of a secret preimage* corresponding to a public wormhole address rather than proving a signature. This idea builds on Ziggy's hash-preimage signatures and EIP-7503's wormhole concept, but we develop it into a practical post-quantum private settlement system.
 
-This paper takes a different approach: rather than proving signature validity, users prove knowledge of a secret tied to an unspent deposit. This idea appears in Ziggy \cite{ziggy}, a STARK-based signature scheme where signers prove knowledge of a hash preimage. We apply the same principle to blockchain settlement, building on EIP-7503's ``wormhole'' concept \cite{eip7503}: funds are sent to addresses derived from secrets and later withdrawn by proving knowledge of that secret. This sidesteps post-quantum signature verification entirely. The circuit only needs hash functions and storage-proof verification. We add recursive proof aggregation for scalable settlement.
+We formalize the wormhole proof relation, design a two-layer recursive aggregation protocol with client-side privacy mechanisms, prove six core security properties in the game-based style, and show that computing the effective anonymity set is \#P-hard. Our Plonky2 implementation achieves practical performance with only 96 bytes of marginal on-chain cost per authorization.
 
 \subsection*{Our Contributions}
 
 \begin{itemize}[leftmargin=1.5em]
-    \item A formal specification of the wormhole-address withdrawal relation, covering nullifier derivation, authenticated state inclusion, and fee constraints.
-    \item A two-layer recursive aggregation architecture where the first layer performs privacy-sensitive dummy padding and shuffling on the client, while subsequent layers can be delegated.
-    \item Combinatorial analysis of anonymity set size under the first-layer grouping rules, with a proof that computing the anonymity set size is \#P-hard.
-    \item Game-based security proofs for deposit binding, one-time withdrawal, spend-path exclusivity, value conservation, nullifier indistinguishability, and transaction unlinkability.
-    \item Implementation and benchmarks demonstrating practical performance on commodity hardware.
+    \item Formalization of the wormhole proof relation and a precise security model for post-quantum private settlement.
+    \item A two-layer recursive aggregation architecture with client-side dummy padding and shuffling that enlarges anonymity sets while remaining efficient.
+    \item Proof that computing the size of the anonymity set is \#P-hard, together with game-based security proofs for deposit binding, one-time withdrawal, spend-path exclusivity, value conservation, nullifier indistinguishability, and transaction unlinkability.
+    \item A practical Plonky2 implementation achieving 20\,ms per authorization and 96 bytes marginal on-chain cost, more than 50$\times$ smaller than ML-DSA, with constant-time recursive verification.
 \end{itemize}
 
 \subsection*{Paper Organization}
 
-\Cref{sec:background} reviews background on wormholes and transparent recursion. \Cref{sec:model} defines the system model and adversarial capabilities. \Cref{sec:overview} provides a protocol overview, followed by the formal specification in \Cref{sec:formal}. \Cref{sec:aggregation} describes the recursive aggregation architecture. \Cref{sec:security} presents security definitions and proofs. \Cref{sec:evaluation} reports benchmarks, and \Cref{sec:related} discusses related work.
+\Cref{sec:background} reviews background on wormholes, privacy pools, and transparent recursion with FRI. \Cref{sec:model} defines our security model. After a protocol overview in \Cref{sec:overview} and formal interfaces in \Cref{sec:formal}, \Cref{sec:aggregation} details the recursive construction. \Cref{sec:security} contains our security definitions and proofs. We report performance in \Cref{sec:evaluation} and discuss related work in \Cref{sec:related}.
 
 \section{Background and Design Goals}
 \label{sec:background}
