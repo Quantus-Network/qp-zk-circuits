@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  4 MAY 2026 14:11
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  4 MAY 2026 14:29
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -1554,7 +1554,7 @@ File: ts1lmr.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 iacrcc:closed as ts1lmr.fd
 \openout5 = `main.abstract'.
 
-<doclicense-CC-by-88x31.pdf, id=151, 90.3375pt x 31.61812pt>
+<doclicense-CC-by-88x31.pdf, id=147, 90.3375pt x 31.61812pt>
 File: doclicense-CC-by-88x31.pdf Graphic file (type pdf)
 <use doclicense-CC-by-88x31.pdf>
 Package pdftex.def Info: doclicense-CC-by-88x31.pdf  used on input line 59.
@@ -1569,7 +1569,7 @@ asic/texmf-dist/tex/latex/doclicense/images/doclicense-CC-by-88x31.pdf>] [2] [3
 {/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-mathit.enc}{/usr
 /local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc}]
 LaTeX Font Info:    Trying to load font information for OT1+lmss on input line 
-145.
+144.
 iacrcc:opened as ot1lmss.fd
 
 (/usr/local/texlive/2026basic/texmf-dist/tex/latex/lm/ot1lmss.fd
@@ -1588,7 +1588,7 @@ Package microtype Info: Character `029' is missing
 
 
 LaTeX Font Warning: Font shape `T1/lmr/bx/sc' undefined
-(Font)              using `T1/lmr/bx/n' instead on input line 382.
+(Font)              using `T1/lmr/bx/n' instead on input line 381.
 
 [9{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-mathex.enc}]
 [10] [11] [12] (./main.aux)
@@ -1604,11 +1604,11 @@ Package rerunfilecheck Info: File `main.out' has not changed.
 (rerunfilecheck)             Checksum: CCD0DA8022564ED0DFAA4B6A45551BD3;5151.
  ) 
 Here is how much of TeX's memory you used:
- 30982 strings out of 469006
- 574920 string characters out of 5454813
- 1048969 words of memory out of 5000000
+ 30980 strings out of 469006
+ 574900 string characters out of 5454813
+ 1047969 words of memory out of 5000000
  58679 multiletter control sequences out of 15000+600000
- 745200 words of font info for 251 fonts, out of 8000000 for 9000
+ 745117 words of font info for 250 fonts, out of 8000000 for 9000
  319 hyphenation exceptions out of 8191
  125i,14n,121p,997b,709s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmbx10.pfb></u
@@ -1632,10 +1632,10 @@ e/2026basic/texmf-dist/fonts/type1/public/lm/lmsy7.pfb></usr/local/texlive/2026
 basic/texmf-dist/fonts/type1/public/lm/lmsy9.pfb></usr/local/texlive/2026basic/
 texmf-dist/fonts/type1/public/lm/lmtt10.pfb></usr/local/texlive/2026basic/texmf
 -dist/fonts/type1/public/lm/lmtt8.pfb>
-Output written on main.pdf (12 pages, 474115 bytes).
+Output written on main.pdf (12 pages, 473354 bytes).
 PDF statistics:
- 490 PDF objects out of 1000 (max. 8388607)
- 423 compressed objects within 5 object streams
+ 486 PDF objects out of 1000 (max. 8388607)
+ 419 compressed objects within 5 object streams
  124 named destinations out of 1000 (max. 500000)
  70946 words of extra memory for PDF output out of 74296 (max. 10000000)
 
