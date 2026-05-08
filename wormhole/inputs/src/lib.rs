@@ -32,6 +32,12 @@ const GOLDILOCKS_ORDER: u64 = 0xFFFFFFFF00000001;
 /// but is not exposed as a public input since block_hash already commits to it.
 pub const PUBLIC_INPUTS_FELTS_LEN: usize = 21;
 
+/// Current public-input layout version for layer-0 aggregated proofs.
+pub const L0_AGGREGATED_PUBLIC_INPUT_LAYOUT_VERSION: u32 = 1;
+
+/// Current public-input layout version for layer-1 aggregated proofs.
+pub const L1_AGGREGATED_PUBLIC_INPUT_LAYOUT_VERSION: u32 = 1;
+
 // Index constants for parsing public inputs
 pub const ASSET_ID_INDEX: usize = 0;
 pub const OUTPUT_AMOUNT_1_INDEX: usize = 1;
@@ -46,6 +52,30 @@ pub const EXIT_ACCOUNT_2_END_INDEX: usize = 16;
 pub const BLOCK_HASH_START_INDEX: usize = 16;
 pub const BLOCK_HASH_END_INDEX: usize = 20;
 pub const BLOCK_NUMBER_INDEX: usize = 20;
+
+// Layer-1 aggregated public input layout.
+//
+// [aggregator_address(4),
+//  asset_id(1),
+//  volume_fee_bps(1),
+//  block_hash(4),
+//  block_number(1),
+//  total_exit_slots(1),
+//  [sum(1), exit_account(4)] * total_exit_slots,
+//  nullifier(4) * (total_exit_slots / 2)]
+pub const L1_AGGREGATOR_ADDRESS_LEN: usize = 4;
+pub const L1_AGGREGATOR_ADDRESS_START_INDEX: usize = 0;
+pub const L1_AGGREGATOR_ADDRESS_END_INDEX: usize =
+    L1_AGGREGATOR_ADDRESS_START_INDEX + L1_AGGREGATOR_ADDRESS_LEN;
+pub const L1_ASSET_ID_INDEX: usize = L1_AGGREGATOR_ADDRESS_END_INDEX;
+pub const L1_VOLUME_FEE_BPS_INDEX: usize = L1_ASSET_ID_INDEX + 1;
+pub const L1_BLOCK_HASH_START_INDEX: usize = L1_VOLUME_FEE_BPS_INDEX + 1;
+pub const L1_BLOCK_HASH_END_INDEX: usize = L1_BLOCK_HASH_START_INDEX + 4;
+pub const L1_BLOCK_NUMBER_INDEX: usize = L1_BLOCK_HASH_END_INDEX;
+pub const L1_TOTAL_EXIT_SLOTS_INDEX: usize = L1_BLOCK_NUMBER_INDEX + 1;
+pub const L1_HEADER_FELTS_LEN: usize = L1_TOTAL_EXIT_SLOTS_INDEX + 1;
+pub const L1_EXIT_SLOT_FELTS_LEN: usize = 5;
+pub const L1_NULLIFIER_FELTS_LEN: usize = 4;
 
 /// A 32-byte digest that can be converted to/from field elements.
 #[derive(Hash, Default, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
@@ -218,6 +248,31 @@ pub struct AggregatedPublicCircuitInputs {
     pub account_data: Vec<PublicInputsByAccount>,
     /// The nullifiers of each individual transfer proof.
     pub nullifiers: Vec<BytesDigest>,
+}
+
+/// Layer-1 aggregated public inputs from multiple layer-0 aggregated proofs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Layer1AggregatedPublicCircuitInputs {
+    /// Aggregation reward address committed by the delegated layer-1 proof.
+    pub aggregator_address: BytesDigest,
+    /// The asset ID of the set (0 for native token).
+    pub asset_id: u32,
+    /// Volume fee rate in basis points (1 basis point = 0.01%).
+    pub volume_fee_bps: u32,
+    /// The block data (block_hash, block_number) shared by all child layer-0 proofs.
+    pub block_data: BlockData,
+    /// Number of exit slots forwarded by the layer-1 circuit.
+    pub total_exit_slots: u32,
+    /// Forwarded exit account data from all child layer-0 proofs.
+    pub account_data: Vec<PublicInputsByAccount>,
+    /// Forwarded nullifiers from all child layer-0 proofs.
+    pub nullifiers: Vec<BytesDigest>,
+    /// Reserved for the future constrained bundle-root public input.
+    pub bundle_root: Option<BytesDigest>,
+    /// Reserved for an explicit circuit identifier public input.
+    pub circuit_id: Option<BytesDigest>,
+    /// Reserved for an explicit in-circuit layout version public input.
+    pub layout_version: Option<u32>,
 }
 
 /// Helper to convert 4 u64 values (hash output) to a BytesDigest.
@@ -443,9 +498,163 @@ impl AggregatedPublicCircuitInputs {
     }
 }
 
+impl Layer1AggregatedPublicCircuitInputs {
+    /// Parse layer-1 aggregated public inputs from a slice of u64 values.
+    pub fn try_from_u64_slice(pis: &[u64]) -> anyhow::Result<Self> {
+        if pis.len() < L1_HEADER_FELTS_LEN {
+            bail!(
+                "Layer1AggregatedPI: too few elements, need at least {} for header, got {}",
+                L1_HEADER_FELTS_LEN,
+                pis.len()
+            );
+        }
+
+        let aggregator_address = hash_u64s_to_bytes_digest(
+            &pis[L1_AGGREGATOR_ADDRESS_START_INDEX..L1_AGGREGATOR_ADDRESS_END_INDEX],
+        )
+        .context("Layer1AggregatedPI: parsing aggregator_address")?;
+
+        let asset_id: u32 = pis[L1_ASSET_ID_INDEX]
+            .try_into()
+            .context("Layer1AggregatedPI: asset_id exceeds u32 range")?;
+        let volume_fee_bps: u32 = pis[L1_VOLUME_FEE_BPS_INDEX]
+            .try_into()
+            .context("Layer1AggregatedPI: volume_fee_bps exceeds u32 range")?;
+        let block_hash =
+            hash_u64s_to_bytes_digest(&pis[L1_BLOCK_HASH_START_INDEX..L1_BLOCK_HASH_END_INDEX])
+                .context("Layer1AggregatedPI: parsing block_hash")?;
+        let block_number: u32 = pis[L1_BLOCK_NUMBER_INDEX]
+            .try_into()
+            .context("Layer1AggregatedPI: block_number exceeds u32 range")?;
+        let total_exit_slots: u32 = pis[L1_TOTAL_EXIT_SLOTS_INDEX]
+            .try_into()
+            .context("Layer1AggregatedPI: total_exit_slots exceeds u32 range")?;
+
+        let total_exit_slots_usize: usize = total_exit_slots
+            .try_into()
+            .context("Layer1AggregatedPI: total_exit_slots exceeds usize range")?;
+        let Some(exit_slots_felts) = total_exit_slots_usize.checked_mul(L1_EXIT_SLOT_FELTS_LEN)
+        else {
+            bail!(
+                "Layer1AggregatedPI: total_exit_slots {} overflows exit-slot felt length",
+                total_exit_slots
+            );
+        };
+
+        let mut cursor = L1_HEADER_FELTS_LEN;
+        let Some(exit_slots_end) = cursor.checked_add(exit_slots_felts) else {
+            bail!(
+                "Layer1AggregatedPI: exit slots end overflows (cursor={}, slots={})",
+                cursor,
+                total_exit_slots
+            );
+        };
+        if exit_slots_end > pis.len() {
+            bail!(
+                "Layer1AggregatedPI: not enough elements for {} exit slots (need {}, got {})",
+                total_exit_slots,
+                exit_slots_end,
+                pis.len()
+            );
+        }
+
+        let mut account_data = Vec::with_capacity(total_exit_slots_usize);
+        for i in 0..total_exit_slots_usize {
+            let summed_output_amount: u32 = pis[cursor].try_into().with_context(|| {
+                format!(
+                    "Layer1AggregatedPI: summed_output_amount at cursor {} exceeds u32 range",
+                    cursor
+                )
+            })?;
+            cursor += 1;
+
+            let exit_account =
+                hash_u64s_to_bytes_digest(&pis[cursor..cursor + 4]).with_context(|| {
+                    format!(
+                        "Layer1AggregatedPI: parsing exit_account[{}] at cursor {}",
+                        i, cursor
+                    )
+                })?;
+            cursor += 4;
+
+            account_data.push(PublicInputsByAccount {
+                summed_output_amount,
+                exit_account,
+            });
+        }
+
+        let remaining = pis.len() - cursor;
+        if !remaining.is_multiple_of(L1_NULLIFIER_FELTS_LEN) {
+            bail!(
+                "Layer1AggregatedPI: malformed nullifier length {} - expected a multiple of {} felts",
+                remaining,
+                L1_NULLIFIER_FELTS_LEN
+            );
+        }
+
+        let nullifier_count = remaining / L1_NULLIFIER_FELTS_LEN;
+        if !total_exit_slots_usize.is_multiple_of(2) {
+            bail!(
+                "Layer1AggregatedPI: total_exit_slots {} is not even; expected two exit slots per nullifier",
+                total_exit_slots
+            );
+        }
+        if nullifier_count * 2 != total_exit_slots_usize {
+            bail!(
+                "Layer1AggregatedPI: inconsistent shape - total_exit_slots={} implies {} nullifiers, got {}",
+                total_exit_slots,
+                total_exit_slots_usize / 2,
+                nullifier_count
+            );
+        }
+
+        let mut nullifiers = Vec::with_capacity(nullifier_count);
+        for i in 0..nullifier_count {
+            let nullifier =
+                hash_u64s_to_bytes_digest(&pis[cursor..cursor + 4]).with_context(|| {
+                    format!(
+                        "Layer1AggregatedPI: parsing nullifier[{}] at cursor {}",
+                        i, cursor
+                    )
+                })?;
+            cursor += 4;
+            nullifiers.push(nullifier);
+        }
+
+        if cursor != pis.len() {
+            bail!(
+                "Layer1AggregatedPI: cursor mismatch - consumed {} felts, input length {}",
+                cursor,
+                pis.len()
+            );
+        }
+
+        Ok(Layer1AggregatedPublicCircuitInputs {
+            aggregator_address,
+            asset_id,
+            volume_fee_bps,
+            block_data: BlockData {
+                block_hash,
+                block_number,
+            },
+            total_exit_slots,
+            account_data,
+            nullifiers,
+            bundle_root: None,
+            circuit_id: None,
+            layout_version: None,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{AggregatedPublicCircuitInputs, PUBLIC_INPUTS_FELTS_LEN};
+    use super::{
+        hash_u64s_to_bytes_digest, AggregatedPublicCircuitInputs,
+        Layer1AggregatedPublicCircuitInputs, L1_AGGREGATOR_ADDRESS_START_INDEX, L1_ASSET_ID_INDEX,
+        L1_BLOCK_HASH_START_INDEX, L1_BLOCK_NUMBER_INDEX, L1_HEADER_FELTS_LEN,
+        L1_TOTAL_EXIT_SLOTS_INDEX, L1_VOLUME_FEE_BPS_INDEX, PUBLIC_INPUTS_FELTS_LEN,
+    };
 
     #[test]
     fn aggregated_public_inputs_reject_malformed_padded_length() {
@@ -467,5 +676,117 @@ mod tests {
         assert_eq!(parsed.block_data.block_number, 42);
         assert_eq!(parsed.account_data.len(), 2);
         assert_eq!(parsed.nullifiers.len(), 1);
+    }
+
+    fn valid_layer1_pis(total_exit_slots: usize) -> Vec<u64> {
+        assert!(total_exit_slots.is_multiple_of(2));
+
+        let mut pis = vec![0u64; L1_HEADER_FELTS_LEN];
+        pis[L1_AGGREGATOR_ADDRESS_START_INDEX] = 0x1111;
+        pis[L1_AGGREGATOR_ADDRESS_START_INDEX + 1] = 0x2222;
+        pis[L1_AGGREGATOR_ADDRESS_START_INDEX + 2] = 0x3333;
+        pis[L1_AGGREGATOR_ADDRESS_START_INDEX + 3] = 0x4444;
+        pis[L1_ASSET_ID_INDEX] = 0;
+        pis[L1_VOLUME_FEE_BPS_INDEX] = 25;
+        pis[L1_BLOCK_HASH_START_INDEX] = 0xAA01;
+        pis[L1_BLOCK_HASH_START_INDEX + 1] = 0xAA02;
+        pis[L1_BLOCK_HASH_START_INDEX + 2] = 0xAA03;
+        pis[L1_BLOCK_HASH_START_INDEX + 3] = 0xAA04;
+        pis[L1_BLOCK_NUMBER_INDEX] = 42;
+        pis[L1_TOTAL_EXIT_SLOTS_INDEX] = total_exit_slots as u64;
+
+        for slot in 0..total_exit_slots {
+            pis.push((slot as u64) + 100);
+            pis.extend_from_slice(&[
+                0xE000 + slot as u64,
+                0xE100 + slot as u64,
+                0xE200 + slot as u64,
+                0xE300 + slot as u64,
+            ]);
+        }
+
+        for nullifier in 0..(total_exit_slots / 2) {
+            pis.extend_from_slice(&[
+                0xA000 + nullifier as u64,
+                0xA100 + nullifier as u64,
+                0xA200 + nullifier as u64,
+                0xA300 + nullifier as u64,
+            ]);
+        }
+
+        pis
+    }
+
+    #[test]
+    fn layer1_public_inputs_parse_valid_minimal_vector() {
+        let pis = valid_layer1_pis(2);
+
+        let parsed = Layer1AggregatedPublicCircuitInputs::try_from_u64_slice(&pis).unwrap();
+
+        assert_eq!(
+            parsed.aggregator_address,
+            hash_u64s_to_bytes_digest(&[0x1111, 0x2222, 0x3333, 0x4444]).unwrap()
+        );
+        assert_eq!(parsed.asset_id, 0);
+        assert_eq!(parsed.volume_fee_bps, 25);
+        assert_eq!(parsed.block_data.block_number, 42);
+        assert_eq!(parsed.total_exit_slots, 2);
+        assert_eq!(parsed.account_data.len(), 2);
+        assert_eq!(parsed.nullifiers.len(), 1);
+        assert_eq!(parsed.bundle_root, None);
+        assert_eq!(parsed.circuit_id, None);
+        assert_eq!(parsed.layout_version, None);
+    }
+
+    #[test]
+    fn layer1_public_inputs_reject_too_short_vector() {
+        let err = Layer1AggregatedPublicCircuitInputs::try_from_u64_slice(&[0u64; 11]).unwrap_err();
+        assert!(err.to_string().contains("too few elements"));
+    }
+
+    #[test]
+    fn layer1_public_inputs_reject_malformed_nullifier_length() {
+        let mut pis = valid_layer1_pis(2);
+        pis.push(1);
+
+        let err = Layer1AggregatedPublicCircuitInputs::try_from_u64_slice(&pis).unwrap_err();
+        assert!(err.to_string().contains("malformed nullifier length"));
+    }
+
+    #[test]
+    fn layer1_public_inputs_parse_expected_positions() {
+        let pis = valid_layer1_pis(4);
+
+        let parsed = Layer1AggregatedPublicCircuitInputs::try_from_u64_slice(&pis).unwrap();
+
+        assert_eq!(
+            parsed.aggregator_address,
+            hash_u64s_to_bytes_digest(&[0x1111, 0x2222, 0x3333, 0x4444]).unwrap()
+        );
+        assert_eq!(
+            parsed.block_data.block_hash,
+            hash_u64s_to_bytes_digest(&[0xAA01, 0xAA02, 0xAA03, 0xAA04]).unwrap()
+        );
+        assert_eq!(parsed.block_data.block_number, 42);
+    }
+
+    #[test]
+    fn layer1_public_inputs_nullifier_count_matches_expected_shape() {
+        let pis = valid_layer1_pis(4);
+
+        let parsed = Layer1AggregatedPublicCircuitInputs::try_from_u64_slice(&pis).unwrap();
+
+        assert_eq!(parsed.total_exit_slots, 4);
+        assert_eq!(parsed.account_data.len(), 4);
+        assert_eq!(parsed.nullifiers.len(), 2);
+    }
+
+    #[test]
+    fn layer1_public_inputs_reject_cursor_shape_mismatch() {
+        let mut pis = valid_layer1_pis(2);
+        pis.extend_from_slice(&[0xB000, 0xB100, 0xB200, 0xB300]);
+
+        let err = Layer1AggregatedPublicCircuitInputs::try_from_u64_slice(&pis).unwrap_err();
+        assert!(err.to_string().contains("inconsistent shape"));
     }
 }

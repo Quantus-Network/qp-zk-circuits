@@ -189,10 +189,11 @@ fn build_layer1_wrapper_constraints(
         builder.connect(pis_i[l1c::L0_ASSET_ID_OFFSET], asset_ref);
         builder.connect(pis_i[l1c::L0_VOLUME_FEE_BPS_OFFSET], fee_ref);
 
-        // block hash must match ref
+        // block hash and block number must match ref
         let block_i: [Target; 4] = core::array::from_fn(|j| pis_i[l1c::L0_BLOCK_HASH_OFFSET + j]);
         let matches_ref = bytes_digest_eq(builder, block_i, block_ref);
         builder.connect(matches_ref.target, one);
+        builder.connect(pis_i[l1c::L0_BLOCK_NUMBER_OFFSET], block_number_ref);
     }
 
     // Output block reference + number
@@ -710,6 +711,118 @@ mod tests {
         assert!(
             res.is_err(),
             "expected layer-1 proving to fail for mismatched blocks"
+        );
+    }
+
+    /// Negative test: if two layer-0 proofs use different block numbers, layer-1 proving must fail.
+    #[test]
+    fn layer1_mismatched_block_numbers_fails() {
+        let block_hash: [u64; 4] = [0xAA01, 0xAA02, 0xAA03, 0xAA04];
+
+        let (leaf_data, leaf_targets) = build_fake_leaf_circuit();
+
+        let a0 = prove_fake_leaf(
+            &leaf_data,
+            &leaf_targets,
+            make_leaf_pi(
+                100,
+                0,
+                [1, 2, 3, 4],
+                [0, 0, 0, 0],
+                [1, 2, 3, 4],
+                block_hash,
+                42,
+            ),
+        );
+        let a1 = prove_fake_leaf(
+            &leaf_data,
+            &leaf_targets,
+            make_leaf_pi(
+                200,
+                0,
+                [5, 6, 7, 8],
+                [0, 0, 0, 0],
+                [5, 6, 7, 8],
+                block_hash,
+                42,
+            ),
+        );
+
+        let b0 = prove_fake_leaf(
+            &leaf_data,
+            &leaf_targets,
+            make_leaf_pi(
+                300,
+                0,
+                [9, 10, 11, 12],
+                [0, 0, 0, 0],
+                [9, 10, 11, 12],
+                block_hash,
+                43,
+            ),
+        );
+        let b1 = prove_fake_leaf(
+            &leaf_data,
+            &leaf_targets,
+            make_leaf_pi(
+                400,
+                0,
+                [13, 14, 15, 16],
+                [0, 0, 0, 0],
+                [13, 14, 15, 16],
+                block_hash,
+                43,
+            ),
+        );
+
+        let l0_circuit = Layer0AggregationCircuit::new(
+            CircuitConfig::standard_recursion_config(),
+            leaf_data.common.clone(),
+            NUM_LEAVES,
+        );
+        let l0_targets = l0_circuit.targets();
+        let l0_data = l0_circuit.build_circuit();
+
+        let l0_a = prove_layer0_batch(
+            &l0_data,
+            &l0_targets,
+            &leaf_data.verifier_only,
+            vec![a0, a1],
+        );
+        let l0_b = prove_layer0_batch(
+            &l0_data,
+            &l0_targets,
+            &leaf_data.verifier_only,
+            vec![b0, b1],
+        );
+
+        let l1_circuit = Layer1AggregationCircuit::new(
+            CircuitConfig::standard_recursion_config(),
+            l0_data.common.clone(),
+            N_INNER,
+            NUM_LEAVES,
+        );
+        let l1_targets = l1_circuit.targets();
+        let l1_data = l1_circuit.build_circuit();
+
+        let agg_addr = [
+            F::from_canonical_u64(1),
+            F::from_canonical_u64(2),
+            F::from_canonical_u64(3),
+            F::from_canonical_u64(4),
+        ];
+
+        let res = prove_layer1(
+            &l1_data,
+            &l1_targets,
+            &l0_data.verifier_only,
+            vec![l0_a, l0_b],
+            agg_addr,
+        );
+
+        assert!(
+            res.is_err(),
+            "expected layer-1 proving to fail for mismatched block numbers"
         );
     }
 }
