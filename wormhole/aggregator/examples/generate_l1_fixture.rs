@@ -124,6 +124,10 @@ fn write_hex_file(path: &Path, bytes: &[u8]) -> Result<()> {
         .with_context(|| format!("failed to write {}", path.display()))
 }
 
+fn write_bin_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    fs::write(path, bytes).with_context(|| format!("failed to write {}", path.display()))
+}
+
 fn digest_hex(digest: &BytesDigest) -> String {
     hex::encode(digest.as_ref())
 }
@@ -141,8 +145,6 @@ fn parse_l1_inputs(
 
 fn main() -> Result<()> {
     let args = parse_args()?;
-    fs::create_dir_all(&args.out)
-        .with_context(|| format!("failed to create {}", args.out.display()))?;
 
     let mut aggregator = Layer1Aggregator::new(
         &args.bins_dir,
@@ -160,7 +162,7 @@ fn main() -> Result<()> {
     let layer0_common = aggregator
         .load_common_data(CircuitType::Leaf)
         .context("failed to load layer-0 common data")?;
-    let mut l0_candidate_files = Vec::new();
+    let mut l0_candidates = Vec::new();
 
     for (index, path) in args.l0_proofs.iter().enumerate() {
         let proof_bytes = read_hex_file(path)?;
@@ -172,8 +174,7 @@ fn main() -> Result<()> {
             .with_context(|| format!("failed to add {}", path.display()))?;
 
         let file_name = format!("l0_candidate_{}.hex", index);
-        write_hex_file(&args.out.join(&file_name), &proof_bytes)?;
-        l0_candidate_files.push(file_name);
+        l0_candidates.push((file_name, proof_bytes));
     }
 
     let l1_proof = aggregator
@@ -185,10 +186,20 @@ fn main() -> Result<()> {
 
     let l1_inputs = parse_l1_inputs(&l1_proof).context("failed to parse layer-1 public inputs")?;
     let l1_proof_bytes = l1_proof.to_bytes();
+
+    fs::create_dir_all(&args.out)
+        .with_context(|| format!("failed to create {}", args.out.display()))?;
+    for (file_name, proof_bytes) in &l0_candidates {
+        write_hex_file(&args.out.join(file_name), proof_bytes)?;
+    }
     write_hex_file(&args.out.join("l1_aggregate.hex"), &l1_proof_bytes)?;
+    write_bin_file(&args.out.join("l1_aggregate.bin"), &l1_proof_bytes)?;
 
     let expected = ExpectedBundle {
-        l0_candidates: l0_candidate_files,
+        l0_candidates: l0_candidates
+            .iter()
+            .map(|(file_name, _)| file_name.clone())
+            .collect(),
         l1_aggregate: "l1_aggregate.hex".to_string(),
         aggregator_address: digest_hex(&l1_inputs.aggregator_address),
         asset_id: l1_inputs.asset_id,

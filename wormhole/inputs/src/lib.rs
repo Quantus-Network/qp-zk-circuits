@@ -739,9 +739,41 @@ mod tests {
     }
 
     #[test]
+    fn layer1_public_inputs_abi_layout_regression() {
+        assert_eq!(L1_HEADER_FELTS_LEN, 12);
+        assert_eq!(L1_AGGREGATOR_ADDRESS_START_INDEX, 0);
+        assert_eq!(L1_ASSET_ID_INDEX, 4);
+        assert_eq!(L1_VOLUME_FEE_BPS_INDEX, 5);
+        assert_eq!(L1_BLOCK_HASH_START_INDEX, 6);
+        assert_eq!(L1_BLOCK_NUMBER_INDEX, 10);
+        assert_eq!(L1_TOTAL_EXIT_SLOTS_INDEX, 11);
+
+        let pis = valid_layer1_pis(4);
+        assert_eq!(pis.len(), L1_HEADER_FELTS_LEN + 4 * 5 + 2 * 4);
+    }
+
+    #[test]
     fn layer1_public_inputs_reject_too_short_vector() {
         let err = Layer1AggregatedPublicCircuitInputs::try_from_u64_slice(&[0u64; 11]).unwrap_err();
         assert!(err.to_string().contains("too few elements"));
+    }
+
+    #[test]
+    fn layer1_public_inputs_reject_too_long_vector() {
+        let mut pis = valid_layer1_pis(2);
+        pis.extend_from_slice(&[0xB000, 0xB100, 0xB200, 0xB300]);
+
+        let err = Layer1AggregatedPublicCircuitInputs::try_from_u64_slice(&pis).unwrap_err();
+        assert!(err.to_string().contains("inconsistent shape"));
+    }
+
+    #[test]
+    fn layer1_public_inputs_reject_bad_digest_field_element() {
+        let mut pis = valid_layer1_pis(2);
+        pis[L1_BLOCK_HASH_START_INDEX] = u64::MAX;
+
+        let err = Layer1AggregatedPublicCircuitInputs::try_from_u64_slice(&pis).unwrap_err();
+        assert!(err.to_string().contains("parsing block_hash"));
     }
 
     #[test]
@@ -751,6 +783,27 @@ mod tests {
 
         let err = Layer1AggregatedPublicCircuitInputs::try_from_u64_slice(&pis).unwrap_err();
         assert!(err.to_string().contains("malformed nullifier length"));
+    }
+
+    #[test]
+    fn layer1_public_inputs_reject_odd_exit_slot_count() {
+        let mut pis = valid_layer1_pis(2);
+        pis[L1_TOTAL_EXIT_SLOTS_INDEX] = 1;
+        pis.truncate(L1_HEADER_FELTS_LEN + 1 * 5 + 4);
+
+        let err = Layer1AggregatedPublicCircuitInputs::try_from_u64_slice(&pis).unwrap_err();
+        assert!(err.to_string().contains("total_exit_slots 1 is not even"));
+    }
+
+    #[test]
+    fn layer1_public_inputs_reject_declared_exit_count_larger_than_payload() {
+        let mut pis = valid_layer1_pis(2);
+        pis[L1_TOTAL_EXIT_SLOTS_INDEX] = 4;
+
+        let err = Layer1AggregatedPublicCircuitInputs::try_from_u64_slice(&pis).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("not enough elements for 4 exit slots"));
     }
 
     #[test]
