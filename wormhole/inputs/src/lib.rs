@@ -789,7 +789,7 @@ mod tests {
     fn layer1_public_inputs_reject_odd_exit_slot_count() {
         let mut pis = valid_layer1_pis(2);
         pis[L1_TOTAL_EXIT_SLOTS_INDEX] = 1;
-        pis.truncate(L1_HEADER_FELTS_LEN + 1 * 5 + 4);
+        pis.truncate(L1_HEADER_FELTS_LEN + 5 + 4);
 
         let err = Layer1AggregatedPublicCircuitInputs::try_from_u64_slice(&pis).unwrap_err();
         assert!(err.to_string().contains("total_exit_slots 1 is not even"));
