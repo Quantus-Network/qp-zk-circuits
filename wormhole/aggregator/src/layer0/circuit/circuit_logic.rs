@@ -398,44 +398,7 @@ mod tests {
 
     // ---------------- Circuit helpers ----------------
 
-    /// Dummy leaf circuit with the Wormhole leaf PI layout only.
-    ///
-    /// This lets us generate "fake" leaf proofs with arbitrary public inputs so we can
-    /// stress-test the layer-0 aggregation circuit in isolation.
-    fn generate_dummy_wormhole_circuit() -> (CircuitData<F, C, D>, [Target; LEAF_PI_LEN]) {
-        let config = CircuitConfig::standard_recursion_config();
-        let mut builder = CircuitBuilder::<F, D>::new(config);
-
-        let pis_vec = builder.add_virtual_targets(LEAF_PI_LEN);
-        let pis: [Target; LEAF_PI_LEN] = pis_vec
-            .clone()
-            .try_into()
-            .expect("expected exactly LEAF_PI_LEN targets");
-
-        // Mimic some lightweight constraints like the real leaf circuit.
-        builder.range_check(pis[OUTPUT_AMOUNT_1_START], 32);
-        builder.range_check(pis[OUTPUT_AMOUNT_2_START], 32);
-        builder.range_check(pis[VOLUME_FEE_BPS_START], 32);
-
-        builder.register_public_inputs(&pis_vec);
-
-        let data = builder.build::<C>();
-        (data, pis)
-    }
-
-    fn prove_dummy_wormhole(
-        pis: [F; LEAF_PI_LEN],
-    ) -> (ProofWithPublicInputs<F, C, D>, CircuitData<F, C, D>) {
-        let (circuit_data, targets) = generate_dummy_wormhole_circuit();
-        let mut pw = PartialWitness::new();
-
-        for (t, v) in targets.into_iter().zip(pis.into_iter()) {
-            pw.set_target(t, v).unwrap();
-        }
-
-        let proof = circuit_data.prove(pw).unwrap();
-        (proof, circuit_data)
-    }
+    use test_helpers::fake_leaf::{build_fake_leaf_circuit, prove_fake_leaf_standalone};
 
     /// Build and prove the layer-0 aggregation circuit using the split witness-filler path.
     fn aggregate_proofs_layer0(
@@ -774,7 +737,7 @@ mod tests {
         let leaves = pis_list
             .clone()
             .into_iter()
-            .map(prove_dummy_wormhole)
+            .map(prove_fake_leaf_standalone)
             .collect::<Vec<_>>();
 
         let leaf_common = leaves[0].1.common.clone();
@@ -970,7 +933,7 @@ mod tests {
 
         let leaves = pis_list
             .into_iter()
-            .map(prove_dummy_wormhole)
+            .map(prove_fake_leaf_standalone)
             .collect::<Vec<_>>();
         let leaf_common = leaves[0].1.common.clone();
         let leaf_verifier_only = leaves[0].1.verifier_only.clone();
@@ -1025,7 +988,7 @@ mod tests {
 
         let leaves = pis_list
             .into_iter()
-            .map(prove_dummy_wormhole)
+            .map(prove_fake_leaf_standalone)
             .collect::<Vec<_>>();
         let leaf_common = leaves[0].1.common.clone();
         let leaf_verifier_only = leaves[0].1.verifier_only.clone();
@@ -1104,7 +1067,7 @@ mod tests {
         let leaves = pis_list
             .clone()
             .into_iter()
-            .map(prove_dummy_wormhole)
+            .map(prove_fake_leaf_standalone)
             .collect::<Vec<_>>();
         let leaf_common = leaves[0].1.common.clone();
         let leaf_verifier_only = leaves[0].1.verifier_only.clone();
@@ -1196,7 +1159,7 @@ mod tests {
         let leaves = pis_list
             .clone()
             .into_iter()
-            .map(prove_dummy_wormhole)
+            .map(prove_fake_leaf_standalone)
             .collect::<Vec<_>>();
         let leaf_common = leaves[0].1.common.clone();
         let leaf_verifier_only = leaves[0].1.verifier_only.clone();
@@ -1279,7 +1242,7 @@ mod tests {
 
         let leaves = pis_list
             .into_iter()
-            .map(prove_dummy_wormhole)
+            .map(prove_fake_leaf_standalone)
             .collect::<Vec<_>>();
         let leaf_common = leaves[0].1.common.clone();
         let leaf_verifier_only = leaves[0].1.verifier_only.clone();
@@ -1336,7 +1299,7 @@ mod tests {
 
         let leaves = pis_list
             .into_iter()
-            .map(prove_dummy_wormhole)
+            .map(prove_fake_leaf_standalone)
             .collect::<Vec<_>>();
         let leaf_common = leaves[0].1.common.clone();
         let leaf_verifier_only = leaves[0].1.verifier_only.clone();
@@ -1407,7 +1370,7 @@ mod tests {
         let leaves = pis_list
             .clone()
             .into_iter()
-            .map(prove_dummy_wormhole)
+            .map(prove_fake_leaf_standalone)
             .collect::<Vec<_>>();
         let leaf_common = leaves[0].1.common.clone();
         let leaf_verifier_only = leaves[0].1.verifier_only.clone();
@@ -1494,7 +1457,7 @@ mod tests {
     #[test]
     fn layer0_rejects_malicious_circuit_proofs() {
         // Build the "legitimate" leaf circuit (with real constraints)
-        let (legit_circuit, _legit_targets) = generate_dummy_wormhole_circuit();
+        let (legit_circuit, _legit_targets) = build_fake_leaf_circuit();
 
         // Build a MALICIOUS circuit (no constraints)
         let (malicious_circuit, malicious_targets) = build_malicious_leaf_circuit();
@@ -1554,7 +1517,7 @@ mod tests {
     #[test]
     fn layer0_accepts_legitimate_proofs_after_fix() {
         // Build legitimate circuit
-        let (legit_circuit, legit_targets) = generate_dummy_wormhole_circuit();
+        let (legit_circuit, legit_targets) = build_fake_leaf_circuit();
 
         // Build L0 with legitimate verifier key baked in
         let l0_config = CircuitConfig::standard_recursion_config();

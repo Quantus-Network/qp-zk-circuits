@@ -29,13 +29,9 @@
 //!
 //! ## Usage
 //!
-//! Use [`add_recursive_verifier`] or [`add_recursive_verifiers`] to safely add
-//! recursive verification:
+//! Use [`add_recursive_verifiers`] to safely add recursive verification:
 //!
 //! ```ignore
-//! // Single proof
-//! let proof_target = add_recursive_verifier(&mut builder, &inner_common, &inner_vk);
-//!
 //! // Multiple proofs from the same circuit
 //! let proof_targets = add_recursive_verifiers(&mut builder, &inner_common, &inner_vk, n);
 //! ```
@@ -50,54 +46,6 @@ use plonky2::{
         proof::ProofWithPublicInputsTarget,
     },
 };
-
-/// Safely add recursive proof verification to a circuit.
-///
-/// This function:
-/// 1. Bakes the expected verifier key as constants (prevents substitution attacks)
-/// 2. Adds a virtual proof target (witness)
-/// 3. Adds verification constraints
-///
-/// # Security
-///
-/// The verifier key is baked in as constants at circuit build time. This ensures
-/// the circuit can only verify proofs from the exact expected inner circuit.
-/// An attacker cannot substitute a different verifier key.
-///
-/// # Arguments
-///
-/// * `builder` - The circuit builder
-/// * `inner_common` - Common circuit data of the inner circuit (for proof structure)
-/// * `inner_verifier_only` - Verifier-only data of the inner circuit (baked as constants)
-///
-/// # Returns
-///
-/// The proof target (the only witness input needed).
-pub fn add_recursive_verifier<
-    F: RichField + Extendable<D>,
-    C: GenericConfig<D, F = F>,
-    const D: usize,
->(
-    builder: &mut CircuitBuilder<F, D>,
-    inner_common: &CommonCircuitData<F, D>,
-    inner_verifier_only: &VerifierOnlyCircuitData<C, D>,
-) -> ProofWithPublicInputsTarget<D>
-where
-    C::Hasher: AlgebraicHasher<F>,
-    C::InnerHasher: AlgebraicHasher<F>,
-{
-    // SECURITY: Bake the verifier key as constants.
-    // This prevents verifier key substitution attacks.
-    let verifier_data = builder.constant_verifier_data::<C>(inner_verifier_only);
-
-    // Add virtual proof target (this is the only witness)
-    let proof = builder.add_virtual_proof_with_pis(inner_common);
-
-    // Add verification constraints
-    builder.verify_proof::<C>(&proof, &verifier_data, inner_common);
-
-    proof
-}
 
 /// Safely add multiple recursive proof verifications for the same inner circuit.
 ///
@@ -170,11 +118,13 @@ mod tests {
 
         // Build outer circuit using SAFE helper with legitimate verifier key
         let mut builder = CircuitBuilder::<F, D>::new(config.clone());
-        let proof_target = add_recursive_verifier::<F, C, D>(
+        let proof_targets = add_recursive_verifiers::<F, C, D>(
             &mut builder,
             &legit_circuit.common,
             &legit_circuit.verifier_only, // Baked as constants
+            1,
         );
+        let proof_target = &proof_targets[0];
         builder.register_public_inputs(&proof_target.public_inputs);
         let outer_circuit = builder.build::<C>();
 
@@ -190,7 +140,7 @@ mod tests {
 
         // Try to use malicious proof in outer circuit
         let mut pw = PartialWitness::new();
-        pw.set_proof_with_pis_target(&proof_target, &malicious_proof)
+        pw.set_proof_with_pis_target(proof_target, &malicious_proof)
             .unwrap();
         // Note: We do NOT set verifier_data - it's constants!
 
@@ -211,11 +161,13 @@ mod tests {
 
         // Build outer circuit using SAFE helper
         let mut builder = CircuitBuilder::<F, D>::new(config.clone());
-        let proof_target = add_recursive_verifier::<F, C, D>(
+        let proof_targets = add_recursive_verifiers::<F, C, D>(
             &mut builder,
             &inner_circuit.common,
             &inner_circuit.verifier_only,
+            1,
         );
+        let proof_target = &proof_targets[0];
         builder.register_public_inputs(&proof_target.public_inputs);
         let outer_circuit = builder.build::<C>();
 
@@ -230,7 +182,7 @@ mod tests {
 
         // Use legitimate proof in outer circuit
         let mut pw = PartialWitness::new();
-        pw.set_proof_with_pis_target(&proof_target, &legit_proof)
+        pw.set_proof_with_pis_target(proof_target, &legit_proof)
             .unwrap();
 
         // This should SUCCEED

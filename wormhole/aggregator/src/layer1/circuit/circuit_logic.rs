@@ -231,46 +231,10 @@ mod tests {
     use crate::layer0::circuit::circuit_logic::{
         AggregationCircuitTargets, Layer0AggregationCircuit,
     };
+    use test_helpers::fake_leaf::{build_fake_leaf_circuit, prove_fake_leaf};
 
     const NUM_LEAVES: usize = 2; // 2 leaf proofs per layer-0 batch (fast)
     const N_INNER: usize = 2; // 2 layer-0 proofs aggregated into one layer-1 proof
-
-    // ---------------- Fake leaf circuit ----------------
-
-    /// Build a fake leaf circuit whose public inputs match the Wormhole leaf PI layout (length=LEAF_PI_LEN).
-    /// We use this to generate leaf proofs that the layer-0 circuit can verify/aggregate.
-    fn build_fake_leaf_circuit() -> (CircuitData<F, C, D>, [Target; LEAF_PI_LEN]) {
-        let config = CircuitConfig::standard_recursion_config();
-        let mut builder = CircuitBuilder::<F, D>::new(config);
-
-        let pis_vec = builder.add_virtual_targets(LEAF_PI_LEN);
-        let pis: [Target; LEAF_PI_LEN] = pis_vec
-            .clone()
-            .try_into()
-            .expect("exactly LEAF_PI_LEN targets");
-
-        // Range checks to mimic real leaf constraints (matches old tests)
-        builder.range_check(pis[1], 32); // output_amount_1
-        builder.range_check(pis[2], 32); // output_amount_2
-        builder.range_check(pis[3], 32); // volume_fee_bps
-
-        builder.register_public_inputs(&pis_vec);
-
-        let data = builder.build::<C>();
-        (data, pis)
-    }
-
-    fn prove_fake_leaf(
-        leaf_data: &CircuitData<F, C, D>,
-        leaf_targets: &[Target; LEAF_PI_LEN],
-        pis: [F; LEAF_PI_LEN],
-    ) -> ProofWithPublicInputs<F, C, D> {
-        let mut pw = PartialWitness::new();
-        for (t, v) in leaf_targets.iter().zip(pis.iter()) {
-            pw.set_target(*t, *v).unwrap();
-        }
-        leaf_data.prove(pw).unwrap()
-    }
 
     /// Build one leaf PI array in the Bitcoin-style 2-output layout.
     ///
@@ -315,11 +279,9 @@ mod tests {
     // ---------------- Layer-0 proving helpers ----------------
 
     /// Prove a layer-0 aggregated proof using the monolithic Layer0AggregationCircuit.
-    /// NOTE: The verifier key is baked in as constants - we don't set it here.
     fn prove_layer0_batch(
         l0_data: &CircuitData<F, C, D>,
         l0_targets: &AggregationCircuitTargets,
-        _leaf_verifier_only: &plonky2::plonk::circuit_data::VerifierOnlyCircuitData<C, D>,
         leaf_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
     ) -> ProofWithPublicInputs<F, C, D> {
         assert_eq!(leaf_proofs.len(), NUM_LEAVES);
@@ -347,11 +309,9 @@ mod tests {
     // ---------------- Layer-1 proving helpers ----------------
 
     /// Prove a layer-1 aggregated proof using Layer1AggregationCircuit.
-    /// NOTE: The layer-0 verifier key is baked in as constants - we don't set it here.
     fn prove_layer1(
         l1_data: &CircuitData<F, C, D>,
         l1_targets: &Layer1AggregationCircuitTargets,
-        _layer0_verifier_only: &plonky2::plonk::circuit_data::VerifierOnlyCircuitData<C, D>,
         layer0_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
         aggregator_address: [F; AGGREGATOR_ADDRESS_LEN],
     ) -> Result<ProofWithPublicInputs<F, C, D>, anyhow::Error> {
@@ -464,13 +424,11 @@ mod tests {
         let l0_proof_a = prove_layer0_batch(
             &l0_data,
             &l0_targets,
-            &leaf_verifier_only,
             vec![leaf_a0.clone(), leaf_a1.clone()],
         );
         let l0_proof_b = prove_layer0_batch(
             &l0_data,
             &l0_targets,
-            &leaf_verifier_only,
             vec![leaf_b0.clone(), leaf_b1.clone()],
         );
 
@@ -501,7 +459,6 @@ mod tests {
         let l1_proof = prove_layer1(
             &l1_data,
             &l1_targets,
-            &l0_data.verifier_only,
             vec![l0_proof_a.clone(), l0_proof_b.clone()],
             aggregator_address,
         )
@@ -661,18 +618,8 @@ mod tests {
         let l0_targets = l0_circuit.targets();
         let l0_data = l0_circuit.build_circuit();
 
-        let l0_a = prove_layer0_batch(
-            &l0_data,
-            &l0_targets,
-            &leaf_data.verifier_only,
-            vec![a0, a1],
-        );
-        let l0_b = prove_layer0_batch(
-            &l0_data,
-            &l0_targets,
-            &leaf_data.verifier_only,
-            vec![b0, b1],
-        );
+        let l0_a = prove_layer0_batch(&l0_data, &l0_targets, vec![a0, a1]);
+        let l0_b = prove_layer0_batch(&l0_data, &l0_targets, vec![b0, b1]);
 
         // Layer-1 circuit
         // SECURITY: l0 verifier_only is baked in as constants at build time
@@ -693,13 +640,7 @@ mod tests {
             F::from_canonical_u64(4),
         ];
 
-        let res = prove_layer1(
-            &l1_data,
-            &l1_targets,
-            &l0_data.verifier_only,
-            vec![l0_a, l0_b],
-            agg_addr,
-        );
+        let res = prove_layer1(&l1_data, &l1_targets, vec![l0_a, l0_b], agg_addr);
 
         assert!(
             res.is_err(),
