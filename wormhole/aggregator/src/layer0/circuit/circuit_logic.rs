@@ -8,10 +8,8 @@
 //! - replace dummy nullifiers with hashes of externally provided random preimages
 //! - emit fixed-format aggregated public inputs
 //!
-//! The runtime prover fills:
-//! - `leaf_verifier_data`
-//! - `leaf_proofs[i]`
-//! - `dummy_nullifier_pre_images[i]`
+//! The leaf verifier key is baked in as constants at circuit build time to prevent
+//! verifier key substitution attacks.
 
 use plonky2::{
     field::types::Field,
@@ -21,7 +19,7 @@ use plonky2::{
         circuit_builder::CircuitBuilder,
         circuit_data::{
             CircuitConfig, CircuitData, CommonCircuitData, ProverCircuitData, VerifierCircuitData,
-            VerifierCircuitTarget,
+            VerifierOnlyCircuitData,
         },
         proof::ProofWithPublicInputsTarget,
     },
@@ -32,6 +30,8 @@ use zk_circuits_common::{
     gadgets::{bytes_digest_eq, limb1_at_offset, limbs4_at_offset},
 };
 
+use crate::common::recursive::add_recursive_verifiers;
+
 use super::constants::{
     aggregated_output, ASSET_ID_START, BLOCK_HASH_START, BLOCK_NUMBER_START, EXIT_1_START,
     EXIT_2_START, LEAF_PI_LEN, NULLIFIER_START, OUTPUT_AMOUNT_1_START, OUTPUT_AMOUNT_2_START,
@@ -41,8 +41,6 @@ use super::constants::{
 /// Runtime targets for the prebuilt layer-0 aggregation circuit.
 #[derive(Debug, Clone)]
 pub struct AggregationCircuitTargets {
-    /// Verifier target for the leaf wormhole circuit.
-    pub leaf_verifier_data: VerifierCircuitTarget,
     /// One proof target per leaf slot.
     pub leaf_proofs: Vec<ProofWithPublicInputsTarget<D>>,
     /// One dummy-nullifier preimage target (4 felts) per leaf slot.
@@ -57,26 +55,23 @@ pub struct Layer0AggregationCircuit {
 impl Layer0AggregationCircuit {
     /// Build a monolithic layer-0 aggregation circuit that verifies `n_leaf` wormhole leaf proofs.
     ///
-    /// # Arguments
-    /// - `config`: circuit config for the aggregation circuit itself
-    /// - `leaf_common`: common data for the leaf wormhole circuit (used to allocate and verify proof targets)
-    /// - `n_leaf`: number of leaf proofs to aggregate
-    pub fn new(config: CircuitConfig, leaf_common: CommonCircuitData<F, D>, n_leaf: usize) -> Self {
+    /// The `leaf_verifier_only` is baked in as constants to prevent verifier key substitution.
+    pub fn new(
+        config: CircuitConfig,
+        leaf_common: CommonCircuitData<F, D>,
+        leaf_verifier_only: &VerifierOnlyCircuitData<C, D>,
+        n_leaf: usize,
+    ) -> Self {
         assert!(n_leaf > 0, "n_leaf must be > 0");
 
         let mut builder = CircuitBuilder::<F, D>::new(config);
 
-        // Allocate verifier target for the leaf circuit.
-        let leaf_verifier_data =
-            builder.add_virtual_verifier_data(leaf_common.fri_params.config.cap_height);
-
-        // Allocate N leaf proof targets and verify each against the same leaf verifier.
-        let mut leaf_proofs = Vec::with_capacity(n_leaf);
-        for _ in 0..n_leaf {
-            let pt = builder.add_virtual_proof_with_pis(&leaf_common);
-            builder.verify_proof::<C>(&pt, &leaf_verifier_data, &leaf_common);
-            leaf_proofs.push(pt);
-        }
+        let (leaf_proofs, _verifier_data_target) = add_recursive_verifiers::<F, C, D>(
+            &mut builder,
+            &leaf_common,
+            leaf_verifier_only,
+            n_leaf,
+        );
 
         // Allocate one dummy-nullifier preimage target (4 felts) per slot.
         let mut dummy_nullifier_pre_images = Vec::with_capacity(n_leaf);
@@ -90,7 +85,6 @@ impl Layer0AggregationCircuit {
         }
 
         let targets = AggregationCircuitTargets {
-            leaf_verifier_data,
             leaf_proofs,
             dummy_nullifier_pre_images,
         };
@@ -459,16 +453,21 @@ mod tests {
         );
 
         let agg_config = wormhole_aggregator_circuit_config();
-        let agg_circuit =
-            Layer0AggregationCircuit::new(agg_config.clone(), leaf_common.clone(), n_leaf);
+        // SECURITY: leaf_verifier_only is now baked in at build time
+        let agg_circuit = Layer0AggregationCircuit::new(
+            agg_config.clone(),
+            leaf_common.clone(),
+            &leaf_verifier_only,
+            n_leaf,
+        );
         let targets = agg_circuit.targets();
         let prover_data = agg_circuit.build_prover();
 
         let mut pw = PartialWitness::new();
+        // NOTE: leaf_verifier_only is no longer passed here - it's baked in as constants
         fill_layer0_aggregation_witness(
             &mut pw,
             &targets,
-            &leaf_verifier_only,
             &leaf_proofs,
             &dummy_nullifier_pre_images,
         )?;
@@ -476,8 +475,10 @@ mod tests {
         let agg_proof = prover_data.prove(pw)?;
 
         // Build verifier data from the same config/leaf common so we can verify the result.
+        // NOTE: Must use the same leaf_verifier_only to get matching circuit digest
         let verifier_data =
-            Layer0AggregationCircuit::new(agg_config, leaf_common, n_leaf).build_verifier();
+            Layer0AggregationCircuit::new(agg_config, leaf_common, &leaf_verifier_only, n_leaf)
+                .build_verifier();
 
         Ok((agg_proof, verifier_data))
     }
@@ -1466,5 +1467,139 @@ mod tests {
             "Verified dummy nullifier replacement for {} dummy proofs",
             7
         );
+    }
+
+    // =========================================================================
+    // Security tests: Verifier key substitution attack prevention
+    // =========================================================================
+
+    /// Build a MALICIOUS circuit - same PI count as leaf, but NO security constraints.
+    fn build_malicious_leaf_circuit() -> (CircuitData<F, C, D>, Vec<Target>) {
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+
+        let pis: Vec<_> = (0..LEAF_PI_LEN)
+            .map(|_| builder.add_virtual_target())
+            .collect();
+
+        // NO constraints! Attacker can set any values.
+
+        let targets = pis.clone();
+        builder.register_public_inputs(&pis);
+        (builder.build::<C>(), targets)
+    }
+
+    /// Test that L0 rejects proofs from a malicious circuit when built with
+    /// the legitimate verifier key baked in as constants.
+    #[test]
+    fn layer0_rejects_malicious_circuit_proofs() {
+        // Build the "legitimate" leaf circuit (with real constraints)
+        let (legit_circuit, _legit_targets) = generate_dummy_wormhole_circuit();
+
+        // Build a MALICIOUS circuit (no constraints)
+        let (malicious_circuit, malicious_targets) = build_malicious_leaf_circuit();
+
+        // Build L0 with LEGITIMATE verifier key baked in
+        let l0_config = CircuitConfig::standard_recursion_config();
+        let l0_circuit = Layer0AggregationCircuit::new(
+            l0_config,
+            legit_circuit.common.clone(),
+            &legit_circuit.verifier_only, // SECURITY: Baked as constants
+            1,
+        );
+        let l0_targets = l0_circuit.targets();
+        let l0_data = l0_circuit.build_circuit();
+
+        // Generate a malicious proof with FAKE values
+        let fake_public_inputs: [u64; LEAF_PI_LEN] = [
+            999,        // asset_id
+            0xFFFFFFFF, // output_amount_1 - would fail range_check in legit circuit
+            0xFFFFFFFF, // output_amount_2 - would fail range_check in legit circuit
+            9999,       // volume_fee_bps - way over 100%
+            0xDEADBEEF, 0xCAFEBABE, 0x12345678, 0x87654321, // fake nullifier
+            0xAAAAAAAA, 0xBBBBBBBB, 0xCCCCCCCC, 0xDDDDDDDD, // fake exit_1
+            0xEEEEEEEE, 0xFFFFFFFF, 0x11111111, 0x22222222, // fake exit_2
+            0x33333333, 0x44444444, 0x55555555, 0x66666666, // fake block_hash
+            9999999,    // fake block_number
+        ];
+
+        let mut pw = PartialWitness::new();
+        for (i, &val) in fake_public_inputs.iter().enumerate() {
+            pw.set_target(malicious_targets[i], F::from_canonical_u64(val))
+                .unwrap();
+        }
+
+        let malicious_proof = malicious_circuit.prove(pw).expect("prove malicious");
+
+        // Try to use malicious proof in L0 - this should FAIL
+        let mut pw = PartialWitness::new();
+        pw.set_proof_with_pis_target(&l0_targets.leaf_proofs[0], &malicious_proof)
+            .unwrap();
+
+        for pre_image in &l0_targets.dummy_nullifier_pre_images {
+            for (i, &t) in pre_image.iter().enumerate() {
+                pw.set_target(t, F::from_canonical_u64(i as u64)).unwrap();
+            }
+        }
+
+        // L0 proof generation should FAIL because the proof doesn't match the baked verifier key
+        let result = l0_data.prove(pw);
+        assert!(
+            result.is_err(),
+            "L0 should reject proofs from malicious circuit"
+        );
+    }
+
+    /// Test that L0 correctly accepts legitimate proofs after the security fix.
+    #[test]
+    fn layer0_accepts_legitimate_proofs_after_fix() {
+        // Build legitimate circuit
+        let (legit_circuit, legit_targets) = generate_dummy_wormhole_circuit();
+
+        // Build L0 with legitimate verifier key baked in
+        let l0_config = CircuitConfig::standard_recursion_config();
+        let l0_circuit = Layer0AggregationCircuit::new(
+            l0_config,
+            legit_circuit.common.clone(),
+            &legit_circuit.verifier_only,
+            1,
+        );
+        let l0_targets = l0_circuit.targets();
+        let l0_data = l0_circuit.build_circuit();
+
+        // Generate a LEGITIMATE proof with valid values
+        let valid_public_inputs: [u64; LEAF_PI_LEN] = [
+            0,    // asset_id
+            1000, // output_amount_1 - valid u32
+            2000, // output_amount_2 - valid u32
+            100,  // volume_fee_bps - valid (1%)
+            0x11111111, 0x22222222, 0x33333333, 0x44444444, // nullifier
+            0x11111111, 0x22222222, 0x33333333, 0x44444444, // exit_1
+            0x55555555, 0x66666666, 0x77777777, 0x88888888, // exit_2
+            0x99999999, 0xAAAAAAAA, 0xBBBBBBBB, 0xCCCCCCCC, // block_hash
+            12345,      // block_number
+        ];
+
+        let mut pw = PartialWitness::new();
+        for (i, &val) in valid_public_inputs.iter().enumerate() {
+            pw.set_target(legit_targets[i], F::from_canonical_u64(val))
+                .unwrap();
+        }
+
+        let legit_proof = legit_circuit.prove(pw).expect("prove legit");
+
+        // Use legitimate proof in L0 - this should succeed
+        let mut pw = PartialWitness::new();
+        pw.set_proof_with_pis_target(&l0_targets.leaf_proofs[0], &legit_proof)
+            .unwrap();
+
+        for pre_image in &l0_targets.dummy_nullifier_pre_images {
+            for (i, &t) in pre_image.iter().enumerate() {
+                pw.set_target(t, F::from_canonical_u64(i as u64)).unwrap();
+            }
+        }
+
+        let l0_proof = l0_data.prove(pw).expect("L0 prove should succeed");
+        l0_data.verify(l0_proof).expect("L0 verify should succeed");
     }
 }

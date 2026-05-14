@@ -1,23 +1,16 @@
 //! Build + serialize layer-1 aggregation circuit artifacts.
 //!
-//! Produces:
-//! - `layer1_common.bin`
-//! - `layer1_verifier.bin`
-//! - `layer1_prover.bin` (optional)
+//! Generates: `layer1_common.bin`, `layer1_verifier.bin`, `layer1_prover.bin` (optional)
 //!
-//! Expects layer-0 artifacts to already exist in `output_dir`:
-//! - `aggregated_common.bin`
-//! - `aggregated_verifier.bin`
-//! - `aggregated_prover.bin`
-//! - `common.bin`
-//! - `verifier.bin`
-//! - `dummy_proof.bin`
+//! Expects layer-0 artifacts to already exist in `output_dir`.
 
 use anyhow::{anyhow, Context, Result};
 use std::fs::{create_dir_all, write};
 use std::path::Path;
 
-use plonky2::plonk::circuit_data::{CommonCircuitData, ProverCircuitData, VerifierCircuitData};
+use plonky2::plonk::circuit_data::{
+    CommonCircuitData, ProverCircuitData, VerifierCircuitData, VerifierOnlyCircuitData,
+};
 use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
 
 use zk_circuits_common::circuit::{wormhole_aggregator_circuit_config, C, D, F};
@@ -26,8 +19,6 @@ use crate::common::utils::l0_num_leaves_from_padded_pi_len;
 use crate::layer1::circuit::circuit_logic::Layer1AggregationCircuit;
 
 /// Build and write all layer-1 artifacts into `output_dir`.
-///
-/// This assumes layer-0 artifacts are already present in `output_dir`.
 pub fn generate_layer1_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
     num_layer0_proofs: usize,
@@ -37,33 +28,25 @@ pub fn generate_layer1_circuit_binaries<P: AsRef<Path>>(
     create_dir_all(output_dir)
         .with_context(|| format!("Failed to create output dir {}", output_dir.display()))?;
 
-    // -------------------------------------------------------------------------
-    // 1) Load layer-0 common circuit data (child circuit for layer-1)
-    // -------------------------------------------------------------------------
     let layer0_common = load_layer0_common_from_bins(output_dir)
-        .context("Failed to load layer-0 common circuit data from bins dir. Make sure the dependent layer-0 artifacts are present in the output directory")?;
+        .context("Failed to load layer-0 common circuit data")?;
+    let layer0_verifier_only = load_layer0_verifier_only_from_bins(output_dir)
+        .context("Failed to load layer-0 verifier data")?;
 
     let layer0_num_leaves = l0_num_leaves_from_padded_pi_len(layer0_common.num_public_inputs)?;
-    // -------------------------------------------------------------------------
-    // 2) Build layer-1 circuit + targets layout
-    // -------------------------------------------------------------------------
+
     let layer1_circuit = Layer1AggregationCircuit::new(
         wormhole_aggregator_circuit_config(),
         layer0_common,
+        &layer0_verifier_only,
         num_layer0_proofs,
         layer0_num_leaves,
     );
 
-    // -------------------------------------------------------------------------
-    // 3) Build verifier artifacts (common + verifier)
-    // -------------------------------------------------------------------------
     let circuit_data = layer1_circuit.build_circuit();
     let verifier_data = circuit_data.verifier_data();
     write_verifier_artifacts(output_dir, &verifier_data)?;
 
-    // -------------------------------------------------------------------------
-    // 4) Optionally build prover artifact
-    // -------------------------------------------------------------------------
     if include_prover {
         let prover_data = circuit_data.prover_data();
         write_prover_artifact(output_dir, &prover_data)?;
@@ -79,10 +62,6 @@ pub fn generate_layer1_circuit_binaries<P: AsRef<Path>>(
     Ok(())
 }
 
-// -----------------------------------------------------------------------------
-// Helpers
-// -----------------------------------------------------------------------------
-
 fn load_layer0_common_from_bins(bins_dir: &Path) -> Result<CommonCircuitData<F, D>> {
     let gate_serializer = DefaultGateSerializer;
 
@@ -95,6 +74,18 @@ fn load_layer0_common_from_bins(bins_dir: &Path) -> Result<CommonCircuitData<F, 
 
     CommonCircuitData::from_bytes(bytes, &gate_serializer)
         .map_err(|e| anyhow!("Failed to deserialize aggregated_common.bin: {}", e))
+}
+
+fn load_layer0_verifier_only_from_bins(bins_dir: &Path) -> Result<VerifierOnlyCircuitData<C, D>> {
+    let bytes = std::fs::read(bins_dir.join("aggregated_verifier.bin")).with_context(|| {
+        format!(
+            "Failed to read {}",
+            bins_dir.join("aggregated_verifier.bin").display()
+        )
+    })?;
+
+    VerifierOnlyCircuitData::from_bytes(bytes)
+        .map_err(|e| anyhow!("Failed to deserialize aggregated_verifier.bin: {}", e))
 }
 
 fn write_verifier_artifacts(

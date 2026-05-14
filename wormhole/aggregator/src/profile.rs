@@ -83,6 +83,7 @@ mod tests {
             // Build fake leaf circuit to get common data
             let leaf_data = build_fake_leaf_circuit();
             let leaf_common = leaf_data.common.clone();
+            let leaf_verifier_only = leaf_data.verifier_only.clone();
 
             println!("Leaf circuit degree bits: {}", leaf_common.degree_bits());
 
@@ -91,6 +92,7 @@ mod tests {
             let l0_circuit = Layer0AggregationCircuit::new(
                 wormhole_aggregator_circuit_config(),
                 leaf_common,
+                &leaf_verifier_only,
                 num_leaves,
             );
 
@@ -134,10 +136,12 @@ mod tests {
         let l0_circuit = Layer0AggregationCircuit::new(
             wormhole_aggregator_circuit_config(),
             leaf_data.common.clone(),
+            &leaf_data.verifier_only,
             layer0_num_leaves,
         );
         let l0_data = l0_circuit.build_circuit();
         let l0_common = l0_data.common.clone();
+        let l0_verifier_only = l0_data.verifier_only.clone();
 
         println!(
             "Layer-0 circuit (n={}) degree bits: {}",
@@ -157,6 +161,7 @@ mod tests {
             let l1_circuit = Layer1AggregationCircuit::new(
                 wormhole_aggregator_circuit_config(),
                 l0_common.clone(),
+                &l0_verifier_only,
                 num_l0_proofs,
                 layer0_num_leaves,
             );
@@ -201,6 +206,7 @@ mod tests {
 
         let leaf_data = build_fake_leaf_circuit();
         let leaf_common = leaf_data.common.clone();
+        let leaf_verifier_only = leaf_data.verifier_only.clone();
 
         println!("Leaf circuit:");
         println!("  Degree bits: {}", leaf_common.degree_bits());
@@ -213,6 +219,7 @@ mod tests {
             let l0_circuit = Layer0AggregationCircuit::new(
                 wormhole_aggregator_circuit_config(),
                 leaf_common.clone(),
+                &leaf_verifier_only,
                 num_leaves,
             );
             let l0_data = l0_circuit.build_circuit();

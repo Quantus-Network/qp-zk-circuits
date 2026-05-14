@@ -1,6 +1,7 @@
 //! Layer-1 aggregation circuit (monolithic prebuilt-circuit form).
 //!
-//! Verifies N layer-0 aggregated proofs directly and emits a layer-1 aggregated proof.
+//! Verifies N layer-0 aggregated proofs and emits a layer-1 aggregated proof.
+//! The layer-0 verifier key is baked in as constants to prevent verifier key substitution.
 
 use plonky2::{
     field::types::Field,
@@ -9,7 +10,7 @@ use plonky2::{
         circuit_builder::CircuitBuilder,
         circuit_data::{
             CircuitConfig, CircuitData, CommonCircuitData, ProverCircuitData, VerifierCircuitData,
-            VerifierCircuitTarget,
+            VerifierOnlyCircuitData,
         },
         proof::ProofWithPublicInputsTarget,
     },
@@ -20,6 +21,8 @@ use zk_circuits_common::{
     gadgets::bytes_digest_eq,
 };
 
+use crate::common::recursive::add_recursive_verifiers;
+
 use super::constants::AGGREGATOR_ADDRESS_LEN;
 
 use super::constants as l1c;
@@ -27,8 +30,6 @@ use super::constants as l1c;
 /// Runtime targets for the prebuilt layer-1 aggregation circuit.
 #[derive(Debug, Clone)]
 pub struct Layer1AggregationCircuitTargets {
-    /// Verifier target for the layer-0 aggregation circuit.
-    pub layer0_verifier_data: VerifierCircuitTarget,
     /// One proof target per layer-0 slot.
     pub layer0_proofs: Vec<ProofWithPublicInputsTarget<D>>,
     /// Aggregator address (4 felts, 8 bytes/felt) for hash-derived accounts.
@@ -43,24 +44,19 @@ pub struct Layer1AggregationCircuit {
 impl Layer1AggregationCircuit {
     /// Build a monolithic layer-1 aggregation circuit that verifies `n_inner` layer-0 aggregated proofs.
     ///
-    /// # Arguments
-    /// - `config`: circuit config for the layer-1 circuit itself
-    /// - `layer0_common`: common data for the layer-0 aggregation circuit
-    /// - `n_inner`: number of layer-0 aggregated proofs to aggregate
-    /// - `layer0_num_leaves`: number of leaf proofs represented in each layer-0 proof
+    /// The `layer0_verifier_only` is baked in as constants to prevent verifier key substitution.
     pub fn new(
         config: CircuitConfig,
         layer0_common: CommonCircuitData<F, D>,
+        layer0_verifier_only: &VerifierOnlyCircuitData<C, D>,
         n_inner: usize,
         layer0_num_leaves: usize,
     ) -> Self {
         assert!(n_inner > 0, "n_inner must be > 0");
         assert!(layer0_num_leaves > 0, "layer0_num_leaves must be > 0");
 
-        // Expected PI length of each layer-0 aggregated proof, derived from layout.
         let expected_l0_pi_len = l1c::l0_pi_len(layer0_num_leaves);
 
-        // Catch config mismatches early.
         debug_assert_eq!(
             layer0_common.num_public_inputs,
             expected_l0_pi_len,
@@ -72,27 +68,19 @@ impl Layer1AggregationCircuit {
 
         let mut builder = CircuitBuilder::<F, D>::new(config);
 
-        // Allocate verifier target for the layer-0 circuit.
-        let layer0_verifier_data =
-            builder.add_virtual_verifier_data(layer0_common.fri_params.config.cap_height);
+        let (layer0_proofs, _verifier_data_target) = add_recursive_verifiers::<F, C, D>(
+            &mut builder,
+            &layer0_common,
+            layer0_verifier_only,
+            n_inner,
+        );
 
-        // Allocate N layer-0 proof targets and verify each.
-        let mut layer0_proofs = Vec::with_capacity(n_inner);
-        for _ in 0..n_inner {
-            let pt = builder.add_virtual_proof_with_pis(&layer0_common);
-            builder.verify_proof::<C>(&pt, &layer0_verifier_data, &layer0_common);
-            layer0_proofs.push(pt);
-        }
-
-        // Aggregator address is witness-filled (NOT a constant).
-        // Uses 4 felts (8 bytes/felt) for hash-derived accounts.
         let aggregator_address: [Target; AGGREGATOR_ADDRESS_LEN] = builder
             .add_virtual_targets(AGGREGATOR_ADDRESS_LEN)
             .try_into()
             .unwrap();
 
         let targets = Layer1AggregationCircuitTargets {
-            layer0_verifier_data,
             layer0_proofs,
             aggregator_address,
         };
@@ -327,19 +315,18 @@ mod tests {
     // ---------------- Layer-0 proving helpers ----------------
 
     /// Prove a layer-0 aggregated proof using the monolithic Layer0AggregationCircuit.
+    /// NOTE: The verifier key is baked in as constants - we don't set it here.
     fn prove_layer0_batch(
         l0_data: &CircuitData<F, C, D>,
         l0_targets: &AggregationCircuitTargets,
-        leaf_verifier_only: &plonky2::plonk::circuit_data::VerifierOnlyCircuitData<C, D>,
+        _leaf_verifier_only: &plonky2::plonk::circuit_data::VerifierOnlyCircuitData<C, D>,
         leaf_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
     ) -> ProofWithPublicInputs<F, C, D> {
         assert_eq!(leaf_proofs.len(), NUM_LEAVES);
 
         let mut pw = PartialWitness::new();
 
-        // Fill leaf verifier target
-        pw.set_verifier_data_target(&l0_targets.leaf_verifier_data, leaf_verifier_only)
-            .unwrap();
+        // NOTE: leaf_verifier_data is NOT set - it's baked in as constants
 
         // Fill each leaf proof target
         for (pt, proof) in l0_targets.leaf_proofs.iter().zip(leaf_proofs.iter()) {
@@ -360,10 +347,11 @@ mod tests {
     // ---------------- Layer-1 proving helpers ----------------
 
     /// Prove a layer-1 aggregated proof using Layer1AggregationCircuit.
+    /// NOTE: The layer-0 verifier key is baked in as constants - we don't set it here.
     fn prove_layer1(
         l1_data: &CircuitData<F, C, D>,
         l1_targets: &Layer1AggregationCircuitTargets,
-        layer0_verifier_only: &plonky2::plonk::circuit_data::VerifierOnlyCircuitData<C, D>,
+        _layer0_verifier_only: &plonky2::plonk::circuit_data::VerifierOnlyCircuitData<C, D>,
         layer0_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
         aggregator_address: [F; AGGREGATOR_ADDRESS_LEN],
     ) -> Result<ProofWithPublicInputs<F, C, D>, anyhow::Error> {
@@ -371,9 +359,7 @@ mod tests {
 
         let mut pw = PartialWitness::new();
 
-        // Fill layer-0 verifier target
-        pw.set_verifier_data_target(&l1_targets.layer0_verifier_data, layer0_verifier_only)
-            .unwrap();
+        // NOTE: layer0_verifier_data is NOT set - it's baked in as constants
 
         // Fill layer-0 proof targets
         for (pt, proof) in l1_targets.layer0_proofs.iter().zip(layer0_proofs.iter()) {
@@ -465,9 +451,11 @@ mod tests {
         let leaf_common = leaf_data.common.clone();
         let leaf_verifier_only = leaf_data.verifier_only.clone();
 
+        // SECURITY: leaf_verifier_only is baked in as constants at build time
         let l0_circuit = Layer0AggregationCircuit::new(
             CircuitConfig::standard_recursion_config(),
             leaf_common,
+            &leaf_verifier_only,
             NUM_LEAVES,
         );
         let l0_targets = l0_circuit.targets();
@@ -491,9 +479,11 @@ mod tests {
         l0_data.verify(l0_proof_b.clone()).unwrap();
 
         // ---- 3) Build monolithic Layer1AggregationCircuit and prove ----
+        // SECURITY: l0_data.verifier_only is baked in as constants at build time
         let l1_circuit = Layer1AggregationCircuit::new(
             CircuitConfig::standard_recursion_config(),
             l0_data.common.clone(),
+            &l0_data.verifier_only,
             N_INNER,
             NUM_LEAVES,
         );
@@ -661,9 +651,11 @@ mod tests {
         );
 
         // Layer-0 circuit
+        // SECURITY: leaf verifier_only is baked in as constants at build time
         let l0_circuit = Layer0AggregationCircuit::new(
             CircuitConfig::standard_recursion_config(),
             leaf_data.common.clone(),
+            &leaf_data.verifier_only,
             NUM_LEAVES,
         );
         let l0_targets = l0_circuit.targets();
@@ -683,9 +675,11 @@ mod tests {
         );
 
         // Layer-1 circuit
+        // SECURITY: l0 verifier_only is baked in as constants at build time
         let l1_circuit = Layer1AggregationCircuit::new(
             CircuitConfig::standard_recursion_config(),
             l0_data.common.clone(),
+            &l0_data.verifier_only,
             N_INNER,
             NUM_LEAVES,
         );
