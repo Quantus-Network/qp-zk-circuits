@@ -251,6 +251,9 @@ pub struct Layer0Aggregator {
     bins_dir: PathBuf,
     buf: ProofBuffer,
     expected_leaf_pi_len: usize,
+    /// Whether to use the ZK wrapper optimization (non-ZK L0 + ZK wrap).
+    /// This provides ~1.8x speedup over direct ZK aggregation.
+    use_wrapper: bool,
 }
 
 impl Layer0Aggregator {
@@ -262,16 +265,26 @@ impl Layer0Aggregator {
         let expected_leaf_pi_len =
             load_common_from_bins(&bins_dir, "common.bin")?.num_public_inputs;
 
+        // Check if wrapper binaries exist (new optimized approach)
+        let use_wrapper = bins_dir.join("aggregated_nonzk_prover.bin").exists()
+            && bins_dir.join("wrapper_prover.bin").exists();
+
         Ok(Self {
             bins_dir,
             buf: ProofBuffer::new(config.num_leaf_proofs),
             expected_leaf_pi_len,
+            use_wrapper,
         })
     }
 
     fn build_prover(&self) -> Result<Layer0AggregationProver> {
         Layer0AggregationProver::new_from_binaries_dir(&self.bins_dir)
             .context("failed to load prebuilt layer-0 prover from binaries dir")
+    }
+
+    fn build_wrapper_prover(&self) -> Result<crate::layer0::prover::Layer0WrapperProver> {
+        crate::layer0::prover::Layer0WrapperProver::new_from_binaries_dir(&self.bins_dir)
+            .context("failed to load prebuilt layer-0 wrapper prover from binaries dir")
     }
 
     fn load_verifier(&self) -> Result<VerifierCircuitData<F, C, D>> {
@@ -320,12 +333,21 @@ impl AggregationBackend for Layer0Aggregator {
             }
         }
 
-        let prover = self.build_prover()?;
-        let prover = prover
-            .commit(proofs)
-            .context("failed to commit leaf proofs to layer-0 aggregation prover")?;
-
-        prover.prove().context("layer-0 proving failed")
+        if self.use_wrapper {
+            // New optimized path: non-ZK L0 + ZK wrapper (~1.8x faster)
+            let prover = self.build_wrapper_prover()?;
+            let prover = prover
+                .commit(proofs)
+                .context("failed to commit leaf proofs to layer-0 wrapper prover")?;
+            prover.prove().context("layer-0 wrapper proving failed")
+        } else {
+            // Legacy path: direct ZK aggregation
+            let prover = self.build_prover()?;
+            let prover = prover
+                .commit(proofs)
+                .context("failed to commit leaf proofs to layer-0 aggregation prover")?;
+            prover.prove().context("layer-0 proving failed")
+        }
     }
 
     fn verify(&self, proof: Proof) -> Result<()> {

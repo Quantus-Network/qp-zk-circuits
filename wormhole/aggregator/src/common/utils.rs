@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use plonky2::{
     field::types::Field,
     field::types::PrimeField64,
@@ -6,6 +6,7 @@ use plonky2::{
     plonk::proof::ProofWithPublicInputs,
     util::serialization::DefaultGateSerializer,
 };
+use rand::seq::SliceRandom;
 use zk_circuits_common::circuit::{C, D, F};
 
 use crate::layer0::circuit::constants::{
@@ -94,6 +95,57 @@ pub fn l0_num_leaves_from_padded_pi_len(pi_len: usize) -> Result<usize> {
     }
 
     Ok(num_leaves)
+}
+
+// -----------------------------------------------------------------------------
+// Layer-0 proof padding/shuffling helpers
+// -----------------------------------------------------------------------------
+
+/// Shuffle leaf proofs while ensuring a real proof remains in slot 0 (if any real proof exists).
+///
+/// This is required because the layer-0 circuit derives its public outputs (block_hash, etc.)
+/// from slot 0. If a dummy proof (with zeroed block_hash) ends up in slot 0, the aggregated
+/// proof would have invalid public outputs.
+pub fn shuffle_proofs_preserving_first_real(proofs: &mut [ProofWithPublicInputs<F, C, D>]) {
+    // Find the first real proof and swap it to position 0
+    if let Some(first_real_idx) = proofs
+        .iter()
+        .position(|p| !is_dummy_leaf_proof(p).unwrap_or(false))
+    {
+        proofs.swap(0, first_real_idx);
+    }
+
+    // Shuffle remaining proofs (positions 1..n)
+    if proofs.len() > 1 {
+        let mut rng = rand::thread_rng();
+        proofs[1..].shuffle(&mut rng);
+    }
+}
+
+/// Verify that all real proofs use `asset_id = 0` when padding with dummy proofs is required.
+///
+/// This check is necessary because:
+/// - Dummy proofs use `asset_id = 0`
+/// - The layer-0 circuit enforces `asset_id` equality across all proofs
+/// - Mixing non-zero `asset_id` real proofs with dummy proofs would fail in-circuit
+pub fn assert_dummy_padding_asset_id_compatible(
+    proofs: &[ProofWithPublicInputs<F, C, D>],
+) -> Result<()> {
+    for (idx, proof) in proofs.iter().enumerate() {
+        ensure_proof_public_input_len(proof, LEAF_PI_LEN, "leaf proof")?;
+        let real_asset_id = leaf_proof_asset_id(proof)?;
+
+        if real_asset_id != 0 {
+            bail!(
+                "real proof {} has asset_id={}, but dummy proofs use asset_id=0. \
+                 All proofs must have the same asset_id for aggregation when padding is required.",
+                idx,
+                real_asset_id
+            );
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

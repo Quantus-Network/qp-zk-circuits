@@ -21,7 +21,6 @@ use plonky2::{
     },
     util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer},
 };
-use rand::seq::SliceRandom;
 
 #[cfg(feature = "std")]
 use std::{fs, path::Path};
@@ -33,8 +32,8 @@ use zk_circuits_common::{
 
 use crate::{
     common::utils::{
-        ensure_proof_public_input_len, is_dummy_leaf_proof, leaf_proof_asset_id,
-        load_verifier_data_from_bytes,
+        assert_dummy_padding_asset_id_compatible, load_verifier_data_from_bytes,
+        shuffle_proofs_preserving_first_real,
     },
     dummy_proof::{generate_random_nullifier_preimage, load_dummy_proof},
     layer0::{
@@ -281,7 +280,7 @@ impl Layer0AggregationProver {
         }
 
         // Shuffle proofs to hide dummy positions while preserving a real proof in slot 0 (if any)
-        shuffle_proofs_preserving_first_real_layer0(&mut proofs);
+        shuffle_proofs_preserving_first_real(&mut proofs);
 
         // Generate one dummy nullifier preimage per slot.
         // In-circuit hashes these only for dummy proofs.
@@ -311,52 +310,6 @@ impl Layer0AggregationProver {
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
-
-/// Shuffle proofs while ensuring a real proof remains in slot 0 (if any real proof exists).
-///
-/// This mirrors the behavior of `shuffle_proofs_preserving_first_real(...)` but avoids needing
-/// a full `AggregationWrapper` impl just for the prover path.
-fn shuffle_proofs_preserving_first_real_layer0(proofs: &mut [ProofWithPublicInputs<F, C, D>]) {
-    // Find the first real proof
-    if let Some(first_real_idx) = proofs
-        .iter()
-        .position(|p| !is_dummy_leaf_proof(p).unwrap_or(false))
-    {
-        proofs.swap(0, first_real_idx);
-    }
-
-    // Shuffle remaining proofs
-    if proofs.len() > 1 {
-        let mut rng = rand::thread_rng();
-        proofs[1..].shuffle(&mut rng);
-    }
-}
-
-/// If we're padding with dummy proofs (`asset_id = 0`), real proofs must also use `asset_id = 0`
-/// because the layer-0 circuit enforces asset_id equality across all proofs.
-fn assert_dummy_padding_asset_id_compatible(
-    proofs: &[ProofWithPublicInputs<F, C, D>],
-) -> Result<()> {
-    for (idx, proof) in proofs.iter().enumerate() {
-        ensure_proof_public_input_len(
-            proof,
-            crate::layer0::circuit::constants::LEAF_PI_LEN,
-            "leaf proof",
-        )?;
-        let real_asset_id = leaf_proof_asset_id(proof)?;
-
-        if real_asset_id != 0 {
-            bail!(
-                "real proof {} has asset_id={}, but dummy proofs use asset_id=0. \
-                 All proofs must have the same asset_id for aggregation when padding is required.",
-                idx,
-                real_asset_id
-            );
-        }
-    }
-
-    Ok(())
-}
 
 /// Generate a dummy nullifier preimage for every slot.
 ///

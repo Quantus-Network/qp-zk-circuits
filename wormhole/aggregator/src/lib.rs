@@ -4,6 +4,7 @@ pub mod config;
 pub mod dummy_proof;
 pub mod layer0;
 pub mod layer1;
+pub mod zk_wrapper;
 
 #[cfg(feature = "profile")]
 pub mod profile;
