@@ -66,7 +66,7 @@ impl Layer0AggregationCircuit {
 
         let mut builder = CircuitBuilder::<F, D>::new(config);
 
-        let (leaf_proofs, _verifier_data_target) = add_recursive_verifiers::<F, C, D>(
+        let leaf_proofs = add_recursive_verifiers::<F, C, D>(
             &mut builder,
             &leaf_common,
             leaf_verifier_only,

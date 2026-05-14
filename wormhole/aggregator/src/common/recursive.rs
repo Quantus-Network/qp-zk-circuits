@@ -29,17 +29,15 @@
 //!
 //! ## Usage
 //!
-//! Use [`add_recursive_verifier`] to safely add recursive verification:
+//! Use [`add_recursive_verifier`] or [`add_recursive_verifiers`] to safely add
+//! recursive verification:
 //!
 //! ```ignore
-//! use crate::common::recursive::{add_recursive_verifier, RecursiveVerifierTargets};
+//! // Single proof
+//! let proof_target = add_recursive_verifier(&mut builder, &inner_common, &inner_vk);
 //!
-//! let targets = add_recursive_verifier(
-//!     &mut builder,
-//!     &inner_common,
-//!     &inner_verifier_only,
-//! );
-//! // targets.proof is the only witness - verifier key is baked in as constants
+//! // Multiple proofs from the same circuit
+//! let proof_targets = add_recursive_verifiers(&mut builder, &inner_common, &inner_vk, n);
 //! ```
 
 use plonky2::{
@@ -47,24 +45,11 @@ use plonky2::{
     hash::hash_types::RichField,
     plonk::{
         circuit_builder::CircuitBuilder,
-        circuit_data::{CommonCircuitData, VerifierCircuitTarget, VerifierOnlyCircuitData},
+        circuit_data::{CommonCircuitData, VerifierOnlyCircuitData},
         config::{AlgebraicHasher, GenericConfig},
         proof::ProofWithPublicInputsTarget,
     },
 };
-
-/// Targets for a recursively verified proof.
-///
-/// Note: Unlike the unsafe pattern, there is no `verifier_data` target here
-/// because the verifier key is baked in as constants.
-#[derive(Debug, Clone)]
-pub struct RecursiveVerifierTargets<const D: usize> {
-    /// The proof to be verified (witness).
-    pub proof: ProofWithPublicInputsTarget<D>,
-    /// The verifier data target (constants - do NOT set in witness).
-    /// This is exposed for compatibility but should not be modified.
-    pub verifier_data: VerifierCircuitTarget,
-}
 
 /// Safely add recursive proof verification to a circuit.
 ///
@@ -87,7 +72,7 @@ pub struct RecursiveVerifierTargets<const D: usize> {
 ///
 /// # Returns
 ///
-/// Targets for the proof (the only witness input needed).
+/// The proof target (the only witness input needed).
 pub fn add_recursive_verifier<
     F: RichField + Extendable<D>,
     C: GenericConfig<D, F = F>,
@@ -96,7 +81,7 @@ pub fn add_recursive_verifier<
     builder: &mut CircuitBuilder<F, D>,
     inner_common: &CommonCircuitData<F, D>,
     inner_verifier_only: &VerifierOnlyCircuitData<C, D>,
-) -> RecursiveVerifierTargets<D>
+) -> ProofWithPublicInputsTarget<D>
 where
     C::Hasher: AlgebraicHasher<F>,
     C::InnerHasher: AlgebraicHasher<F>,
@@ -111,10 +96,7 @@ where
     // Add verification constraints
     builder.verify_proof::<C>(&proof, &verifier_data, inner_common);
 
-    RecursiveVerifierTargets {
-        proof,
-        verifier_data,
-    }
+    proof
 }
 
 /// Safely add multiple recursive proof verifications for the same inner circuit.
@@ -130,7 +112,7 @@ where
 ///
 /// # Returns
 ///
-/// A vector of proof targets and the shared (constant) verifier data target.
+/// A vector of proof targets (the only witnesses needed).
 pub fn add_recursive_verifiers<
     F: RichField + Extendable<D>,
     C: GenericConfig<D, F = F>,
@@ -140,7 +122,7 @@ pub fn add_recursive_verifiers<
     inner_common: &CommonCircuitData<F, D>,
     inner_verifier_only: &VerifierOnlyCircuitData<C, D>,
     num_proofs: usize,
-) -> (Vec<ProofWithPublicInputsTarget<D>>, VerifierCircuitTarget)
+) -> Vec<ProofWithPublicInputsTarget<D>>
 where
     C::Hasher: AlgebraicHasher<F>,
     C::InnerHasher: AlgebraicHasher<F>,
@@ -156,7 +138,7 @@ where
         proofs.push(proof);
     }
 
-    (proofs, verifier_data)
+    proofs
 }
 
 #[cfg(test)]
@@ -188,12 +170,12 @@ mod tests {
 
         // Build outer circuit using SAFE helper with legitimate verifier key
         let mut builder = CircuitBuilder::<F, D>::new(config.clone());
-        let targets = add_recursive_verifier::<F, C, D>(
+        let proof_target = add_recursive_verifier::<F, C, D>(
             &mut builder,
             &legit_circuit.common,
             &legit_circuit.verifier_only, // Baked as constants
         );
-        builder.register_public_inputs(&targets.proof.public_inputs);
+        builder.register_public_inputs(&proof_target.public_inputs);
         let outer_circuit = builder.build::<C>();
 
         // Generate a malicious proof
@@ -208,7 +190,7 @@ mod tests {
 
         // Try to use malicious proof in outer circuit
         let mut pw = PartialWitness::new();
-        pw.set_proof_with_pis_target(&targets.proof, &malicious_proof)
+        pw.set_proof_with_pis_target(&proof_target, &malicious_proof)
             .unwrap();
         // Note: We do NOT set verifier_data - it's constants!
 
@@ -229,12 +211,12 @@ mod tests {
 
         // Build outer circuit using SAFE helper
         let mut builder = CircuitBuilder::<F, D>::new(config.clone());
-        let targets = add_recursive_verifier::<F, C, D>(
+        let proof_target = add_recursive_verifier::<F, C, D>(
             &mut builder,
             &inner_circuit.common,
             &inner_circuit.verifier_only,
         );
-        builder.register_public_inputs(&targets.proof.public_inputs);
+        builder.register_public_inputs(&proof_target.public_inputs);
         let outer_circuit = builder.build::<C>();
 
         // Generate a legitimate proof
@@ -248,7 +230,7 @@ mod tests {
 
         // Use legitimate proof in outer circuit
         let mut pw = PartialWitness::new();
-        pw.set_proof_with_pis_target(&targets.proof, &legit_proof)
+        pw.set_proof_with_pis_target(&proof_target, &legit_proof)
             .unwrap();
 
         // This should SUCCEED
