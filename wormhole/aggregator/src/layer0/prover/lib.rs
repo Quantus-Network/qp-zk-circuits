@@ -282,8 +282,8 @@ impl Layer0AggregationProver {
 
 /// Shuffle proofs while ensuring a real proof remains in slot 0 (if any real proof exists).
 ///
-/// This mirrors the behavior of `shuffle_proofs_preserving_first_real(...)` but avoids needing
-/// a full `AggregationWrapper` impl just for the prover path.
+/// This hides dummy proof positions while maintaining valid circuit semantics
+/// (slot 0 must contain a real proof for reference value extraction).
 fn shuffle_proofs_preserving_first_real_layer0(proofs: &mut [ProofWithPublicInputs<F, C, D>]) {
     // Find the first real proof
     if let Some(first_real_idx) = proofs
