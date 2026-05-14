@@ -1,9 +1,7 @@
 //! Layer-1 aggregation prover (prebuilt-circuit proving API).
 //!
-//! Mirrors the `WormholeProver` / `Layer0AggregationProver` API style:
-//! - `new(...)` / `new_from_*`
-//! - `commit(...)`
-//! - `prove()`
+//! The layer-0 verifier key is baked in as constants at circuit build time to prevent
+//! verifier key substitution attacks.
 
 use anyhow::{anyhow, bail, Context, Result};
 #[cfg(feature = "std")]
@@ -36,9 +34,6 @@ use crate::{
     },
 };
 
-/// Inputs for layer-1 aggregation.
-///
-/// Takes ownership to avoid unnecessary clones in `commit(...)`.
 #[derive(Debug)]
 pub struct Layer1AggregationInputs {
     pub proofs: Vec<ProofWithPublicInputs<F, C, D>>,
@@ -47,41 +42,28 @@ pub struct Layer1AggregationInputs {
 
 #[derive(Debug)]
 pub struct Layer1AggregationProver {
-    /// Prebuilt layer-1 circuit prover data.
     pub circuit_data: ProverCircuitData<F, C, D>,
-
     partial_witness: PartialWitness<F>,
-
-    /// Runtime targets for the prebuilt circuit (consumed on commit).
     targets: Option<Layer1AggregationCircuitTargets>,
-
-    /// Verifier-only data for the child (layer-0) proofs.
-    layer0_verifier_only: VerifierOnlyCircuitData<C, D>,
-
-    /// Number of layer-0 proofs expected in one batch.
     num_layer0_proofs: usize,
 }
 
 impl Layer1AggregationProver {
-    // -------------------------------------------------------------------------
-    // Constructors (fresh build path)
-    // -------------------------------------------------------------------------
-
     /// Build a fresh layer-1 aggregation prover from circuit definitions.
     ///
-    /// This is the "dev/fallback" path. In production, prefer `new_from_binaries_dir(...)`
-    /// or `new_from_files(...)` so the aggregation circuit is prebuilt and loaded to reduce overhead.
+    /// In production, prefer `new_from_binaries_dir(...)` to load prebuilt circuits.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         layer1_circuit_config: CircuitConfig,
         layer0_common: CommonCircuitData<F, D>,
-        layer0_verifier_only: VerifierOnlyCircuitData<C, D>,
+        layer0_verifier_only: &VerifierOnlyCircuitData<C, D>,
         num_layer0_proofs: usize,
         layer0_num_leaves: usize,
     ) -> Self {
         let l1_circuit = Layer1AggregationCircuit::new(
             layer1_circuit_config,
             layer0_common,
+            layer0_verifier_only,
             num_layer0_proofs,
             layer0_num_leaves,
         );
@@ -93,23 +75,11 @@ impl Layer1AggregationProver {
             circuit_data,
             partial_witness: PartialWitness::new(),
             targets,
-            layer0_verifier_only,
             num_layer0_proofs,
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Constructors (bytes / files)
-    // -------------------------------------------------------------------------
-
     /// Create a layer-1 prover from serialized bytes.
-    ///
-    /// Expected bytes:
-    /// - `layer1_prover_only_bytes`
-    /// - `layer1_common_bytes`
-    /// - `layer0_common_bytes`
-    /// - `layer0_verifier_only_bytes`
-    /// - `config` tuple: (num_leaf_proofs, num_layer0_proofs)
     pub fn new_from_bytes(
         layer1_prover_only_bytes: &[u8],
         layer1_common_bytes: &[u8],
@@ -122,7 +92,6 @@ impl Layer1AggregationProver {
             _phantom: Default::default(),
         };
 
-        // 1) Load prebuilt layer-1 circuit prover data
         let l1_common =
             CommonCircuitData::from_bytes(layer1_common_bytes.to_vec(), &gate_serializer)
                 .map_err(|e| anyhow!("Failed to deserialize layer1 common data: {}", e))?;
@@ -134,20 +103,18 @@ impl Layer1AggregationProver {
         )
         .map_err(|e| anyhow!("Failed to deserialize layer1 prover data: {}", e))?;
 
-        // 2) Load layer-0 verifier data (needed for witness filling and dummy proof parsing)
         let layer0_verifier_data = load_verifier_data_from_bytes(
             layer0_common_bytes,
             layer0_verifier_only_bytes,
             "layer0",
         )?;
 
-        // 3) Create circuit and get targets
-
         let (num_leaf_proofs, num_layer0_proofs) = config;
 
         let circuit = Layer1AggregationCircuit::new(
             l1_common.config.clone(),
             layer0_verifier_data.common.clone(),
+            &layer0_verifier_data.verifier_only,
             num_layer0_proofs,
             num_leaf_proofs,
         );
@@ -161,12 +128,10 @@ impl Layer1AggregationProver {
             },
             partial_witness: PartialWitness::new(),
             targets,
-            layer0_verifier_only: layer0_verifier_data.verifier_only,
             num_layer0_proofs,
         })
     }
 
-    /// Create a layer-1 prover from explicit file paths.
     #[cfg(feature = "std")]
     #[allow(clippy::too_many_arguments)]
     pub fn new_from_files(
@@ -174,7 +139,7 @@ impl Layer1AggregationProver {
         layer1_common_path: &Path,
         layer0_common_path: &Path,
         layer0_verifier_path: &Path,
-        config: (usize, usize), // (num_leaf_proofs, num_layer0_proofs)
+        config: (usize, usize),
     ) -> Result<Self> {
         let layer1_prover_only_bytes = fs::read(layer1_prover_path)
             .with_context(|| format!("Failed to read {:?}", layer1_prover_path))?;
@@ -224,16 +189,11 @@ impl Layer1AggregationProver {
         )
     }
 
-    // -------------------------------------------------------------------------
-    // Proving API
-    // -------------------------------------------------------------------------
-
     pub fn num_layer0_proofs(&self) -> usize {
         self.num_layer0_proofs
     }
 
-    /// Commit layer-0 aggregated proofs into the layer-1 circuit witness
-    /// We don't perform dummy padding here since it doesn't serve a privacy preserving purpose like it does for layer 0.
+    /// Commit layer-0 aggregated proofs into the layer-1 circuit witness.
     pub fn commit(mut self, inputs: Layer1AggregationInputs) -> Result<Self> {
         let Some(targets) = self.targets.take() else {
             bail!("layer-1 aggregation prover has already committed to inputs");
@@ -242,7 +202,6 @@ impl Layer1AggregationProver {
         let proofs = inputs.proofs;
         let aggregator_address = inputs.aggregator_address;
 
-        // Use 8 bytes/felt encoding for hash-derived account addresses
         let aggregator_address_felts = bytes_to_digest(aggregator_address);
 
         if proofs.len() != self.num_layer0_proofs {
@@ -256,7 +215,6 @@ impl Layer1AggregationProver {
         fill_layer1_aggregation_witness(
             &mut self.partial_witness,
             &targets,
-            &self.layer0_verifier_only,
             &proofs,
             aggregator_address_felts,
         )?;
