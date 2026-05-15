@@ -14,6 +14,7 @@ use plonky2::{
         circuit_builder::CircuitBuilder,
         circuit_data::{
             CircuitConfig, CircuitData, CommonCircuitData, ProverCircuitData, VerifierCircuitData,
+            VerifierOnlyCircuitData,
         },
     },
 };
@@ -23,6 +24,7 @@ use zk_circuits_common::{
 };
 
 use super::constants::{inner_circuit_config, INNER_NUM_LEAVES, INNER_OUTPUT_PI_LEN};
+use crate::common::recursive::add_recursive_verifiers;
 use crate::layer0::circuit::constants::{
     aggregated_output, ASSET_ID_START, BLOCK_HASH_START, BLOCK_NUMBER_START, EXIT_1_START,
     EXIT_2_START, LEAF_PI_LEN, NULLIFIER_START, OUTPUT_AMOUNT_1_START, OUTPUT_AMOUNT_2_START,
@@ -32,8 +34,6 @@ use crate::layer0::circuit::constants::{
 /// Runtime targets for the shipping inner aggregation circuit.
 #[derive(Debug, Clone)]
 pub struct AggregationCircuitTargets {
-    /// Verifier target for the leaf wormhole circuit.
-    pub leaf_verifier_data: plonky2::plonk::circuit_data::VerifierCircuitTarget,
     /// One proof target per leaf slot.
     pub leaf_proofs: Vec<plonky2::plonk::proof::ProofWithPublicInputsTarget<D>>,
     /// One dummy-nullifier preimage target (4 felts) per leaf slot.
@@ -49,9 +49,6 @@ impl AggregationCircuitTargets {
         use plonky2::util::serialization::Write;
 
         let mut bytes = Vec::new();
-        bytes
-            .write_target_verifier_circuit(&self.leaf_verifier_data)
-            .map_err(|e| anyhow!("failed to serialize leaf verifier target: {}", e))?;
         bytes
             .write_usize(self.leaf_proofs.len())
             .map_err(|e| anyhow!("failed to serialize leaf proof count: {}", e))?;
@@ -77,10 +74,6 @@ impl AggregationCircuitTargets {
         use plonky2::util::serialization::{Buffer, Read, Remaining};
 
         let mut buffer = Buffer::new(bytes);
-        let leaf_verifier_data = buffer
-            .read_target_verifier_circuit()
-            .map_err(|e| anyhow!("failed to deserialize leaf verifier target: {}", e))?;
-
         let proof_count = buffer
             .read_usize()
             .map_err(|e| anyhow!("failed to deserialize leaf proof count: {}", e))?;
@@ -113,7 +106,6 @@ impl AggregationCircuitTargets {
         }
 
         Ok(Self {
-            leaf_verifier_data,
             leaf_proofs,
             dummy_nullifier_pre_images,
         })
@@ -127,21 +119,25 @@ pub struct InnerAggregationCircuit {
 }
 
 impl InnerAggregationCircuit {
-    pub fn new(leaf_common: CommonCircuitData<F, D>) -> Self {
-        Self::new_with_config(inner_circuit_config(), leaf_common)
+    pub fn new(
+        leaf_common: CommonCircuitData<F, D>,
+        leaf_verifier_only: &VerifierOnlyCircuitData<C, D>,
+    ) -> Self {
+        Self::new_with_config(inner_circuit_config(), leaf_common, leaf_verifier_only)
     }
 
-    pub fn new_with_config(config: CircuitConfig, leaf_common: CommonCircuitData<F, D>) -> Self {
+    pub fn new_with_config(
+        config: CircuitConfig,
+        leaf_common: CommonCircuitData<F, D>,
+        leaf_verifier_only: &VerifierOnlyCircuitData<C, D>,
+    ) -> Self {
         let mut builder = CircuitBuilder::<F, D>::new(config);
-        let leaf_verifier_data =
-            builder.add_virtual_verifier_data(leaf_common.fri_params.config.cap_height);
-
-        let mut leaf_proofs = Vec::with_capacity(INNER_NUM_LEAVES);
-        for _ in 0..INNER_NUM_LEAVES {
-            let pt = builder.add_virtual_proof_with_pis(&leaf_common);
-            builder.verify_proof::<C>(&pt, &leaf_verifier_data, &leaf_common);
-            leaf_proofs.push(pt);
-        }
+        let leaf_proofs = add_recursive_verifiers::<F, C, D>(
+            &mut builder,
+            &leaf_common,
+            leaf_verifier_only,
+            INNER_NUM_LEAVES,
+        );
 
         let mut dummy_nullifier_pre_images = Vec::with_capacity(INNER_NUM_LEAVES);
         for _ in 0..INNER_NUM_LEAVES {
@@ -154,7 +150,6 @@ impl InnerAggregationCircuit {
         }
 
         let targets = InnerAggregationCircuitTargets {
-            leaf_verifier_data,
             leaf_proofs,
             dummy_nullifier_pre_images,
         };

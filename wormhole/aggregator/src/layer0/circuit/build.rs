@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use plonky2::{
-    plonk::circuit_data::CommonCircuitData,
+    plonk::circuit_data::{CommonCircuitData, VerifierOnlyCircuitData},
     util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer},
 };
 use std::{
@@ -52,7 +52,8 @@ fn generate_inner_circuit_binaries(output_dir: &Path, include_prover: bool) -> R
     );
 
     let leaf_common = load_common_data(&output_dir.join("common.bin"), "leaf")?;
-    let inner_circuit = InnerAggregationCircuit::new(leaf_common);
+    let leaf_verifier_only = load_verifier_only_data(&output_dir.join("verifier.bin"), "leaf")?;
+    let inner_circuit = InnerAggregationCircuit::new(leaf_common, &leaf_verifier_only);
     let targets = inner_circuit.targets();
     let circuit_data = inner_circuit.build_circuit();
 
@@ -96,7 +97,9 @@ fn generate_outer_circuit_binaries(output_dir: &Path, include_prover: bool) -> R
     println!("Building shipping 2x8 final public ZK wrapper circuit...");
 
     let inner_common = load_common_data(&output_dir.join(INNER_COMMON_FILENAME), "inner")?;
-    let outer_circuit = OuterAggregationCircuit::new(inner_common);
+    let inner_verifier_only =
+        load_verifier_only_data(&output_dir.join(INNER_VERIFIER_FILENAME), "inner")?;
+    let outer_circuit = OuterAggregationCircuit::new(inner_common, &inner_verifier_only);
     let targets = outer_circuit.targets();
     let circuit_data = outer_circuit.build_circuit();
 
@@ -194,6 +197,27 @@ fn load_common_data(common_path: &Path, label: &str) -> Result<CommonCircuitData
             "Failed to deserialize {} common circuit data from {:?}: {}",
             label,
             common_path,
+            e
+        )
+    })
+}
+
+fn load_verifier_only_data(
+    verifier_path: &Path,
+    label: &str,
+) -> Result<VerifierOnlyCircuitData<C, D>> {
+    let verifier_bytes = fs::read(verifier_path).with_context(|| {
+        format!(
+            "Failed to read {} verifier circuit file {:?}",
+            label, verifier_path
+        )
+    })?;
+
+    VerifierOnlyCircuitData::from_bytes(verifier_bytes).map_err(|e| {
+        anyhow!(
+            "Failed to deserialize {} verifier circuit data from {:?}: {}",
+            label,
+            verifier_path,
             e
         )
     })

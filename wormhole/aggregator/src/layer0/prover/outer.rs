@@ -41,7 +41,6 @@ pub struct OuterAggregationArtifacts {
     pub circuit_data: Arc<ProverCircuitData<F, C, D>>,
     pub verifier_data: Arc<VerifierCircuitData<F, C, D>>,
     targets: OuterAggregationCircuitTargets,
-    inner_verifier_only: Arc<VerifierOnlyCircuitData<C, D>>,
 }
 
 impl OuterAggregationArtifacts {
@@ -49,7 +48,7 @@ impl OuterAggregationArtifacts {
         inner_common: CommonCircuitData<F, D>,
         inner_verifier_only: VerifierOnlyCircuitData<C, D>,
     ) -> Self {
-        let circuit = OuterAggregationCircuit::new(inner_common.clone());
+        let circuit = OuterAggregationCircuit::new(inner_common.clone(), &inner_verifier_only);
         let targets = circuit.targets();
         let built_circuit = circuit.build_circuit();
         let verifier_data = Arc::new(built_circuit.verifier_data());
@@ -59,7 +58,6 @@ impl OuterAggregationArtifacts {
             circuit_data,
             verifier_data,
             targets,
-            inner_verifier_only: Arc::new(inner_verifier_only),
         }
     }
 
@@ -91,7 +89,11 @@ impl OuterAggregationArtifacts {
         let targets = match outer_targets_bytes {
             Some(bytes) => OuterAggregationCircuitTargets::from_bytes(bytes)
                 .context("failed to deserialize outer target layout")?,
-            None => OuterAggregationCircuit::new(inner_verifier_data.common.clone()).targets(),
+            None => OuterAggregationCircuit::new(
+                inner_verifier_data.common.clone(),
+                &inner_verifier_data.verifier_only,
+            )
+            .targets(),
         };
 
         Ok(Self {
@@ -100,10 +102,13 @@ impl OuterAggregationArtifacts {
                 common: outer_common,
             }),
             verifier_data: Arc::new(
-                OuterAggregationCircuit::new(inner_verifier_data.common.clone()).build_verifier(),
+                OuterAggregationCircuit::new(
+                    inner_verifier_data.common.clone(),
+                    &inner_verifier_data.verifier_only,
+                )
+                .build_verifier(),
             ),
             targets,
-            inner_verifier_only: Arc::new(inner_verifier_data.verifier_only),
         })
     }
 
@@ -161,7 +166,6 @@ pub struct OuterAggregationProver {
     pub circuit_data: Arc<ProverCircuitData<F, C, D>>,
     partial_witness: PartialWitness<F>,
     targets: Option<OuterAggregationCircuitTargets>,
-    inner_verifier_only: Arc<VerifierOnlyCircuitData<C, D>>,
 }
 
 impl OuterAggregationProver {
@@ -170,7 +174,6 @@ impl OuterAggregationProver {
             circuit_data: Arc::clone(&artifacts.circuit_data),
             partial_witness: PartialWitness::new(),
             targets: Some(artifacts.targets.clone()),
-            inner_verifier_only: Arc::clone(&artifacts.inner_verifier_only),
         }
     }
 
@@ -195,12 +198,7 @@ impl OuterAggregationProver {
             ensure_proof_public_input_len(proof, OUTER_CHILD_PI_LEN, "inner proof")?;
         }
 
-        fill_outer_aggregation_witness(
-            &mut self.partial_witness,
-            &targets,
-            &self.inner_verifier_only,
-            &proofs,
-        )?;
+        fill_outer_aggregation_witness(&mut self.partial_witness, &targets, &proofs)?;
 
         Ok(self)
     }

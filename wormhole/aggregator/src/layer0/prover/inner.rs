@@ -51,7 +51,6 @@ pub struct InnerAggregationArtifacts {
     pub circuit_data: Arc<ProverCircuitData<F, C, D>>,
     pub verifier_data: Arc<VerifierCircuitData<F, C, D>>,
     targets: InnerAggregationCircuitTargets,
-    leaf_verifier_only: Arc<VerifierOnlyCircuitData<C, D>>,
     expected_leaf_pi_len: usize,
     dummy_proof_template: Arc<Proof>,
 }
@@ -63,7 +62,7 @@ impl InnerAggregationArtifacts {
         dummy_proof_template: Proof,
     ) -> Self {
         let expected_leaf_pi_len = leaf_common.num_public_inputs;
-        let circuit = InnerAggregationCircuit::new(leaf_common.clone());
+        let circuit = InnerAggregationCircuit::new(leaf_common.clone(), &leaf_verifier_only);
         let targets = circuit.targets();
         let built_circuit = circuit.build_circuit();
         let verifier_data = Arc::new(built_circuit.verifier_data());
@@ -73,7 +72,6 @@ impl InnerAggregationArtifacts {
             circuit_data,
             verifier_data,
             targets,
-            leaf_verifier_only: Arc::new(leaf_verifier_only),
             expected_leaf_pi_len,
             dummy_proof_template: Arc::new(dummy_proof_template),
         }
@@ -110,7 +108,11 @@ impl InnerAggregationArtifacts {
         let targets = match inner_targets_bytes {
             Some(bytes) => InnerAggregationCircuitTargets::from_bytes(bytes)
                 .context("failed to deserialize inner target layout")?,
-            None => InnerAggregationCircuit::new(leaf_verifier_data.common.clone()).targets(),
+            None => InnerAggregationCircuit::new(
+                leaf_verifier_data.common.clone(),
+                &leaf_verifier_data.verifier_only,
+            )
+            .targets(),
         };
 
         let dummy_proof_template =
@@ -123,10 +125,13 @@ impl InnerAggregationArtifacts {
                 common: inner_common,
             }),
             verifier_data: Arc::new(
-                InnerAggregationCircuit::new(leaf_verifier_data.common.clone()).build_verifier(),
+                InnerAggregationCircuit::new(
+                    leaf_verifier_data.common.clone(),
+                    &leaf_verifier_data.verifier_only,
+                )
+                .build_verifier(),
             ),
             targets,
-            leaf_verifier_only: Arc::new(leaf_verifier_data.verifier_only),
             expected_leaf_pi_len,
             dummy_proof_template: Arc::new(dummy_proof_template),
         })
@@ -241,7 +246,6 @@ pub struct InnerAggregationProver {
     pub circuit_data: Arc<ProverCircuitData<F, C, D>>,
     partial_witness: PartialWitness<F>,
     targets: Option<InnerAggregationCircuitTargets>,
-    leaf_verifier_only: Arc<VerifierOnlyCircuitData<C, D>>,
     dummy_proof_template: Arc<Proof>,
 }
 
@@ -251,7 +255,6 @@ impl InnerAggregationProver {
             circuit_data: Arc::clone(&artifacts.circuit_data),
             partial_witness: PartialWitness::new(),
             targets: Some(artifacts.targets.clone()),
-            leaf_verifier_only: Arc::clone(&artifacts.leaf_verifier_only),
             dummy_proof_template: Arc::clone(&artifacts.dummy_proof_template),
         }
     }
@@ -290,7 +293,6 @@ impl InnerAggregationProver {
         fill_inner_aggregation_witness(
             &mut self.partial_witness,
             &targets,
-            &self.leaf_verifier_only,
             &proofs,
             &dummy_nullifier_pre_images,
         )?;

@@ -6,7 +6,7 @@ use plonky2::{
         circuit_builder::CircuitBuilder,
         circuit_data::{
             CircuitConfig, CircuitData, CommonCircuitData, ProverCircuitData, VerifierCircuitData,
-            VerifierCircuitTarget,
+            VerifierOnlyCircuitData,
         },
         proof::ProofWithPublicInputsTarget,
     },
@@ -17,6 +17,7 @@ use zk_circuits_common::{
     gadgets::bytes_digest_eq,
 };
 
+use crate::common::recursive::add_recursive_verifiers;
 use crate::layer0::circuit::constants::aggregated_output;
 
 use super::constants::{
@@ -27,16 +28,12 @@ use super::constants::{
 
 #[derive(Debug, Clone)]
 pub struct OuterAggregationCircuitTargets {
-    pub inner_verifier_data: VerifierCircuitTarget,
     pub inner_proofs: Vec<ProofWithPublicInputsTarget<D>>,
 }
 
 impl OuterAggregationCircuitTargets {
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();
-        bytes
-            .write_target_verifier_circuit(&self.inner_verifier_data)
-            .map_err(|e| anyhow!("failed to serialize inner verifier target: {}", e))?;
         bytes
             .write_usize(self.inner_proofs.len())
             .map_err(|e| anyhow!("failed to serialize inner proof count: {}", e))?;
@@ -50,9 +47,6 @@ impl OuterAggregationCircuitTargets {
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let mut buffer = Buffer::new(bytes);
-        let inner_verifier_data = buffer
-            .read_target_verifier_circuit()
-            .map_err(|e| anyhow!("failed to deserialize inner verifier target: {}", e))?;
         let proof_count = buffer
             .read_usize()
             .map_err(|e| anyhow!("failed to deserialize inner proof count: {}", e))?;
@@ -72,10 +66,7 @@ impl OuterAggregationCircuitTargets {
             ));
         }
 
-        Ok(Self {
-            inner_verifier_data,
-            inner_proofs,
-        })
+        Ok(Self { inner_proofs })
     }
 }
 
@@ -85,30 +76,32 @@ pub struct OuterAggregationCircuit {
 }
 
 impl OuterAggregationCircuit {
-    pub fn new(inner_common: CommonCircuitData<F, D>) -> Self {
-        Self::new_with_config(outer_circuit_config(), inner_common)
+    pub fn new(
+        inner_common: CommonCircuitData<F, D>,
+        inner_verifier_only: &VerifierOnlyCircuitData<C, D>,
+    ) -> Self {
+        Self::new_with_config(outer_circuit_config(), inner_common, inner_verifier_only)
     }
 
-    pub fn new_with_config(config: CircuitConfig, inner_common: CommonCircuitData<F, D>) -> Self {
+    pub fn new_with_config(
+        config: CircuitConfig,
+        inner_common: CommonCircuitData<F, D>,
+        inner_verifier_only: &VerifierOnlyCircuitData<C, D>,
+    ) -> Self {
         debug_assert_eq!(
             inner_common.num_public_inputs, OUTER_CHILD_PI_LEN,
             "inner common PI length mismatch"
         );
 
         let mut builder = CircuitBuilder::<F, D>::new(config);
-        let inner_verifier_data =
-            builder.add_virtual_verifier_data(inner_common.fri_params.config.cap_height);
-        let mut inner_proofs = Vec::with_capacity(OUTER_INNER_PROOFS);
-        for _ in 0..OUTER_INNER_PROOFS {
-            let pt = builder.add_virtual_proof_with_pis(&inner_common);
-            builder.verify_proof::<C>(&pt, &inner_verifier_data, &inner_common);
-            inner_proofs.push(pt);
-        }
+        let inner_proofs = add_recursive_verifiers::<F, C, D>(
+            &mut builder,
+            &inner_common,
+            inner_verifier_only,
+            OUTER_INNER_PROOFS,
+        );
 
-        let targets = OuterAggregationCircuitTargets {
-            inner_verifier_data,
-            inner_proofs,
-        };
+        let targets = OuterAggregationCircuitTargets { inner_proofs };
 
         build_outer_wrapper_constraints(&mut builder, &targets);
 
