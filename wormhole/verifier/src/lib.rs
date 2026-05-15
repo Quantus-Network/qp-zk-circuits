@@ -84,15 +84,12 @@ pub struct WormholeVerifier {
 
 impl WormholeVerifier {
     /// Creates a new [`WormholeVerifier`] from verifier and common data bytes.
-    pub fn new_from_bytes(
-        verifier_bytes: &[u8],
-        common_bytes: &[u8],
-    ) -> Result<Self, &'static str> {
+    pub fn new_from_bytes(verifier_bytes: &[u8], common_bytes: &[u8]) -> anyhow::Result<Self> {
         let verifier_only = VerifierOnlyCircuitData::from_bytes(verifier_bytes.to_vec())
-            .map_err(|_| "Failed to deserialize verifier data from bytes")?;
+            .map_err(|e| anyhow!("failed to deserialize verifier data: {}", e))?;
 
         let common = CommonCircuitData::from_bytes(common_bytes.to_vec(), &DefaultGateSerializer)
-            .map_err(|_| "Failed to deserialize common circuit data from bytes")?;
+            .map_err(|e| anyhow!("failed to deserialize common circuit data: {}", e))?;
 
         let circuit_data = VerifierCircuitData {
             verifier_only,
@@ -109,31 +106,9 @@ impl WormholeVerifier {
         common_data_path: &Path,
     ) -> anyhow::Result<Self> {
         let verifier_bytes = std::fs::read(verifier_data_path)?;
-
-        let verifier_only = VerifierOnlyCircuitData::from_bytes(verifier_bytes).map_err(|e| {
-            anyhow!(
-                "Failed to deserialize verifier data from {:?}: {}",
-                verifier_data_path,
-                e
-            )
-        })?;
-
         let common_bytes = std::fs::read(common_data_path)?;
-        let common =
-            CommonCircuitData::from_bytes(common_bytes, &DefaultGateSerializer).map_err(|e| {
-                anyhow!(
-                    "Failed to deserialize common circuit data from {:?}: {}",
-                    common_data_path,
-                    e
-                )
-            })?;
 
-        let circuit_data = VerifierCircuitData {
-            verifier_only,
-            common,
-        };
-
-        Ok(Self { circuit_data })
+        Self::new_from_bytes(&verifier_bytes, &common_bytes)
     }
 
     /// Verify a [`ProofWithPublicInputs`].

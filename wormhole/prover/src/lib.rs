@@ -75,9 +75,11 @@ use plonky2::{
     },
     util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer},
 };
-use std::panic::{self, AssertUnwindSafe};
 #[cfg(feature = "std")]
 use std::{fs, path::Path};
+
+use zk_circuits_common::circuit::{CircuitFragment, C, D, F};
+use zk_circuits_common::zk_merkle::MAX_DEPTH;
 
 use wormhole_circuit::nullifier::Nullifier;
 use wormhole_circuit::ByteCodec;
@@ -92,8 +94,6 @@ use wormhole_circuit::{
 use wormhole_circuit::{
     unspendable_account::UnspendableAccount, zk_merkle_proof::ZkMerkleProofData,
 };
-use zk_circuits_common::circuit::{CircuitFragment, C, D, F};
-use zk_circuits_common::zk_merkle::MAX_DEPTH;
 
 #[derive(Debug)]
 pub struct WormholeProver {
@@ -115,16 +115,6 @@ pub fn build_fresh() -> WormholeProver {
 }
 
 impl WormholeProver {
-    fn deserialize_no_panic<T, E, F>(label: &str, f: F) -> anyhow::Result<T>
-    where
-        E: core::fmt::Display,
-        F: FnOnce() -> Result<T, E>,
-    {
-        panic::catch_unwind(AssertUnwindSafe(f))
-            .map_err(|_| anyhow!("failed to deserialize {label}: deserializer panicked"))?
-            .map_err(|e| anyhow!("failed to deserialize {label}: {}", e))
-    }
-
     fn ensure_loaded_common_matches_canonical(
         common_data: &CommonCircuitData<F, D>,
     ) -> anyhow::Result<()> {
@@ -155,18 +145,16 @@ impl WormholeProver {
             _phantom: Default::default(),
         };
 
-        let common_data = Self::deserialize_no_panic("common circuit data from bytes", || {
-            CommonCircuitData::from_bytes(common_bytes.to_vec(), &gate_serializer)
-        })?;
+        let common_data = CommonCircuitData::from_bytes(common_bytes.to_vec(), &gate_serializer)
+            .map_err(|e| anyhow!("failed to deserialize common circuit data: {}", e))?;
         Self::ensure_loaded_common_matches_canonical(&common_data)?;
 
-        let prover_only_data = Self::deserialize_no_panic("prover-only data from bytes", || {
-            ProverOnlyCircuitData::from_bytes(
-                prover_only_bytes,
-                &generator_serializer,
-                &common_data,
-            )
-        })?;
+        let prover_only_data = ProverOnlyCircuitData::from_bytes(
+            prover_only_bytes,
+            &generator_serializer,
+            &common_data,
+        )
+        .map_err(|e| anyhow!("failed to deserialize prover-only data: {}", e))?;
 
         let wormhole_circuit = WormholeCircuit::new(common_data.config.clone());
         let targets = Some(wormhole_circuit.targets());
@@ -195,23 +183,29 @@ impl WormholeProver {
         };
 
         let common_bytes = fs::read(common_data_path)?;
-        let common_data = Self::deserialize_no_panic(
-            &format!("common circuit data from {:?}", common_data_path),
-            || CommonCircuitData::from_bytes(common_bytes, &gate_serializer),
-        )?;
+        let common_data =
+            CommonCircuitData::from_bytes(common_bytes, &gate_serializer).map_err(|e| {
+                anyhow!(
+                    "failed to deserialize common circuit data from {:?}: {}",
+                    common_data_path,
+                    e
+                )
+            })?;
         Self::ensure_loaded_common_matches_canonical(&common_data)?;
 
         let prover_only_bytes = fs::read(prover_data_path)?;
-        let prover_only_data = Self::deserialize_no_panic(
-            &format!("prover only data from {:?}", prover_data_path),
-            || {
-                ProverOnlyCircuitData::from_bytes(
-                    &prover_only_bytes,
-                    &generator_serializer,
-                    &common_data,
-                )
-            },
-        )?;
+        let prover_only_data = ProverOnlyCircuitData::from_bytes(
+            &prover_only_bytes,
+            &generator_serializer,
+            &common_data,
+        )
+        .map_err(|e| {
+            anyhow!(
+                "failed to deserialize prover-only data from {:?}: {}",
+                prover_data_path,
+                e
+            )
+        })?;
 
         let wormhole_circuit = WormholeCircuit::new(common_data.config.clone());
         let targets = Some(wormhole_circuit.targets());

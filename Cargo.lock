@@ -3546,8 +3546,7 @@ dependencies = [
 [[package]]
 name = "plonky2_maybe_rayon"
 version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e1e554181dc95243b8d9948ae7bae5759c7fb2502fed28f671f95ef38079406"
+source = "git+https://github.com/Quantus-Network/qp-plonky2?branch=illuzen%2Fno-panic-deserialization#4995f0da26794a70dffdad44801fe190c2f36cdc"
 dependencies = [
  "rayon",
 ]
@@ -3557,6 +3556,11 @@ name = "plonky2_util"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c32c137808ca984ab2458b612b7eb0462d853ee041a3136e83d54b96074c7610"
+
+[[package]]
+name = "plonky2_util"
+version = "1.0.0"
+source = "git+https://github.com/Quantus-Network/qp-plonky2?branch=illuzen%2Fno-panic-deserialization#4995f0da26794a70dffdad44801fe190c2f36cdc"
 
 [[package]]
 name = "polkavm-common"
@@ -3781,8 +3785,7 @@ dependencies = [
 [[package]]
 name = "qp-plonky2"
 version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1d18516ef5ecd81ddcccb6beacdfe1578f44e4f05ccb0890998afcd3b87d01f"
+source = "git+https://github.com/Quantus-Network/qp-plonky2?branch=illuzen%2Fno-panic-deserialization#4995f0da26794a70dffdad44801fe190c2f36cdc"
 dependencies = [
  "ahash",
  "anyhow",
@@ -3799,9 +3802,9 @@ dependencies = [
  "p3-poseidon2",
  "p3-symmetric",
  "plonky2_maybe_rayon",
- "plonky2_util",
+ "plonky2_util 1.0.0 (git+https://github.com/Quantus-Network/qp-plonky2?branch=illuzen%2Fno-panic-deserialization)",
  "qp-plonky2-core",
- "qp-plonky2-field",
+ "qp-plonky2-field 1.4.1 (git+https://github.com/Quantus-Network/qp-plonky2?branch=illuzen%2Fno-panic-deserialization)",
  "qp-plonky2-verifier",
  "qp-poseidon-constants",
  "rand 0.8.5",
@@ -3815,8 +3818,7 @@ dependencies = [
 [[package]]
 name = "qp-plonky2-core"
 version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ad9961c2e2f6aca563eefd902697b0d21e9807c2c3b719ba1d4488bb03383c4"
+source = "git+https://github.com/Quantus-Network/qp-plonky2?branch=illuzen%2Fno-panic-deserialization#4995f0da26794a70dffdad44801fe190c2f36cdc"
 dependencies = [
  "ahash",
  "anyhow",
@@ -3829,8 +3831,8 @@ dependencies = [
  "p3-goldilocks",
  "p3-poseidon2",
  "p3-symmetric",
- "plonky2_util",
- "qp-plonky2-field",
+ "plonky2_util 1.0.0 (git+https://github.com/Quantus-Network/qp-plonky2?branch=illuzen%2Fno-panic-deserialization)",
+ "qp-plonky2-field 1.4.1 (git+https://github.com/Quantus-Network/qp-plonky2?branch=illuzen%2Fno-panic-deserialization)",
  "qp-poseidon-constants",
  "rand 0.8.5",
  "serde",
@@ -3847,7 +3849,23 @@ dependencies = [
  "anyhow",
  "itertools 0.11.0",
  "num",
- "plonky2_util",
+ "plonky2_util 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rand 0.8.5",
+ "rustc_version",
+ "serde",
+ "static_assertions",
+ "unroll",
+]
+
+[[package]]
+name = "qp-plonky2-field"
+version = "1.4.1"
+source = "git+https://github.com/Quantus-Network/qp-plonky2?branch=illuzen%2Fno-panic-deserialization#4995f0da26794a70dffdad44801fe190c2f36cdc"
+dependencies = [
+ "anyhow",
+ "itertools 0.11.0",
+ "num",
+ "plonky2_util 1.0.0 (git+https://github.com/Quantus-Network/qp-plonky2?branch=illuzen%2Fno-panic-deserialization)",
  "rand 0.8.5",
  "rustc_version",
  "serde",
@@ -3858,8 +3876,7 @@ dependencies = [
 [[package]]
 name = "qp-plonky2-verifier"
 version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb155f950f3df3c0cf5fce846290f19c6b7a059fbefd9bdf9011fd6f01f84e79"
+source = "git+https://github.com/Quantus-Network/qp-plonky2?branch=illuzen%2Fno-panic-deserialization#4995f0da26794a70dffdad44801fe190c2f36cdc"
 dependencies = [
  "ahash",
  "anyhow",
@@ -3874,9 +3891,9 @@ dependencies = [
  "p3-goldilocks",
  "p3-poseidon2",
  "p3-symmetric",
- "plonky2_util",
+ "plonky2_util 1.0.0 (git+https://github.com/Quantus-Network/qp-plonky2?branch=illuzen%2Fno-panic-deserialization)",
  "qp-plonky2-core",
- "qp-plonky2-field",
+ "qp-plonky2-field 1.4.1 (git+https://github.com/Quantus-Network/qp-plonky2?branch=illuzen%2Fno-panic-deserialization)",
  "qp-poseidon-constants",
  "serde",
  "static_assertions",
@@ -4108,7 +4125,7 @@ version = "2.0.1"
 dependencies = [
  "anyhow",
  "criterion",
- "qp-plonky2-field",
+ "qp-plonky2-field 1.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "qp-plonky2-verifier",
  "qp-wormhole-inputs 2.0.1",
  "qp-wormhole-prover 2.0.1",
