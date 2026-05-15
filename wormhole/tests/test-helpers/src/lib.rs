@@ -13,6 +13,8 @@ use zk_circuits_common::serialization::{bytes_to_digest, digest_to_bytes as seri
 use zk_circuits_common::utils::{digest_to_bytes, u64_to_felts, BytesDigest};
 use zk_circuits_common::zk_merkle::SIBLINGS_PER_LEVEL;
 
+pub mod fake_leaf;
+
 pub const DEFAULT_SECRETS: [&str; 2] = [
     "4c8587bd422e01d961acdc75e7d66f6761b7af7c9b1864a492f369c9d6724f05",
     "c6034553e5556630d24a593d2c92de9f1ede81d48f0fb3371764462cc3594b3f",

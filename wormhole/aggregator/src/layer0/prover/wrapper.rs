@@ -124,6 +124,7 @@ impl Layer0WrapperProver {
         let nonzk_circuit = Layer0AggregationCircuit::new(
             nonzk_config,
             leaf_verifier_data.common.clone(),
+            &leaf_verifier_data.verifier_only,
             num_leaf_proofs,
         );
         let nonzk_targets = Some(nonzk_circuit.targets());
@@ -250,7 +251,6 @@ impl Layer0WrapperProver {
         fill_layer0_aggregation_witness(
             &mut self.nonzk_partial_witness,
             &targets,
-            &self.leaf_verifier_only,
             &proofs,
             &dummy_nullifier_pre_images,
         )?;

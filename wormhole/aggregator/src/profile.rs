@@ -42,30 +42,8 @@ mod tests {
     use super::*;
     use crate::layer0::circuit::circuit_logic::Layer0AggregationCircuit;
     use crate::layer1::circuit::circuit_logic::Layer1AggregationCircuit;
-    use plonky2::plonk::{
-        circuit_builder::CircuitBuilder,
-        circuit_data::{CircuitConfig, CircuitData},
-    };
-    use qp_wormhole_inputs::PUBLIC_INPUTS_FELTS_LEN as LEAF_PI_LEN;
-    use zk_circuits_common::circuit::{wormhole_aggregator_circuit_config, C};
-
-    /// Build a minimal fake leaf circuit that matches the Wormhole leaf PI layout.
-    /// Used to get CommonCircuitData for layer0 circuit construction.
-    fn build_fake_leaf_circuit() -> CircuitData<F, C, D> {
-        let config = CircuitConfig::standard_recursion_config();
-        let mut builder = CircuitBuilder::<F, D>::new(config);
-
-        let pis_vec = builder.add_virtual_targets(LEAF_PI_LEN);
-
-        // Minimal constraints to mimic real leaf circuit
-        builder.range_check(pis_vec[1], 32); // output_amount_1
-        builder.range_check(pis_vec[2], 32); // output_amount_2
-        builder.range_check(pis_vec[3], 32); // volume_fee_bps
-
-        builder.register_public_inputs(&pis_vec);
-
-        builder.build::<C>()
-    }
+    use test_helpers::fake_leaf::build_fake_leaf_circuit_data_only;
+    use zk_circuits_common::circuit::wormhole_aggregator_circuit_config;
 
     #[test]
     fn profile_layer0_circuit() {
@@ -81,8 +59,9 @@ mod tests {
             println!("\n--- Layer-0 with {} leaf proofs ---", num_leaves);
 
             // Build fake leaf circuit to get common data
-            let leaf_data = build_fake_leaf_circuit();
+            let leaf_data = build_fake_leaf_circuit_data_only();
             let leaf_common = leaf_data.common.clone();
+            let leaf_verifier_only = leaf_data.verifier_only.clone();
 
             println!("Leaf circuit degree bits: {}", leaf_common.degree_bits());
 
@@ -91,6 +70,7 @@ mod tests {
             let l0_circuit = Layer0AggregationCircuit::new(
                 wormhole_aggregator_circuit_config(),
                 leaf_common,
+                &leaf_verifier_only,
                 num_leaves,
             );
 
@@ -128,16 +108,18 @@ mod tests {
         let layer0_num_leaves = 4;
 
         // Build fake leaf circuit to get common data for layer0
-        let leaf_data = build_fake_leaf_circuit();
+        let leaf_data = build_fake_leaf_circuit_data_only();
 
         // Build layer-0 circuit to get its common data for layer1
         let l0_circuit = Layer0AggregationCircuit::new(
             wormhole_aggregator_circuit_config(),
             leaf_data.common.clone(),
+            &leaf_data.verifier_only,
             layer0_num_leaves,
         );
         let l0_data = l0_circuit.build_circuit();
         let l0_common = l0_data.common.clone();
+        let l0_verifier_only = l0_data.verifier_only.clone();
 
         println!(
             "Layer-0 circuit (n={}) degree bits: {}",
@@ -157,6 +139,7 @@ mod tests {
             let l1_circuit = Layer1AggregationCircuit::new(
                 wormhole_aggregator_circuit_config(),
                 l0_common.clone(),
+                &l0_verifier_only,
                 num_l0_proofs,
                 layer0_num_leaves,
             );
@@ -199,8 +182,9 @@ mod tests {
         println!("   AGGREGATION SCALING ANALYSIS");
         println!("========================================\n");
 
-        let leaf_data = build_fake_leaf_circuit();
+        let leaf_data = build_fake_leaf_circuit_data_only();
         let leaf_common = leaf_data.common.clone();
+        let leaf_verifier_only = leaf_data.verifier_only.clone();
 
         println!("Leaf circuit:");
         println!("  Degree bits: {}", leaf_common.degree_bits());
@@ -213,6 +197,7 @@ mod tests {
             let l0_circuit = Layer0AggregationCircuit::new(
                 wormhole_aggregator_circuit_config(),
                 leaf_common.clone(),
+                &leaf_verifier_only,
                 num_leaves,
             );
             let l0_data = l0_circuit.build_circuit();

@@ -33,7 +33,7 @@ use wormhole_circuit::inputs::{
 };
 use wormhole_circuit::nullifier::Nullifier;
 use wormhole_prover::WormholeProver;
-use zk_circuits_common::aggregation::AggregationConfig;
+
 use zk_circuits_common::circuit::wormhole_leaf_circuit_config;
 use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::utils::{digest_to_bytes, BytesDigest, Digest};
@@ -823,13 +823,10 @@ fn parse_funding_amount(s: &str) -> Result<u128, String> {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Helper to get aggregation config (required for aggregation modes)
-    let get_aggregation_config = || -> anyhow::Result<AggregationConfig> {
-        let num_leaf_proofs = cli
-            .num_leaf_proofs
-            .context("--num-leaf-proofs is required for aggregation modes")?;
-        let num_layer0_proofs = cli.num_layer0_proofs;
-        Ok(AggregationConfig::new(num_leaf_proofs, num_layer0_proofs))
+    // Helper to get num_leaf_proofs (required for aggregation modes)
+    let get_num_leaf_proofs = || -> anyhow::Result<usize> {
+        cli.num_leaf_proofs
+            .context("--num-leaf-proofs is required for aggregation modes")
     };
 
     // Aggregation-only mode (from files)
@@ -881,26 +878,26 @@ async fn main() -> anyhow::Result<()> {
         dev_account, &funding_account
     );
 
-    // Get aggregation config if needed (for generate_and_aggregate mode)
-    let aggregation_config = if cli.generate_and_aggregate {
-        Some(get_aggregation_config()?)
+    // Get num_leaf_proofs if needed (for generate_and_aggregate mode)
+    let num_leaf_proofs = if cli.generate_and_aggregate {
+        Some(get_num_leaf_proofs()?)
     } else {
         None
     };
 
     // Determine number of proofs to generate
     let num_proofs = if cli.generate_and_aggregate {
-        cli.num_proofs
-            .unwrap_or(aggregation_config.as_ref().unwrap().num_leaf_proofs)
+        cli.num_proofs.unwrap_or(num_leaf_proofs.unwrap())
     } else {
         1 // Single proof for --live mode
     };
 
-    if let Some(ref config) = aggregation_config {
+    if cli.generate_and_aggregate {
         println!("Running in generate-and-aggregate mode.");
         println!(
-            "Will generate {} proofs (aggregation config: num_leaf_proofs={})",
-            num_proofs, config.num_leaf_proofs
+            "Will generate {} proofs (num_leaf_proofs={})",
+            num_proofs,
+            num_leaf_proofs.unwrap()
         );
     } else {
         println!("Running in live mode (single proof).");
@@ -954,12 +951,9 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // If generate-and-aggregate mode, aggregate all proofs
-    if let Some(config) = aggregation_config {
+    if let Some(n) = num_leaf_proofs {
         println!("\n=== Aggregating {} Proofs ===", proofs.len());
-        println!(
-            "Using aggregation config: num_leaf_proofs={}",
-            config.num_leaf_proofs
-        );
+        println!("Using num_leaf_proofs={}", n);
         aggregate_proofs_direct(proofs, &cli.aggregated_proof_output)?;
     }
 

@@ -14,11 +14,13 @@
 //!
 //! The old direct ZK approach can still be used by calling `generate_layer0_circuit_binaries_zk`.
 //!
-//! It expects the leaf circuit `common.bin` to already exist in the same output directory.
+//! Expects `common.bin` and `verifier.bin` to already exist in the output directory.
 
 use anyhow::{anyhow, Context, Result};
-use plonky2::plonk::circuit_data::CircuitConfig;
-use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
+use plonky2::{
+    plonk::circuit_data::{CircuitConfig, CommonCircuitData, VerifierOnlyCircuitData},
+    util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer},
+};
 use std::{
     fs::{create_dir_all, write},
     path::Path,
@@ -39,6 +41,7 @@ use crate::zk_wrapper::build::generate_wrapper_circuit_binaries;
 ///
 /// # Expected inputs (already generated in `output_dir`)
 /// - `common.bin` (leaf common circuit data)
+/// - `verifier.bin` (leaf verifier-only circuit data)
 ///
 /// # Outputs (written to `output_dir`)
 /// - `aggregated_nonzk_common.bin`, `aggregated_nonzk_verifier.bin`, `aggregated_nonzk_prover.bin`
@@ -116,12 +119,14 @@ fn generate_layer0_nonzk_binaries<P: AsRef<Path>>(
 ) -> Result<()> {
     let output_path = output_dir.as_ref();
 
-    // Load leaf common data
+    // Load leaf common and verifier data
     let leaf_common = load_leaf_common_data(&output_path.join("common.bin"))?;
+    let leaf_verifier_only = load_leaf_verifier_only_data(&output_path.join("verifier.bin"))?;
 
     // Build non-ZK L0 aggregation circuit
     let nonzk_config = CircuitConfig::standard_recursion_config(); // non-ZK
-    let agg_circuit = Layer0AggregationCircuit::new(nonzk_config, leaf_common, num_leaf_proofs);
+    let agg_circuit =
+        Layer0AggregationCircuit::new(nonzk_config, leaf_common, &leaf_verifier_only, num_leaf_proofs);
     let circuit_data = agg_circuit.build_circuit();
 
     let gate_serializer = DefaultGateSerializer;
@@ -201,13 +206,15 @@ pub fn generate_layer0_circuit_binaries_zk<P: AsRef<Path>>(
         num_leaf_proofs
     );
 
-    // Load leaf common data
+    // Load leaf common and verifier data
     let leaf_common = load_leaf_common_data(&output_path.join("common.bin"))?;
+    let leaf_verifier_only = load_leaf_verifier_only_data(&output_path.join("verifier.bin"))?;
 
     // Build ZK L0 aggregation circuit (the old approach)
     let agg_circuit = Layer0AggregationCircuit::new(
         wormhole_aggregator_circuit_config(), // ZK config
         leaf_common,
+        &leaf_verifier_only,
         num_leaf_proofs,
     );
 
@@ -222,14 +229,12 @@ pub fn generate_layer0_circuit_binaries_zk<P: AsRef<Path>>(
     let prover_data = circuit_data.prover_data();
     let common_data = &verifier_data.common;
 
-    // Serialize aggregated common.bin
     let agg_common_bytes = common_data
         .to_bytes(&gate_serializer)
         .map_err(|e| anyhow!("Failed to serialize aggregated common data: {}", e))?;
     write(output_path.join("aggregated_common.bin"), agg_common_bytes)?;
     println!("Saved {}/aggregated_common.bin", output_path.display());
 
-    // Serialize aggregated verifier.bin
     let agg_verifier_only_bytes = verifier_data
         .verifier_only
         .to_bytes()
@@ -240,7 +245,6 @@ pub fn generate_layer0_circuit_binaries_zk<P: AsRef<Path>>(
     )?;
     println!("Saved {}/aggregated_verifier.bin", output_path.display());
 
-    // Serialize aggregated prover.bin
     if include_prover {
         let agg_prover_only_bytes = prover_data
             .prover_only
@@ -258,11 +262,7 @@ pub fn generate_layer0_circuit_binaries_zk<P: AsRef<Path>>(
 }
 
 /// Load leaf `common.bin` from disk.
-fn load_leaf_common_data(
-    common_path: &Path,
-) -> Result<plonky2::plonk::circuit_data::CommonCircuitData<F, D>> {
-    use plonky2::plonk::circuit_data::CommonCircuitData;
-
+fn load_leaf_common_data(common_path: &Path) -> Result<CommonCircuitData<F, D>> {
     let gate_serializer = DefaultGateSerializer;
 
     let common_bytes = std::fs::read(common_path)
@@ -272,6 +272,23 @@ fn load_leaf_common_data(
         anyhow!(
             "Failed to deserialize leaf common circuit data from {:?}: {}",
             common_path,
+            e
+        )
+    })
+}
+
+fn load_leaf_verifier_only_data(verifier_path: &Path) -> Result<VerifierOnlyCircuitData<C, D>> {
+    let verifier_bytes = std::fs::read(verifier_path).with_context(|| {
+        format!(
+            "Failed to read leaf verifier circuit file {:?}",
+            verifier_path
+        )
+    })?;
+
+    VerifierOnlyCircuitData::from_bytes(verifier_bytes).map_err(|e| {
+        anyhow!(
+            "Failed to deserialize leaf verifier circuit data from {:?}: {}",
+            verifier_path,
             e
         )
     })
