@@ -8,7 +8,7 @@ pub mod layer1;
 #[cfg(feature = "profile")]
 pub mod profile;
 
-pub use config::CircuitBinsConfig;
+pub use config::{CircuitBinsConfig, MAX_PROOF_COUNT};
 pub use dummy_proof::{
     build_dummy_circuit_inputs, generate_dummy_proof, DUMMY_BLOCK_HASH, DUMMY_EXIT_ACCOUNT,
 };

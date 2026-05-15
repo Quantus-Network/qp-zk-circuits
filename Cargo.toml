@@ -35,3 +35,8 @@ version = "2.0.1"
 
 [workspace.lints.clippy]
 uninlined_format_args = "allow"
+
+# Use qp-plonky2 with panic-safe deserialization fixes
+[patch.crates-io]
+qp-plonky2 = { git = "https://github.com/Quantus-Network/qp-plonky2", branch = "illuzen/no-panic-deserialization" }
+qp-plonky2-verifier = { git = "https://github.com/Quantus-Network/qp-plonky2", branch = "illuzen/no-panic-deserialization" }

@@ -113,7 +113,14 @@ impl ZkMerkleProof {
     /// Verify the proof against the expected root.
     ///
     /// Returns `true` if the proof is valid.
+    ///
+    /// Note: Proofs with depth exceeding `MAX_DEPTH` are rejected early to prevent
+    /// resource exhaustion from oversized proofs.
     pub fn verify(&self) -> bool {
+        // Reject proofs exceeding max supported depth to prevent DoS
+        if self.siblings.len() > MAX_DEPTH {
+            return false;
+        }
         if self.siblings.len() != self.positions.len() {
             return false;
         }
@@ -145,7 +152,14 @@ impl ZkMerkleProof {
     /// This is the verification method that matches the circuit logic:
     /// siblings are already sorted, and the position indicates where
     /// to insert the current hash.
+    ///
+    /// Note: Proofs with depth exceeding `MAX_DEPTH` are rejected early to prevent
+    /// resource exhaustion from oversized proofs.
     pub fn verify_with_positions(&self) -> bool {
+        // Reject proofs exceeding max supported depth to prevent DoS
+        if self.siblings.len() > MAX_DEPTH {
+            return false;
+        }
         if self.siblings.len() != self.positions.len() {
             return false;
         }
@@ -461,5 +475,48 @@ mod tests {
         );
 
         assert!(!bad_proof.verify());
+    }
+
+    #[test]
+    fn test_oversized_proof_rejected() {
+        // Create a proof with depth exceeding MAX_DEPTH
+        let leaf_hash = [0x42; 32];
+        let oversized_siblings: Vec<[Hash256; SIBLINGS_PER_LEVEL]> =
+            (0..MAX_DEPTH + 1).map(|_| [[0u8; 32]; 3]).collect();
+        let oversized_positions: Vec<u8> = vec![0; MAX_DEPTH + 1];
+
+        let proof = ZkMerkleProof {
+            leaf_index: 0,
+            siblings: oversized_siblings,
+            positions: oversized_positions,
+            leaf_hash,
+            root: [0xff; 32], // doesn't matter, should reject before hashing
+        };
+
+        // Both verify methods should reject oversized proofs
+        assert!(!proof.verify());
+        assert!(!proof.verify_with_positions());
+    }
+
+    #[test]
+    fn test_max_depth_proof_accepted() {
+        // A proof at exactly MAX_DEPTH should be accepted (if valid)
+        let leaf_hash = [0x42; 32];
+        let max_siblings: Vec<[Hash256; SIBLINGS_PER_LEVEL]> =
+            (0..MAX_DEPTH).map(|_| [[0u8; 32]; 3]).collect();
+        let max_positions: Vec<u8> = vec![0; MAX_DEPTH];
+
+        let proof = ZkMerkleProof {
+            leaf_index: 0,
+            siblings: max_siblings,
+            positions: max_positions,
+            leaf_hash,
+            root: [0xff; 32], // won't match but that's ok for this test
+        };
+
+        // Should not reject due to depth (will fail hash check instead)
+        // Just verify it doesn't panic and processes the full depth
+        let _ = proof.verify();
+        let _ = proof.verify_with_positions();
     }
 }

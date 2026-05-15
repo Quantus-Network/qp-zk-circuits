@@ -92,17 +92,19 @@ impl Layer1AggregationProver {
             _phantom: Default::default(),
         };
 
+        // 1) Load prebuilt layer-1 circuit prover data
         let l1_common =
             CommonCircuitData::from_bytes(layer1_common_bytes.to_vec(), &gate_serializer)
-                .map_err(|e| anyhow!("Failed to deserialize layer1 common data: {}", e))?;
+                .map_err(|e| anyhow!("failed to deserialize layer1 common data: {}", e))?;
 
         let l1_prover_only = ProverOnlyCircuitData::from_bytes(
             layer1_prover_only_bytes,
             &generator_serializer,
             &l1_common,
         )
-        .map_err(|e| anyhow!("Failed to deserialize layer1 prover data: {}", e))?;
+        .map_err(|e| anyhow!("failed to deserialize layer1 prover data: {}", e))?;
 
+        // 2) Load layer-0 verifier data (needed for witness filling and dummy proof parsing)
         let layer0_verifier_data = load_verifier_data_from_bytes(
             layer0_common_bytes,
             layer0_verifier_only_bytes,
