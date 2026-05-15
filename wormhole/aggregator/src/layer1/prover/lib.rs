@@ -138,9 +138,11 @@ impl Layer1AggregationProver {
         let targets = Some(circuit.targets());
 
         // Load the dummy L0 proof template
-        let dummy_l0_proof_template =
-            ProofWithPublicInputs::<F, C, D>::from_bytes(dummy_l0_proof_bytes.to_vec(), &layer0_verifier_data.common)
-                .map_err(|e| anyhow!("Failed to deserialize dummy L0 proof: {}", e))?;
+        let dummy_l0_proof_template = ProofWithPublicInputs::<F, C, D>::from_bytes(
+            dummy_l0_proof_bytes.to_vec(),
+            &layer0_verifier_data.common,
+        )
+        .map_err(|e| anyhow!("Failed to deserialize dummy L0 proof: {}", e))?;
 
         Ok(Self {
             circuit_data: ProverCircuitData {

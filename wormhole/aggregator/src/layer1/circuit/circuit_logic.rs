@@ -184,8 +184,7 @@ fn build_layer1_wrapper_constraints(
     let dummy_sentinel: [Target; 4] = [zero, zero, zero, zero];
 
     for pis_i in l0_pi_targets.iter().take(n_inner) {
-        let block_i: [Target; 4] =
-            core::array::from_fn(|j| pis_i[l1c::L0_BLOCK_HASH_OFFSET + j]);
+        let block_i: [Target; 4] = core::array::from_fn(|j| pis_i[l1c::L0_BLOCK_HASH_OFFSET + j]);
         let is_dummy_i = bytes_digest_eq(builder, block_i, dummy_sentinel);
 
         // asset_id: for dummies, use the reference value to satisfy the constraint
@@ -758,7 +757,11 @@ mod tests {
             .iter()
             .map(|f| f.to_canonical_u64())
             .collect();
-        assert_eq!(dummy_block, vec![0, 0, 0, 0], "dummy L0 should have zero block hash");
+        assert_eq!(
+            dummy_block,
+            vec![0, 0, 0, 0],
+            "dummy L0 should have zero block hash"
+        );
 
         // Build layer-1 circuit
         let l1_circuit = Layer1AggregationCircuit::new(
