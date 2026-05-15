@@ -89,29 +89,35 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
 /// # Arguments
 /// * `output_dir` - Directory to write the binaries to
 /// * `include_prover` - Whether to include the prover binary
-/// * `num_leaf_proofs` - Number of leaf proofs aggregated into a single proof
+/// * `num_leaf_proofs` - Number of leaf proofs aggregated into a single proof (must be > 0)
 /// * `num_layer0_proofs` - Optional param for number of inner proofs (for layer-1 circuit). Set to none if you only want layer-0 aggregation.
+///
+/// # Errors
+/// Returns an error if proof counts are invalid (zero or exceed maximum bounds).
+/// Validation happens before any files are written to avoid partial artifact generation.
 pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
     include_prover: bool,
     num_leaf_proofs: usize,
     num_layer0_proofs: Option<usize>,
 ) -> Result<()> {
+    // Validate proof counts upfront before any writes to avoid partial artifact generation
+    let config = CircuitBinsConfig::new(num_leaf_proofs, num_layer0_proofs)?;
+
     let output_path = output_dir.as_ref();
 
     // Generate regular circuit binaries
     generate_circuit_binaries(output_path, include_prover)?;
 
     // Generate aggregated circuit binaries
-    generate_layer0_circuit_binaries(output_path, num_leaf_proofs, include_prover)?;
+    generate_layer0_circuit_binaries(output_path, config.num_leaf_proofs, include_prover)?;
 
     // If num_layer0_proofs is specified, generate layer-1 aggregation circuit binaries
-    if let Some(num_layer0_proofs) = num_layer0_proofs {
+    if let Some(num_layer0_proofs) = config.num_layer0_proofs {
         generate_layer1_circuit_binaries(output_path, num_layer0_proofs, include_prover)?;
     }
 
     // Save config file alongside binaries
-    let config = CircuitBinsConfig::new(num_leaf_proofs, num_layer0_proofs);
     config.save(output_path)?;
 
     Ok(())
