@@ -57,8 +57,6 @@ pub struct Layer0WrapperProver {
     nonzk_partial_witness: PartialWitness<F>,
     /// Non-ZK L0 targets (consumed on commit)
     nonzk_targets: Option<AggregationCircuitTargets>,
-    /// Leaf verifier-only data
-    leaf_verifier_only: VerifierOnlyCircuitData<C, D>,
     /// Number of leaf proofs
     num_leaf_proofs: usize,
     /// Dummy proof template
@@ -153,7 +151,6 @@ impl Layer0WrapperProver {
             wrapper_targets,
             nonzk_partial_witness: PartialWitness::new(),
             nonzk_targets,
-            leaf_verifier_only: leaf_verifier_data.verifier_only,
             num_leaf_proofs,
             dummy_proof_template,
         })

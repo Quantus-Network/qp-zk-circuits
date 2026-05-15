@@ -12,6 +12,7 @@ use zk_circuits_common::circuit::{C, D, F};
 use crate::layer0::circuit::constants::{
     aggregated_output, ASSET_ID_START, BLOCK_HASH_START, LEAF_PI_LEN,
 };
+use crate::layer1::circuit::constants as l1c;
 
 /// Load verifier circuit data (common + verifier-only) from serialized bytes.
 pub fn load_verifier_data_from_bytes(
@@ -63,6 +64,22 @@ pub fn leaf_proof_asset_id(proof: &ProofWithPublicInputs<F, C, D>) -> Result<u32
 pub fn is_dummy_leaf_proof(proof: &ProofWithPublicInputs<F, C, D>) -> Result<bool> {
     ensure_proof_public_input_len(proof, LEAF_PI_LEN, "leaf proof")?;
     Ok(proof.public_inputs[BLOCK_HASH_START..BLOCK_HASH_START + 4]
+        .iter()
+        .all(|f| f.is_zero()))
+}
+
+/// Check if an L0 aggregated proof is a dummy proof (block_hash == [0,0,0,0]).
+///
+/// Dummy L0 proofs are created by aggregating only dummy leaf proofs. The aggregated
+/// output inherits the block_hash from the first leaf, which is zero for dummies.
+pub fn is_dummy_l0_proof(
+    proof: &ProofWithPublicInputs<F, C, D>,
+    layer0_num_leaves: usize,
+) -> Result<bool> {
+    let expected_len = l1c::l0_pi_len(layer0_num_leaves);
+    ensure_proof_public_input_len(proof, expected_len, "layer-0 aggregated proof")?;
+    Ok(proof.public_inputs
+        [aggregated_output::BLOCK_HASH_OFFSET..aggregated_output::BLOCK_HASH_OFFSET + 4]
         .iter()
         .all(|f| f.is_zero()))
 }

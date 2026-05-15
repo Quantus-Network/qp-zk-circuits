@@ -132,6 +132,10 @@ impl Layer1AggregationCircuit {
 ///  total_exit_slots(1),
 ///  [sum(1), exit(4)] * total_exit_slots,
 ///  nullifier(4) * total_nullifiers]
+///
+/// Dummy L0 proofs (with block_hash == [0,0,0,0]) are allowed for padding. The circuit
+/// enforces that real proofs have matching block_hash, asset_id, and volume_fee_bps, but
+/// skips the block consistency check for dummy proofs.
 fn build_layer1_wrapper_constraints(
     builder: &mut CircuitBuilder<F, D>,
     targets: &Layer1AggregationCircuitTargets,
@@ -139,6 +143,7 @@ fn build_layer1_wrapper_constraints(
     layer0_num_leaves: usize,
 ) {
     let one = builder.one();
+    let zero = builder.zero();
 
     let l0_pi_len = l1c::l0_pi_len(layer0_num_leaves);
     let l0_exit_slots_per_proof = l1c::l0_exit_slots_count(layer0_num_leaves);
@@ -162,6 +167,7 @@ fn build_layer1_wrapper_constraints(
     output_pis.extend_from_slice(&targets.aggregator_address);
 
     // 2) Reference values from proof 0
+    // The prover must ensure slot 0 contains a real proof if any real proofs exist.
     let asset_ref = l0_pi_targets[0][l1c::L0_ASSET_ID_OFFSET];
     let fee_ref = l0_pi_targets[0][l1c::L0_VOLUME_FEE_BPS_OFFSET];
     output_pis.push(asset_ref);
@@ -172,15 +178,30 @@ fn build_layer1_wrapper_constraints(
     let block_number_ref = l0_pi_targets[0][l1c::L0_BLOCK_NUMBER_OFFSET];
 
     // 3) Enforce asset/fee consistency and block consistency across all layer-0 proofs
-    for pis_i in l0_pi_targets.iter().take(n_inner) {
-        // asset_id and volume_fee_bps must match
-        builder.connect(pis_i[l1c::L0_ASSET_ID_OFFSET], asset_ref);
-        builder.connect(pis_i[l1c::L0_VOLUME_FEE_BPS_OFFSET], fee_ref);
+    //
+    // Dummy L0 proofs have block_hash == [0,0,0,0]. For dummies, we skip the block
+    // consistency check but still enforce asset/fee matching.
+    let dummy_sentinel: [Target; 4] = [zero, zero, zero, zero];
 
-        // block hash must match ref
-        let block_i: [Target; 4] = core::array::from_fn(|j| pis_i[l1c::L0_BLOCK_HASH_OFFSET + j]);
+    for pis_i in l0_pi_targets.iter().take(n_inner) {
+        let block_i: [Target; 4] =
+            core::array::from_fn(|j| pis_i[l1c::L0_BLOCK_HASH_OFFSET + j]);
+        let is_dummy_i = bytes_digest_eq(builder, block_i, dummy_sentinel);
+
+        // asset_id: for dummies, use the reference value to satisfy the constraint
+        let asset_i = pis_i[l1c::L0_ASSET_ID_OFFSET];
+        let asset_i_or_ref = builder.select(is_dummy_i, asset_ref, asset_i);
+        builder.connect(asset_i_or_ref, asset_ref);
+
+        // volume_fee_bps: same treatment
+        let fee_i = pis_i[l1c::L0_VOLUME_FEE_BPS_OFFSET];
+        let fee_i_or_ref = builder.select(is_dummy_i, fee_ref, fee_i);
+        builder.connect(fee_i_or_ref, fee_ref);
+
+        // block hash: must match ref OR be dummy
         let matches_ref = bytes_digest_eq(builder, block_i, block_ref);
-        builder.connect(matches_ref.target, one);
+        let valid_block_relation = builder.or(is_dummy_i, matches_ref);
+        builder.connect(valid_block_relation.target, one);
     }
 
     // Output block reference + number
@@ -646,5 +667,143 @@ mod tests {
             res.is_err(),
             "expected layer-1 proving to fail for mismatched blocks"
         );
+    }
+
+    /// Test that layer-1 can aggregate one real L0 proof and one dummy L0 proof.
+    ///
+    /// Dummy L0 proofs have block_hash == [0,0,0,0]. The circuit should skip block
+    /// consistency checks for dummies and produce a valid proof.
+    #[test]
+    fn layer1_with_dummy_l0_proof() {
+        let block_hash: [u64; 4] = [0xAA01, 0xAA02, 0xAA03, 0xAA04];
+        let block_number = 42u32;
+
+        // Build fake leaf circuit
+        let (leaf_data, leaf_targets) = build_fake_leaf_circuit();
+
+        // Real leaf proofs for batch A
+        let leaf_a0 = prove_fake_leaf(
+            &leaf_data,
+            &leaf_targets,
+            make_leaf_pi(
+                100,
+                50,
+                [1, 2, 3, 4],
+                [5, 6, 7, 8],
+                [0x10, 0x11, 0x12, 0x13],
+                block_hash,
+                block_number,
+            ),
+        );
+        let leaf_a1 = prove_fake_leaf(
+            &leaf_data,
+            &leaf_targets,
+            make_leaf_pi(
+                200,
+                0,
+                [9, 10, 11, 12],
+                [0, 0, 0, 0],
+                [0x20, 0x21, 0x22, 0x23],
+                block_hash,
+                block_number,
+            ),
+        );
+
+        // Dummy leaf proofs for batch B (block_hash == [0,0,0,0], amounts == 0)
+        let dummy_leaf = prove_fake_leaf(
+            &leaf_data,
+            &leaf_targets,
+            make_leaf_pi(
+                0,
+                0,
+                [0, 0, 0, 0],
+                [0, 0, 0, 0],
+                [0, 0, 0, 0], // dummy nullifier
+                [0, 0, 0, 0], // dummy block hash sentinel
+                0,
+            ),
+        );
+
+        // Build layer-0 circuit
+        let l0_circuit = Layer0AggregationCircuit::new(
+            CircuitConfig::standard_recursion_config(),
+            leaf_data.common.clone(),
+            &leaf_data.verifier_only,
+            NUM_LEAVES,
+        );
+        let l0_targets = l0_circuit.targets();
+        let l0_data = l0_circuit.build_circuit();
+
+        // Real L0 proof from batch A
+        let l0_proof_real = prove_layer0_batch(
+            &l0_data,
+            &l0_targets,
+            vec![leaf_a0.clone(), leaf_a1.clone()],
+        );
+
+        // Dummy L0 proof from batch B (all dummy leaves)
+        let l0_proof_dummy = prove_layer0_batch(
+            &l0_data,
+            &l0_targets,
+            vec![dummy_leaf.clone(), dummy_leaf.clone()],
+        );
+
+        // Verify both L0 proofs individually
+        l0_data.verify(l0_proof_real.clone()).unwrap();
+        l0_data.verify(l0_proof_dummy.clone()).unwrap();
+
+        // Confirm dummy L0 has block_hash == [0,0,0,0]
+        let dummy_block: Vec<u64> = l0_proof_dummy.public_inputs
+            [l1c::L0_BLOCK_HASH_OFFSET..l1c::L0_BLOCK_HASH_OFFSET + 4]
+            .iter()
+            .map(|f| f.to_canonical_u64())
+            .collect();
+        assert_eq!(dummy_block, vec![0, 0, 0, 0], "dummy L0 should have zero block hash");
+
+        // Build layer-1 circuit
+        let l1_circuit = Layer1AggregationCircuit::new(
+            CircuitConfig::standard_recursion_config(),
+            l0_data.common.clone(),
+            &l0_data.verifier_only,
+            N_INNER,
+            NUM_LEAVES,
+        );
+        let l1_targets = l1_circuit.targets();
+        let l1_data = l1_circuit.build_circuit();
+
+        let aggregator_address: [F; AGGREGATOR_ADDRESS_LEN] = [
+            F::from_canonical_u64(0xDEAD),
+            F::from_canonical_u64(0xBEEF),
+            F::from_canonical_u64(0xCAFE),
+            F::from_canonical_u64(0xBABE),
+        ];
+
+        // Aggregate: real L0 in slot 0, dummy L0 in slot 1
+        let l1_proof = prove_layer1(
+            &l1_data,
+            &l1_targets,
+            vec![l0_proof_real.clone(), l0_proof_dummy.clone()],
+            aggregator_address,
+        )
+        .expect("layer-1 aggregation with dummy L0 should succeed");
+
+        // Verify the L1 proof
+        l1_data
+            .verify(l1_proof.clone())
+            .expect("layer-1 proof with dummy L0 should verify");
+
+        // Check output PIs
+        let pis = &l1_proof.public_inputs;
+
+        // Block hash should come from the real proof (slot 0)
+        assert_eq!(pis[l1c::BLOCK_HASH_START].to_canonical_u64(), 0xAA01);
+        assert_eq!(pis[l1c::BLOCK_HASH_START + 1].to_canonical_u64(), 0xAA02);
+        assert_eq!(pis[l1c::BLOCK_HASH_START + 2].to_canonical_u64(), 0xAA03);
+        assert_eq!(pis[l1c::BLOCK_HASH_START + 3].to_canonical_u64(), 0xAA04);
+        assert_eq!(pis[l1c::BLOCK_NUMBER_START].to_canonical_u64(), 42);
+
+        // Asset ID and fee from real proof
+        assert_eq!(pis[l1c::ASSET_ID_START].to_canonical_u64(), 0);
+        assert_eq!(pis[l1c::VOLUME_FEE_BPS_START].to_canonical_u64(), 10);
     }
 }
