@@ -71,6 +71,7 @@ impl Layer0WrapperProver {
     // -------------------------------------------------------------------------
 
     /// Create from serialized bytes.
+    #[allow(clippy::too_many_arguments)]
     pub fn new_from_bytes(
         nonzk_prover_only_bytes: &[u8],
         nonzk_common_bytes: &[u8],
