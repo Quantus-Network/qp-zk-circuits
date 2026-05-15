@@ -125,8 +125,12 @@ fn generate_layer0_nonzk_binaries<P: AsRef<Path>>(
 
     // Build non-ZK L0 aggregation circuit
     let nonzk_config = CircuitConfig::standard_recursion_config(); // non-ZK
-    let agg_circuit =
-        Layer0AggregationCircuit::new(nonzk_config, leaf_common, &leaf_verifier_only, num_leaf_proofs);
+    let agg_circuit = Layer0AggregationCircuit::new(
+        nonzk_config,
+        leaf_common,
+        &leaf_verifier_only,
+        num_leaf_proofs,
+    );
     let circuit_data = agg_circuit.build_circuit();
 
     let gate_serializer = DefaultGateSerializer;
