@@ -228,12 +228,13 @@ mod tests {
     use qp_wormhole_inputs::PUBLIC_INPUTS_FELTS_LEN as LEAF_PI_LEN;
 
     use super::super::constants::AGGREGATOR_ADDRESS_LEN;
-    use crate::layer0::circuit::circuit_logic::{
-        AggregationCircuitTargets, Layer0AggregationCircuit,
+    use crate::layer0::circuit::{
+        constants::{INNER_NUM_LEAVES, TOTAL_NUM_LEAVES},
+        InnerAggregationCircuit, InnerAggregationCircuitTargets, OuterAggregationCircuit,
+        OuterAggregationCircuitTargets,
     };
     use test_helpers::fake_leaf::{build_fake_leaf_circuit, prove_fake_leaf};
 
-    const NUM_LEAVES: usize = 2; // 2 leaf proofs per layer-0 batch (fast)
     const N_INNER: usize = 2; // 2 layer-0 proofs aggregated into one layer-1 proof
 
     /// Build one leaf PI array in the Bitcoin-style 2-output layout.
@@ -278,32 +279,72 @@ mod tests {
 
     // ---------------- Layer-0 proving helpers ----------------
 
-    /// Prove a layer-0 aggregated proof using the monolithic Layer0AggregationCircuit.
-    fn prove_layer0_batch(
-        l0_data: &CircuitData<F, C, D>,
-        l0_targets: &AggregationCircuitTargets,
+    fn prove_inner_batch(
+        inner_data: &CircuitData<F, C, D>,
+        inner_targets: &InnerAggregationCircuitTargets,
         leaf_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
     ) -> ProofWithPublicInputs<F, C, D> {
-        assert_eq!(leaf_proofs.len(), NUM_LEAVES);
+        assert_eq!(leaf_proofs.len(), INNER_NUM_LEAVES);
 
         let mut pw = PartialWitness::new();
 
-        // NOTE: leaf_verifier_data is NOT set - it's baked in as constants
-
         // Fill each leaf proof target
-        for (pt, proof) in l0_targets.leaf_proofs.iter().zip(leaf_proofs.iter()) {
+        for (pt, proof) in inner_targets.leaf_proofs.iter().zip(leaf_proofs.iter()) {
             pw.set_proof_with_pis_target(pt, proof).unwrap();
         }
 
-        // Dummy nullifier preimages: can be anything for non-dummy leaves (is_dummy=false), but must be filled.
-        for (i, limbs) in l0_targets.dummy_nullifier_pre_images.iter().enumerate() {
+        for (i, limbs) in inner_targets.dummy_nullifier_pre_images.iter().enumerate() {
             for (j, t) in limbs.iter().enumerate() {
                 let v = F::from_canonical_u64(1000 + (i as u64) * 10 + (j as u64));
                 pw.set_target(*t, v).unwrap();
             }
         }
 
-        l0_data.prove(pw).unwrap()
+        inner_data.prove(pw).unwrap()
+    }
+
+    fn prove_outer_batch(
+        outer_data: &CircuitData<F, C, D>,
+        outer_targets: &OuterAggregationCircuitTargets,
+        inner_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
+    ) -> ProofWithPublicInputs<F, C, D> {
+        assert_eq!(inner_proofs.len(), 2);
+
+        let mut pw = PartialWitness::new();
+        for (pt, proof) in outer_targets.inner_proofs.iter().zip(inner_proofs.iter()) {
+            pw.set_proof_with_pis_target(pt, proof).unwrap();
+        }
+
+        outer_data.prove(pw).unwrap()
+    }
+
+    fn prove_layer0_batch(
+        leaf_data: &CircuitData<F, C, D>,
+        leaf_targets: &[Target; LEAF_PI_LEN],
+        inner_data: &CircuitData<F, C, D>,
+        inner_targets: &InnerAggregationCircuitTargets,
+        outer_data: &CircuitData<F, C, D>,
+        outer_targets: &OuterAggregationCircuitTargets,
+        leaf_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
+    ) -> ProofWithPublicInputs<F, C, D> {
+        assert!(leaf_proofs.len() <= TOTAL_NUM_LEAVES);
+
+        let dummy_leaf = prove_fake_leaf(leaf_data, leaf_targets, [F::ZERO; LEAF_PI_LEN]);
+        let mut padded = leaf_proofs;
+        padded.resize(TOTAL_NUM_LEAVES, dummy_leaf);
+
+        let inner_a = prove_inner_batch(
+            inner_data,
+            inner_targets,
+            padded[..INNER_NUM_LEAVES].to_vec(),
+        );
+        let inner_b = prove_inner_batch(
+            inner_data,
+            inner_targets,
+            padded[INNER_NUM_LEAVES..].to_vec(),
+        );
+
+        prove_outer_batch(outer_data, outer_targets, vec![inner_a, inner_b])
     }
 
     // ---------------- Layer-1 proving helpers ----------------
@@ -339,12 +380,9 @@ mod tests {
 
     // ---------------- Tests ----------------
 
-    /// Port of the old `two_layer_aggregation_pipeline` test, updated for:
-    /// - monolithic Layer0AggregationCircuit
-    /// - monolithic Layer1AggregationCircuit
-    /// - aggregator_address is a witness target
+    /// End-to-end check that layer-1 forwards shipping layer-0 outputs verbatim.
     #[test]
-    fn two_layer_aggregation_pipeline_monolithic() {
+    fn two_layer_aggregation_pipeline_shipping_layer0() {
         let block_hash: [u64; 4] = [0xAA01, 0xAA02, 0xAA03, 0xAA04];
         let block_number = 42u32;
 
@@ -407,43 +445,47 @@ mod tests {
             ),
         );
 
-        // ---- 2) Build monolithic Layer0AggregationCircuit once, prove two batches ----
-        let leaf_common = leaf_data.common.clone();
-        let leaf_verifier_only = leaf_data.verifier_only.clone();
+        // ---- 2) Build shipping layer-0 inner/outer circuits once, prove two batches ----
+        let inner_circuit =
+            InnerAggregationCircuit::new(leaf_data.common.clone(), &leaf_data.verifier_only);
+        let inner_targets = inner_circuit.targets();
+        let inner_data = inner_circuit.build_circuit();
 
-        // SECURITY: leaf_verifier_only is baked in as constants at build time
-        let l0_circuit = Layer0AggregationCircuit::new(
-            CircuitConfig::standard_recursion_config(),
-            leaf_common,
-            &leaf_verifier_only,
-            NUM_LEAVES,
-        );
-        let l0_targets = l0_circuit.targets();
-        let l0_data = l0_circuit.build_circuit();
+        let outer_circuit =
+            OuterAggregationCircuit::new(inner_data.common.clone(), &inner_data.verifier_only);
+        let outer_targets = outer_circuit.targets();
+        let outer_data = outer_circuit.build_circuit();
 
         let l0_proof_a = prove_layer0_batch(
-            &l0_data,
-            &l0_targets,
+            &leaf_data,
+            &leaf_targets,
+            &inner_data,
+            &inner_targets,
+            &outer_data,
+            &outer_targets,
             vec![leaf_a0.clone(), leaf_a1.clone()],
         );
         let l0_proof_b = prove_layer0_batch(
-            &l0_data,
-            &l0_targets,
+            &leaf_data,
+            &leaf_targets,
+            &inner_data,
+            &inner_targets,
+            &outer_data,
+            &outer_targets,
             vec![leaf_b0.clone(), leaf_b1.clone()],
         );
 
-        // Sanity: layer-0 proofs verify under layer-0 circuit data
-        l0_data.verify(l0_proof_a.clone()).unwrap();
-        l0_data.verify(l0_proof_b.clone()).unwrap();
+        // Sanity: layer-0 proofs verify under the shipping outer circuit data
+        outer_data.verify(l0_proof_a.clone()).unwrap();
+        outer_data.verify(l0_proof_b.clone()).unwrap();
 
-        // ---- 3) Build monolithic Layer1AggregationCircuit and prove ----
-        // SECURITY: l0_data.verifier_only is baked in as constants at build time
+        // ---- 3) Build layer-1 circuit and prove ----
         let l1_circuit = Layer1AggregationCircuit::new(
             CircuitConfig::standard_recursion_config(),
-            l0_data.common.clone(),
-            &l0_data.verifier_only,
+            outer_data.common.clone(),
+            &outer_data.verifier_only,
             N_INNER,
-            NUM_LEAVES,
+            TOTAL_NUM_LEAVES,
         );
         let l1_targets = l1_circuit.targets();
         let l1_data = l1_circuit.build_circuit();
@@ -473,7 +515,7 @@ mod tests {
         let pis = &l1_proof.public_inputs;
 
         // Expected PI length
-        let expected_len = l1c::l1_pi_len(N_INNER, NUM_LEAVES);
+        let expected_len = l1c::l1_pi_len(N_INNER, TOTAL_NUM_LEAVES);
         assert_eq!(pis.len(), expected_len, "unexpected layer-1 PI length");
 
         // Aggregator address (4 felts, 8 bytes/felt)
@@ -507,10 +549,10 @@ mod tests {
         // Block number
         assert_eq!(pis[l1c::BLOCK_NUMBER_START].to_canonical_u64(), 42);
 
-        // Total exit slots = N_INNER * (2 * NUM_LEAVES)
+        // Total exit slots = N_INNER * (2 * TOTAL_NUM_LEAVES)
         assert_eq!(
             pis[l1c::TOTAL_EXIT_SLOTS_START].to_canonical_u64(),
-            (N_INNER * 2 * NUM_LEAVES) as u64
+            (N_INNER * 2 * TOTAL_NUM_LEAVES) as u64
         );
 
         // ---- Forwarding checks (exit slots + nullifiers) ----
@@ -518,7 +560,7 @@ mod tests {
         // L1 exit slots region begins immediately after the header
         let l1_exit_start = l1c::L1_HEADER_LEN;
         let l0_exit_start = l1c::l0_exit_slots_start();
-        let l0_exit_len = l1c::l0_exit_slots_count(NUM_LEAVES) * l1c::L0_EXIT_SLOT_LEN;
+        let l0_exit_len = l1c::l0_exit_slots_count(TOTAL_NUM_LEAVES) * l1c::L0_EXIT_SLOT_LEN;
 
         // For each layer-0 proof, ensure its exit slot region is copied verbatim into layer-1 PIs.
         for (i, l0p) in [l0_proof_a.clone(), l0_proof_b.clone()]
@@ -531,9 +573,9 @@ mod tests {
         }
 
         // Nullifiers:
-        let l1_null_start = l1c::l1_nullifiers_start(N_INNER, NUM_LEAVES);
-        let l0_null_start = l1c::l0_nullifiers_start(NUM_LEAVES);
-        let l0_null_len = l1c::l0_nullifiers_count(NUM_LEAVES) * 4;
+        let l1_null_start = l1c::l1_nullifiers_start(N_INNER, TOTAL_NUM_LEAVES);
+        let l0_null_start = l1c::l0_nullifiers_start(TOTAL_NUM_LEAVES);
+        let l0_null_len = l1c::l0_nullifiers_count(TOTAL_NUM_LEAVES) * 4;
 
         for (i, l0p) in [l0_proof_a, l0_proof_b].into_iter().enumerate() {
             let src = &l0p.public_inputs[l0_null_start..l0_null_start + l0_null_len];
@@ -607,28 +649,43 @@ mod tests {
             ),
         );
 
-        // Layer-0 circuit
-        // SECURITY: leaf verifier_only is baked in as constants at build time
-        let l0_circuit = Layer0AggregationCircuit::new(
-            CircuitConfig::standard_recursion_config(),
-            leaf_data.common.clone(),
-            &leaf_data.verifier_only,
-            NUM_LEAVES,
-        );
-        let l0_targets = l0_circuit.targets();
-        let l0_data = l0_circuit.build_circuit();
+        let inner_circuit =
+            InnerAggregationCircuit::new(leaf_data.common.clone(), &leaf_data.verifier_only);
+        let inner_targets = inner_circuit.targets();
+        let inner_data = inner_circuit.build_circuit();
 
-        let l0_a = prove_layer0_batch(&l0_data, &l0_targets, vec![a0, a1]);
-        let l0_b = prove_layer0_batch(&l0_data, &l0_targets, vec![b0, b1]);
+        let outer_circuit =
+            OuterAggregationCircuit::new(inner_data.common.clone(), &inner_data.verifier_only);
+        let outer_targets = outer_circuit.targets();
+        let outer_data = outer_circuit.build_circuit();
+
+        let l0_a = prove_layer0_batch(
+            &leaf_data,
+            &leaf_targets,
+            &inner_data,
+            &inner_targets,
+            &outer_data,
+            &outer_targets,
+            vec![a0, a1],
+        );
+        let l0_b = prove_layer0_batch(
+            &leaf_data,
+            &leaf_targets,
+            &inner_data,
+            &inner_targets,
+            &outer_data,
+            &outer_targets,
+            vec![b0, b1],
+        );
 
         // Layer-1 circuit
         // SECURITY: l0 verifier_only is baked in as constants at build time
         let l1_circuit = Layer1AggregationCircuit::new(
             CircuitConfig::standard_recursion_config(),
-            l0_data.common.clone(),
-            &l0_data.verifier_only,
+            outer_data.common.clone(),
+            &outer_data.verifier_only,
             N_INNER,
-            NUM_LEAVES,
+            TOTAL_NUM_LEAVES,
         );
         let l1_targets = l1_circuit.targets();
         let l1_data = l1_circuit.build_circuit();
