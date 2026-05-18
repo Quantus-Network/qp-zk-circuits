@@ -203,3 +203,35 @@ Unrun on PR 1 so far:
   - `layer0_shipping_verify_4`: `[26.224 ms 26.465 ms 26.699 ms]`
   - `layer0_shipping_verify_8`: `[26.275 ms 26.505 ms 26.725 ms]`
   - `layer0_shipping_verify_16`: `[26.554 ms 26.611 ms 26.673 ms]`
+
+## Final Self-Check
+
+On `split/compact-2x8-core`:
+
+- `git diff --stat origin/main...HEAD` -> 12 files changed, 2351 insertions, 8 deletions.
+- `git diff --name-status origin/main...HEAD` contains only:
+  - `SPLIT_STATUS.md`
+  - compact-child layer-0 circuit/prover modules
+  - shared constants/module/witness wiring
+  - `wormhole/tests/src/layer0_equivalence.rs`
+  - `wormhole/tests/src/lib.rs`
+- Verified PR 1 has compact-child core files and `layer0_equivalence` tests.
+- Verified PR 1 does not include `wormhole/aggregator/src/aggregator.rs`.
+- Verified PR 1 does not include `wormhole/aggregator/src/layer0/circuit/build.rs`.
+- Verified PR 1 does not include `wormhole/circuit-builder/src/lib.rs` or `wormhole/circuit-builder/src/main.rs`.
+- Verified PR 1 retains legacy `circuit_logic.rs` and `prover/lib.rs`.
+- Verified PR 1 has no broad production docs.
+
+On `split/compact-2x8-production`:
+
+- `git diff --stat split/compact-2x8-core...HEAD` -> 30 files changed, 1517 insertions, 2894 deletions.
+- `git diff --name-status split/compact-2x8-core...HEAD` includes:
+  - production `Layer0Aggregator` switch
+  - layer-0 circuit-builder/artifact generation changes
+  - `aggregated_*` alias generation
+  - fixed-16 layer-0 guard
+  - layer-1/integration test updates
+  - benchmark updates
+  - production docs
+  - legacy single-stage cleanup (`circuit_logic.rs`, `prover/lib.rs`)
+- Verified PR 2 is stacked on PR 1.
