@@ -1,53 +1,68 @@
 # Wormhole Circuit Tests
 
-This is the dedicated crate for all tests and benchmarks in the Wormhole Circuit project. Tests and benchmarks are organized by the crate they test, following a consistent structure.
+This crate contains the Wormhole integration and regression test suites. It includes shipping
+layer-0 contract and semantic regression tests, cached-artifact proving tests, and cross-crate
+aggregator regressions.
 
 ## Running Tests
 
-
 To run all tests:
+
 ```bash
-cargo test
+cargo test -p tests
 ```
 
-To run tests for a specific module:
+To run tests for a specific module or suite:
+
 ```bash
 # For prover tests
-cargo test prover
+cargo test -p tests prover
 
 # For circuit tests
-cargo test circuit
+cargo test -p tests circuit
 
 # For verifier tests
-cargo test verifier
+cargo test -p tests verifier
 
 # For aggregator tests
-cargo test aggregator
+cargo test -p tests aggregator
+
+# For layer-0 contract and semantic regression tests
+cargo test -p tests layer0_equivalence
+```
+
+The expensive layer-0 proving and semantic regression smokes should be run in release mode:
+
+```bash
+cargo test -p tests --release layer0_equivalence::layer0_matches_reference_single_stage_semantics -- --nocapture
+cargo test -p tests --release layer0_equivalence::layer0_warm_artifacts_load_and_prove -- --nocapture
+cargo test -p tests --release aggregator::aggregator_tests::aggregate_uses_cached_layer0_artifacts -- --nocapture
 ```
 
 ## Running Benchmarks
 
-To run all benchmarks:
-```bash
-cargo bench
-```
+This crate does not own the restored production layer-0 Criterion bench. Benchmark commands are:
 
-To run specific benchmarks:
 ```bash
-# For prover benchmarks
-cargo bench -p tests --bench prover
+# Production layer-0 aggregation bench
+cargo bench -p qp-wormhole-aggregator --bench aggregator
 
-# For verifier benchmarks
-cargo bench -p tests --bench verifier
+# Prover bench
+cargo bench -p qp-wormhole-prover --bench prover
+
+# Verifier bench
+cargo bench -p qp-wormhole-verifier --bench verifier
 ```
 
 ## Adding New Tests
 
 When adding new tests:
-1. Place them in the appropriate subdirectory under `src/` matching the crate name they test
-2. For benchmarks, add them to the corresponding file in the `benches/` directory
-3. Follow the existing test patterns and organization
+1. Place them in the appropriate subdirectory under `src/` matching the crate name they test.
+2. Keep cross-crate integration and regression coverage here; crate-local unit tests and benches can stay with their owning crates.
+3. Follow the existing test patterns and organization.
 
 ## Note
 
-This crate is specifically designed to contain all tests and benchmarks for the Wormhole Circuit project. All new tests should be added here rather than in the individual crates to maintain a centralized testing structure. 
+The `layer0_equivalence` module name is retained for continuity, but the current checkout no
+longer carries the deleted legacy layer-0 oracle. These tests now validate the shipping contract,
+warm-artifact loading, and related regression invariants directly against the production path.
