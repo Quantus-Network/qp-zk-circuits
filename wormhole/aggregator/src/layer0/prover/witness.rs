@@ -2,13 +2,17 @@
 
 use anyhow::{anyhow, bail, Result};
 use plonky2::{
+    iop::target::Target,
     iop::witness::{PartialWitness, WitnessWrite},
-    plonk::proof::ProofWithPublicInputs,
+    plonk::proof::{ProofWithPublicInputs, ProofWithPublicInputsTarget},
 };
 
 use zk_circuits_common::circuit::{C, D, F};
 
-use crate::layer0::circuit::circuit_logic::AggregationCircuitTargets;
+use crate::layer0::circuit::{
+    circuit_logic::AggregationCircuitTargets, constants::OUTER_INNER_PROOFS,
+    inner::InnerAggregationCircuitTargets, outer::OuterAggregationCircuitTargets,
+};
 
 /// Fill the partial witness for the prebuilt layer-0 aggregation circuit.
 pub fn fill_layer0_aggregation_witness(
@@ -17,7 +21,59 @@ pub fn fill_layer0_aggregation_witness(
     proofs: &[ProofWithPublicInputs<F, C, D>],
     dummy_nullifier_pre_images: &[[F; 4]],
 ) -> Result<()> {
-    let n_targets = targets.leaf_proofs.len();
+    fill_leaf_aggregation_witness(
+        pw,
+        &targets.leaf_proofs,
+        &targets.dummy_nullifier_pre_images,
+        proofs,
+        dummy_nullifier_pre_images,
+    )
+}
+
+pub fn fill_inner_aggregation_witness(
+    pw: &mut PartialWitness<F>,
+    targets: &InnerAggregationCircuitTargets,
+    proofs: &[ProofWithPublicInputs<F, C, D>],
+    dummy_nullifier_pre_images: &[[F; 4]],
+) -> Result<()> {
+    fill_leaf_aggregation_witness(
+        pw,
+        &targets.leaf_proofs,
+        &targets.dummy_nullifier_pre_images,
+        proofs,
+        dummy_nullifier_pre_images,
+    )
+}
+
+pub fn fill_outer_aggregation_witness(
+    pw: &mut PartialWitness<F>,
+    targets: &OuterAggregationCircuitTargets,
+    proofs: &[ProofWithPublicInputs<F, C, D>],
+) -> Result<()> {
+    if proofs.len() != OUTER_INNER_PROOFS {
+        bail!(
+            "outer proof count mismatch: got {}, expected {}",
+            proofs.len(),
+            OUTER_INNER_PROOFS
+        );
+    }
+
+    for (idx, (proof_t, proof)) in targets.inner_proofs.iter().zip(proofs.iter()).enumerate() {
+        pw.set_proof_with_pis_target(proof_t, proof)
+            .map_err(|e| anyhow!("failed to set inner proof target {}: {}", idx, e))?;
+    }
+
+    Ok(())
+}
+
+fn fill_leaf_aggregation_witness(
+    pw: &mut PartialWitness<F>,
+    leaf_proof_targets: &[ProofWithPublicInputsTarget<D>],
+    dummy_nullifier_targets: &[[Target; 4]],
+    proofs: &[ProofWithPublicInputs<F, C, D>],
+    dummy_nullifier_pre_images: &[[F; 4]],
+) -> Result<()> {
+    let n_targets = leaf_proof_targets.len();
 
     if proofs.len() != n_targets {
         bail!(
@@ -27,10 +83,10 @@ pub fn fill_layer0_aggregation_witness(
         );
     }
 
-    if targets.dummy_nullifier_pre_images.len() != n_targets {
+    if dummy_nullifier_targets.len() != n_targets {
         bail!(
             "target layout is inconsistent: dummy_nullifier_pre_image target count {} != leaf proof target count {}",
-            targets.dummy_nullifier_pre_images.len(),
+            dummy_nullifier_targets.len(),
             n_targets
         );
     }
@@ -43,13 +99,12 @@ pub fn fill_layer0_aggregation_witness(
         );
     }
 
-    for (i, (proof_t, proof)) in targets.leaf_proofs.iter().zip(proofs.iter()).enumerate() {
+    for (i, (proof_t, proof)) in leaf_proof_targets.iter().zip(proofs.iter()).enumerate() {
         pw.set_proof_with_pis_target(proof_t, proof)
             .map_err(|e| anyhow!("failed to set leaf proof target at slot {}: {}", i, e))?;
     }
 
-    for (i, (nullifier_targets, nullifier_vals)) in targets
-        .dummy_nullifier_pre_images
+    for (i, (nullifier_targets, nullifier_vals)) in dummy_nullifier_targets
         .iter()
         .zip(dummy_nullifier_pre_images.iter())
         .enumerate()
