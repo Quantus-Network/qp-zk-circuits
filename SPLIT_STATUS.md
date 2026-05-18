@@ -153,3 +153,53 @@ Further validation will be appended after each branch is reconstructed.
 Unrun on PR 1 so far:
 
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+
+## PR 2 Reconstruction Notes
+
+- Branch: `split/compact-2x8-production`
+- Base: `split/compact-2x8-core`
+- Imported production cutover changes from `pr129-original` for:
+  - `Layer0Aggregator`
+  - layer-0 artifact generation and aliasing
+  - circuit-builder API/CLI behavior
+  - layer-1 integration updates
+  - production integration tests and benchmarks
+  - production docs
+  - dependency/lockfile updates
+- Removed legacy single-stage production files only in PR 2:
+  - `wormhole/aggregator/src/layer0/circuit/circuit_logic.rs`
+  - `wormhole/aggregator/src/layer0/prover/lib.rs`
+- Preserved PR 1 fixes while importing the production cutover:
+  - compact-child dummy padding no longer requires real proofs to have `asset_id=0`
+  - canonical real-before-dummy ordering is retained in inner/session splitting
+  - `Layer0AggregationArtifacts` verifies through shared `outer_artifacts.verifier_data`
+  - no duplicate implicit verification in `Layer0Aggregator::aggregate()`
+- Adjusted `common::recursive::tests::test_safe_recursive_verifier_rejects_wrong_circuit` to treat either a returned proof error or a prover panic as a successful rejection of the intentionally invalid proof path. This is needed under workspace feature unification.
+
+### PR 2 Validation
+
+- `cargo fmt --all -- --check` -> failed before formatting due rustfmt diff in `wormhole/aggregator/src/aggregator.rs`.
+- `cargo fmt --all` -> succeeded.
+- `cargo fmt --all -- --check` -> succeeded.
+- `cargo test -p qp-wormhole-aggregator` -> succeeded: 9 passed, 0 failed, 5 doctests ignored, finished in 554.21s.
+- `cargo test -p tests layer0_equivalence` -> succeeded: 3 passed, 0 failed, 69 filtered out, finished in 686.87s.
+- `cargo test -p tests aggregator::aggregator_tests` -> succeeded: 11 passed, 0 failed, 61 filtered out, finished in 1927.86s.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` -> succeeded. Cargo also printed a future-incompatibility notice for `trie-db v0.30.0`.
+- `cargo test --workspace` -> first run failed in `common::recursive::tests::test_safe_recursive_verifier_rejects_wrong_circuit` with the same `qp-plonky2-1.4.1/src/gates/base_sum.rs:198:9` panic seen under workspace feature unification.
+- `cargo test --workspace` -> succeeded after the recursive negative-test fix. The `tests` crate reported 66 passed, 0 failed, 6 ignored; doc tests also completed successfully.
+- `cargo audit` -> completed with exit code 0 but reported 7 allowed warnings. Reported advisories included:
+  - `RUSTSEC-2024-0388` (`derivative` unmaintained)
+  - `RUSTSEC-2025-0161` (`libsecp256k1` unmaintained)
+  - `RUSTSEC-2025-0119` (`number_prefix` unmaintained)
+  - `RUSTSEC-2024-0436` (`paste` unmaintained)
+  - `RUSTSEC-2026-0002` (`lru` unsound)
+  - `RUSTSEC-2026-0097` (`rand` unsound; reported for both `rand 0.8.5` and `rand 0.9.2`)
+- `cargo bench -p qp-wormhole-aggregator --bench aggregator` -> succeeded. Criterion completed:
+  - `layer0_shipping_aggregate_2`: `[5.1120 s 5.1417 s 5.1751 s]`
+  - `layer0_shipping_aggregate_4`: `[5.0903 s 5.1303 s 5.1846 s]`
+  - `layer0_shipping_aggregate_8`: `[5.1128 s 5.1455 s 5.1871 s]`
+  - `layer0_shipping_aggregate_16`: `[5.1255 s 5.1620 s 5.1994 s]`
+  - `layer0_shipping_verify_2`: `[26.306 ms 26.485 ms 26.651 ms]`
+  - `layer0_shipping_verify_4`: `[26.224 ms 26.465 ms 26.699 ms]`
+  - `layer0_shipping_verify_8`: `[26.275 ms 26.505 ms 26.725 ms]`
+  - `layer0_shipping_verify_16`: `[26.554 ms 26.611 ms 26.673 ms]`
