@@ -12,5 +12,7 @@ pub use outer::{
 };
 pub use session::{
     InnerExecutionMode, Layer0AggregateOutput, Layer0AggregationArtifacts, Layer0AggregationProver,
-    Layer0Timing, StageTiming, AGGREGATED_TARGETS_FILENAME,
+    Layer0AggregationVerifierArtifacts, Layer0Timing, Layer0Verifier, StageTiming,
+    AGGREGATED_TARGETS_FILENAME,
 };
+pub use witness::fill_layer0_aggregation_witness;

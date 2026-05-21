@@ -22,7 +22,8 @@ use zk_circuits_common::circuit::{C, D, F};
 
 use crate::layer1::prover::{Layer1AggregationInputs, Layer1AggregationProver};
 use crate::{
-    common::utils::ensure_proof_public_input_len, layer0::prover::Layer0AggregationArtifacts,
+    common::utils::{ensure_proof_public_input_len, validate_leaf_proof_public_inputs},
+    layer0::prover::Layer0AggregationArtifacts,
     CircuitBinsConfig,
 };
 
@@ -256,8 +257,17 @@ pub struct Layer0Aggregator {
 impl Layer0Aggregator {
     pub fn new<P: AsRef<Path>>(bins_dir: P) -> Result<Self> {
         let bins_dir = bins_dir.as_ref().to_path_buf();
+
+        let config = CircuitBinsConfig::load(&bins_dir)?;
         let artifacts = Layer0AggregationArtifacts::new_from_binaries_dir(&bins_dir)
-            .context("failed to load shipping 2x8 artifacts from binaries dir")?;
+            .context("failed to load cached compact-child layer-0 artifacts")?;
+        if config.num_leaf_proofs != artifacts.num_leaf_proofs() {
+            bail!(
+                "config num_leaf_proofs mismatch: expected compact-child capacity {}, got {}",
+                artifacts.num_leaf_proofs(),
+                config.num_leaf_proofs
+            );
+        }
         let expected_leaf_pi_len = artifacts.expected_leaf_pi_len();
 
         Ok(Self {
@@ -267,19 +277,12 @@ impl Layer0Aggregator {
             artifacts,
         })
     }
-
-    fn load_verifier(&self) -> Result<VerifierCircuitData<F, C, D>> {
-        load_verifier_from_bins(
-            &self.bins_dir,
-            "aggregated_common.bin",
-            "aggregated_verifier.bin",
-        )
-    }
 }
 
 impl AggregationBackend for Layer0Aggregator {
     fn push_proof(&mut self, proof: Proof) -> Result<()> {
         ensure_proof_public_input_len(&proof, self.expected_leaf_pi_len, "leaf proof")?;
+        validate_leaf_proof_public_inputs(&proof, "leaf proof")?;
         self.buf.push(proof)
     }
 
@@ -296,7 +299,10 @@ impl AggregationBackend for Layer0Aggregator {
             bail!("there are no leaf proofs to aggregate");
         }
 
+        // Layer-0 prover commit does padding, deterministic ordering, and dummy-nullifier-preimage
+        // handling. Same-block and same-asset invariants remain enforced in-circuit.
         let proofs = self.buf.take_all();
+
         let prover = self
             .artifacts
             .new_session()
@@ -310,10 +316,7 @@ impl AggregationBackend for Layer0Aggregator {
     }
 
     fn verify(&self, proof: Proof) -> Result<()> {
-        let verifier = self.load_verifier()?;
-        verifier
-            .verify(proof)
-            .map_err(|e| anyhow!("layer-0 aggregated proof verification failed: {}", e))
+        self.artifacts.verify(proof)
     }
 
     fn load_common_data(&self, circuit_type: CircuitType) -> Result<CommonCircuitData<F, D>> {

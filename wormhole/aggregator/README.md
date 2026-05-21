@@ -1,33 +1,27 @@
 # qp-wormhole-aggregator
 
-Aggregates Wormhole leaf proofs through the production layer-0 aggregation stack.
+Aggregates Wormhole leaf proofs into recursive proofs.
 
-The shipping layer-0 implementation lives in `src/layer0/**` and uses the fixed compact-child
-`2x8` architecture:
+Production layer-0 aggregation is the compact-child 2x8 topology: two inner non-ZK proofs over 8 leaf slots each, wrapped by one outer ZK proof. Capacity is fixed at 16 leaves. The final public output is 344 felts: 232 semantic felts and 112 zero-tail felts.
 
-- Two non-ZK inner `8`-leaf proofs.
-- One final public ZK wrapper proof.
-- Fixed batch capacity of `16` leaf proofs.
-- Stable final public contract: `344` total felts, `232` semantic felts, `112` zero-tail felts.
+Layer-0 requires these artifacts for proving:
 
-Inner proof ordering is canonical and deterministic by design: slot `0` keeps a real proof when
-one is present, the remaining inner slots are ordered by public inputs, and the stable public
-interface is the final outer ZK wrapper. The old random shuffle is not treated as a privacy
-primitive in this topology.
+- `common.bin`, `verifier.bin`, `dummy_proof.bin`
+- `inner_common.bin`, `inner_verifier.bin`, `inner_prover.bin`, `inner_targets.bin`
+- `outer_common.bin`, `outer_verifier.bin`, `outer_prover.bin`, `outer_targets.bin`
+- `aggregated_common.bin`, `aggregated_verifier.bin`, `aggregated_prover.bin` as outer aliases for legacy consumers
 
-`Layer0Aggregator` is the production hot path. It warm-loads cached artifacts from the binaries
-directory, pads short batches with the shipping dummy-proof behavior, and returns the same final
-`aggregated_*` proof contract used by chain integration.
+Verifier-only loading requires only the common/verifier files. `Layer0Aggregator` and `Layer0Verifier` cache verifier data at construction; `verify()` uses the cached in-memory verifier.
 
-`Layer1Aggregator` remains available for aggregating full batches of layer-0 proofs when layer-1
-artifacts are generated.
+Zero exit-account digests are reserved for empty output slots. Leaf and aggregation validation enforce that a zero exit account has zero output amount. Compact-child ordering is deterministic and semantic; consumers should not infer original proof order from emitted exit/nullifier order.
 
-By default this crate keeps multithreaded proving enabled through the `multithread` feature, which
-turns on `qp-plonky2/parallel` in the shipping build path.
+`Layer1Aggregator` remains available for aggregating full batches of layer-0 proofs when layer-1 artifacts are generated.
+
+By default this crate keeps multithreaded proving enabled through the `multithread` feature, which turns on `qp-plonky2/parallel` in the shipping build path.
 
 ## Benchmarks
 
-The restored Criterion bench for the shipping layer-0 path lives in `benches/aggregator.rs`:
+The Criterion bench for the shipping layer-0 path lives in `benches/aggregator.rs`:
 
 ```sh
 cargo bench -p qp-wormhole-aggregator --bench aggregator

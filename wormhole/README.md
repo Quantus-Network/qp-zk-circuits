@@ -102,22 +102,19 @@ wormhole transactions. The production layer-0 aggregation path is the in-place c
 
 ## Aggregation System
 
-The production layer-0 aggregator is the fixed shipping compact-child `2x8` design:
+Production layer-0 aggregation uses a fixed compact-child topology:
 
-- Two non-ZK inner `8`-leaf proofs.
-- One final public ZK wrapper proof.
-- Fixed capacity of `16` leaf proofs per aggregated proof.
-- Stable final public contract of `344` felts: `232` semantic felts plus a `112`-felt zero tail.
-
-Key behaviors:
-
-- **Single-block storage proof constraint**: All real proofs (non-zero `block_hash`) must reference the same block for storage proofs.
-- **Two outputs per proof**: Each leaf supports `exit_account_1`/`output_amount_1` and `exit_account_2`/`output_amount_2`. Aggregation preserves the parsed account-slot semantics used by the existing public contract.
-- **Privacy via dummy hiding**: Proofs are shuffled before aggregation while keeping one real proof in slot 0 for reference values. Duplicate exit slots are zeroed (both sum and `exit_account`), making them indistinguishable from dummy padding slots.
-- **Dynamic dummy proofs**: Dummy proofs are generated on-the-fly for padding, so batches smaller than `16` still use the same shipping layer-0 wrapper. They use sentinel values (`block_hash = 0`, `output_amount_1 = 0`, `output_amount_2 = 0`, `exit_account = 0`) so the leaf circuit can bypass validation. No dummy proof binaries are checked in.
-- **Stable public input contract**: Parsed account-slot semantics, parsed nullifier semantics, and the legacy slot-0 behavior are preserved exactly.
-- **Public input types**: Public input parsing and aggregated outputs live in `wormhole/inputs` (`qp-wormhole-inputs`) and are shared by the circuit, prover, verifier, and aggregator.
-- **Legacy path removal**: The old single-stage layer-0 path is no longer present in the production namespace or test support code. The current checkout carries only the shipping `2x8` path.
+- **Capacity**: exactly 16 leaf slots. Non-empty batches with fewer than 16 real proofs are padded dynamically with dummy proofs.
+- **Topology**: two non-ZK inner aggregation proofs, each over 8 leaf slots, followed by one outer ZK wrapper proof over those two inner proofs.
+- **Final public output**: 344 felts total: 232 semantic felts and 112 zero-tail felts.
+- **Two outputs per leaf**: each leaf supports `exit_account_1`/`output_amount_1` and `exit_account_2`/`output_amount_2`; the final layer-0 proof exposes 32 exit slots.
+- **Single-block storage proof constraint**: all real proofs with non-zero `block_hash` must reference the same block for storage proofs.
+- **Zero exit-account invariant**: a zero exit-account digest means an empty output slot. The circuit and host validation enforce `exit_account == 0 => output_amount == 0` for both leaf output slots, so positive value cannot be silently dropped by aggregation.
+- **Dummy padding**: dummy proofs use `block_hash = 0`, zero output amounts, and zero exit accounts. Dummy asset and fee values do not force real proofs to use asset `0`; the compact-child circuits select reference asset/fee values from real proofs when padding is present.
+- **Ordering contract**: compact-child aggregation emits deterministic canonical order for real proofs. Downstream consumers should rely on parsed semantic data and the fixed layout, not original user-supplied proof order. Duplicate exit accounts are merged into the first emitted matching slot; duplicate slots and empty slots are zeroed.
+- **Cached verification**: production layer-0 aggregator/verifier construction loads verifier artifacts into memory. `verify()` does not reread layer-0 verifier/common files after construction.
+- **Public input types**: public input parsing and aggregated outputs live in `wormhole/inputs` (`qp-wormhole-inputs`) and are shared by the circuit, prover, verifier, and aggregator.
+- **Legacy path removal**: the old single-stage layer-0 path is no longer present in the production namespace or test support code. The current checkout carries only the shipping `2x8` path.
 
 ## Testing
 
@@ -129,9 +126,8 @@ The circuit builder generates leaf binaries, the shipping layer-0 inner/outer bi
 stable `aggregated_*` aliases used by chain integration, and a `config.json` with aggregation
 configuration. Re-run this after any circuit changes.
 
-`--num-leaf-proofs` is retained for API compatibility, but the production layer-0 aggregated
-output is fixed at `16` leaves. Leave it at `16` for normal shipping builds. `--num-layer0-proofs`
-is optional and only needed when also generating layer-1 artifacts.
+Layer-0 production capacity is fixed at 16 leaves, so `--num-leaf-proofs` must be `16`.
+`--num-layer0-proofs` is optional and only needed when also generating layer-1 artifacts.
 
 To build the layer-0 binary set, run the following command from the root of the workspace:
 
@@ -148,4 +144,5 @@ cargo run --release -p qp-wormhole-circuit-builder -- --num-leaf-proofs 16 --num
 This creates `common.bin`, `verifier.bin`, `prover.bin` (unless `--skip-prover`),
 `dummy_proof.bin`, shipping `inner_*` and `outer_*` layer-0 binaries, stable
 `aggregated_common.bin`, `aggregated_verifier.bin`, `aggregated_prover.bin`,
-`aggregated_targets.bin`, and `config.json` inside `generated-bins/`.
+`aggregated_targets.bin`, and `config.json` inside `generated-bins/`. Verifier-only usage needs
+common/verifier files only; proving requires the matching `*_prover.bin` files.

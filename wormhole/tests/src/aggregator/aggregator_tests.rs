@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use circuit_builder::generate_all_circuit_binaries;
+use plonky2::field::types::Field;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_inputs::PublicCircuitInputs;
 use std::{
@@ -13,7 +14,12 @@ use test_helpers::TestInputs;
 use wormhole_aggregator::{
     aggregator::{AggregationBackend, Layer0Aggregator},
     dummy_proof::load_dummy_proof,
-    layer0::circuit::constants::{INNER_NUM_LEAVES, TOTAL_NUM_LEAVES},
+    layer0::{
+        circuit::constants::{
+            EXIT_1_START, INNER_NUM_LEAVES, OUTPUT_AMOUNT_1_START, TOTAL_NUM_LEAVES,
+        },
+        prover::{Layer0AggregationArtifacts, Layer0Verifier},
+    },
 };
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_prover::WormholeProver;
@@ -198,6 +204,18 @@ fn aggregate_half_full_proof_array_into_tree() {
 }
 
 #[test]
+fn push_proof_rejects_zero_exit_positive_amount() {
+    setup_test_binaries();
+    let mut proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
+    proof.public_inputs[OUTPUT_AMOUNT_1_START] = F::from_canonical_u64(1);
+    proof.public_inputs[EXIT_1_START..EXIT_1_START + 4].copy_from_slice(&[F::ZERO; 4]);
+
+    let mut aggregator = make_aggregator();
+    let err = aggregator.push_proof(proof).unwrap_err();
+    assert!(err.to_string().contains("zero exit_account"));
+}
+
+#[test]
 fn aggregate_allows_nonzero_asset_id_when_dummy_padding_is_needed() {
     setup_test_binaries();
     let mut inputs = CircuitInputs::test_inputs_0();
@@ -259,6 +277,27 @@ fn aggregate_uses_cached_layer0_artifacts() {
     aggregator.verify(aggregated).unwrap();
 
     fs::remove_dir_all(bins_dir).unwrap();
+}
+
+#[test]
+fn verifier_only_loads_skip_prover_artifacts_but_full_prover_requires_prover_files() {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("qp-layer0-skip-prover-{suffix}"));
+    generate_all_circuit_binaries(&dir, false, TOTAL_NUM_LEAVES, None).unwrap();
+
+    Layer0Verifier::new_from_binaries_dir(&dir).unwrap();
+    let err = Layer0AggregationArtifacts::new_from_binaries_dir(&dir).unwrap_err();
+    let err = format!("{err:?}");
+
+    assert!(
+        err.contains("required inner prover artifact")
+            || err.contains("required outer prover artifact"),
+        "unexpected error: {err}"
+    );
+    fs::remove_dir_all(dir).unwrap();
 }
 
 /// This simulates a CLI-ish flow without prebuilt binaries:

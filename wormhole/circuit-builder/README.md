@@ -25,11 +25,15 @@ does not change the production layer-0 architecture.
 Use the generated artifacts with [qp-wormhole-prover], [qp-wormhole-verifier], and
 [qp-wormhole-aggregator].
 
+Use `--skip-prover` to emit verifier-only artifacts; proving APIs require the matching prover files.
+
 ## Usage
 
 ```text
 qp-wormhole-circuit-builder [--output <DIR>] [--num-leaf-proofs 16] [--num-layer0-proofs <N>] [--skip-prover]
 ```
+
+Layer-0 output includes `inner_common.bin`, `inner_verifier.bin`, `inner_targets.bin`, `outer_common.bin`, `outer_verifier.bin`, `outer_targets.bin`, and the corresponding prover files unless skipped. The outer artifacts are also written as `aggregated_*` aliases for existing layer-1 and verifier consumers.
 
 ## License
 

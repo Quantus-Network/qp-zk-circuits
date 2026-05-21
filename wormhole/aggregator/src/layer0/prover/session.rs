@@ -1,15 +1,17 @@
 use anyhow::{bail, Context, Result};
 use plonky2::{
-    plonk::{circuit_data::CommonCircuitData, proof::ProofWithPublicInputs},
+    plonk::{
+        circuit_data::{CommonCircuitData, VerifierCircuitData},
+        proof::ProofWithPublicInputs,
+    },
     util::serialization::DefaultGateSerializer,
 };
 #[cfg(feature = "multithread")]
 use rayon::ThreadPoolBuilder;
-#[cfg(feature = "multithread")]
-use std::sync::Arc;
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Instant,
 };
 use zk_circuits_common::circuit::{C, D, F};
@@ -23,7 +25,10 @@ use crate::{
                 load_inner_verifier_from_binaries_dir, InnerAggregationArtifacts,
                 InnerAggregationInputs,
             },
-            outer::{OuterAggregationArtifacts, OuterAggregationInputs},
+            outer::{
+                load_outer_verifier_from_binaries_dir, OuterAggregationArtifacts,
+                OuterAggregationInputs,
+            },
         },
     },
 };
@@ -64,6 +69,7 @@ pub struct Layer0AggregateOutput {
 pub struct Layer0AggregationArtifacts {
     bins_dir: PathBuf,
     expected_leaf_pi_len: usize,
+    verifier_artifacts: Layer0AggregationVerifierArtifacts,
     inner_artifacts: InnerAggregationArtifacts,
     outer_artifacts: OuterAggregationArtifacts,
     #[cfg(feature = "multithread")]
@@ -86,12 +92,24 @@ impl std::fmt::Debug for InnerParallelPools {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Layer0AggregationVerifierArtifacts {
+    bins_dir: PathBuf,
+    expected_leaf_pi_len: usize,
+    verifier_data: Arc<VerifierCircuitData<F, C, D>>,
+}
+
 #[derive(Debug)]
 pub struct Layer0AggregationProver {
     artifacts: Layer0AggregationArtifacts,
     proofs: Option<Vec<Proof>>,
     mode: InnerExecutionMode,
     verify_output: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct Layer0Verifier {
+    artifacts: Layer0AggregationVerifierArtifacts,
 }
 
 impl Layer0AggregationArtifacts {
@@ -111,6 +129,11 @@ impl Layer0AggregationArtifacts {
         }
         let _ = load_inner_verifier_from_binaries_dir(&bins_dir)
             .context("failed to load layer-0 inner verifier")?;
+        let verifier_artifacts = Layer0AggregationVerifierArtifacts::from_parts(
+            bins_dir.clone(),
+            leaf_common.num_public_inputs,
+            Arc::clone(&outer_artifacts.verifier_data),
+        );
         #[cfg(feature = "multithread")]
         let parallel_pools = build_inner_parallel_pools()
             .context("failed to build cached compact-child inner proving pools")?;
@@ -118,6 +141,7 @@ impl Layer0AggregationArtifacts {
         Ok(Self {
             bins_dir,
             expected_leaf_pi_len: leaf_common.num_public_inputs,
+            verifier_artifacts,
             inner_artifacts,
             outer_artifacts,
             #[cfg(feature = "multithread")]
@@ -138,14 +162,86 @@ impl Layer0AggregationArtifacts {
     }
 
     pub fn verify(&self, proof: Proof) -> Result<()> {
-        self.outer_artifacts
-            .verifier_data
-            .verify(proof)
-            .map_err(|e| anyhow::anyhow!("layer-0 proof verification failed: {}", e))
+        self.verifier_artifacts.verify(proof)
     }
 
     pub fn new_session(&self) -> Layer0AggregationProver {
         Layer0AggregationProver::from_artifacts(self)
+    }
+}
+
+impl Layer0AggregationVerifierArtifacts {
+    pub fn new_from_binaries_dir<P: AsRef<Path>>(bins_dir: P) -> Result<Self> {
+        let bins_dir = bins_dir.as_ref().to_path_buf();
+        let leaf_common = load_common_from_bins(&bins_dir, "common.bin")?;
+        if leaf_common.num_public_inputs != LEAF_PI_LEN {
+            bail!(
+                "leaf common public input length mismatch: expected {}, got {}",
+                LEAF_PI_LEN,
+                leaf_common.num_public_inputs
+            );
+        }
+        let verifier_data = Arc::new(
+            load_outer_verifier_from_binaries_dir(&bins_dir)
+                .context("failed to load compact-child layer-0 verifier artifacts")?,
+        );
+        Ok(Self::from_parts(
+            bins_dir,
+            leaf_common.num_public_inputs,
+            verifier_data,
+        ))
+    }
+
+    fn from_parts(
+        bins_dir: PathBuf,
+        expected_leaf_pi_len: usize,
+        verifier_data: Arc<VerifierCircuitData<F, C, D>>,
+    ) -> Self {
+        Self {
+            bins_dir,
+            expected_leaf_pi_len,
+            verifier_data,
+        }
+    }
+
+    pub fn bins_dir(&self) -> &Path {
+        &self.bins_dir
+    }
+
+    pub fn expected_leaf_pi_len(&self) -> usize {
+        self.expected_leaf_pi_len
+    }
+
+    pub fn num_leaf_proofs(&self) -> usize {
+        TOTAL_NUM_LEAVES
+    }
+
+    pub fn verify(&self, proof: Proof) -> Result<()> {
+        self.verifier_data
+            .verify(proof)
+            .map_err(|e| anyhow::anyhow!("layer-0 proof verification failed: {}", e))
+    }
+}
+
+impl Layer0Verifier {
+    pub fn new_from_binaries_dir<P: AsRef<Path>>(bins_dir: P) -> Result<Self> {
+        Ok(Self {
+            artifacts: Layer0AggregationVerifierArtifacts::new_from_binaries_dir(bins_dir)?,
+        })
+    }
+
+    pub fn from_artifacts(artifacts: &Layer0AggregationVerifierArtifacts) -> Self {
+        Self {
+            artifacts: artifacts.clone(),
+        }
+    }
+
+    pub fn verify(&self, proof: Proof) -> Result<()> {
+        self.artifacts.verify(proof)
+    }
+
+    pub fn expected_leaf_pi_len(&self) -> usize {
+        self.artifacts.expected_leaf_pi_len()
     }
 }
 
