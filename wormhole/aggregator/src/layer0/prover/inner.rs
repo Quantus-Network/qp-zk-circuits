@@ -2,7 +2,6 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use plonky2::{
-    field::types::PrimeField64,
     iop::witness::PartialWitness,
     plonk::{
         circuit_data::{
@@ -22,19 +21,19 @@ use zk_circuits_common::utils::bytes_to_digest;
 
 use crate::{
     common::utils::load_verifier_data_from_bytes,
-    common::utils::{ensure_proof_public_input_len, is_dummy_leaf_proof},
+    common::utils::validate_leaf_proof_public_inputs,
     dummy_proof::{generate_random_nullifier_preimage, load_dummy_proof},
 };
 
 use crate::layer0::{
     circuit::{
         constants::{
-            INNER_COMMON_FILENAME, INNER_NUM_LEAVES, INNER_PROVER_FILENAME, INNER_TARGETS_FILENAME,
-            INNER_VERIFIER_FILENAME,
+            INNER_COMMON_FILENAME, INNER_NUM_LEAVES, INNER_OUTPUT_PI_LEN, INNER_PROVER_FILENAME,
+            INNER_TARGETS_FILENAME, INNER_VERIFIER_FILENAME, LEAF_PI_LEN,
         },
         inner::{InnerAggregationCircuit, InnerAggregationCircuitTargets},
     },
-    prover::witness::fill_inner_aggregation_witness,
+    prover::{ordering::canonicalize_leaf_proofs, witness::fill_inner_aggregation_witness},
 };
 
 type Proof = ProofWithPublicInputs<F, C, D>;
@@ -93,6 +92,13 @@ impl InnerAggregationArtifacts {
         let inner_common =
             CommonCircuitData::from_bytes(inner_common_bytes.to_vec(), &gate_serializer)
                 .map_err(|e| anyhow!("Failed to deserialize inner common data: {}", e))?;
+        if inner_common.num_public_inputs != INNER_OUTPUT_PI_LEN {
+            bail!(
+                "inner common public input length mismatch: expected {}, got {}",
+                INNER_OUTPUT_PI_LEN,
+                inner_common.num_public_inputs
+            );
+        }
 
         let inner_prover_only = ProverOnlyCircuitData::from_bytes(
             inner_prover_only_bytes,
@@ -104,15 +110,29 @@ impl InnerAggregationArtifacts {
         let leaf_verifier_data =
             load_verifier_data_from_bytes(leaf_common_bytes, leaf_verifier_only_bytes, "leaf")?;
         let expected_leaf_pi_len = leaf_verifier_data.common.num_public_inputs;
+        if expected_leaf_pi_len != LEAF_PI_LEN {
+            bail!(
+                "leaf common public input length mismatch: expected {}, got {}",
+                LEAF_PI_LEN,
+                expected_leaf_pi_len
+            );
+        }
+
+        let canonical_circuit = InnerAggregationCircuit::new(
+            leaf_verifier_data.common.clone(),
+            &leaf_verifier_data.verifier_only,
+        );
+        let canonical_targets = canonical_circuit.targets();
+        let verifier_data = Arc::new(canonical_circuit.build_verifier());
 
         let targets = match inner_targets_bytes {
-            Some(bytes) => InnerAggregationCircuitTargets::from_bytes(bytes)
-                .context("failed to deserialize inner target layout")?,
-            None => InnerAggregationCircuit::new(
-                leaf_verifier_data.common.clone(),
-                &leaf_verifier_data.verifier_only,
-            )
-            .targets(),
+            Some(bytes) => {
+                let loaded = InnerAggregationCircuitTargets::from_bytes(bytes)
+                    .context("failed to deserialize inner target layout")?;
+                ensure_inner_targets_match_canonical(&loaded, &canonical_targets)?;
+                loaded
+            }
+            None => canonical_targets,
         };
 
         let dummy_proof_template =
@@ -124,13 +144,7 @@ impl InnerAggregationArtifacts {
                 prover_only: inner_prover_only,
                 common: inner_common,
             }),
-            verifier_data: Arc::new(
-                InnerAggregationCircuit::new(
-                    leaf_verifier_data.common.clone(),
-                    &leaf_verifier_data.verifier_only,
-                )
-                .build_verifier(),
-            ),
+            verifier_data,
             targets,
             expected_leaf_pi_len,
             dummy_proof_template: Arc::new(dummy_proof_template),
@@ -190,7 +204,7 @@ impl InnerAggregationArtifacts {
         let inner_prover_only_bytes =
             fs::read(bins_dir.join(INNER_PROVER_FILENAME)).with_context(|| {
                 format!(
-                    "Failed to read {}",
+                    "Failed to read required inner prover artifact {}",
                     bins_dir.join(INNER_PROVER_FILENAME).display()
                 )
             })?;
@@ -240,6 +254,22 @@ impl InnerAggregationArtifacts {
     }
 }
 
+fn ensure_inner_targets_match_canonical(
+    loaded: &InnerAggregationCircuitTargets,
+    canonical: &InnerAggregationCircuitTargets,
+) -> Result<()> {
+    let loaded_bytes = loaded
+        .to_bytes()
+        .context("failed to serialize loaded inner target layout for validation")?;
+    let canonical_bytes = canonical
+        .to_bytes()
+        .context("failed to serialize canonical inner target layout for validation")?;
+    if loaded_bytes != canonical_bytes {
+        bail!("inner target layout does not match the compiled compact-child 2x8 topology");
+    }
+    Ok(())
+}
+
 /// Mutable proving session backed by cached inner artifacts.
 #[derive(Debug)]
 pub struct InnerAggregationProver {
@@ -276,11 +306,9 @@ impl InnerAggregationProver {
                 self.num_leaf_proofs()
             );
         }
+        validate_leaf_proofs_public_inputs(&proofs)?;
 
         let num_dummies_needed = self.num_leaf_proofs().saturating_sub(proofs.len());
-        if num_dummies_needed > 0 {
-            validate_leaf_proof_public_inputs(&proofs)?;
-        }
 
         for _ in 0..num_dummies_needed {
             proofs.push((*self.dummy_proof_template).clone());
@@ -331,6 +359,13 @@ pub fn load_inner_verifier_from_binaries_dir(
     })?;
     let common = CommonCircuitData::from_bytes(common_bytes, &gate_serializer)
         .map_err(|e| anyhow!("Failed to deserialize inner common data: {}", e))?;
+    if common.num_public_inputs != INNER_OUTPUT_PI_LEN {
+        bail!(
+            "inner common public input length mismatch: expected {}, got {}",
+            INNER_OUTPUT_PI_LEN,
+            common.num_public_inputs
+        );
+    }
 
     let verifier_bytes = fs::read(bins_dir.join(INNER_VERIFIER_FILENAME)).with_context(|| {
         format!(
@@ -356,39 +391,12 @@ pub fn load_inner_verifier_from_binaries_dir(
 /// as a privacy boundary. If inner proofs ever become externally exposed, this ordering decision
 /// must be revisited.
 fn canonicalize_proofs_preserving_first_real_inner(proofs: &mut [Proof]) {
-    proofs.sort_by(compare_inner_proofs_canonically);
+    canonicalize_leaf_proofs(proofs);
 }
 
-fn compare_inner_proofs_canonically(left: &Proof, right: &Proof) -> std::cmp::Ordering {
-    match (
-        is_dummy_leaf_proof(left).unwrap_or(false),
-        is_dummy_leaf_proof(right).unwrap_or(false),
-    ) {
-        (false, true) => std::cmp::Ordering::Less,
-        (true, false) => std::cmp::Ordering::Greater,
-        _ => compare_proofs_by_public_inputs(left, right),
-    }
-}
-
-fn compare_proofs_by_public_inputs(left: &Proof, right: &Proof) -> std::cmp::Ordering {
-    left.public_inputs
-        .iter()
-        .map(PrimeField64::to_canonical_u64)
-        .cmp(
-            right
-                .public_inputs
-                .iter()
-                .map(PrimeField64::to_canonical_u64),
-        )
-}
-
-fn validate_leaf_proof_public_inputs(proofs: &[Proof]) -> Result<()> {
+fn validate_leaf_proofs_public_inputs(proofs: &[Proof]) -> Result<()> {
     for proof in proofs {
-        ensure_proof_public_input_len(
-            proof,
-            crate::layer0::circuit::constants::LEAF_PI_LEN,
-            "leaf proof",
-        )?;
+        validate_leaf_proof_public_inputs(proof, "leaf proof")?;
     }
 
     Ok(())
@@ -407,5 +415,114 @@ fn read_optional_targets_file(bins_dir: &Path) -> Result<Option<Vec<u8>>> {
         Ok(bytes) => Ok(Some(bytes)),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(err) => Err(anyhow!("Failed to read {}: {}", path.display(), err)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layer0::circuit::constants::{
+        ASSET_ID_START, BLOCK_HASH_START, BLOCK_NUMBER_START, EXIT_1_START, LEAF_PI_LEN,
+        NULLIFIER_START, OUTPUT_AMOUNT_1_START, VOLUME_FEE_BPS_START,
+    };
+    use plonky2::field::types::Field;
+    use test_helpers::fake_leaf::{build_fake_leaf_circuit, prove_fake_leaf};
+
+    #[test]
+    fn zero_exit_positive_amount_is_rejected_before_inner_witness_filling() {
+        let (data, targets) = build_fake_leaf_circuit();
+        let dummy = prove_fake_leaf(&data, &targets, dummy_leaf_pi());
+        let bad = prove_fake_leaf(&data, &targets, zero_exit_positive_leaf_pi());
+        let artifacts =
+            InnerAggregationArtifacts::new(data.common.clone(), data.verifier_only.clone(), dummy);
+
+        let err = artifacts
+            .new_session()
+            .commit(InnerAggregationInputs { proofs: vec![bad] })
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("zero exit_account"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn aggregator_uses_nonzero_asset_with_dummy_padding() {
+        let (data, targets) = build_fake_leaf_circuit();
+        let dummy = prove_fake_leaf(&data, &targets, dummy_leaf_pi());
+        let real = prove_fake_leaf(&data, &targets, real_leaf_pi(7));
+        let artifacts =
+            InnerAggregationArtifacts::new(data.common.clone(), data.verifier_only.clone(), dummy);
+
+        let proof = artifacts
+            .new_session()
+            .commit(InnerAggregationInputs { proofs: vec![real] })
+            .unwrap()
+            .prove()
+            .unwrap();
+
+        artifacts.verifier_data.verify(proof.clone()).unwrap();
+        assert_eq!(
+            proof.public_inputs
+                [crate::layer0::circuit::constants::aggregated_output::ASSET_ID_OFFSET],
+            F::from_canonical_u64(7)
+        );
+    }
+
+    #[test]
+    fn validation_rejects_malformed_public_input_length_in_full_inner_batch() {
+        let (data, targets) = build_fake_leaf_circuit();
+        let dummy = prove_fake_leaf(&data, &targets, dummy_leaf_pi());
+        let mut proofs = (0..INNER_NUM_LEAVES)
+            .map(|_| prove_fake_leaf(&data, &targets, real_leaf_pi(0)))
+            .collect::<Vec<_>>();
+        proofs[3].public_inputs.pop();
+        let artifacts =
+            InnerAggregationArtifacts::new(data.common.clone(), data.verifier_only.clone(), dummy);
+
+        let err = artifacts
+            .new_session()
+            .commit(InnerAggregationInputs { proofs })
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("public input length mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    fn zero_exit_positive_leaf_pi() -> [F; LEAF_PI_LEN] {
+        let mut public_inputs = [F::ZERO; LEAF_PI_LEN];
+        public_inputs[ASSET_ID_START] = F::ZERO;
+        public_inputs[OUTPUT_AMOUNT_1_START] = F::from_canonical_u64(11);
+        public_inputs[VOLUME_FEE_BPS_START] = F::from_canonical_u64(10);
+        public_inputs[NULLIFIER_START..NULLIFIER_START + 4].copy_from_slice(&digest(100));
+        public_inputs[EXIT_1_START..EXIT_1_START + 4].copy_from_slice(&[F::ZERO; 4]);
+        public_inputs[BLOCK_HASH_START..BLOCK_HASH_START + 4].copy_from_slice(&digest(200));
+        public_inputs[BLOCK_NUMBER_START] = F::from_canonical_u64(99);
+        public_inputs
+    }
+
+    fn real_leaf_pi(asset_id: u64) -> [F; LEAF_PI_LEN] {
+        let mut public_inputs = [F::ZERO; LEAF_PI_LEN];
+        public_inputs[ASSET_ID_START] = F::from_canonical_u64(asset_id);
+        public_inputs[OUTPUT_AMOUNT_1_START] = F::from_canonical_u64(11);
+        public_inputs[VOLUME_FEE_BPS_START] = F::from_canonical_u64(10);
+        public_inputs[NULLIFIER_START..NULLIFIER_START + 4].copy_from_slice(&digest(100));
+        public_inputs[EXIT_1_START..EXIT_1_START + 4].copy_from_slice(&digest(150));
+        public_inputs[BLOCK_HASH_START..BLOCK_HASH_START + 4].copy_from_slice(&digest(200));
+        public_inputs[BLOCK_NUMBER_START] = F::from_canonical_u64(99);
+        public_inputs
+    }
+
+    fn dummy_leaf_pi() -> [F; LEAF_PI_LEN] {
+        let mut public_inputs = [F::ZERO; LEAF_PI_LEN];
+        public_inputs[VOLUME_FEE_BPS_START] = F::from_canonical_u64(10);
+        public_inputs
+    }
+
+    fn digest(seed: u64) -> [F; 4] {
+        core::array::from_fn(|idx| F::from_canonical_u64(seed + idx as u64))
     }
 }
