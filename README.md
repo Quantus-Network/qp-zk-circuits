@@ -11,8 +11,8 @@ This repository is a Cargo workspace organized to clearly separate different cir
   - [`circuit/`](./wormhole/circuit/): The core Plonky2 circuit definition for Wormhole message verification.
   - [`prover/`](./wormhole/prover/): The prover for the Wormhole circuit.
   - [`verifier/`](./wormhole/verifier/): The verifier for the Wormhole circuit.
-  - [`aggregator/`](./wormhole/aggregator/): A circuit for recursively aggregating Wormhole proofs.
-  - [`tests/`](./wormhole/tests/): Integration tests for the complete Wormhole circuit.
+  - [`aggregator/`](./wormhole/aggregator/): The Wormhole aggregation crate, including the production compact-child `2x8` layer-0 implementation under `src/layer0/**`.
+  - [`tests/`](./wormhole/tests/): Integration and regression tests for the complete Wormhole circuit stack.
 - [`voting/`](./voting/): A separate circuit implementation for a voting system.
 
 ## Prerequisites
@@ -64,19 +64,24 @@ Run the entire test suite:
 cargo test
 ```
 
-You can also run tests for a specific package, for example, for the `wormhole-circuit`:
+You can also run tests for a specific package, for example, for `qp-wormhole-circuit`:
 
 ```sh
-cargo test -p wormhole-circuit
+cargo test -p qp-wormhole-circuit
 ```
-
 
 ## Benchmarks
 
-To run prover and verifier benchmarks:
+To run all workspace benchmarks:
 
 ```sh
 cargo bench
+```
+
+The restored production layer-0 Criterion bench lives under `wormhole/aggregator/benches`:
+
+```sh
+cargo bench -p qp-wormhole-aggregator --bench aggregator
 ```
 
 ## CI/CD and Release Process

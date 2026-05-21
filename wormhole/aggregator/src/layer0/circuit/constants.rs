@@ -89,10 +89,10 @@ pub mod aggregated_output {
     }
 }
 
-/// Fixed inner batch size for the compact-child 2x8 layer-0 core.
+/// Fixed inner batch size for the shipping 2x8 layer-0 path.
 pub const INNER_NUM_LEAVES: usize = 8;
 
-/// Final compact-child leaf capacity.
+/// Final production leaf capacity.
 pub const TOTAL_NUM_LEAVES: usize = INNER_NUM_LEAVES * 2;
 
 /// Inner artifact filenames.
@@ -107,7 +107,7 @@ pub const OUTER_VERIFIER_FILENAME: &str = "outer_verifier.bin";
 pub const OUTER_PROVER_FILENAME: &str = "outer_prover.bin";
 pub const OUTER_TARGETS_FILENAME: &str = "outer_targets.bin";
 
-/// Shared compact-child PI accounting for the 2x8 topology.
+/// Shared compact-child PI accounting for the shipping 2x8 topology.
 pub const INNER_EXIT_SLOTS: usize = aggregated_output::exit_slots_count(INNER_NUM_LEAVES);
 pub const INNER_OUTPUT_PI_LEN: usize = aggregated_output::HEADER_LEN
     + INNER_EXIT_SLOTS * aggregated_output::EXIT_SLOT_LEN
@@ -128,8 +128,6 @@ pub const OUTER_CHILD_PI_LEN: usize = OUTER_CHILD_NULLIFIERS_START + OUTER_CHILD
 pub const OUTER_OUTPUT_PI_LEN: usize = aggregated_output::pi_len(TOTAL_NUM_LEAVES);
 pub const OUTER_FINAL_EXIT_SLOTS: usize = aggregated_output::exit_slots_count(TOTAL_NUM_LEAVES);
 
-/// Inner aggregation is an internal non-ZK stage. The final outer wrapper keeps the public ZK
-/// behavior by using `outer_circuit_config()`.
 pub fn inner_circuit_config() -> CircuitConfig {
     CircuitConfig::standard_recursion_config()
 }

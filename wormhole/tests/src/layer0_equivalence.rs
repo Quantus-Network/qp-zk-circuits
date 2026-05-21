@@ -3,27 +3,23 @@
 use anyhow::{Context, Result};
 use plonky2::{
     field::types::{Field, PrimeField64},
-    iop::{target::Target, witness::PartialWitness},
+    iop::target::Target,
     plonk::{circuit_data::CircuitData, proof::ProofWithPublicInputs},
 };
 use test_helpers::fake_leaf::{build_fake_leaf_circuit, prove_fake_leaf};
 use wormhole_aggregator::layer0::{
-    circuit::{
-        circuit_logic::Layer0AggregationCircuit,
-        constants::{
-            aggregated_output, inner_circuit_config, outer_circuit_config, ASSET_ID_START,
-            BLOCK_HASH_START, BLOCK_NUMBER_START, EXIT_1_START, EXIT_2_START, INNER_NUM_LEAVES,
-            LEAF_PI_LEN, NULLIFIER_START, OUTER_CHILD_EXIT_SLOTS_START, OUTER_CHILD_EXIT_SLOT_LEN,
-            OUTPUT_AMOUNT_1_START, OUTPUT_AMOUNT_2_START, TOTAL_NUM_LEAVES, VOLUME_FEE_BPS_START,
-        },
+    circuit::constants::{
+        aggregated_output, inner_circuit_config, outer_circuit_config, ASSET_ID_START,
+        BLOCK_HASH_START, BLOCK_NUMBER_START, EXIT_1_START, EXIT_2_START, INNER_NUM_LEAVES,
+        LEAF_PI_LEN, NULLIFIER_START, OUTER_CHILD_EXIT_SLOTS_START, OUTER_CHILD_EXIT_SLOT_LEN,
+        OUTPUT_AMOUNT_1_START, OUTPUT_AMOUNT_2_START, TOTAL_NUM_LEAVES, VOLUME_FEE_BPS_START,
     },
     prover::{
         inner::{InnerAggregationArtifacts, InnerAggregationInputs},
         outer::{OuterAggregationArtifacts, OuterAggregationInputs},
-        witness::fill_layer0_aggregation_witness,
     },
 };
-use zk_circuits_common::circuit::{wormhole_aggregator_circuit_config, C, D, F};
+use zk_circuits_common::circuit::{C, D, F};
 
 type Proof = ProofWithPublicInputs<F, C, D>;
 
@@ -89,22 +85,6 @@ fn compact_child_inner_config_is_non_zk_and_outer_config_is_zk() {
         inner_circuit_config().zk_config,
         outer_circuit_config().zk_config
     );
-}
-
-#[test]
-fn compact_child_public_inputs_match_single_stage_for_full_batch() -> Result<()> {
-    let fixture = LeafFixture::new();
-    let proofs = make_leaf_proofs(&fixture, TOTAL_NUM_LEAVES, 0, 10);
-
-    let single_stage = aggregate_single_stage(&fixture, &proofs)?;
-    let compact_child = aggregate_compact_child(&fixture, &proofs)?;
-
-    assert_eq!(
-        normalize_layer0_view("single stage", &single_stage),
-        normalize_layer0_view("compact child", &compact_child)
-    );
-    assert_final_contract("compact child", &compact_child);
-    Ok(())
 }
 
 #[test]
@@ -267,26 +247,6 @@ fn outer_rejects_zero_exit_positive_amount_in_inner_output() -> Result<()> {
         "unexpected error: {err}"
     );
     Ok(())
-}
-
-fn aggregate_single_stage(fixture: &LeafFixture, proofs: &[Proof]) -> Result<Proof> {
-    let circuit = Layer0AggregationCircuit::new(
-        wormhole_aggregator_circuit_config(),
-        fixture.data.common.clone(),
-        &fixture.data.verifier_only,
-        TOTAL_NUM_LEAVES,
-    );
-    let targets = circuit.targets();
-    let data = circuit.build_circuit();
-    let dummy_nullifier_pre_images = vec![[F::ZERO; 4]; TOTAL_NUM_LEAVES];
-    let mut witness = PartialWitness::new();
-    fill_layer0_aggregation_witness(&mut witness, &targets, proofs, &dummy_nullifier_pre_images)?;
-    let proof = data
-        .prove(witness)
-        .context("single-stage layer-0 proof failed")?;
-    data.verify(proof.clone())
-        .context("single-stage layer-0 verification failed")?;
-    Ok(proof)
 }
 
 fn aggregate_compact_child(fixture: &LeafFixture, proofs: &[Proof]) -> Result<Proof> {

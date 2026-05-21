@@ -21,7 +21,6 @@ subxt = "0.44.2"
 tokio = "1.48.0"
 wormhole-aggregator = { package = "qp-wormhole-aggregator", version = "2.0.1", path = "../aggregator", default-features = false, features = [
 	"multithread",
-	"no_zk",
 	"std",
 ] }
 wormhole-circuit = { package = "qp-wormhole-circuit", version = "2.0.1", path = "../circuit", default-features = false, features = [

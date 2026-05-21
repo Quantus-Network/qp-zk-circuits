@@ -1,12 +1,16 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use std::fs::{create_dir_all, write};
 use std::path::Path;
+use wormhole_aggregator::layer0::circuit::{
+    constants::TOTAL_NUM_LEAVES, generate_layer0_circuit_binaries,
+};
 use wormhole_aggregator::layer1::circuit::generate_layer1_circuit_binaries;
 
 use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
-use wormhole_aggregator::layer0::circuit::build::generate_layer0_circuit_binaries;
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use zk_circuits_common::circuit::{wormhole_leaf_circuit_config, C, D};
+
+pub const SHIPPING_LAYER0_NUM_LEAVES: usize = TOTAL_NUM_LEAVES;
 
 // Re-export CircuitBinsConfig from aggregator so users of circuit-builder can access it
 pub use wormhole_aggregator::CircuitBinsConfig;
@@ -89,21 +93,24 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
 /// # Arguments
 /// * `output_dir` - Directory to write the binaries to
 /// * `include_prover` - Whether to include the prover binary
-/// * `num_leaf_proofs` - Number of leaf proofs aggregated into a single proof
-/// * `num_layer0_proofs` - Optional param for number of inner proofs (for layer-1 circuit). Set to none if you only want layer-0 aggregation.
+/// * `num_leaf_proofs` - Legacy parameter retained for API compatibility. The shipping
+///   aggregated output is fixed at 16 leaf proofs.
+/// * `num_layer0_proofs` - Optional param for number of inner proofs (for layer-1 circuit). Set to none if you only want layer-1 disabled.
 pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
     include_prover: bool,
     num_leaf_proofs: usize,
     num_layer0_proofs: Option<usize>,
 ) -> Result<()> {
+    ensure_supported_num_leaf_proofs(num_leaf_proofs)?;
+
     let output_path = output_dir.as_ref();
 
     // Generate regular circuit binaries
     generate_circuit_binaries(output_path, include_prover)?;
 
-    // Generate aggregated circuit binaries
-    generate_layer0_circuit_binaries(output_path, num_leaf_proofs, include_prover)?;
+    // Generate the shipping 2x8 aggregation stack behind the stable aggregated_* filenames.
+    generate_layer0_circuit_binaries(output_path, SHIPPING_LAYER0_NUM_LEAVES, include_prover)?;
 
     // If num_layer0_proofs is specified, generate layer-1 aggregation circuit binaries
     if let Some(num_layer0_proofs) = num_layer0_proofs {
@@ -111,8 +118,49 @@ pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
     }
 
     // Save config file alongside binaries
-    let config = CircuitBinsConfig::new(num_leaf_proofs, num_layer0_proofs);
+    let config = CircuitBinsConfig::new(SHIPPING_LAYER0_NUM_LEAVES, num_layer0_proofs);
     config.save(output_path)?;
 
     Ok(())
+}
+
+fn ensure_supported_num_leaf_proofs(num_leaf_proofs: usize) -> Result<()> {
+    if num_leaf_proofs != SHIPPING_LAYER0_NUM_LEAVES {
+        bail!(
+            "shipping compact-child 2x8 layer-0 artifacts are fixed at {} leaves; received {}; pass {} or use layer-1 for higher-level aggregation",
+            SHIPPING_LAYER0_NUM_LEAVES,
+            num_leaf_proofs,
+            SHIPPING_LAYER0_NUM_LEAVES
+        );
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generate_all_circuit_binaries;
+    use std::{
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn unused_temp_path(name: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("qp-circuit-builder-{name}-{suffix}"))
+    }
+
+    #[test]
+    fn generate_all_circuit_binaries_rejects_unsupported_leaf_count_before_generation() {
+        let output_dir = unused_temp_path("unsupported-leaf-count");
+        let err = generate_all_circuit_binaries(&output_dir, false, 32, None).unwrap_err();
+        let err_text = err.to_string();
+
+        assert!(err_text.contains("fixed at 16"));
+        assert!(!err_text.contains("common.bin"));
+        assert!(!output_dir.exists());
+    }
 }
