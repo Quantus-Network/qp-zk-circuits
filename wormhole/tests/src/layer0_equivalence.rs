@@ -13,8 +13,8 @@ use wormhole_aggregator::layer0::{
         constants::{
             aggregated_output, inner_circuit_config, outer_circuit_config, ASSET_ID_START,
             BLOCK_HASH_START, BLOCK_NUMBER_START, EXIT_1_START, EXIT_2_START, INNER_NUM_LEAVES,
-            LEAF_PI_LEN, NULLIFIER_START, OUTER_CHILD_EXIT_SLOTS_START, OUTER_CHILD_EXIT_SLOT_LEN,
-            OUTPUT_AMOUNT_1_START, OUTPUT_AMOUNT_2_START, TOTAL_NUM_LEAVES, VOLUME_FEE_BPS_START,
+            LEAF_PI_LEN, NULLIFIER_START, OUTPUT_AMOUNT_1_START, OUTPUT_AMOUNT_2_START,
+            TOTAL_NUM_LEAVES, VOLUME_FEE_BPS_START,
         },
     },
     prover::{
@@ -140,135 +140,6 @@ fn compact_child_inner_outputs_are_canonical_for_reordered_inputs() -> Result<()
     Ok(())
 }
 
-#[test]
-fn public_input_order_is_deterministic_for_shuffled_compact_child_inputs() -> Result<()> {
-    let fixture = LeafFixture::new();
-    let proofs = make_leaf_proofs(&fixture, TOTAL_NUM_LEAVES, 0, 10);
-    let shuffled = (0..TOTAL_NUM_LEAVES)
-        .map(|idx| proofs[(idx * 5 + 3) % TOTAL_NUM_LEAVES].clone())
-        .collect::<Vec<_>>();
-
-    let original = aggregate_compact_child(&fixture, &proofs)?;
-    let shuffled = aggregate_compact_child(&fixture, &shuffled)?;
-
-    assert_eq!(original.public_inputs, shuffled.public_inputs);
-    Ok(())
-}
-
-#[test]
-fn zero_exit_positive_amount_in_first_output_is_rejected_before_inner_aggregation() {
-    let fixture = LeafFixture::new();
-    let proof = fixture.prove(leaf_pi_with_zero_exit_positive_amount(0, 0));
-
-    let err = inner_artifacts(&fixture)
-        .new_session()
-        .commit(InnerAggregationInputs {
-            proofs: vec![proof],
-        })
-        .unwrap_err();
-
-    assert!(
-        err.to_string().contains("zero exit_account"),
-        "unexpected error: {err}"
-    );
-}
-
-#[test]
-fn zero_exit_positive_amount_in_second_output_is_rejected_before_inner_aggregation() {
-    let fixture = LeafFixture::new();
-    let proof = fixture.prove(leaf_pi_with_zero_exit_positive_amount(1, 0));
-
-    let err = inner_artifacts(&fixture)
-        .new_session()
-        .commit(InnerAggregationInputs {
-            proofs: vec![proof],
-        })
-        .unwrap_err();
-
-    assert!(
-        err.to_string().contains("zero exit_account"),
-        "unexpected error: {err}"
-    );
-}
-
-#[test]
-fn zero_exit_positive_amount_across_inner_groups_is_rejected() {
-    let fixture = LeafFixture::new();
-    let mut proofs = make_leaf_proofs(&fixture, INNER_NUM_LEAVES, 0, 10);
-    proofs.push(fixture.prove(leaf_pi_with_zero_exit_positive_amount(
-        0,
-        INNER_NUM_LEAVES as u64,
-    )));
-
-    let err = aggregate_compact_child(&fixture, &proofs).unwrap_err();
-
-    let err = format!("{err:?}");
-    assert!(err.contains("zero exit_account"), "unexpected error: {err}");
-}
-
-#[test]
-fn zero_exit_zero_amount_empty_slot_is_accepted_with_dummy_padding() -> Result<()> {
-    let fixture = LeafFixture::new();
-    let proof = fixture.prove(real_leaf_pi(0, 0, 10, 25));
-
-    let aggregated = aggregate_compact_child(&fixture, &[proof])?;
-
-    assert_final_contract("zero exit empty slot", &aggregated);
-    Ok(())
-}
-
-#[test]
-fn nonzero_exit_positive_amount_is_accepted() -> Result<()> {
-    let fixture = LeafFixture::new();
-    let proof = fixture.prove(real_leaf_pi(0, 0, 10, 25));
-
-    let inner = prove_inner_batch(&fixture, vec![proof.clone()])?;
-    let aggregated = aggregate_compact_child(&fixture, &[proof])?;
-
-    let parsed = normalize_layer0_view("nonzero exit positive amount", &aggregated);
-    assert!(parsed.slots.iter().any(|(_, amount)| *amount == 25));
-    assert_eq!(
-        inner.public_inputs[aggregated_output::ASSET_ID_OFFSET],
-        F::ZERO
-    );
-    Ok(())
-}
-
-#[test]
-fn outer_rejects_zero_exit_positive_amount_in_inner_output() -> Result<()> {
-    let fixture = LeafFixture::new();
-    let inner_artifacts = inner_artifacts(&fixture);
-    let outer_artifacts = outer_artifacts(&inner_artifacts);
-    let inner_a = inner_artifacts
-        .new_session()
-        .commit(InnerAggregationInputs {
-            proofs: vec![fixture.prove(real_leaf_pi(0, 0, 10, 11))],
-        })?
-        .prove()?;
-    let mut bad_inner_b = inner_artifacts
-        .new_session()
-        .commit(InnerAggregationInputs {
-            proofs: vec![fixture.prove(real_leaf_pi(1, 0, 10, 12))],
-        })?
-        .prove()?;
-
-    let empty_slot_base = OUTER_CHILD_EXIT_SLOTS_START + OUTER_CHILD_EXIT_SLOT_LEN;
-    bad_inner_b.public_inputs[empty_slot_base] = F::from_canonical_u64(99);
-
-    let err = outer_artifacts
-        .new_session()
-        .commit(OuterAggregationInputs {
-            proofs: vec![inner_a, bad_inner_b],
-        })
-        .unwrap_err();
-
-    assert!(
-        err.to_string().contains("zero exit_account"),
-        "unexpected error: {err}"
-    );
-    Ok(())
-}
-
 fn aggregate_single_stage(fixture: &LeafFixture, proofs: &[Proof]) -> Result<Proof> {
     let circuit = Layer0AggregationCircuit::new(
         wormhole_aggregator_circuit_config(),
@@ -292,9 +163,7 @@ fn aggregate_single_stage(fixture: &LeafFixture, proofs: &[Proof]) -> Result<Pro
 fn aggregate_compact_child(fixture: &LeafFixture, proofs: &[Proof]) -> Result<Proof> {
     let inner_artifacts = inner_artifacts(fixture);
     let outer_artifacts = outer_artifacts(&inner_artifacts);
-    let mut proofs = proofs.to_vec();
-    sort_proofs_canonically_for_test(&mut proofs);
-    let (group_a, group_b) = split_for_inner_batches(&proofs);
+    let (group_a, group_b) = split_for_inner_batches(proofs);
 
     let inner_a = inner_artifacts
         .new_session()
@@ -351,20 +220,6 @@ fn outer_artifacts(inner: &InnerAggregationArtifacts) -> OuterAggregationArtifac
 fn split_for_inner_batches(proofs: &[Proof]) -> (Vec<Proof>, Vec<Proof>) {
     let split_at = proofs.len().min(INNER_NUM_LEAVES);
     (proofs[..split_at].to_vec(), proofs[split_at..].to_vec())
-}
-
-fn sort_proofs_canonically_for_test(proofs: &mut [Proof]) {
-    proofs.sort_by(|left, right| {
-        left.public_inputs
-            .iter()
-            .map(PrimeField64::to_canonical_u64)
-            .cmp(
-                right
-                    .public_inputs
-                    .iter()
-                    .map(PrimeField64::to_canonical_u64),
-            )
-    });
 }
 
 fn make_leaf_proofs(
@@ -471,22 +326,6 @@ fn real_leaf_pi(
     public_inputs[EXIT_2_START..EXIT_2_START + 4].copy_from_slice(&[F::ZERO; 4]);
     public_inputs[BLOCK_HASH_START..BLOCK_HASH_START + 4].copy_from_slice(&digest(3_000));
     public_inputs[BLOCK_NUMBER_START] = F::from_canonical_u64(99);
-    public_inputs
-}
-
-fn leaf_pi_with_zero_exit_positive_amount(output_idx: usize, idx: u64) -> [F; LEAF_PI_LEN] {
-    let mut public_inputs = real_leaf_pi(idx, 0, 10, 7);
-    match output_idx {
-        0 => {
-            public_inputs[OUTPUT_AMOUNT_1_START] = F::from_canonical_u64(7);
-            public_inputs[EXIT_1_START..EXIT_1_START + 4].copy_from_slice(&[F::ZERO; 4]);
-        }
-        1 => {
-            public_inputs[OUTPUT_AMOUNT_2_START] = F::from_canonical_u64(7);
-            public_inputs[EXIT_2_START..EXIT_2_START + 4].copy_from_slice(&[F::ZERO; 4]);
-        }
-        _ => panic!("invalid output index"),
-    }
     public_inputs
 }
 

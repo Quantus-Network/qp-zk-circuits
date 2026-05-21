@@ -6,10 +6,8 @@ use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_inputs::PublicCircuitInputs;
 use std::path::Path;
 use std::sync::Once;
-use std::time::{SystemTime, UNIX_EPOCH};
 use test_helpers::TestInputs;
 use wormhole_aggregator::aggregator::{AggregationBackend, Layer0Aggregator};
-use wormhole_aggregator::layer0::prover::{Layer0AggregationArtifacts, Layer0Verifier};
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::circuit::{C, D, F};
@@ -27,7 +25,7 @@ extern "C" fn cleanup_test_output_dir() {
 
 fn setup_test_binaries() {
     TEST_INIT.call_once(|| {
-        generate_all_circuit_binaries(TEST_OUTPUT_DIR, true, 16, None)
+        generate_all_circuit_binaries(TEST_OUTPUT_DIR, true, 2, None)
             .expect("Failed to generate test circuit binaries");
 
         // Register a process-exit cleanup so the directory is removed once all tests finish.
@@ -50,17 +48,6 @@ fn make_leaf_proof(inputs: &CircuitInputs) -> ProofWithPublicInputs<F, C, D> {
 fn make_aggregator() -> Layer0Aggregator {
     setup_test_binaries();
     Layer0Aggregator::new(TEST_OUTPUT_DIR).unwrap()
-}
-
-fn temp_bins_dir(name: &str) -> String {
-    let suffix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    std::env::temp_dir()
-        .join(format!("qp-wormhole-{name}-{suffix}"))
-        .to_string_lossy()
-        .into_owned()
 }
 
 #[test]
@@ -124,57 +111,6 @@ fn aggregate_single_proof() {
 }
 
 #[test]
-fn cached_layer0_verify_survives_artifact_files_removed_after_construction() {
-    let dir = temp_bins_dir("cached-layer0-verify");
-    generate_all_circuit_binaries(&dir, true, 16, None).unwrap();
-    let proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
-    let mut aggregator = Layer0Aggregator::new(&dir).unwrap();
-    aggregator.push_proof(proof).unwrap();
-    let aggregated = aggregator.aggregate().unwrap();
-
-    std::fs::rename(
-        Path::new(&dir).join("outer_common.bin"),
-        Path::new(&dir).join("outer_common.bin.bak"),
-    )
-    .unwrap();
-    std::fs::rename(
-        Path::new(&dir).join("outer_verifier.bin"),
-        Path::new(&dir).join("outer_verifier.bin.bak"),
-    )
-    .unwrap();
-    std::fs::rename(
-        Path::new(&dir).join("aggregated_common.bin"),
-        Path::new(&dir).join("aggregated_common.bin.bak"),
-    )
-    .unwrap();
-    std::fs::rename(
-        Path::new(&dir).join("aggregated_verifier.bin"),
-        Path::new(&dir).join("aggregated_verifier.bin.bak"),
-    )
-    .unwrap();
-
-    aggregator.verify(aggregated).unwrap();
-    std::fs::remove_dir_all(dir).unwrap();
-}
-
-#[test]
-fn verifier_only_loads_skip_prover_artifacts_but_full_prover_requires_prover_files() {
-    let dir = temp_bins_dir("skip-prover-layer0");
-    generate_all_circuit_binaries(&dir, false, 16, None).unwrap();
-
-    Layer0Verifier::new_from_binaries_dir(&dir).unwrap();
-    let err = Layer0AggregationArtifacts::new_from_binaries_dir(&dir).unwrap_err();
-    let err = format!("{err:?}");
-
-    assert!(
-        err.contains("required inner prover artifact")
-            || err.contains("required outer prover artifact"),
-        "unexpected error: {err}"
-    );
-    std::fs::remove_dir_all(dir).unwrap();
-}
-
-#[test]
 fn aggregate_proofs_into_tree() {
     setup_test_binaries();
     // All proofs must be from the SAME BLOCK for fixed-structure aggregation.
@@ -203,7 +139,7 @@ fn aggregate_proofs_into_tree() {
 #[test]
 fn aggregate_half_full_proof_array_into_tree() {
     setup_test_binaries();
-    // Intentionally only push one proof into the fixed 16-proof layer-0 aggregator to exercise padding.
+    // Intentionally only push one proof into a 2-proof aggregator to exercise padding.
     let proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
 
     let mut aggregator = make_aggregator();
@@ -217,17 +153,18 @@ fn aggregate_half_full_proof_array_into_tree() {
 }
 
 #[test]
-fn push_proof_rejects_zero_exit_positive_amount() {
+fn aggregate_rejects_nonzero_asset_id_when_dummy_padding_is_needed() {
     setup_test_binaries();
     let mut proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
-    proof.public_inputs[1] = F::from_canonical_u64(1);
-    for limb in 8..12 {
-        proof.public_inputs[limb] = F::ZERO;
-    }
+    proof.public_inputs[0] = F::from_canonical_u64(1);
 
     let mut aggregator = make_aggregator();
-    let err = aggregator.push_proof(proof).unwrap_err();
-    assert!(err.to_string().contains("zero exit_account"));
+    aggregator.push_proof(proof).unwrap();
+
+    let err = aggregator.aggregate().unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("dummy padding requires all real proofs to use asset_id=0"));
 }
 
 /// This simulates a CLI-ish flow without prebuilt binaries:

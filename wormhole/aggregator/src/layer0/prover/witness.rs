@@ -10,10 +10,8 @@ use plonky2::{
 use zk_circuits_common::circuit::{C, D, F};
 
 use crate::layer0::circuit::{
-    circuit_logic::AggregationCircuitTargets,
-    constants::{INNER_NUM_LEAVES, OUTER_INNER_PROOFS},
-    inner::InnerAggregationCircuitTargets,
-    outer::OuterAggregationCircuitTargets,
+    circuit_logic::AggregationCircuitTargets, constants::OUTER_INNER_PROOFS,
+    inner::InnerAggregationCircuitTargets, outer::OuterAggregationCircuitTargets,
 };
 
 /// Fill the partial witness for the prebuilt layer-0 aggregation circuit.
@@ -38,14 +36,6 @@ pub fn fill_inner_aggregation_witness(
     proofs: &[ProofWithPublicInputs<F, C, D>],
     dummy_nullifier_pre_images: &[[F; 4]],
 ) -> Result<()> {
-    if targets.leaf_proofs.len() != INNER_NUM_LEAVES {
-        bail!(
-            "inner target layout is inconsistent: got {} leaf proof targets, expected {}",
-            targets.leaf_proofs.len(),
-            INNER_NUM_LEAVES
-        );
-    }
-
     fill_leaf_aggregation_witness(
         pw,
         &targets.leaf_proofs,
@@ -60,13 +50,6 @@ pub fn fill_outer_aggregation_witness(
     targets: &OuterAggregationCircuitTargets,
     proofs: &[ProofWithPublicInputs<F, C, D>],
 ) -> Result<()> {
-    if targets.inner_proofs.len() != OUTER_INNER_PROOFS {
-        bail!(
-            "outer target layout is inconsistent: got {} inner proof targets, expected {}",
-            targets.inner_proofs.len(),
-            OUTER_INNER_PROOFS
-        );
-    }
     if proofs.len() != OUTER_INNER_PROOFS {
         bail!(
             "outer proof count mismatch: got {}, expected {}",
@@ -76,14 +59,6 @@ pub fn fill_outer_aggregation_witness(
     }
 
     for (idx, (proof_t, proof)) in targets.inner_proofs.iter().zip(proofs.iter()).enumerate() {
-        if proof.public_inputs.len() != proof_t.public_inputs.len() {
-            bail!(
-                "inner proof public input length mismatch at slot {}: got {}, target expects {}",
-                idx,
-                proof.public_inputs.len(),
-                proof_t.public_inputs.len()
-            );
-        }
         pw.set_proof_with_pis_target(proof_t, proof)
             .map_err(|e| anyhow!("failed to set inner proof target {}: {}", idx, e))?;
     }
@@ -125,14 +100,6 @@ fn fill_leaf_aggregation_witness(
     }
 
     for (i, (proof_t, proof)) in leaf_proof_targets.iter().zip(proofs.iter()).enumerate() {
-        if proof.public_inputs.len() != proof_t.public_inputs.len() {
-            bail!(
-                "leaf proof public input length mismatch at slot {}: got {}, target expects {}",
-                i,
-                proof.public_inputs.len(),
-                proof_t.public_inputs.len()
-            );
-        }
         pw.set_proof_with_pis_target(proof_t, proof)
             .map_err(|e| anyhow!("failed to set leaf proof target at slot {}: {}", i, e))?;
     }

@@ -101,17 +101,13 @@ wormhole transactions.
 
 ## Aggregation System
 
-Production layer-0 aggregation uses a fixed compact-child topology:
+The aggregator combines `N` leaf proofs into a single proof with a fixed public input layout. Key behaviors:
 
-- **Capacity**: exactly 16 leaf slots. Non-empty batches with fewer than 16 real proofs are padded dynamically with dummy proofs.
-- **Topology**: two non-ZK inner aggregation proofs, each over 8 leaf slots, followed by one outer ZK wrapper proof over those two inner proofs.
-- **Final public output**: 344 felts total: 232 semantic felts and 112 zero-tail felts.
-- **Two outputs per leaf**: each leaf supports `exit_account_1`/`output_amount_1` and `exit_account_2`/`output_amount_2`; the final layer-0 proof exposes 32 exit slots.
-- **Zero exit-account invariant**: a zero exit-account digest means an empty output slot. The circuit and host validation enforce `exit_account == 0 => output_amount == 0` for both leaf output slots, so positive value cannot be silently dropped by aggregation.
-- **Dummy padding**: dummy proofs use `block_hash = 0`, zero output amounts, and zero exit accounts. Dummy asset and fee values do not force real proofs to use asset `0`; the compact-child circuits select reference asset/fee values from real proofs when padding is present.
-- **Ordering contract**: compact-child aggregation emits deterministic canonical order for real proofs. Downstream consumers should rely on parsed semantic data and the fixed layout, not original user-supplied proof order. Duplicate exit accounts are merged into the first emitted matching slot; duplicate slots and empty slots are zeroed.
-- **Cached verification**: production layer-0 aggregator/verifier construction loads verifier artifacts into memory. `verify()` does not reread layer-0 verifier/common files after construction.
-- **Public input types**: public input parsing and aggregated outputs live in `wormhole/inputs` (`qp-wormhole-inputs`) and are shared by the circuit, prover, verifier, and aggregator.
+- **Single-block storage proof constraint**: All real proofs (non-zero `block_hash`) must reference the same block for storage proofs.
+- **Two outputs per proof**: Each leaf supports `exit_account_1`/`output_amount_1` and `exit_account_2`/`output_amount_2`. Aggregation outputs 2\*`N` exit slots.
+- **Privacy via dummy hiding**: Proofs are shuffled before aggregation while keeping one real proof in slot 0 for reference values. Duplicate exit slots are zeroed (both sum and `exit_account`), making them indistinguishable from dummy padding slots.
+- **Dynamic dummy proofs**: Dummy proofs are generated on-the-fly for padding. They use sentinel values (`block_hash = 0`, `output_amount_1 = 0`, `output_amount_2 = 0`, `exit_account = 0`) so the leaf circuit can bypass validation. No dummy proof binaries are checked in.
+- **Public input types**: Public input parsing and aggregated outputs live in `wormhole/inputs` (`qp-wormhole-inputs`) and are shared by the circuit, prover, verifier, and aggregator.
 
 ## Testing
 
@@ -119,15 +115,16 @@ To run the tests for this circuit, please follow the instructions in the [tests]
 
 ## Building the Circuit Binaries
 
-The circuit builder generates leaf and compact-child layer-0 binaries alongside a `config.json`.
+The circuit builder generates leaf and aggregated circuit binaries alongside a `config.json` with aggregation configuration.
 Re-run this after any circuit changes.
 
-Layer-0 production capacity is fixed at 16 leaves, so `--num-leaf-proofs` must be `16`. The optional `--num-layer0-proofs` parameter controls how many layer-0 proofs are aggregated by layer-1.
+The `num_leaf-proofs` and `num-layer0-proofs` parameters control the number of proofs aggregated at each layer. For example, if you want to aggregate 16 leaf proofs per layer-1 proof, and then aggregate 4 layer-1 proofs per layer-2 proof, you would set `num-leaf-proofs` to 16 and `num-layer0-proofs` to 4. The `num-layer0-proofs` param is optional if you only need layer-0 aggregation support. 
 
 To build the circuit binary, run the following command from the root of the workspace:
 
 ```sh
-cargo run --release -p qp-wormhole-circuit-builder -- --num-leaf-proofs 16 --num-layer0-proofs <N> --output generated-bins
+cargo run --release -p qp-wormhole-circuit-builder -- --num-leaf-proofs <N> -- --num-layer0-proofs <N> --output generated-bins
 ```
 
-This creates `common.bin`, `verifier.bin`, `prover.bin` (unless `--skip-prover`), `dummy_proof.bin`, compact-child `inner_*` and `outer_*` artifacts, outer `aggregated_*` aliases, and `config.json` inside `generated-bins/`. Verifier-only usage needs common/verifier files only; proving requires the matching `*_prover.bin` files.
+This creates `common.bin`, `verifier.bin`, `prover.bin` (unless `--skip-prover`), `aggregated_common.bin`, `aggregated_verifier.bin`, `dummy_proof.bin`,
+and `config.json` inside `generated-bins/`.

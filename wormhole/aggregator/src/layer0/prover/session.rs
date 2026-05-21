@@ -1,9 +1,7 @@
 use anyhow::{bail, Context, Result};
 use plonky2::{
-    plonk::{
-        circuit_data::{CommonCircuitData, VerifierCircuitData},
-        proof::ProofWithPublicInputs,
-    },
+    field::types::PrimeField64,
+    plonk::{circuit_data::CommonCircuitData, proof::ProofWithPublicInputs},
     util::serialization::DefaultGateSerializer,
 };
 #[cfg(feature = "multithread")]
@@ -11,29 +9,23 @@ use rayon::ThreadPoolBuilder;
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::Arc,
     time::Instant,
 };
 use zk_circuits_common::circuit::{C, D, F};
 
 use crate::{
-    common::utils::{ensure_proof_public_input_len, validate_leaf_proof_public_inputs},
+    common::utils::is_dummy_leaf_proof,
     layer0::{
-        circuit::constants::{INNER_NUM_LEAVES, LEAF_PI_LEN, TOTAL_NUM_LEAVES},
+        circuit::constants::{INNER_NUM_LEAVES, TOTAL_NUM_LEAVES},
         prover::{
             inner::{
                 load_inner_verifier_from_binaries_dir, InnerAggregationArtifacts,
                 InnerAggregationInputs,
             },
-            outer::{
-                load_outer_verifier_from_binaries_dir, OuterAggregationArtifacts,
-                OuterAggregationInputs,
-            },
+            outer::{OuterAggregationArtifacts, OuterAggregationInputs},
         },
     },
 };
-
-use super::ordering::canonicalize_leaf_proofs;
 
 type Proof = ProofWithPublicInputs<F, C, D>;
 
@@ -69,34 +61,8 @@ pub struct Layer0AggregateOutput {
 pub struct Layer0AggregationArtifacts {
     bins_dir: PathBuf,
     expected_leaf_pi_len: usize,
-    verifier_artifacts: Layer0AggregationVerifierArtifacts,
     inner_artifacts: InnerAggregationArtifacts,
     outer_artifacts: OuterAggregationArtifacts,
-    #[cfg(feature = "multithread")]
-    parallel_pools: Arc<InnerParallelPools>,
-}
-
-#[cfg(feature = "multithread")]
-struct InnerParallelPools {
-    a: rayon::ThreadPool,
-    b: rayon::ThreadPool,
-    threads_per_pool: usize,
-}
-
-#[cfg(feature = "multithread")]
-impl std::fmt::Debug for InnerParallelPools {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("InnerParallelPools")
-            .field("threads_per_pool", &self.threads_per_pool)
-            .finish_non_exhaustive()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Layer0AggregationVerifierArtifacts {
-    bins_dir: PathBuf,
-    expected_leaf_pi_len: usize,
-    verifier_data: Arc<VerifierCircuitData<F, C, D>>,
 }
 
 #[derive(Debug)]
@@ -107,11 +73,6 @@ pub struct Layer0AggregationProver {
     verify_output: bool,
 }
 
-#[derive(Debug, Clone)]
-pub struct Layer0Verifier {
-    artifacts: Layer0AggregationVerifierArtifacts,
-}
-
 impl Layer0AggregationArtifacts {
     pub fn new_from_binaries_dir<P: AsRef<Path>>(bins_dir: P) -> Result<Self> {
         let bins_dir = bins_dir.as_ref().to_path_buf();
@@ -120,32 +81,14 @@ impl Layer0AggregationArtifacts {
         let outer_artifacts = OuterAggregationArtifacts::new_from_binaries_dir(&bins_dir)
             .context("failed to load compact-child outer artifacts")?;
         let leaf_common = load_common_from_bins(&bins_dir, "common.bin")?;
-        if leaf_common.num_public_inputs != LEAF_PI_LEN {
-            bail!(
-                "leaf common public input length mismatch: expected {}, got {}",
-                LEAF_PI_LEN,
-                leaf_common.num_public_inputs
-            );
-        }
         let _ = load_inner_verifier_from_binaries_dir(&bins_dir)
             .context("failed to load layer-0 inner verifier")?;
-        let verifier_artifacts = Layer0AggregationVerifierArtifacts::from_parts(
-            bins_dir.clone(),
-            leaf_common.num_public_inputs,
-            Arc::clone(&outer_artifacts.verifier_data),
-        );
-        #[cfg(feature = "multithread")]
-        let parallel_pools = build_inner_parallel_pools()
-            .context("failed to build cached compact-child inner proving pools")?;
 
         Ok(Self {
             bins_dir,
             expected_leaf_pi_len: leaf_common.num_public_inputs,
-            verifier_artifacts,
             inner_artifacts,
             outer_artifacts,
-            #[cfg(feature = "multithread")]
-            parallel_pools,
         })
     }
 
@@ -162,86 +105,14 @@ impl Layer0AggregationArtifacts {
     }
 
     pub fn verify(&self, proof: Proof) -> Result<()> {
-        self.verifier_artifacts.verify(proof)
+        self.outer_artifacts
+            .verifier_data
+            .verify(proof)
+            .map_err(|e| anyhow::anyhow!("layer-0 proof verification failed: {}", e))
     }
 
     pub fn new_session(&self) -> Layer0AggregationProver {
         Layer0AggregationProver::from_artifacts(self)
-    }
-}
-
-impl Layer0AggregationVerifierArtifacts {
-    pub fn new_from_binaries_dir<P: AsRef<Path>>(bins_dir: P) -> Result<Self> {
-        let bins_dir = bins_dir.as_ref().to_path_buf();
-        let leaf_common = load_common_from_bins(&bins_dir, "common.bin")?;
-        if leaf_common.num_public_inputs != LEAF_PI_LEN {
-            bail!(
-                "leaf common public input length mismatch: expected {}, got {}",
-                LEAF_PI_LEN,
-                leaf_common.num_public_inputs
-            );
-        }
-        let verifier_data = Arc::new(
-            load_outer_verifier_from_binaries_dir(&bins_dir)
-                .context("failed to load compact-child layer-0 verifier artifacts")?,
-        );
-        Ok(Self::from_parts(
-            bins_dir,
-            leaf_common.num_public_inputs,
-            verifier_data,
-        ))
-    }
-
-    fn from_parts(
-        bins_dir: PathBuf,
-        expected_leaf_pi_len: usize,
-        verifier_data: Arc<VerifierCircuitData<F, C, D>>,
-    ) -> Self {
-        Self {
-            bins_dir,
-            expected_leaf_pi_len,
-            verifier_data,
-        }
-    }
-
-    pub fn bins_dir(&self) -> &Path {
-        &self.bins_dir
-    }
-
-    pub fn expected_leaf_pi_len(&self) -> usize {
-        self.expected_leaf_pi_len
-    }
-
-    pub fn num_leaf_proofs(&self) -> usize {
-        TOTAL_NUM_LEAVES
-    }
-
-    pub fn verify(&self, proof: Proof) -> Result<()> {
-        self.verifier_data
-            .verify(proof)
-            .map_err(|e| anyhow::anyhow!("layer-0 proof verification failed: {}", e))
-    }
-}
-
-impl Layer0Verifier {
-    pub fn new_from_binaries_dir<P: AsRef<Path>>(bins_dir: P) -> Result<Self> {
-        Ok(Self {
-            artifacts: Layer0AggregationVerifierArtifacts::new_from_binaries_dir(bins_dir)?,
-        })
-    }
-
-    pub fn from_artifacts(artifacts: &Layer0AggregationVerifierArtifacts) -> Self {
-        Self {
-            artifacts: artifacts.clone(),
-        }
-    }
-
-    pub fn verify(&self, proof: Proof) -> Result<()> {
-        self.artifacts.verify(proof)
-    }
-
-    pub fn expected_leaf_pi_len(&self) -> usize {
-        self.artifacts.expected_leaf_pi_len()
     }
 }
 
@@ -280,7 +151,6 @@ impl Layer0AggregationProver {
                 self.artifacts.num_leaf_proofs()
             );
         }
-        validate_leaf_batch_public_inputs(&proofs, self.artifacts.expected_leaf_pi_len())?;
 
         self.proofs = Some(proofs);
         Ok(self)
@@ -327,7 +197,6 @@ fn aggregate_with_artifacts(
             TOTAL_NUM_LEAVES
         );
     }
-    validate_leaf_batch_public_inputs(&proofs, artifacts.expected_leaf_pi_len())?;
 
     let mut proofs = proofs;
     normalize_proofs_for_inner_split(&mut proofs);
@@ -341,7 +210,9 @@ fn aggregate_with_artifacts(
                 prove_inner_batch(&artifacts.inner_artifacts, group_b).context("inner B failed")?;
             (proof_a, timing_a, proof_b, timing_b)
         }
-        InnerExecutionMode::Parallel => prove_parallel_batches(artifacts, group_a, group_b)?,
+        InnerExecutionMode::Parallel => {
+            prove_parallel_batches(&artifacts.inner_artifacts, group_a, group_b)?
+        }
     };
 
     let (outer_session, outer_commit_ms) = time_operation(|| {
@@ -375,7 +246,27 @@ fn aggregate_with_artifacts(
 }
 
 fn normalize_proofs_for_inner_split(proofs: &mut [Proof]) {
-    canonicalize_leaf_proofs(proofs);
+    proofs.sort_by(compare_leaf_proofs_canonically);
+}
+
+fn compare_leaf_proofs_canonically(left: &Proof, right: &Proof) -> std::cmp::Ordering {
+    match (
+        is_dummy_leaf_proof(left).unwrap_or(false),
+        is_dummy_leaf_proof(right).unwrap_or(false),
+    ) {
+        (false, true) => std::cmp::Ordering::Less,
+        (true, false) => std::cmp::Ordering::Greater,
+        _ => left
+            .public_inputs
+            .iter()
+            .map(PrimeField64::to_canonical_u64)
+            .cmp(
+                right
+                    .public_inputs
+                    .iter()
+                    .map(PrimeField64::to_canonical_u64),
+            ),
+    }
 }
 
 fn split_proofs(proofs: Vec<Proof>) -> (Vec<Proof>, Vec<Proof>) {
@@ -383,14 +274,6 @@ fn split_proofs(proofs: Vec<Proof>) -> (Vec<Proof>, Vec<Proof>) {
     let split_at = proofs.len().min(INNER_NUM_LEAVES);
     let group_b = proofs.split_off(split_at);
     (proofs, group_b)
-}
-
-fn validate_leaf_batch_public_inputs(proofs: &[Proof], expected_len: usize) -> Result<()> {
-    for (idx, proof) in proofs.iter().enumerate() {
-        ensure_proof_public_input_len(proof, expected_len, &format!("leaf proof {idx}"))?;
-        validate_leaf_proof_public_inputs(proof, &format!("leaf proof {idx}"))?;
-    }
-    Ok(())
 }
 
 fn prove_inner_batch(
@@ -415,22 +298,24 @@ fn prove_inner_batch(
 
 #[cfg(feature = "multithread")]
 fn prove_parallel_batches(
-    artifacts: &Layer0AggregationArtifacts,
+    inner_artifacts: &InnerAggregationArtifacts,
     group_a: Vec<Proof>,
     group_b: Vec<Proof>,
 ) -> Result<(Proof, StageTiming, Proof, StageTiming)> {
-    let inner_artifacts = &artifacts.inner_artifacts;
-    let pools_a = Arc::clone(&artifacts.parallel_pools);
-    let pools_b = Arc::clone(&artifacts.parallel_pools);
+    let threads_per_pool = parallel_inner_pool_threads();
     std::thread::scope(|scope| -> Result<_> {
-        let a = scope.spawn(move || {
-            pools_a
-                .a
+        let a = scope.spawn(|| {
+            ThreadPoolBuilder::new()
+                .num_threads(threads_per_pool)
+                .build()
+                .map_err(|e| anyhow::anyhow!("failed to build inner A thread pool: {e}"))?
                 .install(|| prove_inner_batch(inner_artifacts, group_a))
         });
-        let b = scope.spawn(move || {
-            pools_b
-                .b
+        let b = scope.spawn(|| {
+            ThreadPoolBuilder::new()
+                .num_threads(threads_per_pool)
+                .build()
+                .map_err(|e| anyhow::anyhow!("failed to build inner B thread pool: {e}"))?
                 .install(|| prove_inner_batch(inner_artifacts, group_b))
         });
 
@@ -448,59 +333,41 @@ fn prove_parallel_batches(
 
 #[cfg(not(feature = "multithread"))]
 fn prove_parallel_batches(
-    artifacts: &Layer0AggregationArtifacts,
+    inner_artifacts: &InnerAggregationArtifacts,
     group_a: Vec<Proof>,
     group_b: Vec<Proof>,
 ) -> Result<(Proof, StageTiming, Proof, StageTiming)> {
-    let (proof_a, timing_a) =
-        prove_inner_batch(&artifacts.inner_artifacts, group_a).context("inner A failed")?;
-    let (proof_b, timing_b) =
-        prove_inner_batch(&artifacts.inner_artifacts, group_b).context("inner B failed")?;
-    Ok((proof_a, timing_a, proof_b, timing_b))
+    std::thread::scope(|scope| -> Result<_> {
+        let a = scope.spawn(|| prove_inner_batch(inner_artifacts, group_a));
+        let b = scope.spawn(|| prove_inner_batch(inner_artifacts, group_b));
+        let (proof_a, timing_a) = a
+            .join()
+            .map_err(|_| anyhow::anyhow!("inner A thread panicked"))?
+            .context("inner A failed")?;
+        let (proof_b, timing_b) = b
+            .join()
+            .map_err(|_| anyhow::anyhow!("inner B thread panicked"))?
+            .context("inner B failed")?;
+        Ok((proof_a, timing_a, proof_b, timing_b))
+    })
 }
 
 #[cfg(feature = "multithread")]
 fn parallel_inner_pool_threads() -> usize {
+    if let Ok(value) = std::env::var("QP_NONZK_INNER_THREADS") {
+        if let Ok(parsed) = value.parse::<usize>() {
+            return parsed.max(1);
+        }
+    }
+
     let available = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1);
-    let qp = std::env::var("QP_NONZK_INNER_THREADS").ok();
-    let rayon = std::env::var("RAYON_NUM_THREADS").ok();
-    parse_inner_pool_threads(qp.as_deref(), rayon.as_deref(), available)
-}
-
-#[cfg(feature = "multithread")]
-fn parse_inner_pool_threads(
-    qp_nonzk_inner_threads: Option<&str>,
-    rayon_num_threads: Option<&str>,
-    available: usize,
-) -> usize {
-    if let Some(parsed) = qp_nonzk_inner_threads.and_then(|value| value.parse::<usize>().ok()) {
-        return parsed.max(1);
-    }
-
-    let configured = rayon_num_threads
+    let configured = std::env::var("RAYON_NUM_THREADS")
+        .ok()
         .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(available.max(1));
+        .unwrap_or(available);
     (configured / 2).max(1)
-}
-
-#[cfg(feature = "multithread")]
-fn build_inner_parallel_pools() -> Result<Arc<InnerParallelPools>> {
-    let threads_per_pool = parallel_inner_pool_threads();
-    let a = ThreadPoolBuilder::new()
-        .num_threads(threads_per_pool)
-        .build()
-        .map_err(|e| anyhow::anyhow!("failed to build inner A thread pool: {e}"))?;
-    let b = ThreadPoolBuilder::new()
-        .num_threads(threads_per_pool)
-        .build()
-        .map_err(|e| anyhow::anyhow!("failed to build inner B thread pool: {e}"))?;
-    Ok(Arc::new(InnerParallelPools {
-        a,
-        b,
-        threads_per_pool,
-    }))
 }
 
 fn time_operation<T, O>(op: O) -> Result<(T, f64)>
@@ -542,21 +409,6 @@ mod tests {
 
         assert_eq!(proofs[0].public_inputs, real.public_inputs);
         assert!(!is_dummy_leaf_proof(&proofs[0]).expect("valid real proof"));
-    }
-
-    #[cfg(feature = "multithread")]
-    #[test]
-    fn parallel_threads_config_parsing_honors_inner_override() {
-        assert_eq!(parse_inner_pool_threads(Some("6"), Some("12"), 16), 6);
-        assert_eq!(parse_inner_pool_threads(Some("0"), Some("12"), 16), 1);
-    }
-
-    #[cfg(feature = "multithread")]
-    #[test]
-    fn parallel_threads_config_parsing_falls_back_to_rayon_budget() {
-        assert_eq!(parse_inner_pool_threads(Some("bad"), Some("12"), 16), 6);
-        assert_eq!(parse_inner_pool_threads(None, None, 1), 1);
-        assert_eq!(parse_inner_pool_threads(None, None, 8), 4);
     }
 
     fn real_leaf_pi() -> [F; LEAF_PI_LEN] {

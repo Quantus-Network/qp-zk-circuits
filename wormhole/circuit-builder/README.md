@@ -3,18 +3,16 @@
 CLI to generate Wormhole circuit binaries for proving and verification.
 
 ```sh
-cargo run --release -p qp-wormhole-circuit-builder -- --num-leaf-proofs 16 [--num-layer0-proofs <M>] --output generated-bins
+cargo run --release -p qp-wormhole-circuit-builder -- --num-leaf-proofs <N> [--num-layer0-proofs <M>] --output generated-bins
 ```
 
-Produces prover and verifier binaries for the fixed 16-leaf compact-child layer-0 topology and optional layer-1 aggregation. Use `--skip-prover` to emit verifier-only artifacts; proving APIs require the matching prover files.
+Produces prover and verifier binaries for a given aggregation shape (number of leaf proofs and number of inner proofs for layer0 and layer1 respectively). Use the generated artifacts with [qp-wormhole-prover] and [qp-wormhole-verifier] to run proofs at scale.
 
 ## Usage
 
 ```text
-qp-wormhole-circuit-builder --num-leaf-proofs 16 [--num-layer0-proofs <N>] [--output <DIR>] [--skip-prover]
+qp-wormhole-circuit-builder --num-leaf-proofs <N> [--num-layer0-proofs <N>] [--output <DIR>] [--skip-prover] 
 ```
-
-Layer-0 output includes `inner_common.bin`, `inner_verifier.bin`, `inner_targets.bin`, `outer_common.bin`, `outer_verifier.bin`, `outer_targets.bin`, and the corresponding prover files unless skipped. The outer artifacts are also written as `aggregated_*` aliases for existing layer-1 and verifier consumers.
 
 ## License
 

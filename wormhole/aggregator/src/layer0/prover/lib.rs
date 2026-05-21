@@ -32,7 +32,7 @@ use zk_circuits_common::{
 use crate::{
     common::utils::{
         ensure_proof_public_input_len, is_dummy_leaf_proof, leaf_proof_asset_id,
-        load_verifier_data_from_bytes, validate_leaf_proof_public_inputs,
+        load_verifier_data_from_bytes,
     },
     dummy_proof::{generate_random_nullifier_preimage, load_dummy_proof},
     layer0::{
@@ -231,18 +231,12 @@ impl Layer0AggregationProver {
             bail!("layer-0 aggregation prover has already committed to inputs");
         };
 
-        if proofs.is_empty() {
-            bail!("there are no leaf proofs to aggregate");
-        }
         if proofs.len() > self.num_leaf_proofs {
             bail!(
                 "too many proofs: got {}, expected at most {}",
                 proofs.len(),
                 self.num_leaf_proofs
             );
-        }
-        for proof in &proofs {
-            validate_leaf_proof_public_inputs(proof, "leaf proof")?;
         }
 
         // If we're going to pad with dummy proofs (asset_id = 0), ensure real proofs are asset_id=0.
