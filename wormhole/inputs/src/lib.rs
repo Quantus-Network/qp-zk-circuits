@@ -215,8 +215,11 @@ pub struct AggregatedPublicCircuitInputs {
     /// applies to the block used to generate the storage proof (i.e., when the proof is created).
     pub block_data: BlockData,
     /// The set of exit accounts and their summed output amounts.
+    /// The vector preserves circuit emission order. Consumers should treat layer-0 ordering as
+    /// deterministic semantic output, not as original user proof order.
     pub account_data: Vec<PublicInputsByAccount>,
     /// The nullifiers of each individual transfer proof.
+    /// The vector preserves circuit emission order.
     pub nullifiers: Vec<BytesDigest>,
 }
 
