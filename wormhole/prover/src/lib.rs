@@ -284,6 +284,8 @@ pub fn fill_witness(
     circuit_inputs: &CircuitInputs,
     targets: &CircuitTargets,
 ) -> anyhow::Result<()> {
+    validate_zero_exit_account_invariant(circuit_inputs)?;
+
     let proof_depth = circuit_inputs.private.zk_merkle_siblings.len();
     if proof_depth > MAX_DEPTH {
         bail!(
@@ -312,5 +314,29 @@ pub fn fill_witness(
     exit_accounts.fill_targets(pw, targets.exit_accounts)?;
     block_header.fill_targets(pw, targets.block_header.clone())?;
 
+    Ok(())
+}
+
+fn validate_zero_exit_account_invariant(circuit_inputs: &CircuitInputs) -> anyhow::Result<()> {
+    validate_output_slot(
+        circuit_inputs.public.output_amount_1,
+        circuit_inputs.public.exit_account_1.as_ref(),
+        "output slot 1",
+    )?;
+    validate_output_slot(
+        circuit_inputs.public.output_amount_2,
+        circuit_inputs.public.exit_account_2.as_ref(),
+        "output slot 2",
+    )
+}
+
+fn validate_output_slot(amount: u32, exit_account: &[u8], label: &str) -> anyhow::Result<()> {
+    if exit_account.iter().all(|byte| *byte == 0) && amount != 0 {
+        bail!(
+            "{} has zero exit_account but non-zero output amount {}; zero exit accounts are reserved for empty output slots",
+            label,
+            amount
+        );
+    }
     Ok(())
 }

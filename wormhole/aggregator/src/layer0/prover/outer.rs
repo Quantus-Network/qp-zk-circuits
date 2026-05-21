@@ -15,13 +15,17 @@ use std::{fs, io::ErrorKind, path::Path, sync::Arc};
 use zk_circuits_common::circuit::{C, D, F};
 
 use crate::{
-    common::utils::{ensure_proof_public_input_len, load_verifier_data_from_bytes},
+    common::utils::{
+        ensure_proof_public_input_len, load_verifier_data_from_bytes,
+        validate_aggregated_zero_exit_slots,
+    },
     layer0::{
         circuit::{
             constants::{
-                INNER_COMMON_FILENAME, INNER_VERIFIER_FILENAME, OUTER_CHILD_PI_LEN,
-                OUTER_COMMON_FILENAME, OUTER_INNER_PROOFS, OUTER_PROVER_FILENAME,
-                OUTER_TARGETS_FILENAME, OUTER_VERIFIER_FILENAME,
+                INNER_COMMON_FILENAME, INNER_OUTPUT_PI_LEN, INNER_VERIFIER_FILENAME,
+                OUTER_CHILD_EXIT_SLOTS, OUTER_CHILD_EXIT_SLOTS_START, OUTER_CHILD_EXIT_SLOT_LEN,
+                OUTER_CHILD_PI_LEN, OUTER_COMMON_FILENAME, OUTER_INNER_PROOFS, OUTER_OUTPUT_PI_LEN,
+                OUTER_PROVER_FILENAME, OUTER_TARGETS_FILENAME, OUTER_VERIFIER_FILENAME,
             },
             outer::{OuterAggregationCircuit, OuterAggregationCircuitTargets},
         },
@@ -76,6 +80,13 @@ impl OuterAggregationArtifacts {
         let outer_common =
             CommonCircuitData::from_bytes(outer_common_bytes.to_vec(), &gate_serializer)
                 .map_err(|e| anyhow!("Failed to deserialize outer common data: {}", e))?;
+        if outer_common.num_public_inputs != OUTER_OUTPUT_PI_LEN {
+            bail!(
+                "outer common public input length mismatch: expected {}, got {}",
+                OUTER_OUTPUT_PI_LEN,
+                outer_common.num_public_inputs
+            );
+        }
         let outer_prover_only = ProverOnlyCircuitData::from_bytes(
             outer_prover_only_bytes,
             &generator_serializer,
@@ -85,15 +96,29 @@ impl OuterAggregationArtifacts {
 
         let inner_verifier_data =
             load_verifier_data_from_bytes(inner_common_bytes, inner_verifier_only_bytes, "inner")?;
+        if inner_verifier_data.common.num_public_inputs != INNER_OUTPUT_PI_LEN {
+            bail!(
+                "inner common public input length mismatch: expected {}, got {}",
+                INNER_OUTPUT_PI_LEN,
+                inner_verifier_data.common.num_public_inputs
+            );
+        }
+
+        let canonical_circuit = OuterAggregationCircuit::new(
+            inner_verifier_data.common.clone(),
+            &inner_verifier_data.verifier_only,
+        );
+        let canonical_targets = canonical_circuit.targets();
+        let verifier_data = Arc::new(canonical_circuit.build_verifier());
 
         let targets = match outer_targets_bytes {
-            Some(bytes) => OuterAggregationCircuitTargets::from_bytes(bytes)
-                .context("failed to deserialize outer target layout")?,
-            None => OuterAggregationCircuit::new(
-                inner_verifier_data.common.clone(),
-                &inner_verifier_data.verifier_only,
-            )
-            .targets(),
+            Some(bytes) => {
+                let loaded = OuterAggregationCircuitTargets::from_bytes(bytes)
+                    .context("failed to deserialize outer target layout")?;
+                ensure_outer_targets_match_canonical(&loaded, &canonical_targets)?;
+                loaded
+            }
+            None => canonical_targets,
         };
 
         Ok(Self {
@@ -101,13 +126,7 @@ impl OuterAggregationArtifacts {
                 prover_only: outer_prover_only,
                 common: outer_common,
             }),
-            verifier_data: Arc::new(
-                OuterAggregationCircuit::new(
-                    inner_verifier_data.common.clone(),
-                    &inner_verifier_data.verifier_only,
-                )
-                .build_verifier(),
-            ),
+            verifier_data,
             targets,
         })
     }
@@ -117,7 +136,7 @@ impl OuterAggregationArtifacts {
         let outer_prover_only_bytes =
             fs::read(bins_dir.join(OUTER_PROVER_FILENAME)).with_context(|| {
                 format!(
-                    "Failed to read {}",
+                    "Failed to read required outer prover artifact {}",
                     bins_dir.join(OUTER_PROVER_FILENAME).display()
                 )
             })?;
@@ -161,6 +180,22 @@ impl OuterAggregationArtifacts {
     }
 }
 
+fn ensure_outer_targets_match_canonical(
+    loaded: &OuterAggregationCircuitTargets,
+    canonical: &OuterAggregationCircuitTargets,
+) -> Result<()> {
+    let loaded_bytes = loaded
+        .to_bytes()
+        .context("failed to serialize loaded outer target layout for validation")?;
+    let canonical_bytes = canonical
+        .to_bytes()
+        .context("failed to serialize canonical outer target layout for validation")?;
+    if loaded_bytes != canonical_bytes {
+        bail!("outer target layout does not match the compiled compact-child 2x8 topology");
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct OuterAggregationProver {
     pub circuit_data: Arc<ProverCircuitData<F, C, D>>,
@@ -196,6 +231,13 @@ impl OuterAggregationProver {
         }
         for proof in &proofs {
             ensure_proof_public_input_len(proof, OUTER_CHILD_PI_LEN, "inner proof")?;
+            validate_aggregated_zero_exit_slots(
+                &proof.public_inputs,
+                OUTER_CHILD_EXIT_SLOTS_START,
+                OUTER_CHILD_EXIT_SLOTS,
+                OUTER_CHILD_EXIT_SLOT_LEN,
+                "inner proof",
+            )?;
         }
 
         fill_outer_aggregation_witness(&mut self.partial_witness, &targets, &proofs)?;
@@ -223,6 +265,13 @@ pub fn load_outer_verifier_from_binaries_dir(
     })?;
     let common = CommonCircuitData::from_bytes(common_bytes, &gate_serializer)
         .map_err(|e| anyhow!("Failed to deserialize outer common data: {}", e))?;
+    if common.num_public_inputs != OUTER_OUTPUT_PI_LEN {
+        bail!(
+            "outer common public input length mismatch: expected {}, got {}",
+            OUTER_OUTPUT_PI_LEN,
+            common.num_public_inputs
+        );
+    }
 
     let verifier_bytes = fs::read(bins_dir.join(OUTER_VERIFIER_FILENAME)).with_context(|| {
         format!(

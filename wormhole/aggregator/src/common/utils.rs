@@ -9,7 +9,8 @@ use plonky2::{
 use zk_circuits_common::circuit::{C, D, F};
 
 use crate::layer0::circuit::constants::{
-    aggregated_output, ASSET_ID_START, BLOCK_HASH_START, LEAF_PI_LEN,
+    aggregated_output, ASSET_ID_START, BLOCK_HASH_START, EXIT_1_START, EXIT_2_START, LEAF_PI_LEN,
+    OUTPUT_AMOUNT_1_START, OUTPUT_AMOUNT_2_START,
 };
 
 /// Load verifier circuit data (common + verifier-only) from serialized bytes.
@@ -51,8 +52,80 @@ pub fn ensure_proof_public_input_len(
     Ok(())
 }
 
+/// Enforce the layer-0 empty output-slot invariant for a leaf proof.
+///
+/// A zero exit-account digest is the empty-slot sentinel used by aggregation. To avoid silently
+/// dropping value during deduplication, any output slot with a zero exit account must have amount 0.
+pub fn validate_leaf_proof_public_inputs(
+    proof: &ProofWithPublicInputs<F, C, D>,
+    label: &str,
+) -> Result<()> {
+    ensure_proof_public_input_len(proof, LEAF_PI_LEN, label)?;
+    ensure_zero_exit_slot_has_zero_amount(
+        proof.public_inputs[OUTPUT_AMOUNT_1_START],
+        &proof.public_inputs[EXIT_1_START..EXIT_1_START + 4],
+        &format!("{label} output slot 1"),
+    )?;
+    ensure_zero_exit_slot_has_zero_amount(
+        proof.public_inputs[OUTPUT_AMOUNT_2_START],
+        &proof.public_inputs[EXIT_2_START..EXIT_2_START + 4],
+        &format!("{label} output slot 2"),
+    )?;
+    Ok(())
+}
+
+/// Enforce the same empty-slot invariant on an aggregated exit-slot region.
+pub fn validate_aggregated_zero_exit_slots(
+    public_inputs: &[F],
+    slots_start: usize,
+    slot_count: usize,
+    slot_len: usize,
+    label: &str,
+) -> Result<()> {
+    for slot in 0..slot_count {
+        let base = slots_start + slot * slot_len;
+        let end = base + slot_len;
+        if public_inputs.len() < end {
+            return Err(anyhow!(
+                "{} public input length mismatch: slot {} needs end index {}, got {}",
+                label,
+                slot,
+                end,
+                public_inputs.len()
+            ));
+        }
+        ensure_zero_exit_slot_has_zero_amount(
+            public_inputs[base],
+            &public_inputs[base + 1..base + 5],
+            &format!("{label} exit slot {slot}"),
+        )?;
+    }
+    Ok(())
+}
+
+fn ensure_zero_exit_slot_has_zero_amount(amount: F, exit_account: &[F], label: &str) -> Result<()> {
+    if exit_account.len() != 4 {
+        return Err(anyhow!(
+            "{} exit account length mismatch: expected 4 felts, got {}",
+            label,
+            exit_account.len()
+        ));
+    }
+
+    let exit_is_zero = exit_account.iter().all(|felt| felt.is_zero());
+    if exit_is_zero && !amount.is_zero() {
+        return Err(anyhow!(
+            "{} has zero exit_account but non-zero output amount {}; zero exit accounts are reserved for empty output slots",
+            label,
+            amount.to_canonical_u64()
+        ));
+    }
+
+    Ok(())
+}
+
 pub fn leaf_proof_asset_id(proof: &ProofWithPublicInputs<F, C, D>) -> Result<u32> {
-    ensure_proof_public_input_len(proof, LEAF_PI_LEN, "leaf proof")?;
+    validate_leaf_proof_public_inputs(proof, "leaf proof")?;
     proof.public_inputs[ASSET_ID_START]
         .to_canonical_u64()
         .try_into()

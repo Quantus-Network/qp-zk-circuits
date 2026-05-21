@@ -33,6 +33,8 @@ pub struct OuterAggregationCircuitTargets {
 
 impl OuterAggregationCircuitTargets {
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        self.validate()?;
+
         let mut bytes = Vec::new();
         bytes
             .write_usize(self.inner_proofs.len())
@@ -50,6 +52,13 @@ impl OuterAggregationCircuitTargets {
         let proof_count = buffer
             .read_usize()
             .map_err(|e| anyhow!("failed to deserialize inner proof count: {}", e))?;
+        if proof_count != OUTER_INNER_PROOFS {
+            return Err(anyhow!(
+                "outer target layout has {} inner proof targets, expected {}",
+                proof_count,
+                OUTER_INNER_PROOFS
+            ));
+        }
         let mut inner_proofs = Vec::with_capacity(proof_count);
         for _ in 0..proof_count {
             inner_proofs.push(
@@ -66,7 +75,30 @@ impl OuterAggregationCircuitTargets {
             ));
         }
 
-        Ok(Self { inner_proofs })
+        let targets = Self { inner_proofs };
+        targets.validate()?;
+        Ok(targets)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.inner_proofs.len() != OUTER_INNER_PROOFS {
+            return Err(anyhow!(
+                "outer target layout has {} inner proof targets, expected {}",
+                self.inner_proofs.len(),
+                OUTER_INNER_PROOFS
+            ));
+        }
+        for (idx, proof) in self.inner_proofs.iter().enumerate() {
+            if proof.public_inputs.len() != OUTER_CHILD_PI_LEN {
+                return Err(anyhow!(
+                    "outer target layout inner proof {} has public input length {}, expected {}",
+                    idx,
+                    proof.public_inputs.len(),
+                    OUTER_CHILD_PI_LEN
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -88,7 +120,7 @@ impl OuterAggregationCircuit {
         inner_common: CommonCircuitData<F, D>,
         inner_verifier_only: &VerifierOnlyCircuitData<C, D>,
     ) -> Self {
-        debug_assert_eq!(
+        assert_eq!(
             inner_common.num_public_inputs, OUTER_CHILD_PI_LEN,
             "inner common PI length mismatch"
         );
@@ -139,6 +171,9 @@ fn build_outer_wrapper_constraints(
     builder: &mut CircuitBuilder<F, D>,
     targets: &OuterAggregationCircuitTargets,
 ) {
+    targets
+        .validate()
+        .expect("invalid outer aggregation target layout");
     let zero = builder.zero();
     let inner_pi_targets: Vec<&[Target]> = targets
         .inner_proofs
@@ -261,9 +296,58 @@ fn read_exit_slots(
         let amount = pis[base];
         let exit = core::array::from_fn(|i| pis[base + 1 + i]);
         let slot_is_zero = bytes_digest_eq(builder, exit, zero_digest);
+        let amount_when_zero_exit = builder.mul(amount, slot_is_zero.target);
+        builder.connect(amount_when_zero_exit, zero);
         amounts.push(amount);
         exits.push(exit);
         is_zero.push(slot_is_zero);
     }
     (amounts, exits, is_zero)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layer0::circuit::inner::InnerAggregationCircuit;
+    use plonky2::util::serialization::Write;
+    use test_helpers::fake_leaf::build_fake_leaf_circuit;
+
+    #[test]
+    fn outer_target_deserialization_rejects_one_inner_proof_target() {
+        let mut bytes = Vec::new();
+        bytes.write_usize(1).unwrap();
+
+        let err = OuterAggregationCircuitTargets::from_bytes(&bytes).unwrap_err();
+
+        assert!(err.to_string().contains("expected 2"));
+    }
+
+    #[test]
+    fn outer_target_deserialization_rejects_three_inner_proof_targets() {
+        let mut bytes = Vec::new();
+        bytes.write_usize(3).unwrap();
+
+        let err = OuterAggregationCircuitTargets::from_bytes(&bytes).unwrap_err();
+
+        assert!(err.to_string().contains("expected 2"));
+    }
+
+    #[test]
+    fn outer_target_deserialization_rejects_trailing_bytes() {
+        let targets = outer_targets();
+        let mut bytes = targets.to_bytes().unwrap();
+        bytes.push(0);
+
+        let err = OuterAggregationCircuitTargets::from_bytes(&bytes).unwrap_err();
+
+        assert!(err.to_string().contains("trailing bytes"));
+    }
+
+    fn outer_targets() -> OuterAggregationCircuitTargets {
+        let (leaf_data, _) = build_fake_leaf_circuit();
+        let inner =
+            InnerAggregationCircuit::new(leaf_data.common.clone(), &leaf_data.verifier_only)
+                .build_verifier();
+        OuterAggregationCircuit::new(inner.common, &inner.verifier_only).targets()
+    }
 }

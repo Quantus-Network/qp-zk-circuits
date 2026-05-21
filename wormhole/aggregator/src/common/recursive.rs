@@ -97,6 +97,7 @@ mod tests {
         iop::witness::{PartialWitness, WitnessWrite},
         plonk::circuit_data::CircuitConfig,
     };
+    use std::panic::{self, AssertUnwindSafe};
     use zk_circuits_common::circuit::{C, D, F};
 
     #[test]
@@ -106,7 +107,8 @@ mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config.clone());
         let t = builder.add_virtual_target();
         builder.register_public_input(t);
-        builder.range_check(t, 16); // Real constraint
+        let one = builder.one();
+        builder.connect(t, one); // Real constraint
         let legit_circuit = builder.build::<C>();
 
         // Build a "malicious" inner circuit (same shape, no constraints)
@@ -130,10 +132,10 @@ mod tests {
 
         // Generate a malicious proof
         let mut pw = PartialWitness::new();
-        // Set a value that would fail range_check in legit circuit
+        // Set a value that would fail the legit circuit's t == 1 constraint.
         pw.set_target(
             malicious_circuit.prover_only.public_inputs[0],
-            F::from_canonical_u64(0xFFFF + 1),
+            F::from_canonical_u64(2),
         )
         .unwrap();
         let malicious_proof = malicious_circuit.prove(pw).expect("malicious prove");
@@ -145,8 +147,11 @@ mod tests {
         // Note: We do NOT set verifier_data - it's constants!
 
         // This should FAIL because the proof doesn't match the baked verifier key
-        let result = outer_circuit.prove(pw);
-        assert!(result.is_err(), "Should reject proof from wrong circuit");
+        let result = panic::catch_unwind(AssertUnwindSafe(|| outer_circuit.prove(pw)));
+        assert!(
+            result.is_err() || result.unwrap().is_err(),
+            "Should reject proof from wrong circuit"
+        );
     }
 
     #[test]
@@ -156,7 +161,8 @@ mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config.clone());
         let t = builder.add_virtual_target();
         builder.register_public_input(t);
-        builder.range_check(t, 16);
+        let one = builder.one();
+        builder.connect(t, one);
         let inner_circuit = builder.build::<C>();
 
         // Build outer circuit using SAFE helper
@@ -175,7 +181,7 @@ mod tests {
         let mut pw = PartialWitness::new();
         pw.set_target(
             inner_circuit.prover_only.public_inputs[0],
-            F::from_canonical_u64(100),
+            F::from_canonical_u64(1),
         )
         .unwrap();
         let legit_proof = inner_circuit.prove(pw).expect("legit prove");

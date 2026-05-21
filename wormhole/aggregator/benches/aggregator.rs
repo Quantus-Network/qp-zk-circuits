@@ -13,7 +13,8 @@ use zk_circuits_common::circuit::{C, D, F};
 /// Generate dummy proofs from the circuit config (no external files needed).
 /// Path is relative to CARGO_MANIFEST_DIR (the aggregator crate root).
 const BINS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../generated-bins");
-const LAYER1_L0_NUM_LEAVES: usize = 8; // Must be consistent with the layer0 circuit binaries used in layer1 benchmarks.
+const LAYER0_CAPACITY: usize = 16;
+const LAYER1_L0_NUM_LEAVES: usize = LAYER0_CAPACITY; // Must be consistent with the layer0 circuit binaries used in layer1 benchmarks.
 const LAYER1_AGGREGATOR_ADDRESS: [u8; 32] = [42u8; 32];
 
 type Proof = ProofWithPublicInputs<F, C, D>;
@@ -42,16 +43,15 @@ fn generate_dummy_layer0_proof() -> Proof {
 macro_rules! aggregate_proofs_benchmark {
     ($fn_name:ident, $num_leaf_proofs:expr) => {
         pub fn $fn_name(c: &mut Criterion) {
-            let proof = load_dummy_leaf_proof();
-
-            // Call "generate_layer0_circuit_binaries" before we instantiate a new wormhole aggregator,
-            // to ensure the binaries represent the circuit with the correct number of leaf proofs.
-            generate_layer0_circuit_binaries(BINS_DIR, $num_leaf_proofs, true)
+            // Layer-0 production capacity is fixed at 16. The benchmark parameter controls how
+            // many leaf proofs are submitted before dynamic dummy padding fills the batch.
+            generate_layer0_circuit_binaries(BINS_DIR, LAYER0_CAPACITY, true)
                 .expect("Failed to generate layer0 circuit binaries for aggregation benchmark");
-            let config = CircuitBinsConfig::new($num_leaf_proofs, None);
+            let config = CircuitBinsConfig::new(LAYER0_CAPACITY, None);
             config
                 .save(BINS_DIR)
                 .expect("Failed to save circuit bins config for aggregation benchmark");
+            let proof = load_dummy_leaf_proof();
 
             c.bench_function(&format!("aggregate_proofs_{}", $num_leaf_proofs), |b| {
                 b.iter_batched(
@@ -75,16 +75,15 @@ macro_rules! aggregate_proofs_benchmark {
 macro_rules! verify_aggregate_proof_benchmark {
     ($fn_name:ident, $num_leaf_proofs:expr) => {
         pub fn $fn_name(c: &mut Criterion) {
-            let proof = load_dummy_leaf_proof();
-
-            // Call "generate_layer0_circuit_binaries" before we instantiate a new wormhole aggregator,
-            // to ensure the binaries represent the circuit with the correct number of leaf proofs.
-            generate_layer0_circuit_binaries(BINS_DIR, $num_leaf_proofs, true)
+            // Layer-0 production capacity is fixed at 16. The benchmark parameter controls how
+            // many leaf proofs are submitted before dynamic dummy padding fills the batch.
+            generate_layer0_circuit_binaries(BINS_DIR, LAYER0_CAPACITY, true)
                 .expect("Failed to generate layer0 circuit binaries for aggregation benchmark");
-            let config = CircuitBinsConfig::new($num_leaf_proofs, None);
+            let config = CircuitBinsConfig::new(LAYER0_CAPACITY, None);
             config
                 .save(BINS_DIR)
                 .expect("Failed to save circuit bins config for aggregation benchmark");
+            let proof = load_dummy_leaf_proof();
 
             c.bench_function(
                 &format!("verify_aggregate_proof_{}", $num_leaf_proofs),
@@ -198,29 +197,16 @@ macro_rules! verify_layer1_benchmark {
     };
 }
 
-// Various proof counts.
+// Production layer-0 proof counts.
 aggregate_proofs_benchmark!(bench_aggregate_2_proofs, 2);
 aggregate_proofs_benchmark!(bench_aggregate_4_proofs, 4);
 aggregate_proofs_benchmark!(bench_aggregate_8_proofs, 8);
 aggregate_proofs_benchmark!(bench_aggregate_16_proofs, 16);
-aggregate_proofs_benchmark!(bench_aggregate_32_proofs, 32);
 
 verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_2, 2);
 verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_4, 4);
 verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_8, 8);
 verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_16, 16);
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_32, 32);
-
-// Additional proof counts.
-aggregate_proofs_benchmark!(bench_aggregate_proofs_9, 9);
-aggregate_proofs_benchmark!(bench_aggregate_proofs_25, 25);
-aggregate_proofs_benchmark!(bench_aggregate_proofs_36, 36);
-aggregate_proofs_benchmark!(bench_aggregate_proofs_49, 49);
-
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_9, 9);
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_25, 25);
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_36, 36);
-verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_49, 49);
 
 prove_layer1_benchmark!(bench_prove_layer1_2, 2);
 prove_layer1_benchmark!(bench_prove_layer1_4, 4);
@@ -238,10 +224,8 @@ criterion_group!(
     name = benches;
     config = Criterion::default()
         .sample_size(10);
-    targets = bench_aggregate_2_proofs, bench_aggregate_4_proofs, bench_aggregate_8_proofs, bench_aggregate_16_proofs, bench_aggregate_32_proofs,
-              bench_verify_aggregate_proof_2, bench_verify_aggregate_proof_4, bench_verify_aggregate_proof_8, bench_verify_aggregate_proof_16, bench_verify_aggregate_proof_32,
-              bench_aggregate_proofs_9, bench_aggregate_proofs_25, bench_aggregate_proofs_36, bench_aggregate_proofs_49,
-              bench_verify_aggregate_proof_9, bench_verify_aggregate_proof_25, bench_verify_aggregate_proof_36, bench_verify_aggregate_proof_49,
+    targets = bench_aggregate_2_proofs, bench_aggregate_4_proofs, bench_aggregate_8_proofs, bench_aggregate_16_proofs,
+              bench_verify_aggregate_proof_2, bench_verify_aggregate_proof_4, bench_verify_aggregate_proof_8, bench_verify_aggregate_proof_16,
               bench_prove_layer1_2, bench_prove_layer1_4, bench_prove_layer1_8, bench_prove_layer1_16, bench_prove_layer1_32,
               bench_verify_layer1_2, bench_verify_layer1_4, bench_verify_layer1_8, bench_verify_layer1_16, bench_verify_layer1_32,
 );

@@ -223,6 +223,7 @@ pub mod circuit_logic {
     fn connect_shared_targets(targets: &CircuitTargets, builder: &mut CircuitBuilder<F, D>) {
         use crate::nullifier::NULLIFIER_SALT;
         use plonky2::hash::poseidon2::Poseidon2Hash;
+        use zk_circuits_common::gadgets::bytes_digest_eq;
         use zk_circuits_common::utils::string_to_felts;
 
         builder.connect_hashes(targets.nullifier.secret, targets.unspendable_account.secret);
@@ -270,6 +271,25 @@ pub mod circuit_logic {
         let output_1_is_zero = builder.is_equal(leaf.output_amount_1, zero);
         let output_2_is_zero = builder.is_equal(leaf.output_amount_2, zero);
         let both_outputs_zero = builder.and(output_1_is_zero, output_2_is_zero);
+
+        // A zero exit-account digest is the empty output-slot sentinel used by layer-0
+        // aggregation. Positive value may never target that sentinel, otherwise aggregation
+        // would intentionally suppress the slot as empty.
+        let zero_digest = [zero, zero, zero, zero];
+        let exit_1_is_zero = bytes_digest_eq(
+            builder,
+            targets.exit_accounts.exit_account_1.address.elements,
+            zero_digest,
+        );
+        let exit_2_is_zero = bytes_digest_eq(
+            builder,
+            targets.exit_accounts.exit_account_2.address.elements,
+            zero_digest,
+        );
+        let output_1_if_zero_exit = builder.mul(leaf.output_amount_1, exit_1_is_zero.target);
+        let output_2_if_zero_exit = builder.mul(leaf.output_amount_2, exit_2_is_zero.target);
+        builder.connect(output_1_if_zero_exit, zero);
+        builder.connect(output_2_if_zero_exit, zero);
 
         // is_dummy = block_hash_is_zero AND both_outputs_zero
         let is_dummy = builder.and(block_hash_is_zero, both_outputs_zero);
