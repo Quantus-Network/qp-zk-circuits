@@ -223,6 +223,7 @@ fn build_layer0_wrapper_constraints(
     // This makes duplicates indistinguishable from dummy/unused slots in output.
 
     let num_exit_slots = n_leaf * 2;
+    let zero_digest = [zero, zero, zero, zero];
 
     let get_exit_and_amount = |proof_idx: usize, output_idx: usize| -> ([Target; 4], Target) {
         let pis = leaf_pi_targets[proof_idx];
@@ -246,6 +247,9 @@ fn build_layer0_wrapper_constraints(
         let proof_idx = slot / 2;
         let output_idx = slot % 2;
         let (exit_slot, _amount_slot) = get_exit_and_amount(proof_idx, output_idx);
+        let exit_is_zero = bytes_digest_eq(builder, exit_slot, zero_digest);
+        let amount_when_zero_exit = builder.mul(_amount_slot, exit_is_zero.target);
+        builder.connect(amount_when_zero_exit, zero);
 
         // Check whether this exit appeared earlier (for dedupe)
         let mut is_duplicate = builder._false();
@@ -347,7 +351,10 @@ fn hash_dummy_nullifier_pre_image(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::{
+        collections::BTreeMap,
+        panic::{self, AssertUnwindSafe},
+    };
 
     use anyhow::Result;
     use plonky2::field::types::{Field, PrimeField64};
@@ -1475,15 +1482,15 @@ mod tests {
 
         // Generate a malicious proof with FAKE values
         let fake_public_inputs: [u64; LEAF_PI_LEN] = [
-            999,        // asset_id
-            0xFFFFFFFF, // output_amount_1 - would fail range_check in legit circuit
-            0xFFFFFFFF, // output_amount_2 - would fail range_check in legit circuit
-            9999,       // volume_fee_bps - way over 100%
-            0xDEADBEEF, 0xCAFEBABE, 0x12345678, 0x87654321, // fake nullifier
-            0xAAAAAAAA, 0xBBBBBBBB, 0xCCCCCCCC, 0xDDDDDDDD, // fake exit_1
-            0xEEEEEEEE, 0xFFFFFFFF, 0x11111111, 0x22222222, // fake exit_2
-            0x33333333, 0x44444444, 0x55555555, 0x66666666, // fake block_hash
-            9999999,    // fake block_number
+            9,  // asset_id
+            1,  // output_amount_1
+            2,  // output_amount_2
+            10, // volume_fee_bps
+            11, 12, 13, 14, // fake nullifier
+            21, 22, 23, 24, // fake exit_1
+            31, 32, 33, 34, // fake exit_2
+            41, 42, 43, 44, // fake block_hash
+            99, // fake block_number
         ];
 
         let mut pw = PartialWitness::new();
@@ -1506,9 +1513,9 @@ mod tests {
         }
 
         // L0 proof generation should FAIL because the proof doesn't match the baked verifier key
-        let result = l0_data.prove(pw);
+        let result = panic::catch_unwind(AssertUnwindSafe(|| l0_data.prove(pw)));
         assert!(
-            result.is_err(),
+            result.is_err() || result.unwrap().is_err(),
             "L0 should reject proofs from malicious circuit"
         );
     }

@@ -48,6 +48,8 @@ impl AggregationCircuitTargets {
         use anyhow::anyhow;
         use plonky2::util::serialization::Write;
 
+        self.validate()?;
+
         let mut bytes = Vec::new();
         bytes
             .write_usize(self.leaf_proofs.len())
@@ -77,6 +79,13 @@ impl AggregationCircuitTargets {
         let proof_count = buffer
             .read_usize()
             .map_err(|e| anyhow!("failed to deserialize leaf proof count: {}", e))?;
+        if proof_count != INNER_NUM_LEAVES {
+            return Err(anyhow!(
+                "inner target layout has {} leaf proof targets, expected {}",
+                proof_count,
+                INNER_NUM_LEAVES
+            ));
+        }
         let mut leaf_proofs = Vec::with_capacity(proof_count);
         for _ in 0..proof_count {
             leaf_proofs.push(
@@ -89,6 +98,13 @@ impl AggregationCircuitTargets {
         let dummy_count = buffer
             .read_usize()
             .map_err(|e| anyhow!("failed to deserialize dummy nullifier count: {}", e))?;
+        if dummy_count != INNER_NUM_LEAVES {
+            return Err(anyhow!(
+                "inner target layout has {} dummy nullifier targets, expected {}",
+                dummy_count,
+                INNER_NUM_LEAVES
+            ));
+        }
         let mut dummy_nullifier_pre_images = Vec::with_capacity(dummy_count);
         for _ in 0..dummy_count {
             dummy_nullifier_pre_images.push(
@@ -105,10 +121,43 @@ impl AggregationCircuitTargets {
             ));
         }
 
-        Ok(Self {
+        let targets = Self {
             leaf_proofs,
             dummy_nullifier_pre_images,
-        })
+        };
+        targets.validate()?;
+        Ok(targets)
+    }
+
+    /// Validate production-critical target-layout invariants after loading external artifacts.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        use anyhow::anyhow;
+
+        if self.leaf_proofs.len() != INNER_NUM_LEAVES {
+            return Err(anyhow!(
+                "inner target layout has {} leaf proof targets, expected {}",
+                self.leaf_proofs.len(),
+                INNER_NUM_LEAVES
+            ));
+        }
+        if self.dummy_nullifier_pre_images.len() != INNER_NUM_LEAVES {
+            return Err(anyhow!(
+                "inner target layout has {} dummy nullifier targets, expected {}",
+                self.dummy_nullifier_pre_images.len(),
+                INNER_NUM_LEAVES
+            ));
+        }
+        for (idx, proof) in self.leaf_proofs.iter().enumerate() {
+            if proof.public_inputs.len() != LEAF_PI_LEN {
+                return Err(anyhow!(
+                    "inner target layout leaf proof {} has public input length {}, expected {}",
+                    idx,
+                    proof.public_inputs.len(),
+                    LEAF_PI_LEN
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -190,6 +239,9 @@ fn build_inner_wrapper_constraints(
     builder: &mut CircuitBuilder<F, D>,
     targets: &InnerAggregationCircuitTargets,
 ) {
+    targets
+        .validate()
+        .expect("invalid inner aggregation target layout");
     let one = builder.one();
     let zero = builder.zero();
     let zero_digest = [zero, zero, zero, zero];
@@ -260,6 +312,10 @@ fn build_inner_wrapper_constraints(
         } else {
             limb1_at_offset::<LEAF_PI_LEN, OUTPUT_AMOUNT_2_START>(pis, 0)
         };
+
+        let exit_is_zero = bytes_digest_eq(builder, exit, zero_digest);
+        let amount_when_zero_exit = builder.mul(amount, exit_is_zero.target);
+        builder.connect(amount_when_zero_exit, zero);
 
         slot_exits.push(exit);
         slot_amounts.push(amount);
@@ -368,4 +424,53 @@ fn hash_dummy_nullifier_pre_image(
     builder
         .hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(inner_hash.elements.to_vec())
         .elements
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use plonky2::util::serialization::Write;
+    use test_helpers::fake_leaf::build_fake_leaf_circuit;
+
+    #[test]
+    fn inner_target_deserialization_rejects_wrong_proof_count() {
+        let mut bytes = Vec::new();
+        bytes.write_usize(1).unwrap();
+
+        let err = InnerAggregationCircuitTargets::from_bytes(&bytes).unwrap_err();
+
+        assert!(err.to_string().contains("expected 8"));
+    }
+
+    #[test]
+    fn inner_target_deserialization_rejects_trailing_bytes() {
+        let (leaf_data, _) = build_fake_leaf_circuit();
+        let targets =
+            InnerAggregationCircuit::new(leaf_data.common.clone(), &leaf_data.verifier_only)
+                .targets();
+        let mut bytes = targets.to_bytes().unwrap();
+        bytes.push(0);
+
+        let err = InnerAggregationCircuitTargets::from_bytes(&bytes).unwrap_err();
+
+        assert!(err.to_string().contains("trailing bytes"));
+    }
+
+    #[test]
+    fn inner_target_deserialization_rejects_truncated_target_file() {
+        let (leaf_data, _) = build_fake_leaf_circuit();
+        let targets =
+            InnerAggregationCircuit::new(leaf_data.common.clone(), &leaf_data.verifier_only)
+                .targets();
+        let bytes = targets.to_bytes().unwrap();
+
+        let err =
+            InnerAggregationCircuitTargets::from_bytes(&bytes[..bytes.len() - 1]).unwrap_err();
+
+        assert!(
+            err.to_string().contains("deserialize")
+                || err.to_string().contains("failed to fill whole buffer"),
+            "unexpected error: {err}"
+        );
+    }
 }

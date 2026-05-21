@@ -1,5 +1,6 @@
 pub mod inner;
 pub mod lib;
+pub mod ordering;
 pub mod outer;
 pub mod session;
 pub mod witness;
