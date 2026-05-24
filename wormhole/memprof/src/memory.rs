@@ -171,8 +171,7 @@ mod linux {
     }
 
     fn parse_kb(rest: &str) -> u64 {
-        rest.trim()
-            .split_whitespace()
+        rest.split_whitespace()
             .next()
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(0)
