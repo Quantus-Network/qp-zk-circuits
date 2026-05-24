@@ -47,7 +47,6 @@ pub enum ZkMode {
 ))]
 pub struct AggConfigArgs {
     // ---------- Safe knobs (no security weakening) ----------
-
     /// Zero-knowledge mode for the aggregation circuit. `polyfri` (default,
     /// strongest) and `rowblinding` are both fully ZK; `disabled` is NOT ZK
     /// and requires `--allow-weakening-security`.
@@ -82,7 +81,6 @@ pub struct AggConfigArgs {
     pub max_quotient_degree_factor: Option<usize>,
 
     // ---------- Security-affecting knobs (gated by --allow-weakening-security) ----------
-
     /// Override FRI query rounds directly. WEAKENS soundness if used to
     /// lower the rate_bits * queries product. By default this is auto-derived
     /// from --rate-bits. Requires `--allow-weakening-security`.
