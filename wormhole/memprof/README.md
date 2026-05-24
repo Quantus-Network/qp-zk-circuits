@@ -1,41 +1,49 @@
 # wormhole-memprof
 
 Single-shot peak-memory profiler for the wormhole proof + aggregation pipeline.
-Reproduces what the Quantus mobile app does when redeeming miner rewards, and
-prints a phase-by-phase memory report so we can iterate on circuit/runtime
-tweaks without firing up Xcode and the mobile app.
+Runs the full flow once in a fresh process and reports per-phase peak resident
+memory. Use it to compare circuit configurations, runtime tuning, and allocator
+behavior without spinning up a full client.
 
 This complements the existing criterion benches:
 
 - **Criterion benches** (`cargo bench`) measure speed at warm steady state.
-  They iterate the hot loop many times, which pollutes peak-memory readings.
-- **memprof** runs the full pipeline ONCE in a fresh process and reports the
-  peak resident memory. Mirrors mobile behavior exactly.
+  They iterate the hot loop many times, reusing setup state, which pollutes
+  peak-memory readings.
+- **memprof** runs the pipeline ONCE in a fresh process and reports the peak.
 
 ## Methodology
 
-A background thread samples `task_info(TASK_VM_INFO).phys_footprint` (Apple) or
-`/proc/self/status:VmRSS` (Linux) every 25ms and tracks the max. `phys_footprint`
-is the same metric iOS uses to decide which apps to jetsam-kill — so when this
-report shows >3GB peak on macOS, that's exactly what crashes on iPhone.
+A background thread samples the resident set every ~25ms and tracks the
+maximum. On macOS it reads `mach_task_basic_info.resident_size`; on Linux it
+reads `/proc/self/status:VmRSS`. Phases are bracketed by `phase_start` /
+`phase_end` calls so each phase reports its own start/end/peak.
 
 ## Usage
 
 ```bash
-# Default: 16 leaf proofs, 16 leaves in agg circuit (mobile app config)
+# Default: build leaf circuit, generate 16 leaf proofs, aggregate them
 cargo run -p wormhole-memprof --release
 
-# Same memory shape as mobile when there are 4 unspent transfers
+# Mimic a smaller batch: 16-leaf agg circuit but only 4 real proofs
 cargo run -p wormhole-memprof --release -- \
-    --num-leaf-proofs 16 --real-proofs 4 --rayon-threads 1
+    --num-leaf-proofs 16 --real-proofs 4
 
-# Just the aggregation circuit data structure cost (no prove)
+# Just the aggregation circuit data structure (no proving)
 cargo run -p wormhole-memprof --release -- --circuit-only --num-leaf-proofs 16
 
-# Try a smaller aggregation circuit (would need chain-side change)
+# Skip leaf-proof generation; clones a dummy proof instead.
+# Useful to isolate aggregation cost from leaf proving cost.
+cargo run -p wormhole-memprof --release -- \
+    --skip-leaf-gen --num-leaf-proofs 16 --real-proofs 4
+
+# Try a smaller aggregation circuit (chain-side change required to use)
 cargo run -p wormhole-memprof --release -- --num-leaf-proofs 4
 
-# CI guard: fail if peak > 1.5GB
+# Force single-threaded to compare against rayon-parallel
+cargo run -p wormhole-memprof --release -- --rayon-threads 1
+
+# CI guard: fail if peak > 1.5 GB
 cargo run -p wormhole-memprof --release -- \
     --num-leaf-proofs 4 --peak-target-mb 1500
 ```
@@ -46,18 +54,14 @@ cargo run -p wormhole-memprof --release -- \
 ============================== MEMPROF REPORT ==============================
 phase                        |  wall (ms) |     start (MB) |       end (MB) |      peak (MB)
 ----------------------------------------------------------------------------------------------
-startup                      |          0 |            0.0 |           18.4 |           18.4
-build_leaf_circuit           |       1240 |           18.4 |          182.1 |          204.6
-gen_leaf_proof[0]            |       3210 |          182.1 |          611.0 |          720.5
-gen_leaf_proof[1]            |       3105 |          611.0 |          970.4 |         1080.2
-...
-build_agg_circuit            |       6520 |         1610.0 |         3850.7 |         3892.0
-agg_commit                   |          5 |         3850.7 |         3851.2 |         3851.2
-agg_prove                    |      45000 |         3851.2 |         4170.3 |         4188.4
+startup                      |          0 |            0.0 |            2.0 |            2.0
+build_leaf_circuit           |         56 |            2.0 |           23.5 |           23.5
+build_agg_circuit            |       6919 |           23.7 |         2301.1 |         2663.8
+agg_commit                   |          8 |         2301.1 |         2302.1 |         2302.1
+agg_prove                    |      20715 |         2302.1 |         3449.4 |         3972.6
 ----------------------------------------------------------------------------------------------
-total wall:              68000 ms
-overall peak phys:        4188.4 MB
-STATUS: WOULD CRASH on iPhone (>3GB even with entitlement)
+total wall:             27699 ms
+overall peak rss:      3972.6 MB
 ===========================================================================
 ```
 
@@ -65,10 +69,11 @@ STATUS: WOULD CRASH on iPhone (>3GB even with entitlement)
 
 | flag | effect |
 | --- | --- |
-| `--num-leaf-proofs N` | Aggregation circuit width. 16 = production chain config. |
-| `--real-proofs M` | How many real proofs to generate (rest are dummy padding). |
-| `--rayon-threads T` | Limit plonky2's parallel FFTs. 1 = lowest peak. |
-| `--skip-leaf-gen` | Use cloned dummy proofs; isolates aggregation memory. |
+| `--num-leaf-proofs N` | Width of the aggregation circuit (production = 16). |
+| `--real-proofs M` | Real proofs to generate; rest are dummy padding. |
+| `--rayon-threads T` | Limit plonky2's parallel FFT pool. `0` = system default. |
+| `--skip-leaf-gen` | Use cloned dummy proofs; isolates aggregation cost. |
 | `--circuit-only` | Build agg circuit only, don't prove. |
-| `--release-after-each` | Call `malloc_zone_pressure_relief` between phases. |
-| `--peak-target-mb T` | Exit non-zero if peak > T MB (CI guard). |
+| `--release-after-each` | Call `malloc_zone_pressure_relief` between phases (Apple only). |
+| `--sample-period-ms P` | Memory sampler poll period in ms (default 25). |
+| `--peak-target-mb T` | Exit non-zero if overall peak > T MB (CI guard). |

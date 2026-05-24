@@ -1,6 +1,6 @@
 [package]
 name = "wormhole-memprof"
-description = "Single-shot peak-memory profiler for wormhole proof generation + aggregation. Reproduces the mobile claim flow."
+description = "Single-shot peak-memory profiler for wormhole proof generation + aggregation."
 edition.workspace = true
 version.workspace = true
 publish = false

@@ -1,12 +1,8 @@
-//! Cross-platform peak memory sampling.
+//! Cross-platform resident-memory sampling.
 //!
-//! On Apple platforms we read `phys_footprint` from `task_info(TASK_VM_INFO)` —
-//! this is exactly the metric iOS jetsam uses to decide which apps to terminate
-//! for memory pressure, so reproducing >2-3GB here means the same crash on iPhone.
-//!
-//! On Linux we read `/proc/self/status` `VmRSS` and `VmPeak`.
-//!
-//! On other platforms we return 0.
+//! - Apple: `mach_task_basic_info.resident_size` via `task_info`.
+//! - Linux: `/proc/self/status:VmRSS`.
+//! - Other: returns `(0, 0)`.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;

@@ -108,20 +108,8 @@ impl PhaseReport {
             );
         }
         println!("{}", "-".repeat(94));
-        println!("total wall:        {:>10} ms", total_wall.as_millis());
-        println!("overall peak phys: {:>10} MB", fmt_mb(overall_peak));
-        println!(
-            "iOS jetsam thresholds: ~2000MB default, ~3000MB w/ increased-memory-limit entitlement"
-        );
-        if overall_peak > 3_000 * 1024 * 1024 {
-            println!("STATUS: WOULD CRASH on iPhone (>3GB even with entitlement)");
-        } else if overall_peak > 2_000 * 1024 * 1024 {
-            println!("STATUS: needs increased-memory-limit entitlement (>2GB)");
-        } else if overall_peak > 1_500 * 1024 * 1024 {
-            println!("STATUS: tight (>1.5GB) — risky on older devices");
-        } else {
-            println!("STATUS: OK on iPhone");
-        }
+        println!("total wall:       {:>10} ms", total_wall.as_millis());
+        println!("overall peak rss: {:>10} MB", fmt_mb(overall_peak));
         println!("===========================================================================");
 
         if let Some(target_mb) = peak_target_mb {

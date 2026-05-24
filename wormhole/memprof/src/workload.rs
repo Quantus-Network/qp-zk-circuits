@@ -1,11 +1,10 @@
-//! Reproduces the mobile claim-rewards flow for memory profiling:
+//! Pipeline phases under measurement:
 //!   1. build leaf circuit (extract common + verifier_only + dummy proof)
-//!   2. generate N leaf proofs sequentially (each one rebuilds the leaf
-//!      prover, mirroring mobile's `WormholeProver::new_from_files` per-call)
-//!   3. build aggregation circuit fresh (matches mobile `aggregate_proofs_fresh`)
+//!   2. generate N leaf proofs sequentially (each builds the leaf prover fresh)
+//!   3. build the layer-0 aggregation circuit
 //!   4. commit + prove the aggregation
 //!
-//! Uses dummy circuit inputs to keep the workload self-contained.
+//! Uses dummy circuit inputs so the workload is self-contained.
 
 use anyhow::Result;
 use plonky2::plonk::circuit_data::{CommonCircuitData, VerifierOnlyCircuitData};
