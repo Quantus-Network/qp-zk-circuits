@@ -1,5 +1,6 @@
 [workspace]
 members = [
+	"circuits-proptest",
 	"common",
 	"voting",
 	"wormhole/aggregator",
@@ -13,6 +14,14 @@ members = [
 	"wormhole/verifier",
 ]
 resolver = "2"
+
+# Per https://proptest-rs.github.io/proptest/proptest/tips-and-best-practices.html
+# proptest + its RNG benefit substantially from opt-level=3 even in `cargo test`.
+[profile.test.package.proptest]
+opt-level = 3
+
+[profile.test.package.rand_chacha]
+opt-level = 3
 
 [workspace.dependencies]
 anyhow = { version = "1.0.98", default-features = false }
