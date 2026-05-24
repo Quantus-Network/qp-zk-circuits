@@ -112,7 +112,7 @@ impl PhaseReport {
             );
         }
         println!("{}", "-".repeat(94));
-        println!("total wall:       {:>10} ms", total_wall.as_millis());
+        println!("total time:       {:>10} ms", total_wall.as_millis());
         println!("overall peak rss: {:>10} MB", fmt_mb(overall_peak));
         println!("===========================================================================");
 
