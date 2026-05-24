@@ -67,6 +67,8 @@ overall peak rss:      3972.6 MB
 
 ## Knobs
 
+### Pipeline
+
 | flag | effect |
 | --- | --- |
 | `--num-leaf-proofs N` | Width of the aggregation circuit (production = 16). |
@@ -77,3 +79,47 @@ overall peak rss:      3972.6 MB
 | `--release-after-each` | Call `malloc_zone_pressure_relief` between phases (Apple only). |
 | `--sample-period-ms P` | Memory sampler poll period in ms (default 25). |
 | `--peak-target-mb T` | Exit non-zero if overall peak > T MB (CI guard). |
+
+### Circuit configuration (preserves security)
+
+The leaf and aggregator `CircuitConfig` can be tuned. By default, settings
+match the production `wormhole_aggregator_circuit_config()`. The leaf circuit
+is always rebuilt with the same FRI/wires/quotient knobs so recursive
+verification remains valid.
+
+| flag | effect | default |
+| --- | --- | --- |
+| `--zk-mode {polyfri,rowblinding,disabled}` | Zero-knowledge construction. `polyfri` and `rowblinding` are both fully ZK; `disabled` leaks witness and requires `--allow-weakening-security`. | `polyfri` |
+| `--rate-bits N` | FRI blowup exponent. Companion `num_query_rounds` is auto-adjusted to preserve the original `rate_bits × queries` soundness product. | 3 |
+| `--cap-height N` | FRI Merkle cap height. Affects proof size only. | 4 |
+| `--num-wires N` | Plonk trace columns. Lowering forces taller circuits; minimum 130 (Poseidon2 width). | 143 |
+| `--num-routed-wires N` | Routed wires. | 80 |
+| `--max-quotient-degree-factor N` | Quotient polynomial degree factor; minimum ~7 with Poseidon. | 8 |
+
+### Circuit configuration (security-affecting; gated)
+
+Use of these flags requires `--allow-weakening-security`. They lower
+soundness or ZK security and exist only for measurement/exploration.
+
+| flag | effect |
+| --- | --- |
+| `--num-query-rounds N` | Override FRI queries directly (use `--rate-bits` instead for safe tuning). |
+| `--security-bits N` | Target security level. |
+| `--num-challenges N` | Plonk challenge count. |
+
+## Tuning observations (qp-plonky2 1.4.1, 16-leaf agg, 4 real proofs)
+
+| config | peak (MB) | time | notes |
+| --- | ---: | ---: | --- |
+| default (`PolyFri` ZK) | 4038 | 12.8s | matches production |
+| `--zk-mode rowblinding` | **2858** | 7.7s | ~–29% memory, faster; still cryptographically ZK |
+| `--rate-bits 2` | crashes | – | plonky2 1.4.1 internal limitation in recursive verification |
+| `--num-wires < 130` | rejected | – | Poseidon2 gate requires 130-wire minimum |
+| `--max-quotient-degree-factor < 7` | rejected | – | Poseidon gate degree exceeds factor |
+
+`PolyFri` and `RowBlinding` are both fully zero-knowledge; the difference is
+the construction (polynomial-domain masked commitments vs row-level blinding).
+RowBlinding has been the standard ZK approach in plonky2 since the project's
+inception. Switching to it on the production chain requires a verifier-key
+update but lets the aggregator proof fit comfortably within mobile memory
+budgets without weakening soundness or ZK guarantees.

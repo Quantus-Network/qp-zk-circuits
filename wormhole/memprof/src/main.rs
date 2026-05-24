@@ -14,6 +14,7 @@
 //!
 //! See `README.md` for usage examples.
 
+mod config;
 mod memory;
 mod report;
 mod workload;
@@ -21,6 +22,9 @@ mod workload;
 use anyhow::Result;
 use clap::Parser;
 
+use crate::config::{
+    default_agg_config, leaf_config_matching, print_config_summary, AggConfigArgs,
+};
 use crate::report::PhaseReport;
 
 #[derive(Parser, Debug)]
@@ -66,11 +70,28 @@ struct Args {
     /// If set, exits non-zero when overall peak exceeds this MB. CI guard.
     #[arg(long)]
     peak_target_mb: Option<u64>,
+
+    #[command(flatten)]
+    agg_cfg: AggConfigArgs,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
     eprintln!("wormhole-memprof: args = {:#?}", args);
+
+    if let Err(msg) = args.agg_cfg.validate() {
+        eprintln!("ERROR: {}", msg);
+        std::process::exit(2);
+    }
+
+    let agg_cfg = if args.agg_cfg.is_default() {
+        default_agg_config()
+    } else {
+        args.agg_cfg.build()
+    };
+    let leaf_cfg = leaf_config_matching(&agg_cfg);
+    print_config_summary("leaf", &leaf_cfg);
+    print_config_summary("agg", &agg_cfg);
 
     if args.rayon_threads > 0 {
         eprintln!("Configuring rayon with {} threads", args.rayon_threads);
@@ -88,13 +109,13 @@ fn main() -> Result<()> {
 
     let mut report = PhaseReport::new(args.sample_period_ms);
 
-    let leaf_ctx = workload::build_leaf_context(&mut report)?;
+    let leaf_ctx = workload::build_leaf_context(leaf_cfg.clone(), &mut report)?;
     if args.release_after_each {
         report.release_memory("after_build_leaf_circuit");
     }
 
     if args.circuit_only {
-        workload::build_agg_circuit_only(&leaf_ctx, num_leaf_proofs, &mut report)?;
+        workload::build_agg_circuit_only(&leaf_ctx, num_leaf_proofs, agg_cfg, &mut report)?;
         report.finish_and_print(args.peak_target_mb);
         return Ok(());
     }
@@ -110,7 +131,12 @@ fn main() -> Result<()> {
         }
     } else {
         for i in 0..real_proofs {
-            let p = workload::generate_leaf_proof(i, args.release_after_each, &mut report)?;
+            let p = workload::generate_leaf_proof(
+                i,
+                leaf_cfg.clone(),
+                args.release_after_each,
+                &mut report,
+            )?;
             leaf_proofs.push(p);
         }
     }
@@ -119,6 +145,7 @@ fn main() -> Result<()> {
         &leaf_ctx,
         leaf_proofs,
         num_leaf_proofs,
+        agg_cfg,
         args.release_after_each,
         &mut report,
     )?;

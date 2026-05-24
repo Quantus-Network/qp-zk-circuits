@@ -1,0 +1,83 @@
+Building wormhole-memprof binary once for warmup...
+Establishing default baseline...
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16
+Establishing best safe combo...
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 54 --num-wires 135
+
+=== Sweep: zk_mode ===
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16
+  polyfri (default): peak=4635.4MB time=13369ms
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding
+  rowblinding: peak=2974.4MB time=8210ms
+
+=== Sweep: num_leaf_proofs ===
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 1 --zk-mode rowblinding
+  1: peak=819.4MB time=2180ms
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 2 --zk-mode rowblinding
+  2: peak=842.8MB time=2199ms
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 4 --zk-mode rowblinding
+  4: peak=1539.7MB time=4143ms
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 8 --zk-mode rowblinding
+  8: peak=2742.9MB time=7781ms
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding
+  16: peak=2975.3MB time=8583ms
+
+=== Sweep: num_routed_wires ===
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 54
+  54: peak=2664.5MB time=7421ms
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 56
+  56: peak=2682.2MB time=7586ms
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 60
+  60: peak=2780.2MB time=8422ms
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 65
+  65: peak=2823.5MB time=8734ms
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 70
+  70: peak=2849.7MB time=9459ms
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 75
+  75: peak=2952.1MB time=9786ms
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 80
+  80: peak=2976.7MB time=10173ms
+
+=== Sweep: num_wires ===
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 54 --num-wires 135
+  135: peak=2521.4MB time=9280ms
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 54 --num-wires 138
+  138: peak=2541.4MB time=9518ms
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 54 --num-wires 140
+  140: peak=2554.2MB time=9406ms
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 54 --num-wires 143
+  143: peak=2670.9MB time=9686ms
+
+=== Sweep: max_qdf ===
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --max-quotient-degree-factor 7
+  7: peak=2971.5MB time=10518ms
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --max-quotient-degree-factor 8
+  8: peak=2978.0MB time=10425ms
+
+=== Sweep: rayon_threads ===
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --rayon-threads 1
+  1: peak=2948.4MB time=27547ms
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --rayon-threads 2
+  2: peak=2951.2MB time=16329ms
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --rayon-threads 4
+  4: peak=2974.1MB time=14198ms
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --rayon-threads 8
+  8: peak=2826.7MB time=13634ms
+$ cargo run -q --release -p wormhole-memprof -- --skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding
+  default: peak=2954.5MB time=14985ms
+
+=== Sweep: combo_per_N ===
+$ cargo run -q --release -p wormhole-memprof -- --num-leaf-proofs 1 --real-proofs 1 --zk-mode rowblinding --num-routed-wires 54 --num-wires 135
+  1: peak=689.3MB time=3522ms
+$ cargo run -q --release -p wormhole-memprof -- --num-leaf-proofs 2 --real-proofs 2 --zk-mode rowblinding --num-routed-wires 54 --num-wires 135
+  2: peak=717.1MB time=3375ms
+$ cargo run -q --release -p wormhole-memprof -- --num-leaf-proofs 4 --real-proofs 4 --zk-mode rowblinding --num-routed-wires 54 --num-wires 135
+  4: peak=1329.5MB time=6388ms
+$ cargo run -q --release -p wormhole-memprof -- --num-leaf-proofs 8 --real-proofs 4 --zk-mode rowblinding --num-routed-wires 54 --num-wires 135
+  8: peak=2449.1MB time=10147ms
+$ cargo run -q --release -p wormhole-memprof -- --num-leaf-proofs 16 --real-proofs 4 --zk-mode rowblinding --num-routed-wires 54 --num-wires 135
+  16: peak=2522.3MB time=10564ms
+
+Wrote /Users/elohim/play/quantus-network/qp-zk-circuits/wormhole/memprof/sweep-results/data.csv
+Wrote /Users/elohim/play/quantus-network/qp-zk-circuits/wormhole/memprof/sweep-results/report.md
+Wrote charts to /Users/elohim/play/quantus-network/qp-zk-circuits/wormhole/memprof/sweep-results
