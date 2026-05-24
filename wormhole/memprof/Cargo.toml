@@ -1,11 +1,11 @@
 [package]
-name = "wormhole-memprof"
+authors.workspace = true
 description = "Single-shot peak-memory profiler for wormhole proof generation + aggregation."
 edition.workspace = true
-version.workspace = true
-publish = false
-authors.workspace = true
 license.workspace = true
+name = "wormhole-memprof"
+publish = false
+version.workspace = true
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }

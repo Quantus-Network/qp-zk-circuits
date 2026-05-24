@@ -36,8 +36,7 @@ pub fn release_memory() -> (u64, u64, u64) {
         extern "C" {
             fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
         }
-        released_reported =
-            malloc_zone_pressure_relief(std::ptr::null_mut(), 0) as u64;
+        released_reported = malloc_zone_pressure_relief(std::ptr::null_mut(), 0) as u64;
     }
     #[cfg(not(target_vendor = "apple"))]
     {

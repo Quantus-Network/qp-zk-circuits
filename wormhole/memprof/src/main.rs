@@ -81,7 +81,10 @@ fn main() -> Result<()> {
     }
 
     let num_leaf_proofs = args.num_leaf_proofs;
-    let real_proofs = args.real_proofs.unwrap_or(num_leaf_proofs).min(num_leaf_proofs);
+    let real_proofs = args
+        .real_proofs
+        .unwrap_or(num_leaf_proofs)
+        .min(num_leaf_proofs);
 
     let mut report = PhaseReport::new(args.sample_period_ms);
 

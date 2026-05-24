@@ -53,7 +53,11 @@ impl PhaseReport {
         if let Some((label, t0, start_phys)) = self.current.take() {
             let wall = t0.elapsed();
             let (end_phys, _) = process_memory();
-            let peak = self.sampler.snapshot_and_reset().max(end_phys).max(start_phys);
+            let peak = self
+                .sampler
+                .snapshot_and_reset()
+                .max(end_phys)
+                .max(start_phys);
             eprintln!(
                 "<<< phase {} done in {}ms (end phys={}MB peak={}MB)",
                 label,
