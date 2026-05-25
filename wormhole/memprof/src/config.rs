@@ -1,7 +1,10 @@
 //! Build a customizable aggregator `CircuitConfig` from CLI overrides.
 //!
-//! The defaults match `wormhole_aggregator_circuit_config()` (=
-//! `standard_recursion_polyfri_zk_config`).
+//! The starting point is always `wormhole_aggregator_circuit_config()` (the
+//! production config). Each flag, when set, overrides the corresponding
+//! field on top of that baseline. Unset flags leave the production value
+//! untouched, so a profiler run with no agg-config flags is identical to
+//! production.
 //!
 //! Knobs are split into two groups:
 //!
@@ -21,9 +24,9 @@ use zk_circuits_common::circuit::wormhole_aggregator_circuit_config;
 
 #[derive(Copy, Clone, Debug, ValueEnum, PartialEq, Eq)]
 pub enum ZkMode {
-    /// `PolyFri` masked commitments (matches production `wormhole_aggregator_circuit_config`).
+    /// `PolyFri` masked commitments. Higher memory than RowBlinding.
     Polyfri,
-    /// `RowBlinding` legacy blinding strategy. Still ZK, lower memory than PolyFri.
+    /// `RowBlinding` legacy blinding strategy (production default).
     Rowblinding,
     /// No ZK (leaks witness). REQUIRES `--allow-weakening-security`.
     Disabled,
@@ -47,36 +50,37 @@ pub enum ZkMode {
 ))]
 pub struct AggConfigArgs {
     // ---------- Safe knobs (no security weakening) ----------
-    /// Zero-knowledge mode for the aggregation circuit. `polyfri` (default,
-    /// strongest) and `rowblinding` are both fully ZK; `disabled` is NOT ZK
-    /// and requires `--allow-weakening-security`.
+    /// Zero-knowledge mode for the aggregation circuit. `rowblinding`
+    /// (production default) and `polyfri` are both fully ZK; `disabled` is
+    /// NOT ZK and requires `--allow-weakening-security`. When unset, the
+    /// production zk mode is used.
     #[arg(long, value_enum)]
     pub zk_mode: Option<ZkMode>,
 
     /// FRI blowup factor exponent (`blowup = 2^rate_bits`). Lower = less
     /// prover memory, larger proofs, slower verifier. The companion
     /// `num_query_rounds` is automatically adjusted to preserve the original
-    /// FRI soundness product (~rate_bits * queries). Default: 3.
+    /// FRI soundness product (~rate_bits * queries). Production: 3.
     #[arg(long)]
     pub rate_bits: Option<usize>,
 
     /// FRI Merkle cap height. Affects proof size only, not security or
-    /// prover memory. Default: 4.
+    /// prover memory. Production: 4.
     #[arg(long)]
     pub cap_height: Option<usize>,
 
     /// Number of plonk wires (trace columns). Reducing this forces the
     /// circuit to use more rows for the same logic but does not affect
-    /// soundness. Must be large enough for the circuit to fit. Default: 143.
+    /// soundness. Must be >= 135 (Poseidon gate floor). Production: 135.
     #[arg(long)]
     pub num_wires: Option<usize>,
 
-    /// Number of routed wires. Default: 80.
+    /// Number of routed wires. Production: 60.
     #[arg(long)]
     pub num_routed_wires: Option<usize>,
 
     /// Max quotient polynomial degree factor. Reducing constrains the kinds
-    /// of constraints the circuit can express. Default: 8.
+    /// of constraints the circuit can express. Production: 8.
     #[arg(long)]
     pub max_quotient_degree_factor: Option<usize>,
 
@@ -88,12 +92,12 @@ pub struct AggConfigArgs {
     pub num_query_rounds: Option<usize>,
 
     /// Target security bits. Lowering this WEAKENS soundness/ZK security.
-    /// Requires `--allow-weakening-security`. Default: 100.
+    /// Requires `--allow-weakening-security`. Production: 100.
     #[arg(long)]
     pub security_bits: Option<usize>,
 
     /// Number of challenge points. Lowering WEAKENS soundness. Requires
-    /// `--allow-weakening-security`. Default: 2.
+    /// `--allow-weakening-security`. Production: 2.
     #[arg(long)]
     pub num_challenges: Option<usize>,
 
@@ -132,11 +136,16 @@ impl AggConfigArgs {
     }
 
     pub fn build(&self) -> CircuitConfig {
-        let mut cfg = match self.zk_mode {
-            Some(ZkMode::Polyfri) | None => CircuitConfig::standard_recursion_polyfri_zk_config(),
-            Some(ZkMode::Rowblinding) => CircuitConfig::standard_recursion_zk_config(),
-            Some(ZkMode::Disabled) => CircuitConfig::standard_recursion_config(),
-        };
+        let mut cfg = wormhole_aggregator_circuit_config();
+
+        if let Some(mode) = self.zk_mode {
+            let template = match mode {
+                ZkMode::Polyfri => CircuitConfig::standard_recursion_polyfri_zk_config(),
+                ZkMode::Rowblinding => CircuitConfig::standard_recursion_zk_config(),
+                ZkMode::Disabled => CircuitConfig::standard_recursion_config(),
+            };
+            cfg.zk_config = template.zk_config;
+        }
 
         let original_rate = cfg.fri_config.rate_bits;
         let original_queries = cfg.fri_config.num_query_rounds;

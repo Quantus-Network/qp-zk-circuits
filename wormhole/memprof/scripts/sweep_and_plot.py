@@ -6,10 +6,11 @@
 """Sweep `wormhole-memprof` across every safe (security-preserving) circuit
 knob and emit per-knob PNG charts, a CSV, and a markdown report.
 
-Each sweep varies ONE parameter while holding the rest at their defaults
-(matching `wormhole_aggregator_circuit_config()`), except where a baseline
-combination of already-confirmed safe wins is needed to make the next knob
-visible (e.g. when sweeping `num_wires` on top of `rowblinding`).
+Each sweep varies ONE parameter while holding the rest at their production
+defaults (sourced from `wormhole_aggregator_circuit_config()` — currently
+RowBlinding ZK, num_wires=135, num_routed_wires=60). The memprof binary
+applies CLI flags as overrides on top of that production baseline, so the
+unset knobs always track production.
 
 Usage:
     uv run scripts/sweep_and_plot.py
@@ -94,7 +95,6 @@ def run_memprof(extra_args: list[str]) -> RunResult | None:
 def define_sweeps(quick: bool) -> list[SweepDef]:
     common = ["--skip-leaf-gen", "--real-proofs", "1"]
     leaf16 = ["--num-leaf-proofs", "16"]
-    rb = ["--zk-mode", "rowblinding"]
 
     return [
         SweepDef(
@@ -102,54 +102,58 @@ def define_sweeps(quick: bool) -> list[SweepDef]:
             title="ZK mode (security-preserving variants only)",
             xlabel="ZK mode",
             points=[
-                ("polyfri (default)", common + leaf16),
-                ("rowblinding", common + leaf16 + rb),
+                ("rowblinding (production)", common + leaf16),
+                ("polyfri", common + leaf16 + ["--zk-mode", "polyfri"]),
             ],
             notes=(
-                "Both modes are fully zero-knowledge. `disabled` is excluded "
-                "(would weaken security)."
+                "Both modes are fully zero-knowledge at security_bits=100. "
+                "PolyFri adds explicit wire/Z/batch masking polynomials, "
+                "which is where the memory bloat lives. `disabled` is "
+                "excluded (would weaken security)."
             ),
         ),
         SweepDef(
             name="num_leaf_proofs",
-            title="Aggregation batch size (num_leaf_proofs)",
+            title="Aggregation batch size (num_leaf_proofs) at production defaults",
             xlabel="num_leaf_proofs",
-            points=[(str(n), common + ["--num-leaf-proofs", str(n)] + rb) for n in [1, 2, 4, 8, 16]],
+            points=[(str(n), common + ["--num-leaf-proofs", str(n)]) for n in [1, 2, 4, 8, 16]],
             notes=(
                 "Number of leaves recursively verified inside one aggregated "
-                "proof. Lowering this requires a chain-side update to a "
-                "matching aggregator verifier."
+                "proof. Each run uses the production aggregator config "
+                "(RowBlinding ZK, num_wires=135, num_routed_wires=60). "
+                "Lowering N requires a chain-side update to a matching "
+                "aggregator verifier."
             ),
         ),
         SweepDef(
             name="num_routed_wires",
-            title="num_routed_wires (rowblinding baseline)",
+            title="num_routed_wires (production baseline)",
             xlabel="num_routed_wires",
-            points=[(str(n), common + leaf16 + rb + ["--num-routed-wires", str(n)]) for n in [54, 56, 60, 65, 70, 75, 80]],
+            points=[(str(n), common + leaf16 + ["--num-routed-wires", str(n)]) for n in [54, 56, 60, 65, 70, 75, 80]],
             notes=(
                 "Below ~54 the circuit width forces an extra degree-bit, "
-                "doubling memory. 80 is the production default."
+                "doubling memory. 60 is the production default."
             ),
         ),
         SweepDef(
             name="num_wires",
-            title="num_wires (rowblinding + nrw=54)",
+            title="num_wires (production baseline, nrw=54)",
             xlabel="num_wires",
-            points=[(str(n), common + leaf16 + rb + ["--num-routed-wires", "54", "--num-wires", str(n)]) for n in [135, 138, 140, 143]],
-            notes="135 is the floor (Poseidon needs 135 wires). 143 is default.",
+            points=[(str(n), common + leaf16 + ["--num-routed-wires", "54", "--num-wires", str(n)]) for n in [135, 138, 140, 143]],
+            notes="135 is the floor (Poseidon needs 135 wires) and the production default. 143 was the pre-#139 default.",
         ),
         SweepDef(
             name="max_qdf",
-            title="max_quotient_degree_factor (rowblinding)",
+            title="max_quotient_degree_factor (production baseline)",
             xlabel="max_quotient_degree_factor",
-            points=[(str(n), common + leaf16 + rb + ["--max-quotient-degree-factor", str(n)]) for n in [7, 8]],
-            notes="7 is the floor (Poseidon constraint). 8 is default.",
+            points=[(str(n), common + leaf16 + ["--max-quotient-degree-factor", str(n)]) for n in [7, 8]],
+            notes="7 is the floor (Poseidon constraint). 8 is the production default.",
         ),
         SweepDef(
             name="rayon_threads",
-            title="rayon thread count (rowblinding)",
+            title="rayon thread count (production baseline)",
             xlabel="rayon threads (0 = system default)",
-            points=[(str(n) if n else "default", common + leaf16 + rb + (["--rayon-threads", str(n)] if n else [])) for n in [1, 2, 4, 8, 0]],
+            points=[(str(n) if n else "default", common + leaf16 + (["--rayon-threads", str(n)] if n else [])) for n in [1, 2, 4, 8, 0]],
             notes=(
                 "Pure runtime knob, no security impact. More threads = "
                 "smaller per-thread allocations and faster wall time."
@@ -157,7 +161,7 @@ def define_sweeps(quick: bool) -> list[SweepDef]:
         ),
         SweepDef(
             name="combo_per_N",
-            title="Stacked safe wins at every aggregation batch size (REAL leaf proofs)",
+            title="Production + nrw=54 at every aggregation batch size (REAL leaf proofs)",
             xlabel="num_leaf_proofs (N)",
             points=[
                 (
@@ -167,22 +171,18 @@ def define_sweeps(quick: bool) -> list[SweepDef]:
                         str(n),
                         "--real-proofs",
                         str(min(n, 4)),
-                        "--zk-mode",
-                        "rowblinding",
                         "--num-routed-wires",
                         "54",
-                        "--num-wires",
-                        "135",
                     ],
                 )
                 for n in [1, 2, 4, 8, 16]
             ],
             notes=(
-                "All security-preserving wins applied (rowblinding + nrw=54 + "
-                "nw=135) and real leaf proofs generated for production-equivalent "
-                "results. This is the absolute floor reachable WITHOUT changing "
-                "FRI/PoW soundness parameters. The 1 GB mobile target is comfortably "
-                "achievable at N ≤ 2."
+                "Production config with one extra safe override (nrw=54 "
+                "instead of the production 60). Real leaf proofs are "
+                "generated for production-equivalent results. This is the "
+                "absolute floor reachable WITHOUT changing FRI/PoW "
+                "soundness parameters."
             ),
         ),
     ]
@@ -195,12 +195,8 @@ def best_safe_combo() -> list[str]:
         "1",
         "--num-leaf-proofs",
         "16",
-        "--zk-mode",
-        "rowblinding",
         "--num-routed-wires",
         "54",
-        "--num-wires",
-        "135",
     ]
 
 
@@ -269,8 +265,8 @@ def render_markdown(sweeps_with_results: list[tuple[SweepDef, list[RunResult | N
         md.append("")
         md.append("| config | peak (MB) | wall (s) |")
         md.append("|--------|-----------|----------|")
-        md.append(f"| default (polyfri, 16 leaves, all defaults) | {default_baseline.peak_mb:.0f} | {default_baseline.wall_ms/1000:.2f} |")
-        md.append(f"| **best safe combo** | **{combo.peak_mb:.0f}** | **{combo.wall_ms/1000:.2f}** |")
+        md.append(f"| production (RowBlinding, nw=135, nrw=60, 16 leaves) | {default_baseline.peak_mb:.0f} | {default_baseline.wall_ms/1000:.2f} |")
+        md.append(f"| **production + nrw=54** | **{combo.peak_mb:.0f}** | **{combo.wall_ms/1000:.2f}** |")
         md.append(f"| Δ | -{peak_save:.0f} MB ({peak_pct:.0f}%) | -{wall_save/1000:.2f} s ({wall_pct:.0f}%) |")
         md.append("")
         md.append(f"Best safe combo flags: `{' '.join(best_safe_combo())}`")
@@ -375,7 +371,7 @@ def main() -> int:
 
     if default_baseline and combo:
         fig, ax1 = plt.subplots(figsize=(7, 5))
-        labels = ["default (polyfri,\nall defaults)", "best safe\ncombo"]
+        labels = ["production\n(RowBlinding,\nnw=135, nrw=60)", "production\n+ nrw=54"]
         peaks = [default_baseline.peak_mb, combo.peak_mb]
         times = [default_baseline.wall_ms / 1000.0, combo.wall_ms / 1000.0]
         x = list(range(2))
@@ -391,7 +387,7 @@ def main() -> int:
         ax1.set_ylabel("Peak memory (MB)", color="#4C72B0")
         ax1.set_xticks(x)
         ax1.set_xticklabels(labels)
-        ax1.set_title("Default vs best safe combo")
+        ax1.set_title("Production vs production + nrw=54")
         ax1.grid(axis="y", linestyle=":", alpha=0.5)
         ax2 = ax1.twinx()
         ax2.plot(x, times, color="#C44E52", marker="o", linewidth=2)
