@@ -36,8 +36,17 @@ pub fn wormhole_leaf_circuit_config() -> CircuitConfig {
 ///
 /// The aggregated proofs are verified on-chain, so they must use ZK to prevent leaking
 /// witness information to the public.
+///
+/// This config uses:
+/// - Row blinding ZK mode (lower memory than PolyFri, same security)
+/// - num_wires = 135 (minimum for PoseidonGate)
+/// - num_routed_wires = 60 (optimal for 16-leaf aggregation - lower values cause degree overflow)
 pub fn wormhole_aggregator_circuit_config() -> CircuitConfig {
-    CircuitConfig::standard_recursion_polyfri_zk_config()
+    CircuitConfig {
+        num_wires: 135,
+        num_routed_wires: 60,
+        ..CircuitConfig::standard_recursion_zk_config()
+    }
 }
 
 pub trait CircuitFragment {
