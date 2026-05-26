@@ -98,7 +98,12 @@ fn main() -> Result<()> {
         rayon::ThreadPoolBuilder::new()
             .num_threads(args.rayon_threads)
             .build_global()
-            .ok();
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "failed to configure rayon thread pool with {} threads: {e}",
+                    args.rayon_threads
+                )
+            })?;
     }
 
     let num_leaf_proofs = args.num_leaf_proofs;
@@ -107,16 +112,16 @@ fn main() -> Result<()> {
         .unwrap_or(num_leaf_proofs)
         .min(num_leaf_proofs);
 
-    let mut report = PhaseReport::new(args.sample_period_ms);
+    let mut report = PhaseReport::new(args.sample_period_ms)?;
 
     let leaf_ctx = workload::build_leaf_context(leaf_cfg.clone(), &mut report)?;
     if args.release_after_each {
-        report.release_memory("after_build_leaf_circuit");
+        report.release_memory("after_build_leaf_circuit")?;
     }
 
     if args.circuit_only {
         workload::build_agg_circuit_only(&leaf_ctx, num_leaf_proofs, agg_cfg, &mut report)?;
-        report.finish_and_print(args.peak_target_mb);
+        report.finish_and_print(args.peak_target_mb)?;
         return Ok(());
     }
 
@@ -150,6 +155,6 @@ fn main() -> Result<()> {
         &mut report,
     )?;
 
-    report.finish_and_print(args.peak_target_mb);
+    report.finish_and_print(args.peak_target_mb)?;
     Ok(())
 }

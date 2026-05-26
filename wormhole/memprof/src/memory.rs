@@ -10,7 +10,11 @@ use std::thread;
 use std::time::Duration;
 
 /// Returns (resident-or-phys-footprint, virtual_size) in bytes for the current process.
-pub fn process_memory() -> (u64, u64) {
+///
+/// Fails loudly: zero readings would corrupt the entire point of this tool, so any
+/// kernel / sysfs error bubbles up as an `anyhow::Error` and callers should treat it
+/// as fatal.
+pub fn process_memory() -> anyhow::Result<(u64, u64)> {
     #[cfg(target_vendor = "apple")]
     {
         apple::task_vm_info()
@@ -21,15 +25,17 @@ pub fn process_memory() -> (u64, u64) {
     }
     #[cfg(not(any(target_vendor = "apple", target_os = "linux")))]
     {
-        (0, 0)
+        anyhow::bail!(
+            "wormhole-memprof has no memory backend for this target (supported: apple, linux)"
+        )
     }
 }
 
 /// Force the system allocator to return freed pages to the OS.
 /// On Apple platforms calls `malloc_zone_pressure_relief(NULL, 0)`.
-/// Returns bytes released (best-effort) and (before, after) phys_footprint.
-pub fn release_memory() -> (u64, u64, u64) {
-    let (before, _) = process_memory();
+/// Returns (bytes released by allocator, phys before, phys after).
+pub fn release_memory() -> anyhow::Result<(u64, u64, u64)> {
+    let (before, _) = process_memory()?;
     let released_reported: u64;
     #[cfg(target_vendor = "apple")]
     unsafe {
@@ -42,8 +48,8 @@ pub fn release_memory() -> (u64, u64, u64) {
     {
         released_reported = 0;
     }
-    let (after, _) = process_memory();
-    (released_reported, before, after)
+    let (after, _) = process_memory()?;
+    Ok((released_reported, before, after))
 }
 
 /// A background thread that samples `phys_footprint` (or `RSS`) at a fixed
@@ -63,7 +69,13 @@ impl PeakSampler {
         let stop_t = stop.clone();
         let handle = thread::spawn(move || {
             while !stop_t.load(Ordering::Relaxed) {
-                let (rss, _) = process_memory();
+                let rss = match process_memory() {
+                    Ok((rss, _)) => rss,
+                    Err(e) => {
+                        eprintln!("ERROR: memprof sampler failed to read process memory: {e}");
+                        std::process::exit(1);
+                    }
+                };
                 let mut cur = peak_t.load(Ordering::Relaxed);
                 while rss > cur {
                     match peak_t.compare_exchange_weak(
@@ -128,7 +140,7 @@ mod apple {
         fn task_info(task: u32, flavor: u32, info: *mut i32, count: *mut u32) -> i32;
     }
 
-    pub fn task_vm_info() -> (u64, u64) {
+    pub fn task_vm_info() -> anyhow::Result<(u64, u64)> {
         const COUNT: u32 =
             (std::mem::size_of::<MachTaskBasicInfo>() / std::mem::size_of::<u32>()) as u32;
         let mut info: MaybeUninit<MachTaskBasicInfo> = MaybeUninit::zeroed();
@@ -141,10 +153,10 @@ mod apple {
                 &mut count,
             );
             if kr != 0 {
-                return (0, 0);
+                anyhow::bail!("task_info(MACH_TASK_BASIC_INFO) failed with kern_return_t {kr}");
             }
             let info = info.assume_init();
-            (info.resident_size, info.virtual_size)
+            Ok((info.resident_size, info.virtual_size))
         }
     }
 }
@@ -153,27 +165,28 @@ mod apple {
 mod linux {
     use std::fs;
 
-    pub fn proc_status() -> (u64, u64) {
-        let s = match fs::read_to_string("/proc/self/status") {
-            Ok(s) => s,
-            Err(_) => return (0, 0),
-        };
-        let mut rss_kb = 0u64;
-        let mut vsz_kb = 0u64;
+    pub fn proc_status() -> anyhow::Result<(u64, u64)> {
+        let s = fs::read_to_string("/proc/self/status")
+            .map_err(|e| anyhow::anyhow!("failed to read /proc/self/status: {e}"))?;
+        let mut rss_kb: Option<u64> = None;
+        let mut vsz_kb: Option<u64> = None;
         for line in s.lines() {
             if let Some(rest) = line.strip_prefix("VmRSS:") {
-                rss_kb = parse_kb(rest);
+                rss_kb = Some(parse_kb(rest)?);
             } else if let Some(rest) = line.strip_prefix("VmSize:") {
-                vsz_kb = parse_kb(rest);
+                vsz_kb = Some(parse_kb(rest)?);
             }
         }
-        (rss_kb * 1024, vsz_kb * 1024)
+        let rss = rss_kb.ok_or_else(|| anyhow::anyhow!("/proc/self/status missing VmRSS"))?;
+        let vsz = vsz_kb.ok_or_else(|| anyhow::anyhow!("/proc/self/status missing VmSize"))?;
+        Ok((rss * 1024, vsz * 1024))
     }
 
-    fn parse_kb(rest: &str) -> u64 {
+    fn parse_kb(rest: &str) -> anyhow::Result<u64> {
         rest.split_whitespace()
             .next()
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(0)
+            .ok_or_else(|| anyhow::anyhow!("empty VmRSS/VmSize line"))?
+            .parse::<u64>()
+            .map_err(|e| anyhow::anyhow!("non-numeric VmRSS/VmSize: {e}"))
     }
 }

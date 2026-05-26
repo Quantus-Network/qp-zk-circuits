@@ -2,6 +2,8 @@
 
 use std::time::{Duration, Instant};
 
+use anyhow::Result;
+
 use crate::memory::{fmt_mb, process_memory, release_memory, PeakSampler};
 
 #[derive(Debug, Clone)]
@@ -21,38 +23,39 @@ pub struct PhaseReport {
 }
 
 impl PhaseReport {
-    pub fn new(sample_period_ms: u64) -> Self {
+    pub fn new(sample_period_ms: u64) -> Result<Self> {
         let sampler = PeakSampler::start(sample_period_ms);
-        let (start, _) = process_memory();
+        let (start, _) = process_memory()?;
         let rows = vec![PhaseRow {
             label: "startup".to_string(),
             wall: Duration::ZERO,
-            start_phys: 0,
+            start_phys: start,
             end_phys: start,
             peak_phys: start,
         }];
-        Self {
+        Ok(Self {
             rows,
             sampler,
             current: None,
             started_at: Instant::now(),
-        }
+        })
     }
 
-    pub fn phase_start(&mut self, label: &str) {
+    pub fn phase_start(&mut self, label: &str) -> Result<()> {
         if self.current.is_some() {
-            self.phase_end();
+            self.phase_end()?;
         }
-        let (phys, _) = process_memory();
+        let (phys, _) = process_memory()?;
         self.sampler.snapshot_and_reset();
         eprintln!(">>> phase {} (start phys={}MB)", label, fmt_mb(phys));
         self.current = Some((label.to_string(), Instant::now(), phys));
+        Ok(())
     }
 
-    pub fn phase_end(&mut self) {
+    pub fn phase_end(&mut self) -> Result<()> {
         if let Some((label, t0, start_phys)) = self.current.take() {
             let wall = t0.elapsed();
-            let (end_phys, _) = process_memory();
+            let (end_phys, _) = process_memory()?;
             let peak = self
                 .sampler
                 .snapshot_and_reset()
@@ -73,10 +76,11 @@ impl PhaseReport {
                 peak_phys: peak,
             });
         }
+        Ok(())
     }
 
-    pub fn release_memory(&mut self, tag: &str) {
-        let (released, before, after) = release_memory();
+    pub fn release_memory(&mut self, tag: &str) -> Result<()> {
+        let (released, before, after) = release_memory()?;
         eprintln!(
             "[release_memory] {} released_reported={}MB phys {}MB -> {}MB (delta {}MB)",
             tag,
@@ -85,11 +89,12 @@ impl PhaseReport {
             fmt_mb(after),
             (before as i64 - after as i64) / (1024 * 1024)
         );
+        Ok(())
     }
 
-    pub fn finish_and_print(mut self, peak_target_mb: Option<u64>) -> u64 {
+    pub fn finish_and_print(mut self, peak_target_mb: Option<u64>) -> Result<u64> {
         if self.current.is_some() {
-            self.phase_end();
+            self.phase_end()?;
         }
         let total_wall = self.started_at.elapsed();
         let overall_peak = self.rows.iter().map(|r| r.peak_phys).max().unwrap_or(0);
@@ -127,6 +132,6 @@ impl PhaseReport {
                 std::process::exit(1);
             }
         }
-        overall_peak
+        Ok(overall_peak)
     }
 }

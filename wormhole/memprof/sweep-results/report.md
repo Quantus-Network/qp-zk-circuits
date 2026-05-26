@@ -2,14 +2,16 @@
 
 Each sweep below varies a single circuit knob while keeping the rest at their defaults (or at the rowblinding baseline where noted). All configurations preserve full cryptographic security; weakening knobs (`zk-mode disabled`, lowering `security_bits`, etc.) are excluded.
 
+> **Snapshot only.** These numbers were captured against the **pre-#139 production config** (PolyFri, `num_wires=143`, `num_routed_wires=80`). The new production defaults landed in this same PR (RowBlinding, `num_wires=135`, `num_routed_wires=60`) already absorb most of the "best safe combo" savings shown here. Re-run `scripts/sweep_and_plot.py` to refresh.
+
 ## Headline result
 
 ![combo](chart_combo.png)
 
 | config | peak (MB) | wall (s) |
 |--------|-----------|----------|
-| default (polyfri, 16 leaves, all defaults) | 3867 | 13.09 |
-| **best safe combo** | **2523** | **7.13** |
+| pre-#139 default (polyfri, nw=143, nrw=80, 16 leaves) | 3867 | 13.09 |
+| **best safe combo (rowblinding, nw=135, nrw=54)** | **2523** | **7.13** |
 | Δ | -1344 MB (35%) | -5.96 s (46%) |
 
 Best safe combo flags: `--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 54 --num-wires 135`

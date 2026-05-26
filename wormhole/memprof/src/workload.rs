@@ -29,7 +29,7 @@ pub fn build_leaf_context(
 ) -> Result<LeafContext> {
     use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 
-    report.phase_start("build_leaf_circuit");
+    report.phase_start("build_leaf_circuit")?;
     let circuit = WormholeCircuit::new(leaf_cfg);
     let targets = circuit.targets();
     let circuit_data = circuit.build_circuit();
@@ -40,7 +40,7 @@ pub fn build_leaf_context(
     let verifier_only = verifier_data.verifier_only.clone();
     drop(circuit_data);
     let dummy_proof = load_dummy_proof(dummy_bytes, &common)?;
-    report.phase_end();
+    report.phase_end()?;
 
     Ok(LeafContext {
         common,
@@ -55,14 +55,14 @@ pub fn generate_leaf_proof(
     release_after: bool,
     report: &mut PhaseReport,
 ) -> Result<ProofWithPublicInputs<F, C, D>> {
-    report.phase_start(&format!("gen_leaf_proof[{}]", idx));
+    report.phase_start(&format!("gen_leaf_proof[{}]", idx))?;
     let inputs = build_dummy_circuit_inputs()?;
     let prover = WormholeProver::new(leaf_cfg);
     let prover = prover.commit(&inputs)?;
     let proof = prover.prove()?;
-    report.phase_end();
+    report.phase_end()?;
     if release_after {
-        report.release_memory("after_gen_leaf_proof");
+        report.release_memory("after_gen_leaf_proof")?;
     }
     Ok(proof)
 }
@@ -75,7 +75,7 @@ pub fn aggregate_fresh(
     release_after: bool,
     report: &mut PhaseReport,
 ) -> Result<ProofWithPublicInputs<F, C, D>> {
-    report.phase_start("build_agg_circuit");
+    report.phase_start("build_agg_circuit")?;
     let prover = Layer0AggregationProver::new(
         agg_config,
         leaf.common.clone(),
@@ -83,18 +83,18 @@ pub fn aggregate_fresh(
         num_leaf_proofs,
         leaf.dummy_proof.clone(),
     );
-    report.phase_end();
+    report.phase_end()?;
 
-    report.phase_start("agg_commit");
+    report.phase_start("agg_commit")?;
     let prover = prover.commit(leaf_proofs)?;
-    report.phase_end();
+    report.phase_end()?;
 
-    report.phase_start("agg_prove");
+    report.phase_start("agg_prove")?;
     let proof = prover.prove()?;
-    report.phase_end();
+    report.phase_end()?;
 
     if release_after {
-        report.release_memory("after_agg");
+        report.release_memory("after_agg")?;
     }
     Ok(proof)
 }
@@ -105,7 +105,7 @@ pub fn build_agg_circuit_only(
     agg_config: CircuitConfig,
     report: &mut PhaseReport,
 ) -> Result<()> {
-    report.phase_start("build_agg_circuit_only");
+    report.phase_start("build_agg_circuit_only")?;
     let _ = Layer0AggregationProver::new(
         agg_config,
         leaf.common.clone(),
@@ -113,6 +113,6 @@ pub fn build_agg_circuit_only(
         num_leaf_proofs,
         leaf.dummy_proof.clone(),
     );
-    report.phase_end();
+    report.phase_end()?;
     Ok(())
 }
