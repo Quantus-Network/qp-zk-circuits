@@ -22,9 +22,8 @@ mod workload;
 use anyhow::Result;
 use clap::Parser;
 
-use crate::config::{default_agg_config, print_config_summary, AggConfigArgs};
+use crate::config::{default_agg_config, default_leaf_config, print_config_summary, AggConfigArgs};
 use crate::report::PhaseReport;
-use zk_circuits_common::circuit::wormhole_leaf_circuit_config;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -88,7 +87,7 @@ fn main() -> Result<()> {
     } else {
         args.agg_cfg.build()
     };
-    let leaf_cfg = wormhole_leaf_circuit_config();
+    let leaf_cfg = default_leaf_config();
     print_config_summary("leaf", &leaf_cfg);
     print_config_summary("agg", &agg_cfg);
 
@@ -106,10 +105,14 @@ fn main() -> Result<()> {
     }
 
     let num_leaf_proofs = args.num_leaf_proofs;
-    let real_proofs = args
-        .real_proofs
-        .unwrap_or(num_leaf_proofs)
-        .min(num_leaf_proofs);
+    let real_proofs = args.real_proofs.unwrap_or(num_leaf_proofs);
+    if real_proofs > num_leaf_proofs {
+        anyhow::bail!(
+            "--real-proofs ({}) must be <= --num-leaf-proofs ({})",
+            real_proofs,
+            num_leaf_proofs
+        );
+    }
 
     let mut report = PhaseReport::new(args.sample_period_ms)?;
 

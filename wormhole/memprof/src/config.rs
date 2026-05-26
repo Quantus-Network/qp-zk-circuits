@@ -20,7 +20,7 @@
 
 use clap::{ArgGroup, Args, ValueEnum};
 use plonky2::plonk::circuit_data::CircuitConfig;
-use zk_circuits_common::circuit::wormhole_aggregator_circuit_config;
+use zk_circuits_common::circuit::{wormhole_aggregator_circuit_config, wormhole_leaf_circuit_config};
 
 #[derive(Copy, Clone, Debug, ValueEnum, PartialEq, Eq)]
 pub enum ZkMode {
@@ -109,9 +109,27 @@ pub struct AggConfigArgs {
 }
 
 impl AggConfigArgs {
-    /// Validate that any security-affecting flags are gated by
-    /// `--allow-weakening-security`. Returns the error message to print.
+    /// Validate the override knobs:
+    ///   1. Numeric knobs must be > 0 (zero would silently break the
+    ///      FRI soundness product or trip a panic deep inside plonky2).
+    ///   2. Security-affecting knobs must be gated by
+    ///      `--allow-weakening-security`.
     pub fn validate(&self) -> Result<(), String> {
+        for (name, v) in [
+            ("--rate-bits", self.rate_bits),
+            ("--cap-height", self.cap_height),
+            ("--num-wires", self.num_wires),
+            ("--num-routed-wires", self.num_routed_wires),
+            ("--max-quotient-degree-factor", self.max_quotient_degree_factor),
+            ("--num-query-rounds", self.num_query_rounds),
+            ("--security-bits", self.security_bits),
+            ("--num-challenges", self.num_challenges),
+        ] {
+            if v == Some(0) {
+                return Err(format!("{name} must be greater than 0"));
+            }
+        }
+
         let mut violations: Vec<&'static str> = Vec::new();
         if matches!(self.zk_mode, Some(ZkMode::Disabled)) {
             violations.push("--zk-mode disabled");
@@ -203,6 +221,13 @@ impl AggConfigArgs {
 
 pub fn default_agg_config() -> CircuitConfig {
     wormhole_aggregator_circuit_config()
+}
+
+/// Production leaf config — `wormhole_leaf_circuit_config()` verbatim.
+/// This is what the chain's leaf prover/verifier uses and is the default
+/// for memprof runs.
+pub fn default_leaf_config() -> CircuitConfig {
+    wormhole_leaf_circuit_config()
 }
 
 pub fn print_config_summary(label: &str, cfg: &CircuitConfig) {
