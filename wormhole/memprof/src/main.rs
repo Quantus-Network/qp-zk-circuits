@@ -22,10 +22,9 @@ mod workload;
 use anyhow::Result;
 use clap::Parser;
 
-use crate::config::{
-    default_agg_config, leaf_config_matching, print_config_summary, AggConfigArgs,
-};
+use crate::config::{default_agg_config, print_config_summary, AggConfigArgs};
 use crate::report::PhaseReport;
+use zk_circuits_common::circuit::wormhole_leaf_circuit_config;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -89,7 +88,7 @@ fn main() -> Result<()> {
     } else {
         args.agg_cfg.build()
     };
-    let leaf_cfg = leaf_config_matching(&agg_cfg);
+    let leaf_cfg = wormhole_leaf_circuit_config();
     print_config_summary("leaf", &leaf_cfg);
     print_config_summary("agg", &agg_cfg);
 

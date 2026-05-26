@@ -205,20 +205,6 @@ pub fn default_agg_config() -> CircuitConfig {
     wormhole_aggregator_circuit_config()
 }
 
-/// Build a leaf circuit config that matches the FRI/wires knobs of the agg
-/// config (so recursive verification works), but always with ZK Disabled
-/// (matches production, which uses non-ZK leaves and ZK aggregation).
-pub fn leaf_config_matching(agg_cfg: &CircuitConfig) -> CircuitConfig {
-    let mut leaf = CircuitConfig::standard_recursion_config();
-    leaf.fri_config = agg_cfg.fri_config.clone();
-    leaf.num_wires = agg_cfg.num_wires;
-    leaf.num_routed_wires = agg_cfg.num_routed_wires;
-    leaf.max_quotient_degree_factor = agg_cfg.max_quotient_degree_factor;
-    leaf.security_bits = agg_cfg.security_bits;
-    leaf.num_challenges = agg_cfg.num_challenges;
-    leaf
-}
-
 pub fn print_config_summary(label: &str, cfg: &CircuitConfig) {
     let zk = if cfg.uses_poly_fri_zk() {
         "PolyFri"
