@@ -23,7 +23,8 @@ use anyhow::Result;
 use clap::Parser;
 
 use crate::config::{
-    default_agg_config, leaf_config_matching, print_config_summary, AggConfigArgs,
+    default_agg_config, default_leaf_config, leaf_config_matching, print_config_summary,
+    AggConfigArgs,
 };
 use crate::report::PhaseReport;
 
@@ -71,6 +72,12 @@ struct Args {
     #[arg(long)]
     peak_target_mb: Option<u64>,
 
+    /// Build the leaf circuit with the agg-config FRI/wires overrides instead
+    /// of the production `wormhole_leaf_circuit_config()`. Off by default so
+    /// the profiler measures the same leaf circuit shape the chain ships.
+    #[arg(long, default_value_t = false)]
+    leaf_match_agg: bool,
+
     #[command(flatten)]
     agg_cfg: AggConfigArgs,
 }
@@ -89,7 +96,11 @@ fn main() -> Result<()> {
     } else {
         args.agg_cfg.build()
     };
-    let leaf_cfg = leaf_config_matching(&agg_cfg);
+    let leaf_cfg = if args.leaf_match_agg {
+        leaf_config_matching(&agg_cfg)
+    } else {
+        default_leaf_config()
+    };
     print_config_summary("leaf", &leaf_cfg);
     print_config_summary("agg", &agg_cfg);
 
@@ -107,10 +118,14 @@ fn main() -> Result<()> {
     }
 
     let num_leaf_proofs = args.num_leaf_proofs;
-    let real_proofs = args
-        .real_proofs
-        .unwrap_or(num_leaf_proofs)
-        .min(num_leaf_proofs);
+    let real_proofs = args.real_proofs.unwrap_or(num_leaf_proofs);
+    if real_proofs > num_leaf_proofs {
+        anyhow::bail!(
+            "--real-proofs ({}) must be <= --num-leaf-proofs ({})",
+            real_proofs,
+            num_leaf_proofs
+        );
+    }
 
     let mut report = PhaseReport::new(args.sample_period_ms)?;
 

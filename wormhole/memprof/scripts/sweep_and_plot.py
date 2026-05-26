@@ -55,6 +55,27 @@ class SweepDef:
     notes: str = ""
 
 
+KEEP_GOING = False
+FAILURES: list[str] = []
+
+
+def _fail(msg: str, stderr_tail: str = "") -> None:
+    """Either abort the whole sweep or return None to the caller depending on
+    whether the user passed --keep-going. Default is hard-fail so a failed
+    measurement never silently turns into a clean-looking report. Even with
+    --keep-going, accumulated failures cause a non-zero exit at the end."""
+    print(f"  FAILED: {msg}", file=sys.stderr)
+    if stderr_tail:
+        print(stderr_tail, file=sys.stderr)
+    FAILURES.append(msg)
+    if not KEEP_GOING:
+        print(
+            "\nSweep aborted. Re-run with --keep-going to continue past failures.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def run_memprof(extra_args: list[str]) -> RunResult | None:
     cargo_args = [
         "cargo",
@@ -73,16 +94,14 @@ def run_memprof(extra_args: list[str]) -> RunResult | None:
         text=True,
     )
     if proc.returncode != 0:
-        print(
-            f"  FAILED (exit={proc.returncode}): {proc.stderr.strip().splitlines()[-3:]}",
-            file=sys.stderr,
-        )
+        tail = "\n".join(proc.stderr.strip().splitlines()[-5:])
+        _fail(f"exit={proc.returncode} for args={extra_args}", tail)
         return None
     out = proc.stdout
     peak = PEAK_RE.search(out)
     wall = TIME_RE.search(out)
     if not peak or not wall:
-        print("  WARN: could not parse output", file=sys.stderr)
+        _fail(f"could not parse memprof output for args={extra_args}")
         return None
     return RunResult(
         label=" ".join(extra_args),
@@ -202,9 +221,14 @@ def best_safe_combo() -> list[str]:
 
 def plot_sweep(sweep: SweepDef, results: list[RunResult | None], outpath: Path) -> None:
     fig, ax1 = plt.subplots(figsize=(8, 5))
-    labels = [p[0] for p in sweep.points]
-    peaks = [r.peak_mb if r else 0.0 for r in results]
-    times = [(r.wall_ms / 1000.0 if r else 0.0) for r in results]
+    points = [(p[0], r) for p, r in zip(sweep.points, results) if r is not None]
+    if not points:
+        print(f"  skipping plot for {sweep.name} (no successful runs)", file=sys.stderr)
+        plt.close(fig)
+        return
+    labels = [lbl for lbl, _ in points]
+    peaks = [r.peak_mb for _, r in points]
+    times = [r.wall_ms / 1000.0 for _, r in points]
     x = list(range(len(labels)))
 
     bars = ax1.bar(x, peaks, color="#4C72B0", label="Peak memory (MB)")
@@ -219,16 +243,15 @@ def plot_sweep(sweep: SweepDef, results: list[RunResult | None], outpath: Path) 
     ax1.axhline(2048, color="#ff7f0e", linestyle="--", linewidth=1.0, alpha=0.5, label="2 GB stretch target")
 
     for bar, peak in zip(bars, peaks):
-        if peak > 0:
-            ax1.annotate(
-                f"{peak:.0f}",
-                xy=(bar.get_x() + bar.get_width() / 2, peak),
-                xytext=(0, 3),
-                textcoords="offset points",
-                ha="center",
-                fontsize=8,
-                color="#1e3a5f",
-            )
+        ax1.annotate(
+            f"{peak:.0f}",
+            xy=(bar.get_x() + bar.get_width() / 2, peak),
+            xytext=(0, 3),
+            textcoords="offset points",
+            ha="center",
+            fontsize=8,
+            color="#1e3a5f",
+        )
 
     ax2 = ax1.twinx()
     ax2.plot(x, times, color="#C44E52", marker="o", linewidth=2, label="Wall time (s)")
@@ -324,7 +347,15 @@ def render_markdown(sweeps_with_results: list[tuple[SweepDef, list[RunResult | N
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--quick", action="store_true")
+    parser.add_argument(
+        "--keep-going",
+        action="store_true",
+        help="Continue past failed memprof runs (default: abort on first failure).",
+    )
     args = parser.parse_args()
+
+    global KEEP_GOING
+    KEEP_GOING = args.keep_going
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -402,6 +433,15 @@ def main() -> int:
     print(f"\nWrote {csv_path}", file=sys.stderr)
     print(f"Wrote {OUT_DIR / 'report.md'}", file=sys.stderr)
     print(f"Wrote charts to {OUT_DIR}", file=sys.stderr)
+
+    if FAILURES:
+        print(
+            f"\n{len(FAILURES)} run(s) failed; report and CSV contain partial data:",
+            file=sys.stderr,
+        )
+        for line in FAILURES:
+            print(f"  - {line}", file=sys.stderr)
+        return 1
     return 0
 
 
