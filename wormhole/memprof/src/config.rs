@@ -20,7 +20,9 @@
 
 use clap::{ArgGroup, Args, ValueEnum};
 use plonky2::plonk::circuit_data::CircuitConfig;
-use zk_circuits_common::circuit::{wormhole_aggregator_circuit_config, wormhole_leaf_circuit_config};
+use zk_circuits_common::circuit::{
+    wormhole_aggregator_circuit_config, wormhole_leaf_circuit_config,
+};
 
 #[derive(Copy, Clone, Debug, ValueEnum, PartialEq, Eq)]
 pub enum ZkMode {
@@ -120,7 +122,10 @@ impl AggConfigArgs {
             ("--cap-height", self.cap_height),
             ("--num-wires", self.num_wires),
             ("--num-routed-wires", self.num_routed_wires),
-            ("--max-quotient-degree-factor", self.max_quotient_degree_factor),
+            (
+                "--max-quotient-degree-factor",
+                self.max_quotient_degree_factor,
+            ),
             ("--num-query-rounds", self.num_query_rounds),
             ("--security-bits", self.security_bits),
             ("--num-challenges", self.num_challenges),
