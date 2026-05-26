@@ -96,6 +96,50 @@ def define_sweeps(quick: bool) -> list[SweepDef]:
     common = ["--skip-leaf-gen", "--real-proofs", "1"]
     leaf16 = ["--num-leaf-proofs", "16"]
 
+    # Quick mode: fewer points per sweep, skip expensive combo sweep
+    if quick:
+        return [
+            SweepDef(
+                name="zk_mode",
+                title="ZK mode (security-preserving variants only)",
+                xlabel="ZK mode",
+                points=[
+                    ("rowblinding (production)", common + leaf16),
+                    ("polyfri", common + leaf16 + ["--zk-mode", "polyfri"]),
+                ],
+                notes=(
+                    "Both modes are fully zero-knowledge at security_bits=100. "
+                    "PolyFri adds explicit wire/Z/batch masking polynomials, "
+                    "which is where the memory bloat lives. `disabled` is "
+                    "excluded (would weaken security)."
+                ),
+            ),
+            SweepDef(
+                name="num_leaf_proofs",
+                title="Aggregation batch size (num_leaf_proofs) at production defaults",
+                xlabel="num_leaf_proofs",
+                points=[(str(n), common + ["--num-leaf-proofs", str(n)]) for n in [1, 4, 7, 16]],
+                notes=(
+                    "Number of leaves recursively verified inside one aggregated "
+                    "proof. Each run uses the production aggregator config "
+                    "(RowBlinding ZK, num_wires=135, num_routed_wires=60). "
+                    "Lowering N requires a chain-side update to a matching "
+                    "aggregator verifier."
+                ),
+            ),
+            SweepDef(
+                name="num_routed_wires",
+                title="num_routed_wires (production baseline)",
+                xlabel="num_routed_wires",
+                points=[(str(n), common + leaf16 + ["--num-routed-wires", str(n)]) for n in [54, 60, 80]],
+                notes=(
+                    "Below ~54 the circuit width forces an extra degree-bit, "
+                    "doubling memory. 60 is the production default."
+                ),
+            ),
+        ]
+
+    # Full mode: comprehensive sweeps
     return [
         SweepDef(
             name="zk_mode",
@@ -116,7 +160,7 @@ def define_sweeps(quick: bool) -> list[SweepDef]:
             name="num_leaf_proofs",
             title="Aggregation batch size (num_leaf_proofs) at production defaults",
             xlabel="num_leaf_proofs",
-            points=[(str(n), common + ["--num-leaf-proofs", str(n)]) for n in [1, 2, 4, 8, 16]],
+            points=[(str(n), common + ["--num-leaf-proofs", str(n)]) for n in [1, 2, 4, 7, 8, 16]],
             notes=(
                 "Number of leaves recursively verified inside one aggregated "
                 "proof. Each run uses the production aggregator config "
@@ -175,7 +219,7 @@ def define_sweeps(quick: bool) -> list[SweepDef]:
                         "54",
                     ],
                 )
-                for n in [1, 2, 4, 8, 16]
+                for n in [1, 2, 4, 7, 8, 16]
             ],
             notes=(
                 "Production config with one extra safe override (nrw=54 "
