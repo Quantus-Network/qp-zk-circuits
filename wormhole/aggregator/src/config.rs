@@ -65,11 +65,11 @@ mod tests {
     fn config_round_trip() {
         let dir = temp_dir("round-trip");
 
-        let config = CircuitBinsConfig::new(16, Some(4));
+        let config = CircuitBinsConfig::new(7, Some(4));
         config.save(&dir).unwrap();
 
         let loaded = CircuitBinsConfig::load(&dir).unwrap();
-        assert_eq!(loaded.num_leaf_proofs, 16);
+        assert_eq!(loaded.num_leaf_proofs, 7);
         assert_eq!(loaded.num_layer0_proofs, Some(4));
 
         fs::remove_dir_all(dir).unwrap();
