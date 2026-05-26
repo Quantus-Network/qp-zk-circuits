@@ -116,7 +116,7 @@ fn main() -> Result<()> {
 
     let mut report = PhaseReport::new(args.sample_period_ms)?;
 
-    let leaf_ctx = workload::build_leaf_context(leaf_cfg.clone(), &mut report)?;
+    let mut leaf_ctx = workload::build_leaf_context(leaf_cfg.clone(), &mut report)?;
     if args.release_after_each {
         report.release_memory("after_build_leaf_circuit")?;
     }
@@ -139,8 +139,8 @@ fn main() -> Result<()> {
     } else {
         for i in 0..real_proofs {
             let p = workload::generate_leaf_proof(
+                &mut leaf_ctx,
                 i,
-                leaf_cfg.clone(),
                 args.release_after_each,
                 &mut report,
             )?;
