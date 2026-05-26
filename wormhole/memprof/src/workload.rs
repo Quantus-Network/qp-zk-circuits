@@ -8,13 +8,15 @@
 
 use anyhow::Result;
 use plonky2::iop::witness::PartialWitness;
-use plonky2::plonk::circuit_data::{CircuitConfig, CommonCircuitData, VerifierOnlyCircuitData};
+use plonky2::plonk::circuit_data::{
+    CircuitConfig, CommonCircuitData, ProverCircuitData, VerifierOnlyCircuitData,
+};
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use wormhole_aggregator::dummy_proof::load_dummy_proof;
 use wormhole_aggregator::layer0::prover::Layer0AggregationProver;
 use wormhole_aggregator::{build_dummy_circuit_inputs, generate_dummy_proof};
 use wormhole_circuit::circuit::circuit_logic::{CircuitTargets, WormholeCircuit};
-use wormhole_prover::{fill_witness, WormholeProver};
+use wormhole_prover::fill_witness;
 use zk_circuits_common::circuit::{C, D, F};
 
 use crate::report::PhaseReport;
@@ -23,9 +25,9 @@ pub struct LeafContext {
     pub common: CommonCircuitData<F, D>,
     pub verifier_only: VerifierOnlyCircuitData<C, D>,
     pub dummy_proof: ProofWithPublicInputs<F, C, D>,
-    /// Prover for generating real leaf proofs (reused across multiple proofs).
-    pub prover: Option<WormholeProver>,
-    /// Circuit targets for witness filling (cloned for each proof).
+    /// Prover circuit data for generating real leaf proofs (reused across multiple proofs).
+    pub prover_data: ProverCircuitData<F, C, D>,
+    /// Circuit targets for witness filling (from the same build as prover_data).
     pub targets: CircuitTargets,
 }
 
@@ -34,32 +36,39 @@ pub fn build_leaf_context(
     report: &mut PhaseReport,
 ) -> Result<LeafContext> {
     report.phase_start("build_leaf_circuit")?;
-    let circuit = WormholeCircuit::new(leaf_cfg.clone());
+
+    // Build circuit ONCE - extract all data from this single build
+    let circuit = WormholeCircuit::new(leaf_cfg);
     let targets = circuit.targets();
     let circuit_data = circuit.build_circuit();
+
+    // Generate dummy proof before splitting circuit_data
     let dummy_bytes = generate_dummy_proof(&circuit_data, &targets)?;
 
+    // Extract verifier data
     let verifier_data = circuit_data.verifier_data();
     let common = verifier_data.common.clone();
     let verifier_only = verifier_data.verifier_only.clone();
-    drop(circuit_data);
+
+    // Extract prover data from the SAME build (targets match this circuit_data)
+    let prover_data = circuit_data.prover_data();
+
+    // Load dummy proof
     let dummy_proof = load_dummy_proof(dummy_bytes, &common)?;
 
-    // Build the prover once for reuse
-    let prover = WormholeProver::new(leaf_cfg);
     report.phase_end()?;
 
     Ok(LeafContext {
         common,
         verifier_only,
         dummy_proof,
-        prover: Some(prover),
+        prover_data,
         targets,
     })
 }
 
 pub fn generate_leaf_proof(
-    ctx: &mut LeafContext,
+    ctx: &LeafContext,
     idx: usize,
     release_after: bool,
     report: &mut PhaseReport,
@@ -68,23 +77,14 @@ pub fn generate_leaf_proof(
 
     let inputs = build_dummy_circuit_inputs()?;
 
-    // Take the prover, use it, then put it back
-    let prover = ctx
-        .prover
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("leaf prover already consumed"))?;
-
-    // Fill witness directly using the prover's circuit_data
+    // Fill witness using targets from the same build as prover_data
     let mut pw = PartialWitness::new();
     fill_witness(&mut pw, &inputs, &ctx.targets)?;
 
-    let proof = prover
-        .circuit_data
+    let proof = ctx
+        .prover_data
         .prove(pw)
         .map_err(|e| anyhow::anyhow!("Failed to prove: {}", e))?;
-
-    // Restore prover for next use (it still has circuit_data intact)
-    ctx.prover = Some(prover);
 
     report.phase_end()?;
     if release_after {
