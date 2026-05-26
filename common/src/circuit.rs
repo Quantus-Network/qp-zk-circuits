@@ -40,7 +40,11 @@ pub fn wormhole_leaf_circuit_config() -> CircuitConfig {
 /// This config uses:
 /// - Row blinding ZK mode (lower memory than PolyFri, same security)
 /// - num_wires = 135 (minimum for PoseidonGate)
-/// - num_routed_wires = 60 (optimal for 16-leaf aggregation - lower values cause degree overflow)
+/// - num_routed_wires = 60 (optimal for degree_bits=15 circuits)
+///
+/// Memory usage by batch size (with this config):
+/// - 7 leaves: degree_bits=15, ~1.5 GB peak (recommended for mobile)
+/// - 8+ leaves: degree_bits=16, ~2.5 GB peak (requires 6GB+ device RAM)
 pub fn wormhole_aggregator_circuit_config() -> CircuitConfig {
     CircuitConfig {
         num_wires: 135,

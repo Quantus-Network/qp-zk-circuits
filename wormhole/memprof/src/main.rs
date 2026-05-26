@@ -36,7 +36,7 @@ use crate::report::PhaseReport;
 struct Args {
     /// Number of leaf proofs the aggregation circuit is built for. Matches
     /// the on-chain verifier's expected batch size.
-    #[arg(long, default_value_t = 16)]
+    #[arg(long, default_value_t = 7)]
     num_leaf_proofs: usize,
 
     /// How many real leaf proofs to actually generate before aggregation.
