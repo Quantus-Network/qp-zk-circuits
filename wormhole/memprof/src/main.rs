@@ -138,12 +138,8 @@ fn main() -> Result<()> {
         }
     } else {
         for i in 0..real_proofs {
-            let p = workload::generate_leaf_proof(
-                &leaf_ctx,
-                i,
-                args.release_after_each,
-                &mut report,
-            )?;
+            let p =
+                workload::generate_leaf_proof(&leaf_ctx, i, args.release_after_each, &mut report)?;
             leaf_proofs.push(p);
         }
     }
