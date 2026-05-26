@@ -98,8 +98,14 @@ impl PeakSampler {
         }
     }
 
-    pub fn snapshot_and_reset(&self) -> u64 {
-        self.peak.swap(0, Ordering::Relaxed)
+    /// Read current peak without resetting.
+    pub fn peek(&self) -> u64 {
+        self.peak.load(Ordering::Relaxed)
+    }
+
+    /// Reset peak to zero without returning the old value.
+    pub fn reset(&self) {
+        self.peak.store(0, Ordering::Relaxed);
     }
 }
 

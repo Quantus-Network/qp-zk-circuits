@@ -17,35 +17,36 @@ This complements the existing criterion benches:
 A background thread samples the resident set every ~25ms and tracks the
 maximum. On macOS it reads `mach_task_basic_info.resident_size`; on Linux it
 reads `/proc/self/status:VmRSS`. Phases are bracketed by `phase_start` /
-`phase_end` calls so each phase reports its own start/end/peak.
+`phase_end` calls so each phase reports its own start/end/peak. A global peak
+is tracked across the entire run (including inter-phase gaps) for accurate
+`--peak-target-mb` checks.
 
 ## Usage
 
 ```bash
-# Default: build leaf circuit, generate 16 leaf proofs, aggregate them
+# Default: build leaf circuit, generate 7 leaf proofs, aggregate them
 cargo run -p wormhole-memprof --release
 
-# Mimic a smaller batch: 16-leaf agg circuit but only 4 real proofs
+# Mimic a smaller batch: 7-leaf agg circuit but only 4 real proofs
 cargo run -p wormhole-memprof --release -- \
-    --num-leaf-proofs 16 --real-proofs 4
+    --num-leaf-proofs 7 --real-proofs 4
 
 # Just the aggregation circuit data structure (no proving)
-cargo run -p wormhole-memprof --release -- --circuit-only --num-leaf-proofs 16
+cargo run -p wormhole-memprof --release -- --circuit-only
 
 # Skip leaf-proof generation; clones a dummy proof instead.
 # Useful to isolate aggregation cost from leaf proving cost.
 cargo run -p wormhole-memprof --release -- \
-    --skip-leaf-gen --num-leaf-proofs 16 --real-proofs 4
+    --skip-leaf-gen --real-proofs 4
 
-# Try a smaller aggregation circuit (chain-side change required to use)
+# Try a different aggregation batch size (chain-side verifier update required)
 cargo run -p wormhole-memprof --release -- --num-leaf-proofs 4
 
 # Force single-threaded to compare against rayon-parallel
 cargo run -p wormhole-memprof --release -- --rayon-threads 1
 
-# CI guard: fail if peak > 1.5 GB
-cargo run -p wormhole-memprof --release -- \
-    --num-leaf-proofs 4 --peak-target-mb 1500
+# CI guard: fail if peak > 1.6 GB
+cargo run -p wormhole-memprof --release -- --peak-target-mb 1600
 ```
 
 ## Output
@@ -56,12 +57,12 @@ phase                        |  wall (ms) |     start (MB) |       end (MB) |   
 ----------------------------------------------------------------------------------------------
 startup                      |          0 |            2.0 |            2.0 |            2.0
 build_leaf_circuit           |         56 |            2.0 |           23.5 |           23.5
-build_agg_circuit            |       6919 |           23.7 |         2301.1 |         2663.8
-agg_commit                   |          8 |         2301.1 |         2302.1 |         2302.1
-agg_prove                    |      20715 |         2302.1 |         3449.4 |         3972.6
+build_agg_circuit            |       1823 |           23.7 |          812.4 |          923.1
+agg_commit                   |          6 |          812.4 |          813.2 |          813.2
+agg_prove                    |       2412 |          813.2 |         1287.6 |         1498.3
 ----------------------------------------------------------------------------------------------
-total time:             27699 ms
-overall peak rss:      3972.6 MB
+total time:              4297 ms
+overall peak rss:      1498.3 MB
 ===========================================================================
 ```
 
@@ -69,7 +70,7 @@ overall peak rss:      3972.6 MB
 
 | flag | effect |
 | --- | --- |
-| `--num-leaf-proofs N` | Width of the aggregation circuit (production = 16). |
+| `--num-leaf-proofs N` | Width of the aggregation circuit (production default = 7). |
 | `--real-proofs M` | Real proofs to generate; rest are dummy padding. |
 | `--rayon-threads T` | Limit plonky2's parallel FFT pool. `0` = system default. |
 | `--skip-leaf-gen` | Use cloned dummy proofs; isolates aggregation cost. |

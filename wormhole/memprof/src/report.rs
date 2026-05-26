@@ -20,6 +20,9 @@ pub struct PhaseReport {
     sampler: PeakSampler,
     current: Option<(String, Instant, u64)>,
     started_at: Instant,
+    /// Global peak that is never reset - tracks true maximum across entire run
+    /// including inter-phase gaps.
+    global_peak: u64,
 }
 
 impl PhaseReport {
@@ -38,15 +41,25 @@ impl PhaseReport {
             sampler,
             current: None,
             started_at: Instant::now(),
+            global_peak: start,
         })
+    }
+
+    /// Update global peak from sampler without resetting.
+    fn update_global_peak(&mut self) {
+        let sampled = self.sampler.peek();
+        self.global_peak = self.global_peak.max(sampled);
     }
 
     pub fn phase_start(&mut self, label: &str) -> Result<()> {
         if self.current.is_some() {
             self.phase_end()?;
         }
+        // Capture any inter-phase peak before resetting
+        self.update_global_peak();
         let (phys, _) = process_memory()?;
-        self.sampler.snapshot_and_reset();
+        self.global_peak = self.global_peak.max(phys);
+        self.sampler.reset();
         eprintln!(">>> phase {} (start phys={}MB)", label, fmt_mb(phys));
         self.current = Some((label.to_string(), Instant::now(), phys));
         Ok(())
@@ -56,24 +69,22 @@ impl PhaseReport {
         if let Some((label, t0, start_phys)) = self.current.take() {
             let wall = t0.elapsed();
             let (end_phys, _) = process_memory()?;
-            let peak = self
-                .sampler
-                .snapshot_and_reset()
-                .max(end_phys)
-                .max(start_phys);
+            let sampled_peak = self.sampler.peek();
+            let phase_peak = sampled_peak.max(end_phys).max(start_phys);
+            self.global_peak = self.global_peak.max(phase_peak);
             eprintln!(
                 "<<< phase {} done in {}ms (end phys={}MB peak={}MB)",
                 label,
                 wall.as_millis(),
                 fmt_mb(end_phys),
-                fmt_mb(peak)
+                fmt_mb(phase_peak)
             );
             self.rows.push(PhaseRow {
                 label,
                 wall,
                 start_phys,
                 end_phys,
-                peak_phys: peak,
+                peak_phys: phase_peak,
             });
         }
         Ok(())
@@ -96,8 +107,9 @@ impl PhaseReport {
         if self.current.is_some() {
             self.phase_end()?;
         }
+        // Final update to catch any trailing memory usage
+        self.update_global_peak();
         let total_wall = self.started_at.elapsed();
-        let overall_peak = self.rows.iter().map(|r| r.peak_phys).max().unwrap_or(0);
 
         println!();
         println!("============================== MEMPROF REPORT ==============================");
@@ -118,20 +130,20 @@ impl PhaseReport {
         }
         println!("{}", "-".repeat(94));
         println!("total time:       {:>10} ms", total_wall.as_millis());
-        println!("overall peak rss: {:>10} MB", fmt_mb(overall_peak));
+        println!("overall peak rss: {:>10} MB", fmt_mb(self.global_peak));
         println!("===========================================================================");
 
         if let Some(target_mb) = peak_target_mb {
             let target_bytes = target_mb * 1024 * 1024;
-            if overall_peak > target_bytes {
+            if self.global_peak > target_bytes {
                 eprintln!(
                     "ERROR: peak {} MB exceeded target {} MB",
-                    fmt_mb(overall_peak),
+                    fmt_mb(self.global_peak),
                     target_mb
                 );
                 std::process::exit(1);
             }
         }
-        Ok(overall_peak)
+        Ok(self.global_peak)
     }
 }
