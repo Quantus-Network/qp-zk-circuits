@@ -7167,6 +7167,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "wormhole-memprof"
+version = "2.0.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "qp-plonky2",
+ "qp-wormhole-aggregator 2.0.1",
+ "qp-wormhole-circuit 2.0.1",
+ "qp-wormhole-prover 2.0.1",
+ "qp-zk-circuits-common 2.0.1",
+ "rayon",
+]
+
+[[package]]
 name = "writeable"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
