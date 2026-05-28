@@ -8,7 +8,7 @@
 use anyhow::Context;
 use clap::Parser;
 use plonky2::plonk::proof::ProofWithPublicInputs;
-use qp_poseidon::PoseidonHasher;
+use qp_poseidon_core::hash_pubkey;
 use qp_wormhole_inputs::{AggregatedPublicCircuitInputs, PublicCircuitInputs};
 use quantus_cli::chain::quantus_subxt::api as quantus_node;
 use quantus_cli::chain::quantus_subxt::api::runtime_types::pallet_balances::pallet::Call as BalancesCall;
@@ -19,7 +19,7 @@ use quantus_cli::qp_dilithium_crypto::DilithiumPair;
 use quantus_cli::wallet::QuantumKeyPair;
 use quantus_cli::{AccountId32, ChainConfig, QuantusClient};
 use serde::{Deserialize, Serialize};
-use sp_core::{Hasher, Pair, H256};
+use sp_core::{Pair, H256};
 use std::str::FromStr;
 use subxt::blocks::Block;
 use subxt::ext::codec::Encode;
@@ -872,7 +872,9 @@ async fn main() -> anyhow::Result<()> {
         private_key: funding_pair.secret_bytes().to_vec(),
     };
 
-    let funding_account = AccountId32::new(PoseidonHasher::hash(funding_pair.public().as_ref()).0);
+    let pubkey_bytes: &[u8; 2592] = funding_pair.public().as_ref().try_into()
+        .expect("Dilithium public key must be 2592 bytes");
+    let funding_account = AccountId32::new(hash_pubkey(pubkey_bytes));
     println!(
         "Funding account ({:?}): {:?}",
         dev_account, &funding_account
