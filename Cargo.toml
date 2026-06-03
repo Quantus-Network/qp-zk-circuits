@@ -5,7 +5,6 @@ members = [
 	"wormhole/aggregator",
 	"wormhole/circuit",
 	"wormhole/circuit-builder",
-	"wormhole/example",
 	"wormhole/inputs",
 	"wormhole/memprof",
 	"wormhole/prover",
@@ -19,9 +18,10 @@ resolver = "2"
 anyhow = { version = "1.0.98", default-features = false }
 criterion = { version = "0.5.1", default-features = false }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
-qp-plonky2 = { version = "1.4.1", default-features = false, features = ["std"] }
-qp-poseidon-core = { version = "1.4.0", default-features = false }
-quantus-cli = { version = "1.3.3", default-features = false }
+qp-plonky2 = { path = "../qp-plonky2/plonky2", default-features = false, features = ["std"] }
+qp-plonky2-field = { path = "../qp-plonky2/field", default-features = false }
+qp-plonky2-verifier = { path = "../qp-plonky2/verifier", default-features = false }
+qp-poseidon-core = { path = "../qp-poseidon", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 
 [workspace.package]
