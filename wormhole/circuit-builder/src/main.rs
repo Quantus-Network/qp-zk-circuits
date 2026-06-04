@@ -1,7 +1,19 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use clap::Parser;
-use qp_wormhole_circuit_builder::{generate_all_circuit_binaries, CircuitBinsConfig};
+use qp_wormhole_circuit_builder::generate_all_circuit_binaries;
 use wormhole_aggregator::MAX_PROOF_COUNT;
+
+/// Value parser that validates proof count is in range 1..=MAX_PROOF_COUNT
+fn parse_proof_count(s: &str) -> Result<usize, String> {
+    let n: usize = s.parse().map_err(|_| format!("'{s}' is not a valid number"))?;
+    if n == 0 {
+        return Err("value must be at least 1".to_string());
+    }
+    if n > MAX_PROOF_COUNT {
+        return Err(format!("value must be at most {MAX_PROOF_COUNT}"));
+    }
+    Ok(n)
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "qp-wormhole-circuit-builder")]
@@ -12,12 +24,12 @@ struct Args {
     output: String,
 
     /// Number of leaf proofs aggregated into a single layer-0 proof (must be 1-1024)
-    #[arg(short, long)]
+    #[arg(short, long, value_parser = parse_proof_count)]
     num_leaf_proofs: usize,
 
     /// Number of inner layer0 proofs aggregated into a single layer-1 proof (must be 1-1024 if specified)
     /// Omit this flag to only generate layer-0 artifacts.
-    #[arg(short, long)]
+    #[arg(short, long, value_parser = parse_proof_count)]
     num_layer0_proofs: Option<usize>,
 
     /// Skip prover binary generation (only generate verifier binaries)
@@ -28,26 +40,9 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Validate proof counts upfront with clear error messages
-    if args.num_leaf_proofs == 0 || args.num_leaf_proofs > MAX_PROOF_COUNT {
-        bail!(
-            "num_leaf_proofs must be between 1 and {} (got {})",
-            MAX_PROOF_COUNT,
-            args.num_leaf_proofs
-        );
-    }
-    if let Some(n) = args.num_layer0_proofs {
-        if n == 0 || n > MAX_PROOF_COUNT {
-            bail!(
-                "num_layer0_proofs must be between 1 and {} (got {})",
-                MAX_PROOF_COUNT,
-                n
-            );
-        }
-    }
-
-    // Double-check config is valid (this also validates the combination)
-    CircuitBinsConfig::new(args.num_leaf_proofs, args.num_layer0_proofs)?;
+    // Validation is handled by:
+    // 1. clap value_parser at arg-parse time (range checks)
+    // 2. CircuitBinsConfig::new inside generate_all_circuit_binaries (full validation)
 
     println!(
         "Generating circuit binaries (num_leaf_proofs={}, num_layer0_proofs={})",
