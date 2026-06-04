@@ -6,6 +6,11 @@ use std::path::Path;
 /// Maximum allowed proof count to prevent excessive memory/CPU consumption.
 /// This is a reasonable upper bound - aggregating more than 1024 proofs per layer
 /// would result in impractically large circuits.
+///
+/// In practice, even ~64 proofs is near the practical limit on commodity hardware
+/// (current benches test up to 49). The 1024 cap is "obviously safe" headroom.
+/// Any future need to raise this limit would require a coordinated artifact
+/// regeneration across all deployments.
 pub const MAX_PROOF_COUNT: usize = 1024;
 
 /// Configuration stored alongside circuit binaries (config.json).
@@ -70,9 +75,9 @@ impl CircuitBinsConfig {
     pub fn load<P: AsRef<Path>>(bins_dir: P) -> Result<Self> {
         let config_path = bins_dir.as_ref().join("config.json");
         let config_str = std::fs::read_to_string(&config_path)
-            .map_err(|e| anyhow!("Failed to read {}: {}", config_path.display(), e))?;
+            .map_err(|e| anyhow!("failed to read {}: {}", config_path.display(), e))?;
         let config: Self = serde_json::from_str(&config_str)
-            .map_err(|e| anyhow!("Failed to parse {}: {}", config_path.display(), e))?;
+            .map_err(|e| anyhow!("failed to parse {}: {}", config_path.display(), e))?;
         config.validate()?;
         Ok(config)
     }
@@ -81,9 +86,9 @@ impl CircuitBinsConfig {
     pub fn save<P: AsRef<Path>>(&self, bins_dir: P) -> Result<()> {
         let config_path = bins_dir.as_ref().join("config.json");
         let config_str = serde_json::to_string_pretty(self)
-            .map_err(|e| anyhow!("Failed to serialize config: {}", e))?;
+            .map_err(|e| anyhow!("failed to serialize config: {}", e))?;
         write(&config_path, config_str)
-            .map_err(|e| anyhow!("Failed to write {}: {}", config_path.display(), e))?;
+            .map_err(|e| anyhow!("failed to write {}: {}", config_path.display(), e))?;
         println!("Config saved to {}", config_path.display());
         Ok(())
     }

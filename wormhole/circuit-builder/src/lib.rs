@@ -37,7 +37,7 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
     // Generate dummy proof BEFORE consuming circuit_data (prove() borrows, prover_data() moves)
     println!("Generating dummy proof for aggregation padding...");
     let dummy_proof_bytes = wormhole_aggregator::generate_dummy_proof(&circuit_data, &targets)
-        .map_err(|e| anyhow!("Failed to generate dummy proof: {}", e))?;
+        .map_err(|e| anyhow!("failed to generate dummy proof: {}", e))?;
     write(output_path.join("dummy_proof.bin"), &dummy_proof_bytes)?;
     println!(
         "Dummy proof saved to {}/dummy_proof.bin ({} bytes)",
@@ -54,7 +54,7 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
     // Serialize common data
     let common_bytes = common_data
         .to_bytes(&gate_serializer)
-        .map_err(|e| anyhow!("Failed to serialize common data: {}", e))?;
+        .map_err(|e| anyhow!("failed to serialize common data: {}", e))?;
     write(output_path.join("common.bin"), common_bytes)?;
     println!("Common data saved to {}/common.bin", output_path.display());
 
@@ -62,7 +62,7 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
     let verifier_only_bytes = verifier_data
         .verifier_only
         .to_bytes()
-        .map_err(|e| anyhow!("Failed to serialize verifier data: {}", e))?;
+        .map_err(|e| anyhow!("failed to serialize verifier data: {}", e))?;
     write(output_path.join("verifier.bin"), verifier_only_bytes)?;
     println!(
         "Verifier data saved to {}/verifier.bin",
@@ -74,7 +74,7 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
         let prover_only_bytes = prover_data
             .prover_only
             .to_bytes(&generator_serializer, common_data)
-            .map_err(|e| anyhow!("Failed to serialize prover data: {}", e))?;
+            .map_err(|e| anyhow!("failed to serialize prover data: {}", e))?;
         write(output_path.join("prover.bin"), prover_only_bytes)?;
         println!("Prover data saved to {}/prover.bin", output_path.display());
     } else {

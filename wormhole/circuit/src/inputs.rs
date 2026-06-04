@@ -175,6 +175,9 @@ impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
             })?;
 
         let n_leaf = payload_len / PUBLIC_INPUTS_FELTS_LEN;
+        // This invariant is enforced because an aggregator should never legitimately
+        // produce a PI vector with zero leaf proofs. See audit finding M-3: "Layer-1
+        // has no dummy bypass; all-dummy L0 batches break aggregation".
         anyhow::ensure!(n_leaf > 0, "AggregatedPI: need at least one leaf proof");
 
         // Helper to read a u32 from a felt

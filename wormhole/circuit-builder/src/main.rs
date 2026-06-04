@@ -5,7 +5,9 @@ use wormhole_aggregator::MAX_PROOF_COUNT;
 
 /// Value parser that validates proof count is in range 1..=MAX_PROOF_COUNT
 fn parse_proof_count(s: &str) -> Result<usize, String> {
-    let n: usize = s.parse().map_err(|_| format!("'{s}' is not a valid number"))?;
+    let n: usize = s
+        .parse()
+        .map_err(|_| format!("'{s}' is not a valid number"))?;
     if n == 0 {
         return Err("value must be at least 1".to_string());
     }

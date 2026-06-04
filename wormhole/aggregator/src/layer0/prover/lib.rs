@@ -131,9 +131,9 @@ impl Layer0AggregationProver {
         let targets = Some(circuit.targets());
 
         // 4) Load dummy proof template compatible with the leaf verifier common data
-        let leaf_common = leaf_verifier_data.common.clone();
-        let dummy_proof_template = load_dummy_proof(dummy_proof_bytes.to_vec(), &leaf_common)
-            .map_err(|e| anyhow!("failed to deserialize dummy proof: {}", e))?;
+        let dummy_proof_template =
+            load_dummy_proof(dummy_proof_bytes.to_vec(), &leaf_verifier_data.common)
+                .map_err(|e| anyhow!("failed to deserialize dummy proof: {}", e))?;
 
         Ok(Self {
             circuit_data: ProverCircuitData {
