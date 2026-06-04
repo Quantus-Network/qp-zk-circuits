@@ -1,0 +1,33 @@
+sweep,label,peak_mb,wall_ms,args
+baseline,default,3867.1,13091,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16
+baseline,best_safe_combo,2522.9,7132,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 54 --num-wires 135
+zk_mode,polyfri (default),4635.4,13369,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16
+zk_mode,rowblinding,2974.4,8210,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding
+num_leaf_proofs,1,819.4,2180,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 1 --zk-mode rowblinding
+num_leaf_proofs,2,842.8,2199,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 2 --zk-mode rowblinding
+num_leaf_proofs,4,1539.7,4143,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 4 --zk-mode rowblinding
+num_leaf_proofs,8,2742.9,7781,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 8 --zk-mode rowblinding
+num_leaf_proofs,16,2975.3,8583,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding
+num_routed_wires,54,2664.5,7421,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 54
+num_routed_wires,56,2682.2,7586,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 56
+num_routed_wires,60,2780.2,8422,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 60
+num_routed_wires,65,2823.5,8734,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 65
+num_routed_wires,70,2849.7,9459,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 70
+num_routed_wires,75,2952.1,9786,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 75
+num_routed_wires,80,2976.7,10173,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 80
+num_wires,135,2521.4,9280,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 54 --num-wires 135
+num_wires,138,2541.4,9518,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 54 --num-wires 138
+num_wires,140,2554.2,9406,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 54 --num-wires 140
+num_wires,143,2670.9,9686,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --num-routed-wires 54 --num-wires 143
+max_qdf,7,2971.5,10518,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --max-quotient-degree-factor 7
+max_qdf,8,2978.0,10425,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --max-quotient-degree-factor 8
+rayon_threads,1,2948.4,27547,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --rayon-threads 1
+rayon_threads,2,2951.2,16329,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --rayon-threads 2
+rayon_threads,4,2974.1,14198,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --rayon-threads 4
+rayon_threads,8,2826.7,13634,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding --rayon-threads 8
+rayon_threads,default,2954.5,14985,--skip-leaf-gen --real-proofs 1 --num-leaf-proofs 16 --zk-mode rowblinding
+combo_per_N,1,689.3,3522,--num-leaf-proofs 1 --real-proofs 1 --zk-mode rowblinding --num-routed-wires 54 --num-wires 135
+combo_per_N,2,717.1,3375,--num-leaf-proofs 2 --real-proofs 2 --zk-mode rowblinding --num-routed-wires 54 --num-wires 135
+combo_per_N,4,1329.5,6388,--num-leaf-proofs 4 --real-proofs 4 --zk-mode rowblinding --num-routed-wires 54 --num-wires 135
+combo_per_N,8,2449.1,10147,--num-leaf-proofs 8 --real-proofs 4 --zk-mode rowblinding --num-routed-wires 54 --num-wires 135
+combo_per_N,16,2522.3,10564,--num-leaf-proofs 16 --real-proofs 4 --zk-mode rowblinding --num-routed-wires 54 --num-wires 135
