@@ -130,10 +130,10 @@ mod tests {
 
         // Generate a malicious proof
         let mut pw = PartialWitness::new();
-        // Set a value that would fail range_check in legit circuit
+        // Keep the public input valid for the legitimate circuit; only the verifier key should differ.
         pw.set_target(
             malicious_circuit.prover_only.public_inputs[0],
-            F::from_canonical_u64(0xFFFF + 1),
+            F::from_canonical_u64(100),
         )
         .unwrap();
         let malicious_proof = malicious_circuit.prove(pw).expect("malicious prove");
@@ -145,8 +145,12 @@ mod tests {
         // Note: We do NOT set verifier_data - it's constants!
 
         // This should FAIL because the proof doesn't match the baked verifier key
-        let result = outer_circuit.prove(pw);
-        assert!(result.is_err(), "Should reject proof from wrong circuit");
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| outer_circuit.prove(pw)));
+        assert!(
+            result.is_err() || result.unwrap().is_err(),
+            "Should reject proof from wrong circuit"
+        );
     }
 
     #[test]

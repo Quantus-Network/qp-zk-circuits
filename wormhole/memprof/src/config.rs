@@ -232,7 +232,7 @@ pub fn default_leaf_config() -> CircuitConfig {
 
 pub fn print_config_summary(label: &str, cfg: &CircuitConfig) {
     let zk = if cfg.zero_knowledge {
-        "RowBlinding"
+        "Enabled"
     } else {
         "Disabled"
     };
