@@ -123,19 +123,12 @@ jobs:
 
       - name: Run security audit (informational only)
         # Non-blocking: most failures here are unmaintained-warning RUSTSEC
-        # advisories on transitive deps we don't control (quantus-cli, sp-*,
-        # subxt). We keep this step in `needs:` so infra failures (timeout,
-        # cargo-audit install) still gate the release, but a real CVE in a
-        # transitive dep should not stop the publish.
+        # advisories on transitive deps we don't control. We keep this step in
+        # `needs:` so infra failures (timeout, cargo-audit install) still gate
+        # the release, but a real CVE in a transitive dep should not stop the
+        # publish.
         continue-on-error: true
-        run: |
-          # Temporarily remove unpublished example from workspace for audit
-          # This excludes external dependencies (quantus-cli, sp-*, subxt) that have unmaintained transitive deps
-          sed -i.bak 's/"wormhole\/example",//' Cargo.toml
-          cargo generate-lockfile
-          cargo audit
-          mv Cargo.toml.bak Cargo.toml
-          cargo generate-lockfile
+        run: cargo audit
 
   create-github-release-and-publish:
     name: 🚀 Create GitHub Release & Publish Crates
@@ -185,10 +178,6 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
-
-          # Example is not published; excluding it avoids pulling quantus-cli (version conflict with qp-wormhole-inputs)
-          sed -i.bak '/"wormhole\/example"/d' Cargo.toml
-          trap 'mv Cargo.toml.bak Cargo.toml' EXIT
 
           echo "Publishing qp-wormhole-inputs"
           (cd wormhole/inputs && cargo publish --token "$CARGO_REGISTRY_TOKEN" --allow-dirty)
