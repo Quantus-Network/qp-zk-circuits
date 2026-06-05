@@ -172,7 +172,7 @@ mod tests {
                     reduction_strategy: FriReductionStrategy::ConstantArityBits(4, 5),
                     num_query_rounds,
                 },
-                ..CircuitConfig::standard_recursion_polyfri_zk_config()
+                ..CircuitConfig::standard_recursion_zk_config()
             };
 
             let circuit = WormholeCircuit::new(config);

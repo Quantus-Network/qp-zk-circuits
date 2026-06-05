@@ -4,16 +4,24 @@ name = "wormhole-example"
 publish = false
 version.workspace = true
 
+[[bin]]
+name = "wormhole-example"
+path = "src/main.rs"
+required-features = ["example"]
+
+[features]
+default = []
+example = ["dep:qp-poseidon", "dep:quantus-cli"]
+
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
 clap = { version = "4.5", features = ["derive"] }
 hex = { workspace = true, features = ["alloc"] }
 parity-scale-codec = "3.7.5"
 qp-plonky2 = { workspace = true, features = ["default"] }
-qp-poseidon = { version = "1.4.0", features = ["default"] }
-qp-poseidon-core = { workspace = true, default-features = false }
+qp-poseidon = { version = "1.4.0", features = ["default"], optional = true }
 qp-wormhole-inputs = { version = "2.1.0", path = "../inputs" }
-quantus-cli = { workspace = true }
+quantus-cli = { version = "1.3.3", default-features = false, optional = true }
 serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { version = "1.0", features = ["alloc"] }
 sp-core = "39.0.0"

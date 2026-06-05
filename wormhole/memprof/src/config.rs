@@ -26,9 +26,9 @@ use zk_circuits_common::circuit::{
 
 #[derive(Copy, Clone, Debug, ValueEnum, PartialEq, Eq)]
 pub enum ZkMode {
-    /// `PolyFri` masked commitments. Higher memory than RowBlinding.
+    /// Unsupported by qp-plonky2 1.5.1.
     Polyfri,
-    /// `RowBlinding` legacy blinding strategy (production default).
+    /// Zero-knowledge enabled (production default).
     Rowblinding,
     /// No ZK (leaks witness). REQUIRES `--allow-weakening-security`.
     Disabled,
@@ -136,6 +136,9 @@ impl AggConfigArgs {
         }
 
         let mut violations: Vec<&'static str> = Vec::new();
+        if matches!(self.zk_mode, Some(ZkMode::Polyfri)) {
+            return Err("--zk-mode polyfri is not supported by qp-plonky2 1.5.1".to_string());
+        }
         if matches!(self.zk_mode, Some(ZkMode::Disabled)) {
             violations.push("--zk-mode disabled");
         }
@@ -162,12 +165,12 @@ impl AggConfigArgs {
         let mut cfg = wormhole_aggregator_circuit_config();
 
         if let Some(mode) = self.zk_mode {
-            let template = match mode {
-                ZkMode::Polyfri => CircuitConfig::standard_recursion_polyfri_zk_config(),
+            cfg.zero_knowledge = match mode {
+                ZkMode::Polyfri => unreachable!("polyfri is rejected by validate()"),
                 ZkMode::Rowblinding => CircuitConfig::standard_recursion_zk_config(),
                 ZkMode::Disabled => CircuitConfig::standard_recursion_config(),
-            };
-            cfg.zk_config = template.zk_config;
+            }
+            .zero_knowledge;
         }
 
         let original_rate = cfg.fri_config.rate_bits;
@@ -236,10 +239,8 @@ pub fn default_leaf_config() -> CircuitConfig {
 }
 
 pub fn print_config_summary(label: &str, cfg: &CircuitConfig) {
-    let zk = if cfg.uses_poly_fri_zk() {
-        "PolyFri"
-    } else if cfg.uses_row_blinding_zk() {
-        "RowBlinding"
+    let zk = if cfg.zero_knowledge {
+        "Enabled"
     } else {
         "Disabled"
     };
