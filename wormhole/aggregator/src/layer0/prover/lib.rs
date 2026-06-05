@@ -105,14 +105,14 @@ impl Layer0AggregationProver {
         // 1) Load prebuilt aggregation circuit prover data
         let agg_common =
             CommonCircuitData::from_bytes(aggregated_common_bytes.to_vec(), &gate_serializer)
-                .map_err(|e| anyhow!("Failed to deserialize aggregated common data: {}", e))?;
+                .map_err(|e| anyhow!("failed to deserialize aggregated common data: {}", e))?;
 
         let agg_prover_only = ProverOnlyCircuitData::from_bytes(
             aggregated_prover_only_bytes,
             &generator_serializer,
             &agg_common,
         )
-        .map_err(|e| anyhow!("Failed to deserialize aggregated prover data: {}", e))?;
+        .map_err(|e| anyhow!("failed to deserialize aggregated prover data: {}", e))?;
 
         // 2) Load leaf verifier data (needed to reconstruct targets + parse dummy proof)
         let leaf_verifier_data =
@@ -133,7 +133,7 @@ impl Layer0AggregationProver {
         // 4) Load dummy proof template compatible with the leaf verifier common data
         let dummy_proof_template =
             load_dummy_proof(dummy_proof_bytes.to_vec(), &leaf_verifier_data.common)
-                .map_err(|e| anyhow!("Failed to deserialize dummy proof: {}", e))?;
+                .map_err(|e| anyhow!("failed to deserialize dummy proof: {}", e))?;
 
         Ok(Self {
             circuit_data: ProverCircuitData {

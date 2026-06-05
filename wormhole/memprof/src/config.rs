@@ -26,9 +26,7 @@ use zk_circuits_common::circuit::{
 
 #[derive(Copy, Clone, Debug, ValueEnum, PartialEq, Eq)]
 pub enum ZkMode {
-    /// `PolyFri` masked commitments. Higher memory than RowBlinding.
-    Polyfri,
-    /// `RowBlinding` legacy blinding strategy (production default).
+    /// `RowBlinding` blinding strategy (production default).
     Rowblinding,
     /// No ZK (leaks witness). REQUIRES `--allow-weakening-security`.
     Disabled,
@@ -53,9 +51,8 @@ pub enum ZkMode {
 pub struct AggConfigArgs {
     // ---------- Safe knobs (no security weakening) ----------
     /// Zero-knowledge mode for the aggregation circuit. `rowblinding`
-    /// (production default) and `polyfri` are both fully ZK; `disabled` is
-    /// NOT ZK and requires `--allow-weakening-security`. When unset, the
-    /// production zk mode is used.
+    /// (production default) is fully ZK; `disabled` is NOT ZK and requires
+    /// `--allow-weakening-security`. When unset, the production zk mode is used.
     #[arg(long, value_enum)]
     pub zk_mode: Option<ZkMode>,
 
@@ -162,12 +159,10 @@ impl AggConfigArgs {
         let mut cfg = wormhole_aggregator_circuit_config();
 
         if let Some(mode) = self.zk_mode {
-            let template = match mode {
-                ZkMode::Polyfri => CircuitConfig::standard_recursion_polyfri_zk_config(),
-                ZkMode::Rowblinding => CircuitConfig::standard_recursion_zk_config(),
-                ZkMode::Disabled => CircuitConfig::standard_recursion_config(),
+            cfg.zero_knowledge = match mode {
+                ZkMode::Rowblinding => true,
+                ZkMode::Disabled => false,
             };
-            cfg.zk_config = template.zk_config;
         }
 
         let original_rate = cfg.fri_config.rate_bits;
@@ -236,10 +231,8 @@ pub fn default_leaf_config() -> CircuitConfig {
 }
 
 pub fn print_config_summary(label: &str, cfg: &CircuitConfig) {
-    let zk = if cfg.uses_poly_fri_zk() {
-        "PolyFri"
-    } else if cfg.uses_row_blinding_zk() {
-        "RowBlinding"
+    let zk = if cfg.zero_knowledge {
+        "Enabled"
     } else {
         "Disabled"
     };

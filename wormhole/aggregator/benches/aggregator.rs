@@ -48,7 +48,8 @@ macro_rules! aggregate_proofs_benchmark {
             // to ensure the binaries represent the circuit with the correct number of leaf proofs.
             generate_layer0_circuit_binaries(BINS_DIR, $num_leaf_proofs, true)
                 .expect("Failed to generate layer0 circuit binaries for aggregation benchmark");
-            let config = CircuitBinsConfig::new($num_leaf_proofs, None);
+            let config = CircuitBinsConfig::new($num_leaf_proofs, None)
+                .expect("Failed to create circuit bins config for aggregation benchmark");
             config
                 .save(BINS_DIR)
                 .expect("Failed to save circuit bins config for aggregation benchmark");
@@ -81,7 +82,8 @@ macro_rules! verify_aggregate_proof_benchmark {
             // to ensure the binaries represent the circuit with the correct number of leaf proofs.
             generate_layer0_circuit_binaries(BINS_DIR, $num_leaf_proofs, true)
                 .expect("Failed to generate layer0 circuit binaries for aggregation benchmark");
-            let config = CircuitBinsConfig::new($num_leaf_proofs, None);
+            let config = CircuitBinsConfig::new($num_leaf_proofs, None)
+                .expect("Failed to create circuit bins config for aggregation benchmark");
             config
                 .save(BINS_DIR)
                 .expect("Failed to save circuit bins config for aggregation benchmark");
@@ -119,7 +121,8 @@ macro_rules! prove_layer1_benchmark {
             generate_layer1_circuit_binaries(BINS_DIR, $num_layer0_proofs, true)
                 .expect("Failed to generate layer1 circuit binaries for layer1 benchmark");
 
-            let config = CircuitBinsConfig::new(LAYER1_L0_NUM_LEAVES, Some($num_layer0_proofs));
+            let config = CircuitBinsConfig::new(LAYER1_L0_NUM_LEAVES, Some($num_layer0_proofs))
+                .expect("Failed to create circuit bins config for aggregation benchmark");
             config
                 .save(BINS_DIR)
                 .expect("Failed to save circuit bins config for aggregation benchmark");
@@ -164,7 +167,8 @@ macro_rules! verify_layer1_benchmark {
             generate_layer1_circuit_binaries(BINS_DIR, $num_layer0_proofs, true)
                 .expect("Failed to generate layer1 circuit binaries for layer1 benchmark");
 
-            let config = CircuitBinsConfig::new(LAYER1_L0_NUM_LEAVES, Some($num_layer0_proofs));
+            let config = CircuitBinsConfig::new(LAYER1_L0_NUM_LEAVES, Some($num_layer0_proofs))
+                .expect("Failed to create circuit bins config for aggregation benchmark");
             config
                 .save(BINS_DIR)
                 .expect("Failed to save circuit bins config for aggregation benchmark");

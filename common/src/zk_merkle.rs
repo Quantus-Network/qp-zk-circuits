@@ -113,7 +113,14 @@ impl ZkMerkleProof {
     /// Verify the proof against the expected root.
     ///
     /// Returns `true` if the proof is valid.
+    ///
+    /// Note: Proofs with depth exceeding `MAX_DEPTH` are rejected early to prevent
+    /// resource exhaustion from oversized proofs.
     pub fn verify(&self) -> bool {
+        // Reject proofs exceeding max supported depth to prevent DoS
+        if self.siblings.len() > MAX_DEPTH {
+            return false;
+        }
         if self.siblings.len() != self.positions.len() {
             return false;
         }
@@ -145,7 +152,14 @@ impl ZkMerkleProof {
     /// This is the verification method that matches the circuit logic:
     /// siblings are already sorted, and the position indicates where
     /// to insert the current hash.
+    ///
+    /// Note: Proofs with depth exceeding `MAX_DEPTH` are rejected early to prevent
+    /// resource exhaustion from oversized proofs.
     pub fn verify_with_positions(&self) -> bool {
+        // Reject proofs exceeding max supported depth to prevent DoS
+        if self.siblings.len() > MAX_DEPTH {
+            return false;
+        }
         if self.siblings.len() != self.positions.len() {
             return false;
         }
@@ -461,5 +475,95 @@ mod tests {
         );
 
         assert!(!bad_proof.verify());
+    }
+
+    #[test]
+    fn test_oversized_proof_rejected() {
+        // Create a proof with depth exceeding MAX_DEPTH
+        let leaf_hash = [0x42; 32];
+        let oversized_siblings: Vec<[Hash256; SIBLINGS_PER_LEVEL]> =
+            (0..MAX_DEPTH + 1).map(|_| [[0u8; 32]; 3]).collect();
+        let oversized_positions: Vec<u8> = vec![0; MAX_DEPTH + 1];
+
+        let proof = ZkMerkleProof {
+            leaf_index: 0,
+            siblings: oversized_siblings,
+            positions: oversized_positions,
+            leaf_hash,
+            root: [0xff; 32], // doesn't matter, should reject before hashing
+        };
+
+        // Both verify methods should reject oversized proofs
+        assert!(!proof.verify());
+        assert!(!proof.verify_with_positions());
+    }
+
+    #[test]
+    fn test_max_depth_proof_accepted() {
+        // Build a valid proof at exactly MAX_DEPTH to ensure the boundary is correct.
+        // If a future change tightens the bound to >= MAX_DEPTH, this test will fail.
+
+        // Start with a leaf and build up the tree level by level
+        let leaf_hash = [0x42; 32];
+        let mut current_hash = leaf_hash;
+        let mut siblings_list = Vec::with_capacity(MAX_DEPTH);
+        let mut positions_list = Vec::with_capacity(MAX_DEPTH);
+
+        for level in 0..MAX_DEPTH {
+            // Create 3 siblings that are distinct from current_hash
+            // Use level to make each level unique
+            let sib0 = {
+                let mut h = [0u8; 32];
+                h[0] = (level * 3) as u8;
+                h[1] = 0x01;
+                h
+            };
+            let sib1 = {
+                let mut h = [0u8; 32];
+                h[0] = (level * 3 + 1) as u8;
+                h[1] = 0x02;
+                h
+            };
+            let sib2 = {
+                let mut h = [0u8; 32];
+                h[0] = (level * 3 + 2) as u8;
+                h[1] = 0x03;
+                h
+            };
+
+            // Combine and sort to find position
+            let mut all_four = [current_hash, sib0, sib1, sib2];
+            all_four.sort();
+            let pos = all_four.iter().position(|h| *h == current_hash).unwrap() as u8;
+
+            // Extract sorted siblings (excluding current_hash)
+            let mut sorted_sibs = [[0u8; 32]; 3];
+            let mut sib_idx = 0;
+            for (i, h) in all_four.iter().enumerate() {
+                if i as u8 != pos {
+                    sorted_sibs[sib_idx] = *h;
+                    sib_idx += 1;
+                }
+            }
+
+            siblings_list.push(sorted_sibs);
+            positions_list.push(pos);
+
+            // Compute parent hash for next level
+            current_hash = hash_node_presorted(&all_four);
+        }
+
+        let root = current_hash;
+
+        let proof = ZkMerkleProof {
+            leaf_index: 0,
+            siblings: siblings_list,
+            positions: positions_list,
+            leaf_hash,
+            root,
+        };
+
+        // This must be true - a valid proof at exactly MAX_DEPTH should be accepted
+        assert!(proof.verify_with_positions());
     }
 }

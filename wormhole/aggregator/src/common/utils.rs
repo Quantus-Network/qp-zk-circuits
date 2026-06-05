@@ -21,11 +21,11 @@ pub fn load_verifier_data_from_bytes(
     let gate_serializer = DefaultGateSerializer;
 
     let common = CommonCircuitData::from_bytes(common_bytes.to_vec(), &gate_serializer)
-        .map_err(|e| anyhow!("Failed to deserialize {} common data: {}", label, e))?;
+        .map_err(|e| anyhow!("failed to deserialize {} common data: {}", label, e))?;
 
     let verifier_only =
         VerifierOnlyCircuitData::<C, D>::from_bytes(verifier_only_bytes.to_vec())
-            .map_err(|e| anyhow!("Failed to deserialize {} verifier-only data: {}", label, e))?;
+            .map_err(|e| anyhow!("failed to deserialize {} verifier-only data: {}", label, e))?;
 
     Ok(VerifierCircuitData {
         verifier_only,
