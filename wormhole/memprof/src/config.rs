@@ -163,11 +163,11 @@ impl AggConfigArgs {
 
         if let Some(mode) = self.zk_mode {
             let template = match mode {
-                ZkMode::Polyfri => CircuitConfig::standard_recursion_polyfri_zk_config(),
+                ZkMode::Polyfri => CircuitConfig::standard_recursion_zk_config(),
                 ZkMode::Rowblinding => CircuitConfig::standard_recursion_zk_config(),
                 ZkMode::Disabled => CircuitConfig::standard_recursion_config(),
             };
-            cfg.zk_config = template.zk_config;
+            cfg.zero_knowledge = template.zero_knowledge;
         }
 
         let original_rate = cfg.fri_config.rate_bits;
@@ -236,10 +236,8 @@ pub fn default_leaf_config() -> CircuitConfig {
 }
 
 pub fn print_config_summary(label: &str, cfg: &CircuitConfig) {
-    let zk = if cfg.uses_poly_fri_zk() {
-        "PolyFri"
-    } else if cfg.uses_row_blinding_zk() {
-        "RowBlinding"
+    let zk = if cfg.zero_knowledge {
+        "Enabled"
     } else {
         "Disabled"
     };
