@@ -180,6 +180,7 @@ jobs:
             wormhole/verifier/Cargo.toml \
             wormhole/aggregator/Cargo.toml \
             wormhole/circuit-builder/Cargo.toml \
+            wormhole/memprof/Cargo.toml \
             wormhole/tests/Cargo.toml \
             wormhole/tests/test-helpers/Cargo.toml \
             voting/Cargo.toml \
