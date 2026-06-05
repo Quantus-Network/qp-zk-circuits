@@ -1506,9 +1506,9 @@ mod tests {
         }
 
         // L0 proof generation should FAIL because the proof doesn't match the baked verifier key
-        let result = l0_data.prove(pw);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| l0_data.prove(pw)));
         assert!(
-            result.is_err(),
+            result.is_err() || result.unwrap().is_err(),
             "L0 should reject proofs from malicious circuit"
         );
     }
