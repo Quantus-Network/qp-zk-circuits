@@ -14,8 +14,6 @@ qp-wormhole-inputs = { version = "2.0.1", path = "../inputs", default-features =
 
 [dev-dependencies]
 criterion = { workspace = true }
-qp-plonky2-field = { version = "1.5.1", features = ["rand"] }
-qp-wormhole-prover = { version = "2.0.1", path = "../prover" }
 
 [features]
 default = ["std"]

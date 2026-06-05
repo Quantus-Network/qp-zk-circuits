@@ -9,7 +9,6 @@ version.workspace = true
 
 [dependencies]
 anyhow = { workspace = true, default-features = false }
-hex = { workspace = true }
 qp-plonky2 = { workspace = true, default-features = false }
 qp-poseidon-constants = { version = "1.0", default-features = false }
 qp-poseidon-core = { workspace = true, default-features = false }
