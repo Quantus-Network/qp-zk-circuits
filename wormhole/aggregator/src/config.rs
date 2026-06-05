@@ -117,7 +117,7 @@ mod tests {
     fn config_round_trip() {
         let dir = temp_dir("round-trip");
 
-        let config = CircuitBinsConfig::new(7, Some(4));
+        let config = CircuitBinsConfig::new(7, Some(4)).unwrap();
         config.save(&dir).unwrap();
 
         let loaded = CircuitBinsConfig::load(&dir).unwrap();
