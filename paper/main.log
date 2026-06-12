@@ -1,8 +1,8 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  12 JUN 2026 20:44
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.10)  12 JUN 2026 22:30
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
-**main.tex
+**main
 (./main.tex
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
@@ -1582,11 +1582,11 @@ Package microtype Info: Loading generic protrusion settings for font family
 (microtype)             See the microtype manual for details.
  [4] [5]
 [6] [7] [8] [9{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/lm/lm-ma
-thex.enc}]
+thex.enc}] [10]
 Package microtype Info: Character `029' is missing
 (microtype)             in font `T1/lmr/m/sc/10'.
 (microtype)             Ignoring protrusion settings for this character.
- [10] [11] [12] [13] [14] (./main.aux)
+ [11] [12] [13] [14] (./main.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2020/03/25>
@@ -1595,13 +1595,13 @@ Package rerunfilecheck Info: File `main.out' has not changed.
 (rerunfilecheck)             Checksum: CCD0DA8022564ED0DFAA4B6A45551BD3;5151.
  ) 
 Here is how much of TeX's memory you used:
- 31049 strings out of 469006
- 575659 string characters out of 5454813
- 1048979 words of memory out of 5000000
+ 31037 strings out of 469006
+ 575545 string characters out of 5454813
+ 1051979 words of memory out of 5000000
  58685 multiletter control sequences out of 15000+600000
- 747527 words of font info for 277 fonts, out of 8000000 for 9000
+ 746897 words of font info for 271 fonts, out of 8000000 for 9000
  319 hyphenation exceptions out of 8191
- 125i,14n,121p,1016b,725s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 125i,14n,121p,1012b,725s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmbx10.pfb></u
 sr/local/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmbx12.pfb></usr/lo
 cal/texlive/2026basic/texmf-dist/fonts/type1/public/lm/lmcsc10.pfb></usr/local/
@@ -1624,7 +1624,7 @@ basic/texmf-dist/fonts/type1/public/lm/lmsy9.pfb></usr/local/texlive/2026basic/
 texmf-dist/fonts/type1/public/lm/lmtt10.pfb></usr/local/texlive/2026basic/texmf
 -dist/fonts/type1/public/lm/lmtt8.pfb></usr/local/texlive/2026basic/texmf-dist/
 fonts/type1/public/amsfonts/symbols/msbm10.pfb>
-Output written on main.pdf (14 pages, 493763 bytes).
+Output written on main.pdf (14 pages, 495943 bytes).
 PDF statistics:
  518 PDF objects out of 1000 (max. 8388607)
  446 compressed objects within 5 object streams

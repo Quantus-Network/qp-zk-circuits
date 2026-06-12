@@ -40,7 +40,7 @@ Post-quantum signature schemes such as ML-DSA impose public keys and signatures 
 
 Building on the wormhole mechanism from EIP-7503, we formalize a zero-knowledge \emph{wormhole proof system} where funds are committed to addresses derived from secret preimages and later claimed by proving knowledge of the preimage in zero knowledge. We construct a two-layer recursive proof architecture using Plonky2 with FRI commitments. To achieve privacy against balance-linking adversaries, we introduce client-side dummy padding and local shuffling at the first aggregation layer, enlarging the effective anonymity set.
 
-We give complete game-based security definitions and proofs for deposit binding, one-time withdrawal, spend-path exclusivity, value conservation, nullifier indistinguishability, and transaction unlinkability. Under a uniform prior over plausible deposit subsets, adversarial identification advantage is bounded by \(1/k\) for an anonymity set of size \(k\); we further prove that even computing \(k\) is \#P-hard. Our implementation using Plonky2 shows 20\,ms proving time per authorization with 1.6\,ms verification. Two-layer recursive aggregation scales to 256 authorizations with near-constant final verification (approximately 3.7\,ms at the largest batch tested). The marginal on-chain cost is only 56 bytes per settled output, over 80$\times$ smaller than a single ML-DSA-87 signature.
+We give complete game-based security definitions and proofs for deposit binding, one-time withdrawal, spend-path exclusivity, value conservation, nullifier indistinguishability, and transaction unlinkability. Under a uniform prior over deposit subsets consistent with the public view, adversarial identification advantage is bounded by \(1/k\) for an anonymity set of size \(k\); we further prove that even computing \(k\) is \#P-hard. Our implementation using Plonky2 shows 20\,ms proving time per authorization with 1.6\,ms verification. Two-layer recursive aggregation scales to 256 authorizations with near-constant final verification (approximately 3.7\,ms at the largest batch tested). The marginal on-chain cost is only 56 bytes per settled output, over 80$\times$ smaller than a single ML-DSA-87 signature.
 \end{abstract}
 
 % Text-only abstract required for IACR final version
@@ -383,7 +383,7 @@ Instantiating \(H\) with Poseidon2 is heuristic, as is standard for random-oracl
 A first-layer aggregate \(Y\) exposes block number \(b\), asset identifier \(a\), fee rate \(f\), batch capacity \(N\), a multiset of \(N\) nullifiers, and grouped exits \(\{(\alpha_j, e_j)\}_{j=1}^{E}\) with total \(S = \sum_{j=1}^{E} e_j\).
 \end{definition}
 
-\begin{definition}[Plausible deposit subsets]
+\begin{definition}[Plausible and routable deposit subsets]
 \label{def:anonymity-set}
 Let \(\mathcal{D}(b,a)\) be the unspent wormhole deposits recorded in the ZK tree at block \(b\) with asset \(a\), with amounts \(a_1, \ldots, a_M\). A subset \(I \subseteq \{1,\ldots,M\}\) is \emph{plausible} for \(Y\) if:
 \begin{enumerate}[label=(\roman*),leftmargin=2em]
@@ -391,49 +391,55 @@ Let \(\mathcal{D}(b,a)\) be the unspent wormhole deposits recorded in the ZK tre
     \item \textbf{Output slots:} \(E \leq 2|I|\), since each authorization exposes at most two outputs before grouping.
     \item \textbf{Volume:} \(\sum_{i \in I} a_i \geq S/(1-f)\) (equivalently, \(\sum_{i \in I} a_i(1-f) \geq S\)).
 \end{enumerate}
-The \emph{anonymity set} is
+The \emph{plausible set} is
 \[
 \mathcal{A}(Y) = \{ I \subseteq \{1,\ldots,M\} \mid I \text{ is plausible for } Y \}.
 \]
-Each authorization can route its two outputs arbitrarily among the observed exit accounts, subject only to its per-deposit cap \(a_i(1-f)\); given (ii)--(iii), such a routing always exists for any split \(\{e_j\}\) with \(\sum_j e_j = S\). The public per-account amounts therefore do not further restrict \(\mathcal{A}(Y)\) beyond the total \(S\). The main refinements over a volume-only definition are the deposit pool \(\mathcal{D}(b,a)\), the batch cap \(N\), and the slot bound \(E \leq 2|I|\). Counting \(|\mathcal{A}(Y)|\) is an instance of \textsc{\#SubsetSum} with threshold \(T = S/(1-f)\), plus \(E \leq 2|I|\). The definition depends on exits and metadata only; published nullifiers do not identify deposits without inverting \(\Null(s,c)\).
+Conditions (i)--(iii) are necessary but not sufficient. Each authorization carries exactly two output slots---by design, a target output and a change output---so a subset must additionally admit a routing that reproduces the published per-account totals. Say \(I\) is \emph{routable} for \(Y\) if there exist contributions \(x_{ij} \geq 0\) of deposit \(i \in I\) to exit account \(j\) such that each deposit funds at most two distinct accounts, \(\sum_{i \in I} x_{ij} = e_j\) for every account \(j\), and \(\sum_{j} x_{ij} \leq a_i(1-f)\) for every \(i \in I\). The \emph{effective anonymity set} is
+\[
+\mathcal{F}(Y) = \{ I \in \mathcal{A}(Y) \mid I \text{ is routable for } Y \},
+\]
+and the true funding subset always lies in \(\mathcal{F}(Y)\). The inclusion \(\mathcal{F}(Y) \subseteq \mathcal{A}(Y)\) can be strict: after-fee caps \(\{100, 2\}\) cannot produce three exit accounts of \(34\) each, although \(E = 3 \leq 2|I| = 4\) and the volume bound holds. An adversary can therefore prune \(\mathcal{A}(Y)\) using the public per-account amounts, and the operative privacy guarantee is stated over \(\mathcal{F}(Y)\). The gap is small when each account total is coverable by a single deposit of the subset---in particular when deposit denominations are large relative to per-account exit amounts, or standardized---and can be large for heterogeneous amounts. The definition depends on exits and metadata only; published nullifiers do not identify deposits without inverting \(\Null(s,c)\).
 \end{definition}
 
 \begin{theorem}[Transaction Unlinkability]
 \label{thm:unlinkability}
-Let \(Y\) be a first-layer aggregate with \(|\mathcal{A}(Y)| = k \geq 1\). Assume the true funding subset is drawn uniformly from \(\mathcal{A}(Y)\). Then no PPT adversary can identify the true subset with probability greater than \(1/k\).
+Let \(Y\) be a first-layer aggregate with \(|\mathcal{F}(Y)| = k \geq 1\). Assume the true funding subset is drawn uniformly from \(\mathcal{F}(Y)\). Then no PPT adversary can identify the true subset with probability greater than \(1/k\).
 \end{theorem}
 
 \begin{proof}
-An adversary attempting to identify the funding deposits observes \(Y\) and the deposit pool \(\mathcal{D}(b,a)\), computes \(\mathcal{A}(Y)\), and guesses which subset was used. Any guess outside \(\mathcal{A}(Y)\) is inconsistent with the public exit total \(S\), the slot bound, the batch cap, or the block/asset filter, and can be ruled out without guessing.
+An adversary attempting to identify the funding deposits observes \(Y\) and the deposit pool \(\mathcal{D}(b,a)\), computes \(\mathcal{F}(Y)\), and guesses which subset was used. Any guess outside \(\mathcal{F}(Y)\) is inconsistent with the public view---it violates the batch cap, the block/asset filter, or admits no routing matching the published per-account amounts---and can be ruled out without guessing.
 
-Under the uniform prior over \(\mathcal{A}(Y)\), every plausible subset is equally likely, so success probability is at most \(1/k\). Any strategy exceeding \(1/k\) must use information outside this model (e.g., side channels, deposit clustering, or a non-uniform prior over user behavior). Nullifiers are not needed for this attack: each published nullifier is a one-way tag \(\Null(s,c)\) that does not reveal which deposit funded the withdrawal.
+Under the uniform prior over \(\mathcal{F}(Y)\), every routable subset is equally likely, so success probability is at most \(1/k\). Any strategy exceeding \(1/k\) must use information outside this model (e.g., side channels, deposit clustering, or a non-uniform prior over user behavior). Nullifiers are not needed for this attack: each published nullifier is a one-way tag \(\Null(s,c)\) that does not reveal which deposit funded the withdrawal.
 \end{proof}
 
 \paragraph{Role of nullifier indistinguishability.}
-\Cref{thm:nullifier-indist} addresses a different question: whether an adversary can tell real nullifiers from dummy padding, or infer how many real authorizations appear in a batch. This hides batch composition but does not change the deposit-unlinkability analysis above, which already treats only \(\mathcal{A}(Y)\). Without indistinguishability, an adversary who learns the number of real authorizations could restrict attention to subsets of that exact size, potentially shrinking the effective candidate set below \(k\).
+\Cref{thm:nullifier-indist} addresses a different question: whether an adversary can tell real nullifiers from dummy padding, or infer how many real authorizations appear in a batch. This hides batch composition but does not change the deposit-unlinkability analysis above, which already treats only \(\mathcal{F}(Y)\). Without indistinguishability, an adversary who learns the number of real authorizations could restrict attention to subsets of that exact size, potentially shrinking the effective candidate set below \(k\).
 
 One structural caveat applies in the implemented output layout: exit slots are positionally aligned with nullifier slots (slots \(2i\) and \(2i{+}1\) belong to authorization \(i\)), and each distinct exit account retains its grouped sum at one first-occurrence slot. An observer therefore learns that the authorizations owning non-zero exit slots are real, marking those specific nullifiers as real and yielding a lower bound of up to \(E\) on the real count (versus \(\lceil E/2 \rceil\) from the exits alone). Real authorizations whose outputs were grouped into earlier slots remain indistinguishable from dummies, and no nullifier-to-deposit linkage arises, so the deposit-unlinkability bound of \cref{thm:unlinkability} is unaffected.
 
-Because the proof system enforces an inequality rather than exact equality (condition C5), the adversary must consider any subset whose deposits can fund at least \(S\) after fees. Users may also withdraw less than their full balance, enlarging the volume-feasible region at the cost of burned value. The slot bound \(E \leq 2|I|\) is the main structural constraint beyond volume: a subset of size \(|I|\) cannot explain more than \(2|I|\) distinct exit accounts.
+Because the proof system enforces an inequality rather than exact equality (condition C5), the adversary must consider any subset whose deposits can fund at least \(S\) after fees. Users may also withdraw less than their full balance, enlarging the volume-feasible region at the cost of burned value. Beyond volume, the binding structural constraint is routability: a subset of size \(|I|\) cannot explain more than \(2|I|\) distinct exit accounts, and each account total must decompose across deposits that reach it within their caps and two-account limits.
 
 \paragraph{Complexity of counting plausible subsets:}
-The decision version of subset sum is NP-complete \cite{subsetsum}. The counting version \textsc{\#SubsetSum} is \#P-complete \cite{valiant1979}: the standard reduction establishing NP-completeness of subset sum is parsimonious, so it transfers to the counting class. In the special case \(E = 1\) and \(N = M\), condition (ii) is vacuous and \(\mathcal{A}(Y)\) reduces to \textsc{\#SubsetSum} with threshold \(T = S/(1-f)\).
+The decision version of subset sum is NP-complete \cite{subsetsum}. The counting version \textsc{\#SubsetSum} is \#P-complete \cite{valiant1979}: the standard reduction establishing NP-completeness of subset sum is parsimonious, so it transfers to the counting class. In the special case \(E = 1\) and \(N = M\), condition (ii) is vacuous, every volume-satisfying subset is trivially routable (all contributions target the single account), and \(\mathcal{F}(Y) = \mathcal{A}(Y)\) reduces to \textsc{\#SubsetSum} with threshold \(T = S/(1-f)\).
 
 \begin{theorem}[Hardness of Anonymity Set Computation]
 \label{thm:hardness}
-Computing \(|\mathcal{A}(Y)|\) is \#P-hard.
+Computing \(|\mathcal{F}(Y)|\) (equivalently \(|\mathcal{A}(Y)|\)) is \#P-hard.
 \end{theorem}
 
 \begin{proof}
-We reduce from \textsc{\#SubsetSum}. Given an instance \((a_1, \ldots, a_M, T)\), construct an aggregate view with \(E = 1\), exit \((\alpha_1, e_1)\) where \(e_1 = T(1-f)\), batch cap \(N = M\), and deposit pool \(\mathcal{D}(b,a)\) containing the same amounts. For any \(I \subseteq \{1,\ldots,M\}\), condition (iii) holds iff \(\sum_{i \in I} a_i \geq T\); condition (ii) holds because \(E = 1 \leq 2|I|\) for every non-empty \(I\). Thus \(|\mathcal{A}(Y)|\) equals the number of subsets summing to at least \(T\). Given oracle access to \(|\mathcal{A}(Y)|\), two calls with thresholds \(T\) and \(T+1\) recover \textsc{\#SubsetSum} exactly as in the standard threshold-to-exact conversion. Hence computing \(|\mathcal{A}(Y)|\) is \#P-hard.
+We reduce from \textsc{\#SubsetSum}. Given an instance \((a_1, \ldots, a_M, T)\), construct an aggregate view with \(E = 1\), exit \((\alpha_1, e_1)\) where \(e_1 = T(1-f)\), batch cap \(N = M\), and deposit pool \(\mathcal{D}(b,a)\) containing the same amounts. For any \(I \subseteq \{1,\ldots,M\}\), condition (iii) holds iff \(\sum_{i \in I} a_i \geq T\); condition (ii) holds because \(E = 1 \leq 2|I|\) for every non-empty \(I\); and any such subset is routable, since every deposit sends its entire contribution to the single account. Thus \(|\mathcal{F}(Y)| = |\mathcal{A}(Y)|\) equals the number of subsets summing to at least \(T\). Given oracle access to this count, two calls with thresholds \(T\) and \(T+1\) recover \textsc{\#SubsetSum} exactly as in the standard threshold-to-exact conversion. Hence computing either quantity is \#P-hard.
 \end{proof}
 
+Membership in \(\mathcal{F}(Y)\) is itself nontrivial: deciding routability is a transportation problem with a degree constraint (each deposit funds at most two accounts), which is NP-hard in general. We do not rely on this for privacy---batches are small enough that integer-programming solvers decide routability in practice---but it adds to the cost of pruning for an adversary scanning many candidate subsets.
+
 \paragraph{Burn Cost and Bounded Rationality:}
-A rational adversary may assume users are unwilling to burn significant value for privacy. Under bounded rationality, the effective anonymity set shrinks to subsets whose total deposit volume is at most \((1 + \delta) \cdot S/(1-f)\) for some small \(\delta\) (e.g., 1\%)---that is, at most slightly above the minimum volume required by condition (iii)---in addition to the slot bound above.
+A rational adversary may assume users are unwilling to burn significant value for privacy. Under bounded rationality, the effective anonymity set shrinks to routable subsets whose total deposit volume is at most \((1 + \delta) \cdot S/(1-f)\) for some small \(\delta\) (e.g., 1\%)---that is, at most slightly above the minimum volume required by condition (iii).
 
 \subsection{Privacy leakage}
 
-Output amounts, exit addresses, nullifiers, and timing are public. The unlinkability bound in \cref{thm:unlinkability} assumes a uniform prior over plausible deposit subsets and analyzes the exit-driven candidate set \(\mathcal{A}(Y)\); amount patterns, address reuse, deposit clustering, and timing correlation can shrink the effective set further. Nullifier indistinguishability (\cref{thm:nullifier-indist}) hides dummy padding but is orthogonal to deposit identification. First-layer padding enlarges the anonymity set, but this is plausible deniability, not full shielding.
+Output amounts, exit addresses, nullifiers, and timing are public. The unlinkability bound in \cref{thm:unlinkability} assumes a uniform prior over routable deposit subsets and analyzes the exit-driven candidate set \(\mathcal{F}(Y)\); behavioral amount patterns (e.g., round numbers), address reuse, deposit clustering, and timing correlation can shrink the effective set further. Nullifier indistinguishability (\cref{thm:nullifier-indist}) hides dummy padding but is orthogonal to deposit identification. First-layer padding enlarges the anonymity set, but this is plausible deniability, not full shielding.
 
 \section{Evaluation}
 \label{sec:evaluation}
