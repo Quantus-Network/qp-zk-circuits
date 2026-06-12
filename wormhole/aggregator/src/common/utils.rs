@@ -1,6 +1,5 @@
 use anyhow::{anyhow, Result};
 use plonky2::{
-    field::types::Field,
     field::types::PrimeField64,
     plonk::circuit_data::{CommonCircuitData, VerifierCircuitData, VerifierOnlyCircuitData},
     plonk::proof::ProofWithPublicInputs,
@@ -8,9 +7,7 @@ use plonky2::{
 };
 use zk_circuits_common::circuit::{C, D, F};
 
-use crate::layer0::circuit::constants::{
-    aggregated_output, ASSET_ID_START, BLOCK_HASH_START, LEAF_PI_LEN,
-};
+use crate::layer0::circuit::constants::{aggregated_output, ASSET_ID_START, LEAF_PI_LEN};
 
 /// Load verifier circuit data (common + verifier-only) from serialized bytes.
 pub fn load_verifier_data_from_bytes(
@@ -57,13 +54,6 @@ pub fn leaf_proof_asset_id(proof: &ProofWithPublicInputs<F, C, D>) -> Result<u32
         .to_canonical_u64()
         .try_into()
         .map_err(|_| anyhow!("leaf proof asset_id exceeds u32 range"))
-}
-
-pub fn is_dummy_leaf_proof(proof: &ProofWithPublicInputs<F, C, D>) -> Result<bool> {
-    ensure_proof_public_input_len(proof, LEAF_PI_LEN, "leaf proof")?;
-    Ok(proof.public_inputs[BLOCK_HASH_START..BLOCK_HASH_START + 4]
-        .iter()
-        .all(|f| f.is_zero()))
 }
 
 pub fn l0_num_leaves_from_padded_pi_len(pi_len: usize) -> Result<usize> {
