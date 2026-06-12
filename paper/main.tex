@@ -247,7 +247,7 @@ The \emph{deposit binding game} \(\mathsf{Game}_{\mathrm{bind}}^{\mathcal{B}}\) 
 \begin{enumerate}
     \item \(\mathcal{B}\) is given access to the blockchain state and may create arbitrary deposits.
     \item \(\mathcal{B}\) outputs a proof \(\pi\) and public inputs \(x = (a, v_1, v_2, f, n, \alpha_1, \alpha_2, h_B, b)\).
-    \item \(\mathcal{B}\) wins if \(\mathsf{Verify}(\pi, x) = 1\) and no deposit to address \(\WA(s)\) for any \(s\) exists in the block referenced by \((h_B, b)\).
+    \item \(\mathcal{B}\) wins if \(\mathsf{Verify}(\pi, x) = 1\) and the specific deposit authenticated by the proof---a ZK tree leaf recording a transfer to \(\WA(s)\) with counter \(c\), asset \(a\), and input amount \(v_{\mathrm{in}}\) for some witness \(w = (s, c, v_{\mathrm{in}}, \ldots)\) satisfying \(\mathcal{R}_{\mathrm{leaf}}(x, w)\)---does not exist under the tree root committed in block \((h_B, b)\).
 \end{enumerate}
 We say the system satisfies \emph{deposit binding} if \(\Pr[\mathsf{Game}_{\mathrm{bind}}^{\mathcal{B}} = 1] \leq \epsilon_{\mathrm{ks}} + \epsilon_{\mathrm{coll}}\) for all PPT \(\mathcal{B}\), where \(\epsilon_{\mathrm{coll}}\) is the collision probability of \(H\).
 \end{definition}
@@ -257,7 +257,7 @@ The wormhole protocol satisfies deposit binding under knowledge soundness of \(\
 \end{theorem}
 
 \begin{proof}
-By knowledge soundness, if \(\mathsf{Verify}(\pi, x) = 1\), there exists an extractor that outputs a witness \(w\) satisfying conditions (C1)--(C5) with probability \(1 - \epsilon_{\mathrm{ks}}\). Condition (C3) requires the witness to include a valid ZK tree inclusion proof for a deposit to address \(\WA(s)\), and (C4) binds this proof to the block \((h_B, b)\) via the committed tree root. If no such deposit exists, the extractor must either fail (breaking knowledge soundness) or output a forged inclusion path, which requires a collision in the tree's Poseidon hash (probability \(\epsilon_{\mathrm{coll}}\)). The blockchain's validation that \((h_B, b)\) refers to a real block completes the binding.
+Suppose \(\mathcal{B}\) wins. Then \(\mathsf{Verify}(\pi, x) = 1\) but the authenticated deposit \((\WA(s), c, a, v_{\mathrm{in}})\) is absent from the ZK tree at block \((h_B, b)\). By knowledge soundness, there exists an extractor that outputs a witness \(w\) satisfying \(\mathcal{R}_{\mathrm{leaf}}(x, w)\)---and hence conditions (C1)--(C5)---with probability \(1 - \epsilon_{\mathrm{ks}}\). Condition (C3) requires \(w\) to include a valid ZK tree inclusion proof for exactly this deposit tuple, and (C4) binds that proof to the root committed in \((h_B, b)\). If the leaf is absent, the inclusion path must be forged, which requires a collision in the tree's Poseidon hash (probability \(\epsilon_{\mathrm{coll}}\)). The blockchain's validation that \((h_B, b)\) refers to a real block ensures the committed root is the correct one for that height.
 \end{proof}
 
 \subsection{One-time withdrawal}
