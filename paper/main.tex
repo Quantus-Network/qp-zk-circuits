@@ -17,6 +17,7 @@
 
 \newcommand{\WA}{\mathsf{WA}}
 \newcommand{\Null}{\mathsf{Null}}
+\newcommand{\DNull}{\mathsf{DNull}}
 
 % Title with running head
 \title[running={Wormhole Proofs}]{Wormhole Proofs: Recursive Zero-Knowledge Hash-Based Authorization with \#P-Hard Privacy}
@@ -226,7 +227,7 @@ The first aggregation layer is privacy-sensitive and should be executed locally.
     \item If fewer than \(N\) real leaves are available, the batch is padded with dummy leaves.
     \item The leaf order is shuffled before wrapping.
     \item Exits to identical accounts are grouped into a single summed output.
-    \item Real nullifiers are forwarded; dummy nullifiers are replaced by hashing prover-supplied random preimages, preventing a malicious prover from choosing a dummy nullifier that collides with a real one.
+    \item Real nullifiers are forwarded; dummy nullifiers are replaced by \(H(H(u))\) for prover-supplied random preimages \(u\), preventing a malicious prover from choosing a dummy tag that collides with a real one.
 \end{itemize}
 
 A delegated first-layer service would observe raw child proofs before padding and shuffling, collapsing much of the anonymity set quantified in \cref{sec:layer0privacy}.
@@ -337,27 +338,42 @@ Together with the blockchain's nullifier check, total settled value never exceed
 \subsection{Anonymity sets}
 \label{sec:layer0privacy}
 
-An adversary observing a first-layer aggregate sees \(N\) nullifiers (some real, some dummies), grouped exits, and the public metadata \((b, a, f)\). Deposit unlinkability is analyzed by enumerating plausible funding subsets in \(\mathcal{D}(b,a)\); nullifier indistinguishability is a separate property that hides padding and batch composition.
+An adversary observing a first-layer aggregate sees \(N\) nullifiers (some real, some dummies), grouped exits, and the public metadata \((b, a, f)\). Deposit unlinkability is analyzed by enumerating plausible funding subsets in \(\mathcal{D}(b,a)\); nullifier indistinguishability is a separate property that hides padding and batch composition. Throughout this subsection, \(H\) denotes the Poseidon2 hash used in-circuit, modeled as a random oracle with 256-bit outputs.
+
+\paragraph{Dummy nullifiers.}
+Real nullifiers are \(\Null(s,c) = H(H(\mathsf{salt_{null}} \parallel s \parallel c))\) as in \cref{sec:formal}. Dummy padding replaces each dummy slot with
+\[
+\DNull(u) = H(H(u)),
+\]
+where the prover samples \(u \gets \{0,1\}^{256}\) and the aggregation circuit recomputes the outer hash (matching the implementation).
 
 \begin{definition}[Nullifier Indistinguishability Game]
 The \emph{nullifier indistinguishability game} \(\mathsf{Game}_{\mathrm{null}}^{\mathcal{B}}\) proceeds as follows:
 \begin{enumerate}
-    \item Challenger samples secret \(s \gets \{0,1\}^{256}\), counter \(c\), and random \(r \gets \{0,1\}^{256}\).
-    \item Challenger computes \(n_0 = \Null(s, c) = H(H(\mathsf{salt_{null}} \parallel s \parallel c))\) and \(n_1 = H(H(r))\).
+    \item Challenger samples secret \(s \gets \{0,1\}^{256}\), counter \(c \in \mathbb{N}\), and dummy preimage \(u \gets \{0,1\}^{256}\).
+    \item Challenger computes \(n_0 = \Null(s,c)\) and \(n_1 = \DNull(u)\).
     \item Challenger flips \(b \gets \{0,1\}\) and sends \(n_b\) to \(\mathcal{B}\).
     \item \(\mathcal{B}\) outputs guess \(b'\).
     \item \(\mathcal{B}\) wins if \(b' = b\).
 \end{enumerate}
-We say nullifiers are \emph{indistinguishable} if \(|\Pr[\mathsf{Game}_{\mathrm{null}}^{\mathcal{B}} = 1] - 1/2| \leq \epsilon_{\mathrm{prf}}\) for all PPT \(\mathcal{B}\), where \(\epsilon_{\mathrm{prf}}\) is the PRF advantage against \(H\).
+We say nullifiers are \emph{indistinguishable} if for all PPT \(\mathcal{B}\) making at most \(q_H\) queries to the random oracle \(H\),
+\[
+\left|\Pr[\mathsf{Game}_{\mathrm{null}}^{\mathcal{B}} = 1] - \tfrac{1}{2}\right| \leq \epsilon_{\mathrm{ro}}(q_H),
+\]
+where \(\epsilon_{\mathrm{ro}}(q_H)\) is negligible in the hash output length \(\lambda = 256\) for fixed \(q_H\).
 \end{definition}
 
 \begin{theorem}[Nullifier Indistinguishability]
 \label{thm:nullifier-indist}
-If \(H\) is a pseudorandom function, then real and dummy nullifiers are computationally indistinguishable.
+In the random oracle model, real and dummy nullifiers are computationally indistinguishable: \(\epsilon_{\mathrm{ro}}(q_H) = O(q_H^2 / 2^{\lambda})\). Under the hash-security assumption of \cref{sec:model} for the concrete Poseidon2 instantiation, the same property holds computationally for all PPT adversaries.
 \end{theorem}
 
 \begin{proof}
-Both \(n_0 = H(H(\mathsf{salt_{null}} \parallel s \parallel c))\) and \(n_1 = H(H(r))\) are outputs of \(H\) applied to uniformly random inputs (the inner hashes). If \(\mathcal{B}\) distinguishes with advantage \(\epsilon\), we construct a PRF distinguisher with the same advantage: given oracle access to either \(H\) or a random function, query on a random input and use \(\mathcal{B}\) to distinguish. Thus \(\epsilon \leq \epsilon_{\mathrm{prf}}\).
+Write \(p = \mathsf{salt_{null}} \parallel s \parallel c\) and let \(x_0 = H(p)\), \(x_1 = H(u)\), so \(n_0 = H(x_0)\) and \(n_1 = H(x_1)\). The fixed salt and public counter \(c\) do not weaken the analysis: \(s\) is uniform and independent of \(u\), so \(p\) is unpredictable to \(\mathcal{B}\) before the challenge unless it queries \(H(p)\).
+
+In the random oracle model, \(x_0\) and \(x_1\) are uniform and independent on their first queries, and so are \(n_0\) and \(n_1\) unless \(\mathcal{B}\) has previously queried \(H(x_0)\) or \(H(x_1)\). Because \(s\) is uniform and unknown to \(\mathcal{B}\), the real preimage \(p\) is unpredictable (even though \(\mathsf{salt_{null}}\) and \(c\) are fixed or public), and the dummy preimage \(u\) is uniform and independent. The probability that any of \(\mathcal{B}\)'s \(q_H\) queries hits \(p\), \(u\), \(x_0\), or \(x_1\) before the challenge is therefore at most \(O(q_H^2 / 2^{\lambda})\) by a standard random-oracle union bound. Conditioned on no such query, \(n_0\) and \(n_1\) are identically distributed and independent of \(b\), so \(\Pr[b' = b] = 1/2\).
+
+For the concrete instantiation, replace the random oracle with Poseidon2 and appeal to the collision and preimage resistance assumed in \cref{sec:model}: any distinguisher with non-negligible advantage would yield a non-negligible break of \(H\).
 \end{proof}
 
 \begin{definition}[Aggregate view]
