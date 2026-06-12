@@ -337,7 +337,7 @@ Together with the blockchain's nullifier check, total settled value never exceed
 \subsection{Anonymity sets}
 \label{sec:layer0privacy}
 
-An adversary observing a first-layer aggregate sees \(N\) nullifiers (some real, some dummies) and grouped exits. We formalize privacy through two properties: nullifier indistinguishability and transaction unlinkability.
+An adversary observing a first-layer aggregate sees \(N\) nullifiers (some real, some dummies), grouped exits, and the public metadata \((b, a, f)\). Deposit unlinkability is analyzed by enumerating plausible funding subsets in \(\mathcal{D}(b,a)\); nullifier indistinguishability is a separate property that hides padding and batch composition.
 
 \begin{definition}[Nullifier Indistinguishability Game]
 The \emph{nullifier indistinguishability game} \(\mathsf{Game}_{\mathrm{null}}^{\mathcal{B}}\) proceeds as follows:
@@ -360,26 +360,44 @@ If \(H\) is a pseudorandom function, then real and dummy nullifiers are computat
 Both \(n_0 = H(H(\mathsf{salt_{null}} \parallel s \parallel c))\) and \(n_1 = H(H(r))\) are outputs of \(H\) applied to uniformly random inputs (the inner hashes). If \(\mathcal{B}\) distinguishes with advantage \(\epsilon\), we construct a PRF distinguisher with the same advantage: given oracle access to either \(H\) or a random function, query on a random input and use \(\mathcal{B}\) to distinguish. Thus \(\epsilon \leq \epsilon_{\mathrm{prf}}\).
 \end{proof}
 
-\begin{definition}[Anonymity set]
-Fix a first-layer aggregate \(Y\) with total exit amount \(S\) and fee rate \(f\). Let \(a_1, \ldots, a_M\) be the amounts of all deposits to addresses that have never had an outgoing transaction. Since wormhole addresses cannot have outgoing transactions by construction, all wormhole deposits are included in this set. The \emph{anonymity set} \(\mathcal{A}(Y)\) is
+\begin{definition}[Aggregate view]
+\label{def:aggregate-view}
+A first-layer aggregate \(Y\) exposes block number \(b\), asset identifier \(a\), fee rate \(f\), batch capacity \(N\), a multiset of \(N\) nullifiers, and grouped exits \(\{(\alpha_j, e_j)\}_{j=1}^{E}\) with total \(S = \sum_{j=1}^{E} e_j\).
+\end{definition}
+
+\begin{definition}[Plausible deposit subsets]
+\label{def:anonymity-set}
+Let \(\mathcal{D}(b,a)\) be the unspent wormhole deposits recorded in the ZK tree at block \(b\) with asset \(a\), with amounts \(a_1, \ldots, a_M\). A subset \(I \subseteq \{1,\ldots,M\}\) is \emph{plausible} for \(Y\) if:
+\begin{enumerate}[label=(\roman*),leftmargin=2em]
+    \item \textbf{Batch size:} \(|I| \leq N\).
+    \item \textbf{Output slots:} \(E \leq 2|I|\), since each authorization exposes at most two outputs before grouping.
+    \item \textbf{Volume:} \(\sum_{i \in I} a_i \geq S/(1-f)\) (equivalently, \(\sum_{i \in I} a_i(1-f) \geq S\)).
+\end{enumerate}
+The \emph{anonymity set} is
 \[
-\mathcal{A}(Y) = \left\{ I \subseteq \{1,\ldots,M\} \;\middle|\; |I| \leq N \text{ and } \sum_{i \in I} a_i \geq \frac{S}{1 - f} \right\}.
+\mathcal{A}(Y) = \{ I \subseteq \{1,\ldots,M\} \mid I \text{ is plausible for } Y \}.
 \]
-Computing \(|\mathcal{A}(Y)|\) is an instance of \textsc{\#SubsetSum}: given \(M\) integers, count subsets whose sum meets a target.
+Each authorization can route its two outputs arbitrarily among the observed exit accounts, subject only to its per-deposit cap \(a_i(1-f)\); given (ii)--(iii), such a routing always exists for any split \(\{e_j\}\) with \(\sum_j e_j = S\). The public per-account amounts therefore do not further restrict \(\mathcal{A}(Y)\) beyond the total \(S\). The main refinements over a volume-only definition are the deposit pool \(\mathcal{D}(b,a)\), the batch cap \(N\), and the slot bound \(E \leq 2|I|\). Counting \(|\mathcal{A}(Y)|\) is an instance of \textsc{\#SubsetSum} with threshold \(T = S/(1-f)\), plus \(E \leq 2|I|\). The definition depends on exits and metadata only; published nullifiers do not identify deposits without inverting \(\Null(s,c)\).
 \end{definition}
 
 \begin{theorem}[Transaction Unlinkability]
-Let \(Y\) be a first-layer aggregate with anonymity set \(\mathcal{A}(Y)\) where \(|\mathcal{A}(Y)| = k \geq 1\). No PPT adversary can identify the true deposit subset with probability greater than \(1/k + \epsilon_{\mathrm{prf}}\).
+\label{thm:unlinkability}
+Let \(Y\) be a first-layer aggregate with \(|\mathcal{A}(Y)| = k \geq 1\). Assume the true funding subset is drawn uniformly from \(\mathcal{A}(Y)\). Then no PPT adversary can identify the true subset with probability greater than \(1/k\).
 \end{theorem}
 
 \begin{proof}
-An adversary attempting to identify the funding deposits must first determine which of the \(N\) nullifiers correspond to real deposits. By \cref{thm:nullifier-indist} (nullifier indistinguishability), the adversary cannot distinguish real from dummy nullifiers except with advantage \(\epsilon_{\mathrm{prf}}\). Conditioned on not distinguishing nullifiers, the adversary sees only the total exit amount \(S\) and must guess among all subsets in \(\mathcal{A}(Y)\) that could produce this sum. With \(k\) equally plausible subsets, random guessing succeeds with probability \(1/k\). Any strategy exceeding this probability implies either (1) distinguishing nullifiers, contradicting \cref{thm:nullifier-indist}, or (2) information-theoretic leakage beyond what is revealed, which is impossible since the proof is zero-knowledge. Thus the adversary's success probability is at most \(1/k + \epsilon_{\mathrm{prf}}\).
+An adversary attempting to identify the funding deposits observes \(Y\) and the deposit pool \(\mathcal{D}(b,a)\), computes \(\mathcal{A}(Y)\), and guesses which subset was used. Any guess outside \(\mathcal{A}(Y)\) is inconsistent with the public exit total \(S\), the slot bound, the batch cap, or the block/asset filter, and can be ruled out without guessing.
+
+Under the uniform prior over \(\mathcal{A}(Y)\), every plausible subset is equally likely, so success probability is at most \(1/k\). Any strategy exceeding \(1/k\) must use information outside this model (e.g., side channels, deposit clustering, or a non-uniform prior over user behavior). Nullifiers are not needed for this attack: each published nullifier is a one-way tag \(\Null(s,c)\) that does not reveal which deposit funded the withdrawal.
 \end{proof}
 
-Because the proof system enforces an inequality rather than exact equality (condition C5), the adversary must consider any subset of deposits whose sum is \emph{at least} the required threshold \(T = S/(1-f)\). This is a feature: by withdrawing less than their full balance, users can select output amounts that match more potential deposit combinations, enlarging the anonymity set at the cost of burned value.
+\paragraph{Role of nullifier indistinguishability.}
+\cref{thm:nullifier-indist} addresses a different question: whether an adversary can tell real nullifiers from dummy padding, or infer how many real authorizations appear in a batch. This hides batch composition but does not change the deposit-unlinkability analysis above, which already treats only \(\mathcal{A}(Y)\). Without indistinguishability, an adversary who learns the number of real authorizations could restrict attention to subsets of that exact size, potentially shrinking the effective candidate set below \(k\).
 
-\paragraph{Complexity of \textsc{\#SubsetSum}:}
-The decision version of subset sum (does any subset sum to exactly \(T\)?) is NP-complete. The counting version \textsc{\#SubsetSum} is \#P-complete \cite{subsetsum}, and no polynomial-time algorithm is known.
+Because the proof system enforces an inequality rather than exact equality (condition C5), the adversary must consider any subset whose deposits can fund at least \(S\) after fees. Users may also withdraw less than their full balance, enlarging the volume-feasible region at the cost of burned value. The slot bound \(E \leq 2|I|\) is the main structural constraint beyond volume: a subset of size \(|I|\) cannot explain more than \(2|I|\) distinct exit accounts.
+
+\paragraph{Complexity of counting plausible subsets:}
+The decision version of subset sum is NP-complete \cite{subsetsum}. The counting version \textsc{\#SubsetSum} is \#P-complete \cite{valiant1979}. In the special case \(E = 1\) and \(N = M\), condition (ii) is vacuous and \(\mathcal{A}(Y)\) reduces to \textsc{\#SubsetSum} with threshold \(T = S/(1-f)\).
 
 \begin{theorem}[Hardness of Anonymity Set Computation]
 \label{thm:hardness}
@@ -387,15 +405,15 @@ Computing \(|\mathcal{A}(Y)|\) is \#P-hard.
 \end{theorem}
 
 \begin{proof}
-We give a Turing reduction from \textsc{\#SubsetSum}. Given an instance \((a_1, \ldots, a_M, T)\), let \(f(t)\) denote the number of subsets of \(\{a_1, \ldots, a_M\}\) summing to at least \(t\). Observe that \(f(t) - f(t+1)\) equals the number of subsets summing to exactly \(t\). Construct an anonymity set instance with the same amounts and set \(N = M\) (imposing no effective size restriction). Two oracle calls to \(|\mathcal{A}(Y)|\) then suffice to compute \textsc{\#SubsetSum}. Since \textsc{\#SubsetSum} is \#P-complete, computing \(|\mathcal{A}(Y)|\) is \#P-hard.
+We reduce from \textsc{\#SubsetSum}. Given an instance \((a_1, \ldots, a_M, T)\), construct an aggregate view with \(E = 1\), exit \((\alpha_1, e_1)\) where \(e_1 = T(1-f)\), batch cap \(N = M\), and deposit pool \(\mathcal{D}(b,a)\) containing the same amounts. For any \(I \subseteq \{1,\ldots,M\}\), condition (iii) holds iff \(\sum_{i \in I} a_i \geq T\); condition (ii) holds because \(E = 1 \leq 2|I|\) for every non-empty \(I\). Thus \(|\mathcal{A}(Y)|\) equals the number of subsets summing to at least \(T\). Given oracle access to \(|\mathcal{A}(Y)|\), two calls with thresholds \(T\) and \(T+1\) recover \textsc{\#SubsetSum} exactly as in the standard threshold-to-exact conversion. Hence computing \(|\mathcal{A}(Y)|\) is \#P-hard.
 \end{proof}
 
 \paragraph{Burn Cost and Bounded Rationality:}
-A rational adversary may assume users are unwilling to burn significant value for privacy. Under bounded rationality, the effective anonymity set shrinks to subsets summing to at most \(T \cdot (1 + \delta)\) for some small \(\delta\) (e.g., 1\%). Even with this constraint, the anonymity set remains combinatorially large when deposit amounts cluster near typical withdrawal sizes. The protocol does not enforce any upper bound; users may choose their privacy-value tradeoff freely.
+A rational adversary may assume users are unwilling to burn significant value for privacy. Under bounded rationality, the effective anonymity set shrinks to subsets whose total deposit volume is at most \(T \cdot (1 + \delta)\) for some small \(\delta\) (e.g., 1\%), in addition to the slot bound above.
 
 \subsection{Privacy leakage}
 
-Output amounts, exit addresses, nullifiers, and timing are public. First-layer padding enlarges the anonymity set, but this is plausible deniability, not full shielding. Amount patterns, address reuse, and timing correlation remain potential deanonymization vectors.
+Output amounts, exit addresses, nullifiers, and timing are public. The unlinkability bound in \cref{thm:unlinkability} assumes a uniform prior over plausible deposit subsets and analyzes the exit-driven candidate set \(\mathcal{A}(Y)\); amount patterns, address reuse, deposit clustering, and timing correlation can shrink the effective set further. Nullifier indistinguishability (\cref{thm:nullifier-indist}) hides dummy padding but is orthogonal to deposit identification. First-layer padding enlarges the anonymity set, but this is plausible deniability, not full shielding.
 
 \section{Evaluation}
 \label{sec:evaluation}
@@ -557,6 +575,11 @@ Plonky3 Contributors.
 Michael~R. Garey and David~S. Johnson.
 \newblock \emph{Computers and Intractability: A Guide to the Theory of NP-Completeness}.
 \newblock W.~H. Freeman, 1979.
+
+\bibitem[Val79]{valiant1979}
+Leslie~G. Valiant.
+\newblock The Complexity of Computing the Permanent.
+\newblock \emph{Theoretical Computer Science}, 8(2):189--201, 1979.
 
 \bibitem[Sho97]{shor}
 Peter~W. Shor.
