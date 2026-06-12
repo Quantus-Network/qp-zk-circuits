@@ -17,23 +17,22 @@ wormhole transactions.
 - `exit_account_1`: The public address where `output_amount_1` is intended to be sent.
 - `exit_account_2`: The public address where `output_amount_2` is intended to be sent (set to all zeros if unused).
 - `block_hash`: A commitment (Poseidon2 hash) to the block header fields used inside the circuit.
-- `block_number`: The block height corresponding to `block_hash`. This is public so the verifier/aggregator can check that it matches the associated header and enforce the single-block storage proof constraint in aggregation.
+- `block_number`: The block height corresponding to `block_hash`. This is public so the verifier/aggregator can check that it matches the associated header and enforce the single-block ZK tree constraint in aggregation.
 
 **Private Inputs:**
 
-- `secret`: A confidential, randomly generated value unique to the prover, often serving as a primary secret for deriving other transaction components.
-- `storage_proof`: A storage proof of a Merkle Patricia trie proving inclusion of the transaction event.
-- `transfer_count`: A per-recipient-account unique ID for a transfer. Gets incremented with each transfer, ensuring that each transaction is unique.
-- `funding_account`: The account ID associated with the source of the funds (the sender). Used to derive the nullifier and confirm ownership.
-- `input_amount`: The input amount read from storage (quantized with 0.01 units of precision). The circuit enforces `(output_amount_1 + output_amount_2) * 10000 <= input_amount * (10000 - volume_fee_bps)`.
-- `state_root`: The state root of the Substrate block (the Merkle-Patricia trie root for the state).
-- `extrinsics_root`: The extrinsics root of the block header.
-- `digest`: The raw header digest field (110 bytes), encoded injectively into a fixed number of field elements for use inside the circuit.
-- `unspendable_account`: An account ID derived from the `secret` that, when hashed, produces a verifiable “burn” (unspendable) address.
-- `parent_hash`: The parent hash of the transaction’s block (private, used to compute `block_hash`).
+- `secret`: A confidential, randomly generated value unique to the prover, used to derive the wormhole address and nullifier.
+- `transfer_count`: A per-recipient unique ID for a transfer. Gets incremented with each transfer, ensuring that each transaction is unique. Used in nullifier derivation as `H(H(salt || secret || transfer_count))`.
+- `input_amount`: The input amount read from the ZK tree leaf (quantized with 0.01 units of precision). The circuit enforces `(output_amount_1 + output_amount_2) * 10000 <= input_amount * (10000 - volume_fee_bps)`.
+- `unspendable_account`: The wormhole address derived from the secret (`H(H(salt || secret))`), matching the recipient field in the ZK tree leaf.
+- `parent_hash`, `state_root`, `extrinsics_root`, `digest`: Block header fields used to recompute the public `block_hash`.
+- `zk_tree_root`: The ZK tree root committed in the block header. Used both in block-hash computation and to verify the Merkle inclusion proof.
+- `zk_merkle_siblings`, `zk_merkle_positions`: A 4-ary sorted Poseidon Merkle inclusion proof for the deposit transfer event in the consensus-maintained ZK tree (`pallet-zk-tree`).
+
+> Note: Deposits are visible transfer events on-chain. The circuit does not use Merkle--Patricia storage proofs or encrypted note commitments. Privacy comes from proving knowledge of the secret without revealing which deposit funded the withdrawal.
 
 > Note: Instead of passing a monolithic `block_header` preimage into the circuit, we pass the structured header fields
-> (`parent_hash`, `block_number`, `state_root`, `extrinsics_root`, `digest`) and recompute a Poseidon2 hash from them
+> (`parent_hash`, `block_number`, `state_root`, `extrinsics_root`, `zk_tree_root`, `digest`) and recompute a Poseidon2 hash from them
 > inside the circuit. That hash is constrained to equal the public `block_hash`.
 
 #### Logic Flow
@@ -42,25 +41,23 @@ wormhole transactions.
 
 1. **Dummy Proof Detection**
 
-   - If `block_hash == 0` and both `output_amount_1 == 0` and `output_amount_2 == 0`, the circuit treats the proof as a dummy and skips the storage proof, header, and nullifier checks. This enables universal dummy proofs for aggregation padding.
+   - If `block_hash == 0` and both `output_amount_1 == 0` and `output_amount_2 == 0`, the circuit treats the proof as a dummy and skips the ZK tree proof, header, and nullifier checks. This enables universal dummy proofs for aggregation padding.
 
 2. **Nullifier Derivation**
 
    - Computes `H(H(salt || secret || transfer_count))`.
    - Compares the derived value against the provided `nullifier` public input.
 
-3. **Unspendable Account Derivation**
+3. **Wormhole Address Derivation**
 
    - Computes `H(H(salt || secret))`.
    - Compares the derived value with the provided `unspendable_account`.
 
-4. **Storage Proof Verification + Fee Constraint**
+4. **ZK Tree Inclusion Proof + Fee Constraint**
 
-   - The circuit verifies the `storage_proof` to confirm that a specific leaf (the transfer event) is part of the Merkle Patricia trie with root `state_root`.
-   - To verify that the storage proof is valid, the circuit traverses the tree in root-to-leaf order, and for each node:
-     1. Compares the expected hash against the hash of the current node (verifies inclusion).
-     2. Updates the expected hash to be equal to the hash of the current node.
-     3. If this node is the leaf node: additionally verifies that it includes the hash of the leaf inputs (transfer event).
+   - The circuit verifies a 4-ary sorted Poseidon Merkle proof that a leaf `(to, transfer_count, asset_id, amount)` exists under the block's committed `zk_tree_root`.
+   - Leaf hashing uses injective Poseidon encoding; internal nodes sort four child hashes before compact hashing.
+   - The circuit constrains `to == unspendable_account`, `transfer_count` matches the witness, and `asset_id` matches the public input.
    - The circuit enforces the fee constraint using `input_amount`, `output_amount_1`, `output_amount_2`, and `volume_fee_bps`.
 
 5. **Block Header Commitment Verification**
@@ -72,6 +69,7 @@ wormhole transactions.
      - `block_number` (public)
      - `state_root` (private)
      - `extrinsics_root` (private)
+     - `zk_tree_root` (private)
      - `digest` (private, 110 bytes mapped injectively to field elements)
    - Steps:
      1. **Range-check `block_number`**:  
@@ -79,7 +77,7 @@ wormhole transactions.
      2. **Build header preimage**:  
         The above fields are collected into a vector of field elements:
         ```text
-        preimage = parent_hash || block_number || state_root || extrinsics_root || digest
+        preimage = parent_hash || block_number || state_root || extrinsics_root || zk_tree_root || digest
         ```
      3. **Poseidon2 hash**:  
         The circuit computes:
@@ -96,14 +94,15 @@ wormhole transactions.
    
    As a result:
    - Once an on-chain verifier or aggregator checks that the public `block_hash` corresponds to a real block in the underlying chain,
-   - all of the internal header fields (`parent_hash`, `block_number`, `state_root`, `extrinsics_root`, `digest`) are cryptographically bound to that real header via Poseidon2.
-   - Because the same `state_root` is also used in the storage proof, this ties the storage proof, the header, and the public block commitment together.
+   - all of the internal header fields (`parent_hash`, `block_number`, `state_root`, `extrinsics_root`, `zk_tree_root`, `digest`) are cryptographically bound to that real header via Poseidon2.
+   - Because the same `zk_tree_root` is also used in the ZK tree inclusion proof, this ties the deposit authentication, the header, and the public block commitment together.
 
 ## Aggregation System
 
 The aggregator combines `N` leaf proofs into a single proof with a fixed public input layout. Key behaviors:
 
-- **Single-block storage proof constraint**: All real proofs (non-zero `block_hash`) must reference the same block for storage proofs.
+- **Single-block ZK tree constraint**: All real proofs (non-zero `block_hash`) must reference the same block.
+- **Native asset only (current limitation)**: Dummy padding requires `asset_id = 0` on all real proofs in a batch. Non-native assets are not yet supported for privacy-preserving aggregation with dummy padding.
 - **Two outputs per proof**: Each leaf supports `exit_account_1`/`output_amount_1` and `exit_account_2`/`output_amount_2`. Aggregation outputs 2\*`N` exit slots.
 - **Privacy via dummy hiding**: Proofs are uniformly shuffled before aggregation; the circuit selects reference values from the first non-dummy slot in-circuit, so no slot position is special. Duplicate exit slots are zeroed (both sum and `exit_account`), making them indistinguishable from dummy padding slots.
 - **Dynamic dummy proofs**: Dummy proofs are generated on-the-fly for padding. They use sentinel values (`block_hash = 0`, `output_amount_1 = 0`, `output_amount_2 = 0`, `exit_account = 0`) so the leaf circuit can bypass validation. No dummy proof binaries are checked in.

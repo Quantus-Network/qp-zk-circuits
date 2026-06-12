@@ -210,9 +210,9 @@ pub struct AggregatedPublicCircuitInputs {
     /// All aggregated proofs must have the same fee rate.
     pub volume_fee_bps: u32,
     /// The block data (block_hash, block_number) for all aggregated proofs.
-    /// All proofs in the aggregation must reference the same block for their storage proofs.
+    /// All proofs in the aggregation must reference the same block for their ZK tree inclusion proofs.
     /// Note: The underlying transfers can occur in different blocks; this constraint only
-    /// applies to the block used to generate the storage proof (i.e., when the proof is created).
+    /// applies to the block used to generate the ZK tree inclusion proof (i.e., when the proof is created).
     pub block_data: BlockData,
     /// The set of exit accounts and their summed output amounts.
     pub account_data: Vec<PublicInputsByAccount>,

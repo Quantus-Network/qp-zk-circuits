@@ -77,7 +77,7 @@ We formalize the wormhole proof relation, design a two-layer recursive aggregati
 
 EIP-7503 proposes \emph{zero-knowledge wormholes}: deposit to secret-derived addresses, then prove knowledge of the secret to withdraw \cite{eip7503}. We extend this concept with post-quantum proving and recursive aggregation with dummy padding for privacy.
 
-Related systems include privacy pools and shielded ledgers like Zcash and Tornado Cash \cite{eip7503,privacypools,zcash,tornadocash}. Unlike fully shielded ledgers, our approach proves against native state without a separate note commitment tree. Importantly, no ciphertexts are stored, so a future break in cryptographic assumptions cannot retroactively compromise transaction privacy.
+Related systems include privacy pools and shielded ledgers like Zcash and Tornado Cash \cite{eip7503,privacypools,zcash,tornadocash}. Unlike fully shielded ledgers, deposits remain visible as ordinary transfer events on-chain; privacy comes from proving knowledge of a secret without revealing which deposit funded the withdrawal. The circuit authenticates deposits via inclusion in a consensus-maintained \emph{ZK tree}---a 4-ary sorted Poseidon Merkle tree of transfer events whose root is committed in the block header---rather than via encrypted note commitments or Merkle--Patricia storage proofs. Importantly, no ciphertexts are stored, so a future break in cryptographic assumptions cannot retroactively compromise transaction privacy.
 
 \subsection{Transparent Recursion}
 
@@ -93,7 +93,7 @@ The protocol aims to satisfy four simultaneous goals:
     \item \textbf{Amortized Verification:} The marginal on-chain cost of verifying an additional withdrawal should be small.
     \item \textbf{Deposit Binding:} Every withdrawal must be bound to a real deposit recorded in authenticated chain state.
     \item \textbf{Replay Prevention:} A deposit should not authorize multiple withdrawals; nullifiers must uniquely bind proofs to deposits.
-    \item \textbf{Meaningful Privacy:} The chain should reveal only the public information needed for settlement: exits, amounts, shared fee parameters, nullifiers, and a block hash. Funding accounts, secrets, and raw storage proofs should remain private.
+    \item \textbf{Meaningful Privacy:} The chain should reveal only the public information needed for settlement: exits, amounts, shared fee parameters, nullifiers, and a block hash. Funding accounts, secrets, and ZK tree inclusion proofs should remain private.
 \end{enumerate}
 
 \section{System, Adversary, and Trust Model}
@@ -130,7 +130,7 @@ The protocol relies on the following assumptions.
     \item \textbf{Hash Security:} The Poseidon2 instantiation used by the system remains collision resistant and preimage resistant for the relevant security level \cite{poseidon2}.
     \item \textbf{Proof Soundness:} The configured Plonky2 recursion stack remains knowledge sound under its standard assumptions \cite{plonky2,fri}.
     \item \textbf{Authenticated History:} The blockchain can check that the public block hash and block number correspond to a valid block in chain history.
-    \item \textbf{Witness Availability:} Honest users can obtain the storage proof needed to build a witness for their deposit.
+    \item \textbf{Witness Availability:} Honest users can obtain the ZK tree inclusion proof needed to build a witness for their deposit.
 \end{enumerate}
 
 \section{Protocol Overview}
@@ -146,14 +146,14 @@ The user samples a secret \(s\) and derives a wormhole address
 Because this address is derived from a hash rather than a public key, no one can spend from it via ordinary signature-based authorization—wormhole addresses can receive funds but never have outgoing transactions. Anyone can deposit to a wormhole address through an ordinary on-chain transfer, creating a record that can later be authenticated inside the circuit. A user may receive funds from their own prior transfers or from third-party payments to wormhole addresses derived from secrets the user controls.
 
 \paragraph{2. Witness Acquisition:}
-To withdraw, the user gathers the deposit record and a storage proof. These form the private witness.
+To withdraw, the user gathers the deposit record (a transfer event to their wormhole address) and a ZK tree inclusion proof showing that event is included under the block's committed tree root. These form the private witness.
 
 \paragraph{3. Leaf Proof Generation:}
 The user chooses up to two exit outputs, computes a nullifier
 \[
 \Null(s,c) = H(H(\mathsf{salt_{null}} \parallel s \parallel c)),
 \]
-and produces a leaf proof. The proof reveals the nullifier, the exits, the output amounts, the asset identifier, the fee basis points, the block hash, and the block number, while keeping the secret and storage proof private. Leaf proofs are not zero-knowledge. They are only seen by the user who generated them and then included in the first aggregation layer as private inputs.
+and produces a leaf proof. The proof reveals the nullifier, the exits, the output amounts, the asset identifier, the fee basis points, the block hash, and the block number, while keeping the secret and ZK tree inclusion proof private. Leaf proofs are not zero-knowledge. They are only seen by the user who generated them and then included in the first aggregation layer as private inputs.
 
 \paragraph{4. First-Layer Aggregation:}
 The user batches leaf proofs that share the same \texttt{block\_hash}, pads with dummy leaves if needed, shuffles the order, and produces a zero-knowledge wrapper proof that forwards grouped exits and nullifiers. A user may combine multiple deposits from distinct wormhole addresses (each derived from a different secret) into a single aggregated withdrawal. This step should be performed locally to preserve privacy.
@@ -182,10 +182,11 @@ The leaf proof exposes the following public fields:
 The private witness includes:
 \begin{itemize}[leftmargin=1.5em]
     \item \texttt{secret}: User secret from which nullifier and wormhole address are derived.
-    \item \texttt{counter}: Per-deposit counter used in nullifier derivation.
+    \item \texttt{counter}: Per-deposit counter (\texttt{transfer\_count}) used in nullifier derivation.
     \item \texttt{wormhole\_account}: Derived wormhole address \(\WA(s)\).
-    \item \texttt{storage\_proof}: Inclusion proof for the deposit record.
+    \item \texttt{zk\_tree\_proof}: Merkle inclusion proof for the deposit transfer event in the block's ZK tree.
     \item \texttt{input\_amount}: Deposited amount before fee deduction.
+    \item Header fields (\texttt{parent\_hash}, \texttt{state\_root}, \texttt{extrinsics\_root}, \texttt{zk\_tree\_root}, \texttt{digest}) used to recompute and bind the public \texttt{block\_hash}.
 \end{itemize}
 
 \subsection{Leaf relation}
@@ -194,8 +195,8 @@ Let \(x = (a, v_1, v_2, f, n, \alpha_1, \alpha_2, h_B, b)\) denote the public in
 \begin{enumerate}[label=(C\arabic*),leftmargin=1.9em]
     \item \textbf{Nullifier Correctness:} \(n = \Null(s,c)\).
     \item \textbf{Wormhole-Address Correctness:} \(\alpha_{\mathrm{wh}} = \WA(s)\).
-    \item \textbf{Authenticated Inclusion:} The storage proof verifies that the deposit record exists in chain state.
-    \item \textbf{Block Binding:} The storage proof is bound to the public block hash \(h_B\) and block number \(b\).
+    \item \textbf{Authenticated Inclusion:} The ZK tree inclusion proof verifies that a transfer event to \(\WA(s)\) with counter \(c\) and amount \(v_{\mathrm{in}}\) exists under the tree root committed in the block header.
+    \item \textbf{Block Binding:} The inclusion proof is bound to the public block hash \(h_B\) and block number \(b\) via the header's \texttt{zk\_tree\_root} field and the circuit's block-hash commitment.
     \item \textbf{Fee Constraint:} The disclosed exits satisfy
     \[
     (v_1 + v_2) \cdot 10000 \leq v_{\mathrm{in}} \cdot (10000 - f).
@@ -248,15 +249,15 @@ The \emph{deposit binding game} \(\mathsf{Game}_{\mathrm{bind}}^{\mathcal{B}}\) 
     \item \(\mathcal{B}\) outputs a proof \(\pi\) and public inputs \(x = (a, v_1, v_2, f, n, \alpha_1, \alpha_2, h_B, b)\).
     \item \(\mathcal{B}\) wins if \(\mathsf{Verify}(\pi, x) = 1\) and no deposit to address \(\WA(s)\) for any \(s\) exists in the block referenced by \((h_B, b)\).
 \end{enumerate}
-We say the system satisfies \emph{deposit binding} if \(\Pr[\mathsf{Game}_{\mathrm{bind}}^{\mathcal{B}} = 1] \leq \epsilon_{\mathrm{ks}}\) for all PPT \(\mathcal{B}\).
+We say the system satisfies \emph{deposit binding} if \(\Pr[\mathsf{Game}_{\mathrm{bind}}^{\mathcal{B}} = 1] \leq \epsilon_{\mathrm{ks}} + \epsilon_{\mathrm{coll}}\) for all PPT \(\mathcal{B}\), where \(\epsilon_{\mathrm{coll}}\) is the collision probability of \(H\).
 \end{definition}
 
 \begin{theorem}[Deposit Binding]
-The wormhole protocol satisfies deposit binding under knowledge soundness of \(\Pi\).
+The wormhole protocol satisfies deposit binding under knowledge soundness of \(\Pi\) and collision resistance of \(H\).
 \end{theorem}
 
 \begin{proof}
-By knowledge soundness, if \(\mathsf{Verify}(\pi, x) = 1\), there exists an extractor that outputs a witness \(w\) satisfying conditions (C1)--(C5) with probability \(1 - \epsilon_{\mathrm{ks}}\). Condition (C3) requires the witness to include a valid storage proof for a deposit at address \(\WA(s)\), and (C4) binds this proof to the block \((h_B, b)\). If no such deposit exists, the extractor fails, contradicting knowledge soundness. The blockchain's validation that \((h_B, b)\) refers to a real block completes the binding.
+By knowledge soundness, if \(\mathsf{Verify}(\pi, x) = 1\), there exists an extractor that outputs a witness \(w\) satisfying conditions (C1)--(C5) with probability \(1 - \epsilon_{\mathrm{ks}}\). Condition (C3) requires the witness to include a valid ZK tree inclusion proof for a deposit to address \(\WA(s)\), and (C4) binds this proof to the block \((h_B, b)\) via the committed tree root. If no such deposit exists, the extractor must either fail (breaking knowledge soundness) or output a forged inclusion path, which requires a collision in the tree's Poseidon hash (probability \(\epsilon_{\mathrm{coll}}\)). The blockchain's validation that \((h_B, b)\) refers to a real block completes the binding.
 \end{proof}
 
 \subsection{One-time withdrawal}
@@ -277,7 +278,7 @@ The wormhole protocol satisfies one-time withdrawal under knowledge soundness of
 \end{theorem}
 
 \begin{proof}
-Suppose \(\mathcal{B}\) wins. By knowledge soundness, there exist witnesses \(w_1, w_2\) with secrets \(s_1, s_2\) and counters \(c_1, c_2\) such that both proofs reference the same deposit. Since both reference the same deposit address, \(\WA(s_1) = \WA(s_2)\), which by collision resistance implies \(s_1 = s_2\). The counter \(c\) is stored in the on-chain deposit record and verified by the storage proof; since both proofs reference the same deposit, they must use the same counter \(c_1 = c_2\). But then \(n_1 = \Null(s_1, c_1) = \Null(s_2, c_2) = n_2\), contradicting \(n_1 \neq n_2\). Thus \(\mathcal{B}\) can only win by breaking knowledge soundness or finding a collision.
+Suppose \(\mathcal{B}\) wins. By knowledge soundness, there exist witnesses \(w_1, w_2\) with secrets \(s_1, s_2\) and counters \(c_1, c_2\) such that both proofs reference the same deposit. Since both reference the same deposit address, \(\WA(s_1) = \WA(s_2)\), which by collision resistance implies \(s_1 = s_2\). The counter \(c\) is part of the ZK tree leaf and verified by the inclusion proof; since both proofs reference the same deposit, they must use the same counter \(c_1 = c_2\). But then \(n_1 = \Null(s_1, c_1) = \Null(s_2, c_2) = n_2\), contradicting \(n_1 \neq n_2\). Thus \(\mathcal{B}\) can only win by breaking knowledge soundness or finding a collision.
 \end{proof}
 
 Since the blockchain maintains a nullifier set and rejects duplicates, each deposit can be withdrawn at most once.
@@ -461,10 +462,10 @@ The final aggregate proof is constant-size regardless of the number of authoriza
 \label{sec:related}
 
 \paragraph{Wormholes and Privacy Pools:}
-EIP-7503 proposes proof-of-burn reminting via secret-derived addresses \cite{eip7503}. Privacy Pools adds compliance-aware privacy sets \cite{privacypools}. Our work extends this line with recursive proofs over authenticated state.
+EIP-7503 proposes proof-of-burn reminting via secret-derived addresses \cite{eip7503}. Privacy Pools adds compliance-aware privacy sets \cite{privacypools}. Our work extends this line with recursive proofs that authenticate deposits via a consensus-maintained ZK tree.
 
 \paragraph{Shielded Systems:}
-Zcash provides strong privacy through shielded notes; Tornado Cash popularized mixer-style privacy on Ethereum \cite{zcash,tornadocash}. Our approach offers lighter-weight private settlement anchored in native state without a separate commitment tree.
+Zcash provides strong privacy through shielded notes; Tornado Cash popularized mixer-style privacy on Ethereum \cite{zcash,tornadocash}. Our approach offers lighter-weight private settlement over visible transfer events, authenticated via a consensus-maintained ZK tree rather than encrypted note commitments.
 
 \paragraph{Recursive Proofs:}
 Halo and Plonky2 are standard recursive proof systems \cite{halo,plonky2}. Plonky3 provides Poseidon2 primitives with a separate recursion track \cite{plonky3}. We use Plonky2 with Poseidon2 for recursive composition.

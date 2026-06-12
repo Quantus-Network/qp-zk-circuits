@@ -1,7 +1,7 @@
 //! Universal dummy proof for padding aggregation batches.
 //!
 //! Dummy proofs use `block_hash = 0` AND `output_amounts = 0` as sentinel values.
-//! The leaf circuit skips all validation (storage proof, block header, nullifier)
+//! The leaf circuit skips all validation (ZK tree proof, block header, nullifier)
 //! for proofs with these sentinels, allowing a single universal dummy proof to be
 //! used for all aggregation batches.
 //!
