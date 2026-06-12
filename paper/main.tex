@@ -40,7 +40,7 @@ Post-quantum signature schemes such as ML-DSA impose public keys and signatures 
 
 Building on the wormhole mechanism from EIP-7503, we formalize a zero-knowledge \emph{wormhole proof system} where funds are committed to addresses derived from secret preimages and later claimed by proving knowledge of the preimage in zero knowledge. We construct a two-layer recursive proof architecture using Plonky2 with FRI commitments. To achieve privacy against balance-linking adversaries, we introduce client-side dummy padding and local shuffling at the first aggregation layer, enlarging the effective anonymity set.
 
-We give complete game-based security definitions and proofs for deposit binding, one-time withdrawal, spend-path exclusivity, value conservation, nullifier indistinguishability, and transaction unlinkability. We prove that computing the size of the anonymity set is \#P-hard, which formally bounds the adversarial advantage. Our implementation using Plonky2 shows 20\,ms proving time per authorization with 1.6\,ms verification. Two-layer recursive aggregation scales to 256 authorizations with near-constant final verification (approximately 3.7\,ms at the largest batch tested). The marginal on-chain cost is only 56 bytes per settled output, over 80$\times$ smaller than a single ML-DSA-87 signature.
+We give complete game-based security definitions and proofs for deposit binding, one-time withdrawal, spend-path exclusivity, value conservation, nullifier indistinguishability, and transaction unlinkability. Under a uniform prior over plausible deposit subsets, adversarial identification advantage is bounded by \(1/k\) for an anonymity set of size \(k\); we further prove that even computing \(k\) is \#P-hard. Our implementation using Plonky2 shows 20\,ms proving time per authorization with 1.6\,ms verification. Two-layer recursive aggregation scales to 256 authorizations with near-constant final verification (approximately 3.7\,ms at the largest batch tested). The marginal on-chain cost is only 56 bytes per settled output, over 80$\times$ smaller than a single ML-DSA-87 signature.
 \end{abstract}
 
 % Text-only abstract required for IACR final version
@@ -85,7 +85,7 @@ Related systems include privacy pools and shielded ledgers like Zcash and Tornad
 We use Plonky2, combining PLONK arithmetization with FRI commitments for recursive verification without trusted setup \cite{plonky2,fri}. FRI is based on hash functions rather than elliptic curves, making it plausibly post-quantum secure: known quantum attacks on hash preimage search (Grover) and collision finding (BHT) improve over classical bounds, but 256-bit outputs retain comfortable margins at our security level. Poseidon2 provides efficient in-circuit hashing over prime fields \cite{poseidon2}.
 
 \paragraph{Security Parameters:}
-Our instantiation uses the Goldilocks field (\(p = 2^{64} - 2^{32} + 1\)) with a quadratic extension for 100-bit soundness. FRI is configured with 28 query rounds, rate \(1/8\) (blowup factor \(2^3\)), and 16 bits of proof-of-work grinding, yielding \(28 \times 3 + 16 = 100\) bits of security against proof forgery. Poseidon2 outputs 4 field elements (256 bits), giving roughly 128-bit classical collision resistance and 256-bit classical preimage resistance. Against a quantum adversary, Grover search reduces preimage work to about \(2^{128}\) operations, while generic quantum collision attacks (e.g., BHT) reduce collision work to about \(2^{85}\) operations---still above our 100-bit soundness target. Hash output length, not the Goldilocks field size, therefore governs post-quantum hash margins.
+Our instantiation uses the Goldilocks field (\(p = 2^{64} - 2^{32} + 1\)) with a quadratic extension for 100-bit conjectured soundness. FRI is configured with 28 query rounds, rate \(1/8\) (blowup factor \(2^3\)), and 16 bits of proof-of-work grinding, yielding \(28 \times 3 + 16 = 100\) bits of conjectured security against proof forgery under Plonky2's standard FRI soundness conjecture; provable bounds in the Johnson list-decoding regime are lower \cite{plonky2,fri}. Poseidon2 outputs 4 field elements (256 bits), giving roughly 128-bit classical collision resistance and 256-bit classical preimage resistance. Against a quantum adversary, Grover search reduces preimage work to about \(2^{128}\) operations, while generic quantum collision attacks (e.g., BHT) reduce collision work to about \(2^{85}\) operations---still above our 100-bit soundness target. Hash output length, not the Goldilocks field size, therefore governs post-quantum hash margins.
 
 \subsection{Design goals}
 
@@ -236,7 +236,7 @@ A delegated first-layer service would observe raw child proofs before padding an
 
 \subsection{Higher-layer aggregation}
 
-Higher layers aggregate already-wrapped proofs. Since they operate only on public outputs, they can be safely delegated and do not require zero-knowledge, enabling faster proving.
+Higher layers aggregate already-wrapped proofs. Since they operate only on public outputs, they can be safely delegated, and zero-knowledge is not required in principle at these layers. The current implementation conservatively retains the zero-knowledge configuration at all aggregation layers; dropping it for higher layers is a potential proving-time optimization.
 
 \section{Security and Privacy Analysis}
 \label{sec:security}
@@ -417,7 +417,7 @@ One structural caveat applies in the implemented output layout: exit slots are p
 Because the proof system enforces an inequality rather than exact equality (condition C5), the adversary must consider any subset whose deposits can fund at least \(S\) after fees. Users may also withdraw less than their full balance, enlarging the volume-feasible region at the cost of burned value. The slot bound \(E \leq 2|I|\) is the main structural constraint beyond volume: a subset of size \(|I|\) cannot explain more than \(2|I|\) distinct exit accounts.
 
 \paragraph{Complexity of counting plausible subsets:}
-The decision version of subset sum is NP-complete \cite{subsetsum}. The counting version \textsc{\#SubsetSum} is \#P-complete \cite{valiant1979}. In the special case \(E = 1\) and \(N = M\), condition (ii) is vacuous and \(\mathcal{A}(Y)\) reduces to \textsc{\#SubsetSum} with threshold \(T = S/(1-f)\).
+The decision version of subset sum is NP-complete \cite{subsetsum}. The counting version \textsc{\#SubsetSum} is \#P-complete \cite{valiant1979}: the standard reduction establishing NP-completeness of subset sum is parsimonious, so it transfers to the counting class. In the special case \(E = 1\) and \(N = M\), condition (ii) is vacuous and \(\mathcal{A}(Y)\) reduces to \textsc{\#SubsetSum} with threshold \(T = S/(1-f)\).
 
 \begin{theorem}[Hardness of Anonymity Set Computation]
 \label{thm:hardness}
@@ -598,8 +598,8 @@ Michael~R. Garey and David~S. Johnson.
 
 \bibitem[Val79]{valiant1979}
 Leslie~G. Valiant.
-\newblock The Complexity of Computing the Permanent.
-\newblock \emph{Theoretical Computer Science}, 8(2):189--201, 1979.
+\newblock The Complexity of Enumeration and Reliability Problems.
+\newblock \emph{SIAM Journal on Computing}, 8(3):410--421, 1979.
 
 \bibitem[Sho97]{shor}
 Peter~W. Shor.
