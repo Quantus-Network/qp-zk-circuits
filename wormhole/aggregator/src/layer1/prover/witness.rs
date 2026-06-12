@@ -2,7 +2,7 @@
 
 use anyhow::{bail, Result};
 use plonky2::iop::witness::{PartialWitness, WitnessWrite};
-use plonky2::plonk::{circuit_data::VerifierOnlyCircuitData, proof::ProofWithPublicInputs};
+use plonky2::plonk::proof::ProofWithPublicInputs;
 
 use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::utils::Digest;
@@ -10,12 +10,9 @@ use zk_circuits_common::utils::Digest;
 use crate::layer1::circuit::circuit_logic::Layer1AggregationCircuitTargets;
 
 /// Fill a partial witness for the layer-1 aggregation circuit.
-///
-/// This is the single source of truth used by `Layer1AggregationProver::commit(...)`.
 pub fn fill_layer1_aggregation_witness(
     pw: &mut PartialWitness<F>,
     targets: &Layer1AggregationCircuitTargets,
-    layer0_verifier_only: &VerifierOnlyCircuitData<C, D>,
     layer0_proofs: &[ProofWithPublicInputs<F, C, D>],
     aggregator_address: Digest,
 ) -> Result<()> {
@@ -27,7 +24,6 @@ pub fn fill_layer1_aggregation_witness(
         );
     }
 
-    // Set aggregator address (4 felts, 8 bytes/felt)
     for (target, value) in targets
         .aggregator_address
         .iter()
@@ -35,7 +31,6 @@ pub fn fill_layer1_aggregation_witness(
     {
         pw.set_target(*target, *value)?;
     }
-    pw.set_verifier_data_target(&targets.layer0_verifier_data, layer0_verifier_only)?;
 
     for (proof_t, proof) in targets.layer0_proofs.iter().zip(layer0_proofs.iter()) {
         pw.set_proof_with_pis_target(proof_t, proof)?;

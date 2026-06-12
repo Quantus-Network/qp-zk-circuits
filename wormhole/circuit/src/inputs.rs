@@ -10,8 +10,10 @@ use zk_circuits_common::utils::{try_4_felts_to_bytes, BytesDigest};
 use zk_circuits_common::zk_merkle::SIBLINGS_PER_LEVEL;
 
 // Import public input types and constants from wormhole_inputs (single source of truth)
-use qp_wormhole_inputs::{
+pub use qp_wormhole_inputs::{
     AggregatedPublicCircuitInputs, BlockData, PublicCircuitInputs, PublicInputsByAccount,
+};
+use qp_wormhole_inputs::{
     ASSET_ID_INDEX, BLOCK_HASH_END_INDEX, BLOCK_HASH_START_INDEX, BLOCK_NUMBER_INDEX,
     EXIT_ACCOUNT_1_END_INDEX, EXIT_ACCOUNT_1_START_INDEX, EXIT_ACCOUNT_2_END_INDEX,
     EXIT_ACCOUNT_2_START_INDEX, NULLIFIER_END_INDEX, NULLIFIER_START_INDEX, OUTPUT_AMOUNT_1_INDEX,
@@ -158,100 +160,70 @@ pub trait ParseAggregatedPublicInputs {
 
 impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
     fn try_from_felts(pis: &[GoldilocksField]) -> anyhow::Result<AggregatedPublicCircuitInputs> {
-        // Layout in the FINAL (deduped) wrapper proof PIs:
-        // [num_unique_exits, asset_id, volume_fee_bps, block_data(5),
-        //  [output_sum(1), exit_account(8)] * 2*N,  <-- 2 outputs per leaf, 8 felts per exit account
-        //  nullifiers(4) * N, padding...]
-        //
-        // IMPORTANT: With 2 outputs per leaf, we have 2*N exit slots.
-        // The num_unique_exits is informational only.
-        // Slots with matching exit accounts will have their amounts summed.
-        let num_unique_exits: u32 = pis[0]
-            .to_canonical_u64()
-            .try_into()
-            .context("AggregatedPI: num_unique_exits at index 0 exceeds u32 range")?;
-        let asset_id: u32 = pis[1]
-            .to_canonical_u64()
-            .try_into()
-            .context("AggregatedPI: asset_id at index 1 exceeds u32 range")?;
-        let volume_fee_bps: u32 = pis[2]
-            .to_canonical_u64()
-            .try_into()
-            .context("AggregatedPI: volume_fee_bps at index 2 exceeds u32 range")?;
+        // Layout: [num_unique_exits, asset_id, volume_fee_bps, block_hash(4), block_number,
+        //          [output_sum(1), exit_account(4)] * 2*N, nullifiers(4) * N, padding...]
 
-        // Number of leaf proofs (N) is derived from the total PI length.
-        // The circuit pads to root_pi_len + 8, where root_pi_len = n_leaf * LEAF_PI_LEN.
-        // So: n_leaf = pis.len() / LEAF_PI_LEN (integer division, rounds down correctly).
-        let n_leaf = pis.len() / PUBLIC_INPUTS_FELTS_LEN;
+        // Validate layout: total length must be 8 + N * PUBLIC_INPUTS_FELTS_LEN
+        let payload_len = pis
+            .len()
+            .checked_sub(8)
+            .filter(|len| len % PUBLIC_INPUTS_FELTS_LEN == 0)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "AggregatedPI: malformed length {} - expected 8 + N*{} felts",
+                    pis.len(),
+                    PUBLIC_INPUTS_FELTS_LEN
+                )
+            })?;
 
-        // Helpers
-        #[inline]
-        fn read_hash(slice: &[F]) -> anyhow::Result<BytesDigest> {
-            // Hash outputs use 4 felts (8 bytes/felt)
-            try_4_felts_to_bytes(slice).context("failed to deserialize hash")
-        }
-        #[inline]
-        fn read_account(slice: &[F]) -> anyhow::Result<BytesDigest> {
-            // Account IDs use 4 felts (8 bytes/felt) for hash-derived accounts
-            try_4_felts_to_bytes(slice).context("failed to deserialize account")
-        }
+        let n_leaf = payload_len / PUBLIC_INPUTS_FELTS_LEN;
+        // This invariant is enforced because an aggregator should never legitimately
+        // produce a PI vector with zero leaf proofs. See audit finding M-3: "Layer-1
+        // has no dummy bypass; all-dummy L0 batches break aggregation".
+        anyhow::ensure!(n_leaf > 0, "AggregatedPI: need at least one leaf proof");
 
-        let block_data = BlockData {
-            block_hash: read_hash(&pis[3..7]).context("parsing block_hash")?,
-            block_number: pis[7]
-                .to_canonical_u64()
-                .try_into()
-                .context("parsing block_number")?,
+        // Helper to read a u32 from a felt
+        let read_u32 = |f: GoldilocksField| -> anyhow::Result<u32> {
+            f.to_canonical_u64().try_into().map_err(Into::into)
         };
 
-        let mut cursor = 8usize; // start after metadata felts
+        // Helper to read 4 felts as a BytesDigest
+        let read_digest = |slice: &[GoldilocksField]| -> anyhow::Result<BytesDigest> {
+            try_4_felts_to_bytes(slice).context("failed to deserialize digest")
+        };
 
-        // Read 2*N exit account slots (two outputs per leaf proof)
-        // Slots with duplicate exit accounts will appear multiple times with summed amounts.
-        // The chain should deduplicate by exit account after parsing.
-        let num_exit_slots = n_leaf * 2;
-        let mut account_data: Vec<PublicInputsByAccount> = Vec::with_capacity(num_exit_slots);
-        for i in 0..num_exit_slots {
-            // output_sum (1 felt)
-            let summed_output_amount: u32 =
-                pis[cursor].to_canonical_u64().try_into().with_context(|| {
-                    format!(
-                        "AggregatedPI: summed_output_amount[{}] at cursor {} exceeds u32 range",
-                        i, cursor
-                    )
-                })?;
-            cursor += 1;
+        // Parse header (indices 0-7)
+        let num_unique_exits = read_u32(pis[0]).context("num_unique_exits")?;
+        let asset_id = read_u32(pis[1]).context("asset_id")?;
+        let volume_fee_bps = read_u32(pis[2]).context("volume_fee_bps")?;
+        let block_data = BlockData {
+            block_hash: read_digest(&pis[3..7]).context("block_hash")?,
+            block_number: read_u32(pis[7]).context("block_number")?,
+        };
 
-            // exit_account (4 felts, 8 bytes/felt for hash-derived accounts)
-            let exit_account =
-                read_account(&pis[cursor..cursor + 4]).context("parsing exit_account")?;
-            cursor += 4;
-            account_data.push(PublicInputsByAccount {
-                summed_output_amount,
-                exit_account,
-            });
-        }
+        // Parse 2*N exit accounts (after header at index 8)
+        let account_data = pis[8..]
+            .chunks(5)
+            .take(n_leaf * 2)
+            .enumerate()
+            .map(|(i, chunk)| {
+                Ok(PublicInputsByAccount {
+                    summed_output_amount: read_u32(chunk[0])
+                        .with_context(|| format!("account[{}].amount", i))?,
+                    exit_account: read_digest(&chunk[1..5])
+                        .with_context(|| format!("account[{}].address", i))?,
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
-        // Read N nullifiers (one per leaf proof)
-        let mut nullifiers: Vec<BytesDigest> = Vec::with_capacity(n_leaf);
-        for _ in 0..n_leaf {
-            let n = read_hash(&pis[cursor..cursor + 4]).context("parsing nullifier")?;
-            cursor += 4;
-            nullifiers.push(n);
-        }
-
-        // Compute expected felts consumed
-        // 8 metadata + 2*N*5 exit slots (2 outputs per leaf, 1 sum + 4 account) + N*4 nullifiers
-        let expected_felts = 8 + num_exit_slots * 5 + n_leaf * 4;
-        if cursor != expected_felts {
-            bail!(
-                "Internal parsing error: consumed {} felts, but expected {} (n_leaf={}, num_exit_slots={}).",
-                cursor,
-                expected_felts,
-                n_leaf,
-                num_exit_slots
-            );
-        }
+        // Parse N nullifiers (after exit accounts)
+        let nullifier_start = 8 + n_leaf * 2 * 5;
+        let nullifiers = pis[nullifier_start..]
+            .chunks(4)
+            .take(n_leaf)
+            .enumerate()
+            .map(|(i, chunk)| read_digest(chunk).with_context(|| format!("nullifier[{}]", i)))
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
         Ok(AggregatedPublicCircuitInputs {
             num_unique_exits,
@@ -261,5 +233,87 @@ impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
             account_data,
             nullifiers,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use plonky2::field::goldilocks_field::GoldilocksField;
+    use plonky2::field::types::Field;
+
+    #[test]
+    fn aggregated_try_from_felts_rejects_empty_slice() {
+        let result =
+            <AggregatedPublicCircuitInputs as ParseAggregatedPublicInputs>::try_from_felts(&[]);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("malformed length"),
+            "Expected 'malformed length' error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn aggregated_try_from_felts_rejects_short_slice() {
+        // Only 5 elements when at least 8 are required for header
+        let short_slice: Vec<GoldilocksField> = vec![GoldilocksField::ZERO; 5];
+        let result = <AggregatedPublicCircuitInputs as ParseAggregatedPublicInputs>::try_from_felts(
+            &short_slice,
+        );
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("malformed length"),
+            "Expected 'malformed length' error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn aggregated_try_from_felts_rejects_malformed_length() {
+        // 9 elements: 8 header + 1 extra (not a multiple of PUBLIC_INPUTS_FELTS_LEN)
+        let malformed_slice: Vec<GoldilocksField> = vec![GoldilocksField::ZERO; 9];
+        let result = <AggregatedPublicCircuitInputs as ParseAggregatedPublicInputs>::try_from_felts(
+            &malformed_slice,
+        );
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("malformed length"),
+            "Expected 'malformed length' error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn aggregated_try_from_felts_rejects_header_only() {
+        // Exactly 8 elements (header only, n_leaf would be 0)
+        let header_only: Vec<GoldilocksField> = vec![GoldilocksField::ZERO; 8];
+        let result = <AggregatedPublicCircuitInputs as ParseAggregatedPublicInputs>::try_from_felts(
+            &header_only,
+        );
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("at least one leaf"),
+            "Expected 'at least one leaf' error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn aggregated_try_from_felts_accepts_valid_input() {
+        // Valid input: 8 header + 21 (one leaf worth of data)
+        let valid_slice: Vec<GoldilocksField> =
+            vec![GoldilocksField::ZERO; 8 + PUBLIC_INPUTS_FELTS_LEN];
+        let result = <AggregatedPublicCircuitInputs as ParseAggregatedPublicInputs>::try_from_felts(
+            &valid_slice,
+        );
+        assert!(result.is_ok(), "Expected valid input to parse successfully");
+        let parsed = result.unwrap();
+        assert_eq!(parsed.account_data.len(), 2); // 2 outputs per leaf
+        assert_eq!(parsed.nullifiers.len(), 1); // 1 nullifier per leaf
     }
 }

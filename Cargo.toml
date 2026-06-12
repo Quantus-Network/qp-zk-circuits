@@ -5,8 +5,8 @@ members = [
 	"wormhole/aggregator",
 	"wormhole/circuit",
 	"wormhole/circuit-builder",
-	"wormhole/example",
 	"wormhole/inputs",
+	"wormhole/memprof",
 	"wormhole/prover",
 	"wormhole/tests",
 	"wormhole/tests/test-helpers",
@@ -18,9 +18,8 @@ resolver = "2"
 anyhow = { version = "1.0.98", default-features = false }
 criterion = { version = "0.5.1", default-features = false }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
-qp-plonky2 = { version = "1.4.1", default-features = false, features = ["std"] }
-qp-poseidon-core = { version = "1.4.0", default-features = false }
-quantus-cli = { version = "1.1.1", default-features = false }
+qp-plonky2 = { version = "1.5.1", default-features = false, features = ["std"] }
+qp-poseidon-core = { version = "2.1.0", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 
 [workspace.package]
@@ -31,7 +30,7 @@ edition = "2021"
 keywords = ["circuits", "plonky2", "quantus-network", "wormhole", "zk"]
 license = "MIT"
 repository = "https://github.com/Quantus-Network/qp-zk-circuits"
-version = "2.0.1"
+version = "3.0.0"
 
 [workspace.lints.clippy]
 uninlined_format_args = "allow"

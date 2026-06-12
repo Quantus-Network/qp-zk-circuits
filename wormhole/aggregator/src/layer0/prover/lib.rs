@@ -1,14 +1,12 @@
 //! Layer-0 aggregation prover (prebuilt-circuit proving API).
 //!
-//! This mirrors the `WormholeProver` API style for leaf proofs, but for the
-//! monolithic layer-0 aggregation circuit:
-//!
 //! - `new(...)` / `new_from_*` constructors
 //! - `commit(...)` to fill the witness
 //! - `prove()` to generate the aggregated proof
 //!
-//! The prover expects a prebuilt aggregation circuit (prover/common) plus a
-//! config.json file (`config.json`) which contains the aggregation config (number of leaf/layer0 proofs) and binary hashes for integrity verification.
+//! The leaf verifier key is baked in as constants at circuit build time to prevent
+//! verifier key substitution attacks.
+
 use anyhow::{anyhow, bail, Context, Result};
 use plonky2::{
     iop::witness::PartialWitness,
@@ -43,46 +41,32 @@ use crate::{
     },
 };
 
-/// Public inputs for the layer-0 aggregation prover.
 #[derive(Debug)]
 pub struct Layer0AggregationProver {
-    /// Prebuilt layer-0 aggregation prover circuit data.
     pub circuit_data: ProverCircuitData<F, C, D>,
-
-    /// Witness filled during `commit(...)`.
     partial_witness: PartialWitness<F>,
-
-    /// Runtime targets for the prebuilt aggregation circuit (consumed on commit).
     targets: Option<AggregationCircuitTargets>,
-
-    /// Leaf verifier-only data used to fill `add_virtual_verifier_data(...)` targets.
-    leaf_verifier_only: VerifierOnlyCircuitData<C, D>,
-
-    /// Aggregation config (`num_leaf_proofs`).
     num_leaf_proofs: usize,
-
-    /// Dummy leaf proof template for padding.
     dummy_proof_template: ProofWithPublicInputs<F, C, D>,
 }
 
 impl Layer0AggregationProver {
-    // -------------------------------------------------------------------------
-    // Constructors (fresh build path)
-    // -------------------------------------------------------------------------
-
     /// Build a fresh layer-0 aggregation prover from circuit definitions.
     ///
-    /// This is the "dev/fallback" path. In production, prefer `new_from_binaries_dir(...)`
-    /// or `new_from_files(...)` so the aggregation circuit is prebuilt and loaded to reduce overhead.
+    /// In production, prefer `new_from_binaries_dir(...)` to load prebuilt circuits.
     pub fn new(
         agg_circuit_config: CircuitConfig,
         leaf_common: CommonCircuitData<F, D>,
-        leaf_verifier_only: VerifierOnlyCircuitData<C, D>,
+        leaf_verifier_only: &VerifierOnlyCircuitData<C, D>,
         num_leaf_proofs: usize,
         dummy_proof_template: ProofWithPublicInputs<F, C, D>,
     ) -> Self {
-        let agg_circuit =
-            Layer0AggregationCircuit::new(agg_circuit_config, leaf_common, num_leaf_proofs);
+        let agg_circuit = Layer0AggregationCircuit::new(
+            agg_circuit_config,
+            leaf_common,
+            leaf_verifier_only,
+            num_leaf_proofs,
+        );
 
         let targets = Some(agg_circuit.targets());
         let circuit_data = agg_circuit.build_prover();
@@ -91,15 +75,10 @@ impl Layer0AggregationProver {
             circuit_data,
             partial_witness: PartialWitness::new(),
             targets,
-            leaf_verifier_only,
             num_leaf_proofs,
             dummy_proof_template,
         }
     }
-
-    // -------------------------------------------------------------------------
-    // Constructors (bytes / files)
-    // -------------------------------------------------------------------------
 
     /// Create a layer-0 aggregation prover from serialized bytes.
     ///
@@ -126,23 +105,26 @@ impl Layer0AggregationProver {
         // 1) Load prebuilt aggregation circuit prover data
         let agg_common =
             CommonCircuitData::from_bytes(aggregated_common_bytes.to_vec(), &gate_serializer)
-                .map_err(|e| anyhow!("Failed to deserialize aggregated common data: {}", e))?;
+                .map_err(|e| anyhow!("failed to deserialize aggregated common data: {}", e))?;
 
         let agg_prover_only = ProverOnlyCircuitData::from_bytes(
             aggregated_prover_only_bytes,
             &generator_serializer,
             &agg_common,
         )
-        .map_err(|e| anyhow!("Failed to deserialize aggregated prover data: {}", e))?;
+        .map_err(|e| anyhow!("failed to deserialize aggregated prover data: {}", e))?;
 
-        // 2) Load leaf verifier data (needed to set verifier target + parse dummy proof)
+        // 2) Load leaf verifier data (needed to reconstruct targets + parse dummy proof)
         let leaf_verifier_data =
             load_verifier_data_from_bytes(leaf_common_bytes, leaf_verifier_only_bytes, "leaf")?;
 
         // 3) Reconstruct the aggregation circuit to get targets.
+        // NOTE: This builds a fresh circuit to extract target structure. The verifier key
+        // must match what was used when the prebuilt binaries were created.
         let circuit = Layer0AggregationCircuit::new(
             agg_common.config.clone(),
             leaf_verifier_data.common.clone(),
+            &leaf_verifier_data.verifier_only,
             num_leaf_proofs,
         );
 
@@ -151,7 +133,7 @@ impl Layer0AggregationProver {
         // 4) Load dummy proof template compatible with the leaf verifier common data
         let dummy_proof_template =
             load_dummy_proof(dummy_proof_bytes.to_vec(), &leaf_verifier_data.common)
-                .map_err(|e| anyhow!("Failed to deserialize dummy proof: {}", e))?;
+                .map_err(|e| anyhow!("failed to deserialize dummy proof: {}", e))?;
 
         Ok(Self {
             circuit_data: ProverCircuitData {
@@ -160,7 +142,6 @@ impl Layer0AggregationProver {
             },
             partial_witness: PartialWitness::new(),
             targets,
-            leaf_verifier_only: leaf_verifier_data.verifier_only,
             num_leaf_proofs,
             dummy_proof_template,
         })
@@ -244,17 +225,7 @@ impl Layer0AggregationProver {
 
     /// Commit leaf proofs to the aggregation circuit witness.
     ///
-    /// This performs:
-    /// 1. Padding with dummy proofs
-    /// 2. Shuffle (while keeping a real proof in slot 0 if any real proof exists)
-    /// 3. Dummy nullifier preimage generation (hashed only for dummy slots in-circuit)
-    /// 4. Witness filling
-    ///
-    /// # Errors
-    /// Returns an error if:
-    /// - too many proofs are provided
-    /// - prover has already committed once
-    /// - padded aggregation would mix non-zero `asset_id` real proofs with dummy proofs (`asset_id=0`)
+    /// Performs padding with dummy proofs, shuffling, and witness filling.
     pub fn commit(mut self, mut proofs: Vec<ProofWithPublicInputs<F, C, D>>) -> Result<Self> {
         let Some(targets) = self.targets.take() else {
             bail!("layer-0 aggregation prover has already committed to inputs");
@@ -269,7 +240,6 @@ impl Layer0AggregationProver {
         }
 
         // If we're going to pad with dummy proofs (asset_id = 0), ensure real proofs are asset_id=0.
-        // (Same guard as the current dynamic aggregator path.)
         let num_dummies_needed = self.num_leaf_proofs.saturating_sub(proofs.len());
         if num_dummies_needed > 0 {
             assert_dummy_padding_asset_id_compatible(&proofs)?;
@@ -288,11 +258,9 @@ impl Layer0AggregationProver {
         let dummy_nullifier_pre_images =
             generate_dummy_nullifier_pre_images_for_slots(proofs.len());
 
-        // Fill witness
         fill_layer0_aggregation_witness(
             &mut self.partial_witness,
             &targets,
-            &self.leaf_verifier_only,
             &proofs,
             &dummy_nullifier_pre_images,
         )?;
@@ -314,8 +282,8 @@ impl Layer0AggregationProver {
 
 /// Shuffle proofs while ensuring a real proof remains in slot 0 (if any real proof exists).
 ///
-/// This mirrors the behavior of `shuffle_proofs_preserving_first_real(...)` but avoids needing
-/// a full `AggregationWrapper` impl just for the prover path.
+/// This hides dummy proof positions while maintaining valid circuit semantics
+/// (slot 0 must contain a real proof for reference value extraction).
 fn shuffle_proofs_preserving_first_real_layer0(proofs: &mut [ProofWithPublicInputs<F, C, D>]) {
     // Find the first real proof
     if let Some(first_real_idx) = proofs

@@ -93,7 +93,7 @@ fn main() -> Result<()> {
             .with_context(|| format!("Failed to generate layer0 circuit for N={}", n))?;
 
         // Save config
-        let config = CircuitBinsConfig::new(n, None);
+        let config = CircuitBinsConfig::new(n, None)?;
         config.save(&layer0_dir)?;
 
         println!("done in {:.2}s", start.elapsed().as_secs_f64());
@@ -122,7 +122,7 @@ fn main() -> Result<()> {
             .with_context(|| format!("Failed to generate layer1 circuit for M={}, N={}", m, n))?;
 
         // Save config
-        let config = CircuitBinsConfig::new(n, Some(m));
+        let config = CircuitBinsConfig::new(n, Some(m))?;
         config.save(&layer1_dir)?;
 
         println!("done in {:.2}s", start.elapsed().as_secs_f64());

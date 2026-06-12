@@ -1,5 +1,4 @@
 use std::fs;
-use std::panic;
 
 use hex;
 use plonky2::plonk::circuit_builder::CircuitBuilder;
@@ -40,16 +39,15 @@ fn commit_rejects_zk_merkle_proof_exceeding_max_depth() {
 }
 
 #[test]
-fn new_from_bytes_rejects_invalid_common_bytes_without_panicking() {
-    let result = panic::catch_unwind(|| WormholeProver::new_from_bytes(b"bad-common", b"bad"));
-    let err = result.expect("invalid bytes should not panic").unwrap_err();
+fn new_from_bytes_rejects_invalid_common_bytes() {
+    let err = WormholeProver::new_from_bytes(b"bad-common", b"bad").unwrap_err();
     assert!(err
         .to_string()
-        .contains("failed to deserialize common circuit data from bytes"));
+        .contains("failed to deserialize common circuit data"));
 }
 
 #[test]
-fn new_from_bytes_rejects_invalid_prover_bytes_without_panicking() {
+fn new_from_bytes_rejects_invalid_prover_bytes() {
     let prover = WormholeProver::new(CIRCUIT_CONFIG);
     let gate_serializer = DefaultGateSerializer;
     let common_bytes = prover
@@ -58,12 +56,10 @@ fn new_from_bytes_rejects_invalid_prover_bytes_without_panicking() {
         .to_bytes(&gate_serializer)
         .unwrap();
 
-    let result =
-        panic::catch_unwind(|| WormholeProver::new_from_bytes(b"bad-prover", &common_bytes));
-    let err = result.expect("invalid bytes should not panic").unwrap_err();
+    let err = WormholeProver::new_from_bytes(b"bad-prover", &common_bytes).unwrap_err();
     assert!(err
         .to_string()
-        .contains("failed to deserialize prover-only data from bytes"));
+        .contains("failed to deserialize prover-only data"));
 }
 
 #[test]
