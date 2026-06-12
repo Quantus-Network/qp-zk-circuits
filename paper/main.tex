@@ -236,7 +236,7 @@ A delegated first-layer service would observe raw child proofs before padding an
 
 \subsection{Higher-layer aggregation}
 
-Higher layers aggregate already-wrapped proofs. Since they operate only on public outputs, they can be safely delegated, and zero-knowledge is not required in principle at these layers. The current implementation conservatively retains the zero-knowledge configuration at all aggregation layers; dropping it for higher layers is a potential proving-time optimization.
+Higher layers aggregate already-wrapped proofs. Since they operate only on public outputs, they can be safely delegated, and zero-knowledge is not required in principle at these layers.
 
 \section{Security and Privacy Analysis}
 \label{sec:security}
@@ -429,7 +429,7 @@ We reduce from \textsc{\#SubsetSum}. Given an instance \((a_1, \ldots, a_M, T)\)
 \end{proof}
 
 \paragraph{Burn Cost and Bounded Rationality:}
-A rational adversary may assume users are unwilling to burn significant value for privacy. Under bounded rationality, the effective anonymity set shrinks to subsets whose total deposit volume is at most \(T \cdot (1 + \delta)\) for some small \(\delta\) (e.g., 1\%), in addition to the slot bound above.
+A rational adversary may assume users are unwilling to burn significant value for privacy. Under bounded rationality, the effective anonymity set shrinks to subsets whose total deposit volume is at most \((1 + \delta) \cdot S/(1-f)\) for some small \(\delta\) (e.g., 1\%)---that is, at most slightly above the minimum volume required by condition (iii)---in addition to the slot bound above.
 
 \subsection{Privacy leakage}
 
