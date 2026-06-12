@@ -152,15 +152,51 @@ fn build_layer0_wrapper_constraints(
     // Output: [num_exit_slots, asset_id, volume_fee_bps, block_hash(4), block_number, ...]
     let num_exit_slots_t = builder.constant(F::from_canonical_u64((n_leaf * 2) as u64));
 
-    // Reference values are taken from slot 0.
-    // Prover shuffles to ensure a real proof is in slot 0 if any real proofs exist.
+    // asset_id / volume_fee_bps refs come from slot 0. This is positionally safe because
+    // equality is enforced across ALL slots (dummies included) below.
     let asset_ref = limb1_at_offset::<LEAF_PI_LEN, ASSET_ID_START>(leaf_pi_targets[0], 0);
     let volume_fee_bps_ref =
         limb1_at_offset::<LEAF_PI_LEN, VOLUME_FEE_BPS_START>(leaf_pi_targets[0], 0);
 
-    let block_ref = limbs4_at_offset::<LEAF_PI_LEN, BLOCK_HASH_START>(leaf_pi_targets[0], 0);
-    let block_number_ref =
-        limb1_at_offset::<LEAF_PI_LEN, BLOCK_NUMBER_START>(leaf_pi_targets[0], 0);
+    // Dummy sentinel at the wrapper level is `block_hash == [0;4]`.
+    // Leaf circuit itself uses a stronger dummy condition (block_hash==0 && outputs==0).
+    // Here we only need the block-hash sentinel for wrapper behavior.
+    let dummy_sentinel = [zero, zero, zero, zero];
+
+    // Compute dummy flags for every slot up front. Also kept for the nullifier section.
+    let mut is_dummy_flags: Vec<BoolTarget> = Vec::with_capacity(n_leaf);
+    let mut block_hashes: Vec<[Target; 4]> = Vec::with_capacity(n_leaf);
+    for pis_i in leaf_pi_targets.iter().take(n_leaf) {
+        let block_i = limbs4_at_offset::<LEAF_PI_LEN, BLOCK_HASH_START>(pis_i, 0);
+        let is_dummy_i = bytes_digest_eq(builder, block_i, dummy_sentinel);
+        is_dummy_flags.push(is_dummy_i);
+        block_hashes.push(block_i);
+    }
+
+    // Select the reference block hash / block number from the FIRST NON-DUMMY slot via a
+    // prefix scan. This makes the circuit position-independent: the prover may place real
+    // and dummy proofs in any order (uniform shuffle), which is required for the privacy
+    // argument that real and dummy slots are indistinguishable.
+    //
+    // If every slot is a dummy, the references remain zero, which the on-chain verifier
+    // rejects as a block reference (and an all-dummy batch settles nothing anyway).
+    let mut found_real = builder._false();
+    let mut block_ref = [zero, zero, zero, zero];
+    let mut block_number_ref = zero;
+    for i in 0..n_leaf {
+        let is_real_i = builder.not(is_dummy_flags[i]);
+        let not_found_yet = builder.not(found_real);
+        let take_i = builder.and(is_real_i, not_found_yet);
+
+        for j in 0..4 {
+            block_ref[j] = builder.select(take_i, block_hashes[i][j], block_ref[j]);
+        }
+        let block_number_i =
+            limb1_at_offset::<LEAF_PI_LEN, BLOCK_NUMBER_START>(leaf_pi_targets[i], 0);
+        block_number_ref = builder.select(take_i, block_number_i, block_number_ref);
+
+        found_real = builder.or(found_real, is_real_i);
+    }
 
     let mut output_pis: Vec<Target> = Vec::new();
     output_pis.push(num_exit_slots_t);
@@ -171,31 +207,21 @@ fn build_layer0_wrapper_constraints(
     // Block consistency + asset consistency + volume_fee_bps consistency
     // =========================================================================
     //
-    // Dummy sentinel at the wrapper level is `block_hash == [0;4]`.
-    // Leaf circuit itself uses a stronger dummy condition (block_hash==0 && outputs==0).
-    // Here we only need the block-hash sentinel for wrapper behavior.
-    //
     // Constraint for each proof i:
     //   is_dummy_i OR (block_i == block_ref)
+    //
+    // Since block_ref is the first non-dummy slot's block hash, this forces every real
+    // proof to share that same block, regardless of slot order.
     //
     // Also enforce:
     //   asset_id_i == asset_ref
     //   volume_fee_bps_i == volume_fee_bps_ref
 
-    let dummy_sentinel = [zero, zero, zero, zero];
-
-    // Track dummy flags so we can conditionally replace nullifiers later.
-    let mut is_dummy_flags: Vec<BoolTarget> = Vec::with_capacity(n_leaf);
-
-    for pis_i in leaf_pi_targets.iter().take(n_leaf) {
-        let block_i = limbs4_at_offset::<LEAF_PI_LEN, BLOCK_HASH_START>(pis_i, 0);
-        let is_dummy_i = bytes_digest_eq(builder, block_i, dummy_sentinel);
-        is_dummy_flags.push(is_dummy_i);
-
-        let matches_ref = bytes_digest_eq(builder, block_i, block_ref);
+    for (i, pis_i) in leaf_pi_targets.iter().take(n_leaf).enumerate() {
+        let matches_ref = bytes_digest_eq(builder, block_hashes[i], block_ref);
 
         // Enforce `is_dummy_i OR matches_ref == true`
-        let valid_block_relation = builder.or(is_dummy_i, matches_ref);
+        let valid_block_relation = builder.or(is_dummy_flags[i], matches_ref);
         builder.connect(valid_block_relation.target, one);
 
         // Enforce asset_id consistency
@@ -1126,6 +1152,122 @@ mod tests {
             "Successfully aggregated {} real proofs + {} dummy proofs!",
             num_real_proofs,
             8 - num_real_proofs
+        );
+    }
+
+    /// Regression test: the circuit must accept dummy proofs in slot 0 (real proof in the
+    /// LAST slot). The old circuit read its block reference from slot 0 and required the
+    /// prover to pin a real proof there, leaking that nullifier[0] was always real. The
+    /// block reference is now selected in-circuit from the first non-dummy slot, so any
+    /// slot order (uniform shuffle) must be satisfiable.
+    #[test]
+    fn recursive_aggregation_dummy_in_slot0_succeeds() {
+        let exits_felts: [[F; 8]; 8] = EXIT_ACCOUNTS.map(limbs8_u64_to_felts);
+        let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs4_u64_to_felts);
+        let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs4_u64_to_felts);
+
+        let common_block_hash = block_hashes_felts[0];
+        let common_block_number = F::from_canonical_u64(42);
+        let asset_id = F::from_canonical_u64(TEST_ASSET_ID_U64);
+        let volume_fee_bps = F::from_canonical_u64(TEST_VOLUME_FEE_BPS);
+
+        let num_dummy_proofs = 7usize;
+        let real_slot = num_dummy_proofs; // slot 7 (last)
+
+        let dummy_exit = [F::ZERO; 8];
+        let dummy_block_hash = [F::ZERO; 4];
+
+        let mut pis_list: Vec<[F; LEAF_PI_LEN]> = Vec::with_capacity(8);
+
+        // Dummy proofs occupy slots 0..7
+        for nullifier in nullifiers_felts.iter().take(num_dummy_proofs) {
+            pis_list.push(make_pi_from_felts(
+                asset_id,
+                F::ZERO,
+                F::ZERO,
+                volume_fee_bps,
+                *nullifier,
+                dummy_exit,
+                dummy_exit,
+                dummy_block_hash,
+                F::ZERO,
+            ));
+        }
+
+        // Single real proof in the last slot
+        let real_amount = F::from_canonical_u64(500);
+        pis_list.push(make_pi_from_felts(
+            asset_id,
+            real_amount,
+            F::ZERO,
+            volume_fee_bps,
+            nullifiers_felts[real_slot],
+            exits_felts[real_slot],
+            [F::ZERO; 8],
+            common_block_hash,
+            common_block_number,
+        ));
+
+        let leaves = pis_list
+            .clone()
+            .into_iter()
+            .map(prove_fake_leaf_standalone)
+            .collect::<Vec<_>>();
+        let leaf_common = leaves[0].1.common.clone();
+        let leaf_verifier_only = leaves[0].1.verifier_only.clone();
+        let proofs = leaves
+            .into_iter()
+            .map(|(proof, _)| proof)
+            .collect::<Vec<_>>();
+
+        let dummy_nullifier_pre_images = deterministic_dummy_nullifier_pre_images(proofs.len());
+
+        let (root_proof, root_verifier) = aggregate_proofs_layer0(
+            proofs,
+            leaf_common,
+            leaf_verifier_only,
+            dummy_nullifier_pre_images.clone(),
+        )
+        .expect("aggregation with dummy in slot 0 must be satisfiable");
+
+        root_verifier.verify(root_proof.clone()).unwrap();
+
+        let pis = &root_proof.public_inputs;
+
+        // Header must reference the real block, taken from the last (only real) slot.
+        let block_hash_circuit: [F; 4] = [
+            pis[ROOT_BLOCK_HASH_START],
+            pis[ROOT_BLOCK_HASH_START + 1],
+            pis[ROOT_BLOCK_HASH_START + 2],
+            pis[ROOT_BLOCK_HASH_START + 3],
+        ];
+        assert_eq!(
+            block_hash_circuit, common_block_hash,
+            "block reference must come from the first non-dummy slot"
+        );
+        assert_eq!(pis[ROOT_BLOCK_NUMBER_IDX], common_block_number);
+
+        let nullifier_region_start =
+            ROOT_HEADER_LEN + (pis_list.len() * 2 * aggregated_output::EXIT_SLOT_LEN);
+
+        // Dummy nullifiers (slots 0..7) must be replaced with hashes of the preimages.
+        for (i, pre_image) in dummy_nullifier_pre_images
+            .iter()
+            .enumerate()
+            .take(num_dummy_proofs)
+        {
+            let idx = nullifier_region_start + i * 4;
+            let got = [pis[idx], pis[idx + 1], pis[idx + 2], pis[idx + 3]];
+            let expected = hash_dummy_nullifier_pre_image_native(*pre_image);
+            assert_eq!(got, expected, "dummy nullifier hash mismatch at leaf {i}");
+        }
+
+        // Real nullifier (slot 7) must be forwarded unchanged.
+        let idx = nullifier_region_start + real_slot * 4;
+        let got = [pis[idx], pis[idx + 1], pis[idx + 2], pis[idx + 3]];
+        assert_eq!(
+            got, nullifiers_felts[real_slot],
+            "real nullifier must be preserved in the last slot"
         );
     }
 
