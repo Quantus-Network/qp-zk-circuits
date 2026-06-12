@@ -305,10 +305,10 @@ The wormhole protocol satisfies spend-path exclusivity under preimage resistance
 \begin{proof}
 To win, \(\mathcal{B}\) must find \(pk\) such that \(H(pk) = \WA(s) = H(H(\mathsf{salt_{wh}} \parallel s))\). This requires either:
 \begin{enumerate}
-    \item finding \(s'\) such that \(H(\mathsf{salt_{wh}} \parallel s')\) equals a public key \(\mathcal{B}\) controls, or
-    \item finding \(pk\) such that \(H(pk)\) equals the target address.
+    \item producing the structured inner value itself, \(pk = H(\mathsf{salt_{wh}} \parallel s)\) for the challenge \(s\), as a public key \(\mathcal{B}\) controls, or
+    \item finding some other \(pk\) such that \(H(pk)\) equals the target address.
 \end{enumerate}
-Both are preimage attacks. For post-quantum schemes where \(|pk| > |H|\) (e.g., ML-DSA), case (1) is impossible since a hash output cannot equal a larger public key. In either case, success probability is bounded by \(\epsilon_{\mathrm{pre}}\).
+Both are preimage attacks on the outer hash. For post-quantum schemes where \(|pk| > |H|\) (e.g., ML-DSA), case (1) is impossible since a 256-bit hash output cannot equal a larger public key. In either case, success probability is bounded by \(\epsilon_{\mathrm{pre}}\).
 \end{proof}
 
 \subsection{Value conservation}
@@ -347,7 +347,7 @@ Real nullifiers are \(\Null(s,c) = H(H(\mathsf{salt_{null}} \parallel s \paralle
 \[
 \DNull(u) = H(H(u)),
 \]
-where the prover samples \(u \gets \{0,1\}^{256}\) and the aggregation circuit recomputes the outer hash (matching the implementation).
+where the prover samples \(u \gets \{0,1\}^{256}\) and the aggregation circuit recomputes \(H(H(u))\) from the witnessed preimage (matching the implementation).
 
 \begin{definition}[Nullifier Indistinguishability Game]
 The \emph{nullifier indistinguishability game} \(\mathsf{Game}_{\mathrm{null}}^{\mathcal{B}}\) proceeds as follows:
@@ -367,13 +367,13 @@ where \(\epsilon_{\mathrm{ro}}(q_H)\) is negligible in the hash output length \(
 
 \begin{theorem}[Nullifier Indistinguishability]
 \label{thm:nullifier-indist}
-In the random oracle model, real and dummy nullifiers are computationally indistinguishable: \(\epsilon_{\mathrm{ro}}(q_H) = O(q_H^2 / 2^{\lambda})\).
+In the random oracle model, real and dummy nullifiers are computationally indistinguishable: \(\epsilon_{\mathrm{ro}}(q_H) = O(q_H / 2^{\lambda})\).
 \end{theorem}
 
 \begin{proof}
 Write \(p = \mathsf{salt_{null}} \parallel s \parallel c\) and let \(x_0 = H(p)\), \(x_1 = H(u)\), so \(n_0 = H(x_0)\) and \(n_1 = H(x_1)\). The fixed salt and public counter \(c\) do not weaken the analysis: \(s\) is uniform and independent of \(u\), so \(p\) is unpredictable to \(\mathcal{B}\) before the challenge unless it queries \(H(p)\).
 
-In the random oracle model, \(x_0\) and \(x_1\) are uniform and independent on their first queries, and so are \(n_0\) and \(n_1\) unless \(\mathcal{B}\) has previously queried \(H(x_0)\) or \(H(x_1)\). Because \(s\) is uniform and unknown to \(\mathcal{B}\), the real preimage \(p\) is unpredictable (even though \(\mathsf{salt_{null}}\) and \(c\) are fixed or public), and the dummy preimage \(u\) is uniform and independent. The probability that any of \(\mathcal{B}\)'s \(q_H\) queries hits \(p\), \(u\), \(x_0\), or \(x_1\) before the challenge is therefore at most \(O(q_H^2 / 2^{\lambda})\) by a standard random-oracle union bound. Conditioned on no such query, \(n_0\) and \(n_1\) are identically distributed and independent of \(b\), so \(\Pr[b' = b] = 1/2\).
+In the random oracle model, \(x_0\) and \(x_1\) are uniform and independent on their first queries, and so are \(n_0\) and \(n_1\) unless \(\mathcal{B}\) has previously queried \(H(x_0)\) or \(H(x_1)\). Because \(s\) is uniform and unknown to \(\mathcal{B}\), the real preimage \(p\) is unpredictable (even though \(\mathsf{salt_{null}}\) and \(c\) are fixed or public), and the dummy preimage \(u\) is uniform and independent. The probability that any of \(\mathcal{B}\)'s \(q_H\) queries hits \(p\), \(u\), \(x_0\), or \(x_1\) before the challenge is therefore at most \(4 q_H / 2^{\lambda}\) by a union bound over the four unpredictable points. Conditioned on no such query, \(n_0\) and \(n_1\) are identically distributed and independent of \(b\), so \(\Pr[b' = b] = 1/2\).
 \end{proof}
 
 Instantiating \(H\) with Poseidon2 is heuristic, as is standard for random-oracle-based designs: collision and preimage resistance alone do not imply the pseudorandomness used above, but no structural property of Poseidon2 is known that would distinguish double-hash outputs of unpredictable inputs.
@@ -429,7 +429,7 @@ Computing \(|\mathcal{F}(Y)|\) (equivalently \(|\mathcal{A}(Y)|\)) is \#P-hard.
 \end{theorem}
 
 \begin{proof}
-We reduce from \textsc{\#SubsetSum}. Given an instance \((a_1, \ldots, a_M, T)\), construct an aggregate view with \(E = 1\), exit \((\alpha_1, e_1)\) where \(e_1 = T(1-f)\), batch cap \(N = M\), and deposit pool \(\mathcal{D}(b,a)\) containing the same amounts. For any \(I \subseteq \{1,\ldots,M\}\), condition (iii) holds iff \(\sum_{i \in I} a_i \geq T\); condition (ii) holds because \(E = 1 \leq 2|I|\) for every non-empty \(I\); and any such subset is routable, since every deposit sends its entire contribution to the single account. Thus \(|\mathcal{F}(Y)| = |\mathcal{A}(Y)|\) equals the number of subsets summing to at least \(T\). Given oracle access to this count, two calls with thresholds \(T\) and \(T+1\) recover \textsc{\#SubsetSum} exactly as in the standard threshold-to-exact conversion. Hence computing either quantity is \#P-hard.
+We reduce from \textsc{\#SubsetSum}. Given an instance \((a_1, \ldots, a_M, T)\), construct an aggregate view with fee rate \(f = 0\) (avoiding any quantization of amounts), \(E = 1\), exit \((\alpha_1, e_1)\) where \(e_1 = T\), batch cap \(N = M\), and deposit pool \(\mathcal{D}(b,a)\) containing the same amounts. For any \(I \subseteq \{1,\ldots,M\}\), condition (iii) holds iff \(\sum_{i \in I} a_i \geq T\); condition (ii) holds because \(E = 1 \leq 2|I|\) for every non-empty \(I\); and any such subset is routable, since every deposit sends its entire contribution to the single account. Thus \(|\mathcal{F}(Y)| = |\mathcal{A}(Y)|\) equals the number of subsets summing to at least \(T\). Given oracle access to this count, two calls with thresholds \(T\) and \(T+1\) recover \textsc{\#SubsetSum} exactly as in the standard threshold-to-exact conversion. Hence computing either quantity is \#P-hard.
 \end{proof}
 
 Membership in \(\mathcal{F}(Y)\) is itself nontrivial: deciding routability is a transportation problem with a degree constraint (each deposit funds at most two accounts), which is NP-hard in general. We do not rely on this for privacy---batches are small enough that integer-programming solvers decide routability in practice---but it adds to the cost of pruning for an adversary scanning many candidate subsets.
@@ -549,11 +549,11 @@ Vitalik Buterin, Jacob Illum, Matthias Nadler, Fabian Sch\"{a}r, and Ameen Solei
 \newblock SSRN, 2023.
 \newblock \url{https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4563364}
 
-\bibitem[GR20]{ziggy}
-Lior Gold and Michael Riabzev.
-\newblock Ziggy: A Zero-Knowledge Signature Scheme Based on STARKs.
-\newblock StarkWare, 2020.
-\newblock \url{https://github.com/starkware-libs/ethSTARK}
+\bibitem[Sta24]{ziggy}
+StarkWare.
+\newblock Ziggy: A Post-Quantum-Secure Signature Scheme Based on ZK-STARKs.
+\newblock ethSTARK repository, Ziggy branch, 2024.
+\newblock \url{https://github.com/starkware-libs/ethSTARK/tree/ziggy}
 
 \bibitem[GKS23]{poseidon2}
 Lorenzo Grassi, Dmitry Khovratovich, and Markus Schofnegger.
