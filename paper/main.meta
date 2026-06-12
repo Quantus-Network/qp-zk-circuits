@@ -1,0 +1,17 @@
+license: CC-by
+author:
+  name: Christopher Smith
+  surname: Smith
+  affil: 1
+  email: chris@quantus.com
+author:
+  name: Ethan Cemer
+  surname: Cemer
+  affil: 1
+  email: ethan@quantus.com
+affiliation:
+  name: Quantus Labs
+  country: USA
+version: preprint
+title: Wormhole Proofs: Recursive Zero-Knowledge Hash-Based Authorization with \#P-Hard Privacy
+keywords: zero-knowledge proofs, post-quantum cryptography, recursive aggregation, wormhole proofs, anonymity sets, subset sum
