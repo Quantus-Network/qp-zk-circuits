@@ -94,7 +94,7 @@ The protocol aims to satisfy four simultaneous goals:
     \item \textbf{Amortized Verification:} The marginal on-chain cost of verifying an additional withdrawal should be small.
     \item \textbf{Deposit Binding:} Every withdrawal must be bound to a real deposit recorded in authenticated chain state.
     \item \textbf{Replay Prevention:} A deposit should not authorize multiple withdrawals; nullifiers must uniquely bind proofs to deposits.
-    \item \textbf{Meaningful Privacy:} The chain should reveal only the public information needed for settlement: exits, amounts, shared fee parameters, nullifiers, and a block hash. Funding accounts, secrets, and ZK tree inclusion proofs should remain private.
+    \item \textbf{Meaningful Privacy:} The chain should reveal only the public information needed for settlement: exits, amounts, the asset identifier, shared fee parameters, nullifiers, and a block hash with its block number. Funding accounts, secrets, and ZK tree inclusion proofs should remain private.
 \end{enumerate}
 
 \section{System, Adversary, and Trust Model}
@@ -206,6 +206,8 @@ Let \(x = (a, v_1, v_2, f, n, \alpha_1, \alpha_2, h_B, b)\) denote the public in
 
 The inequality in (C5) allows users to withdraw less than their full balance. This provides a privacy benefit: by forfeiting some value, a user can choose output amounts that blend with more deposits, enlarging their anonymity set. The difference between the deposit and the sum of outputs (beyond fees) is effectively burned.
 
+In the public input tuple and (C5), \(f\) denotes the fee in basis points. In the security and privacy analysis we overload \(f\) to mean the fractional rate \(f/10^4\), so that (C5) reads \(v_1 + v_2 \leq v_{\mathrm{in}}(1-f)\) and thresholds take the form \(S/(1-f)\).
+
 \subsection{On-chain verification}
 
 The proof system does not, by itself, settle a withdrawal. The blockchain must also:
@@ -248,7 +250,7 @@ The \emph{deposit binding game} \(\mathsf{Game}_{\mathrm{bind}}^{\mathcal{B}}\) 
 \begin{enumerate}
     \item \(\mathcal{B}\) is given access to the blockchain state and may create arbitrary deposits.
     \item \(\mathcal{B}\) outputs a proof \(\pi\) and public inputs \(x = (a, v_1, v_2, f, n, \alpha_1, \alpha_2, h_B, b)\).
-    \item \(\mathcal{B}\) wins if \(\mathsf{Verify}(\pi, x) = 1\) and the specific deposit authenticated by the proof---a ZK tree leaf recording a transfer to \(\WA(s)\) with counter \(c\), asset \(a\), and input amount \(v_{\mathrm{in}}\) for some witness \(w = (s, c, v_{\mathrm{in}}, \ldots)\) satisfying \(\mathcal{R}_{\mathrm{leaf}}(x, w)\)---does not exist under the tree root committed in block \((h_B, b)\).
+    \item \(\mathcal{B}\) wins if \(\mathsf{Verify}(\pi, x) = 1\) and there is \emph{no} witness \(w = (s, c, v_{\mathrm{in}}, \ldots)\) satisfying \(\mathcal{R}_{\mathrm{leaf}}(x, w)\) whose authenticated deposit---the ZK tree leaf recording a transfer to \(\WA(s)\) with counter \(c\), asset \(a\), and input amount \(v_{\mathrm{in}}\)---is actually recorded in the ZK tree at block \((h_B, b)\).
 \end{enumerate}
 We say the system satisfies \emph{deposit binding} if \(\Pr[\mathsf{Game}_{\mathrm{bind}}^{\mathcal{B}} = 1] \leq \epsilon_{\mathrm{ks}} + \epsilon_{\mathrm{coll}}\) for all PPT \(\mathcal{B}\), where \(\epsilon_{\mathrm{coll}}\) is the collision probability of \(H\).
 \end{definition}
@@ -258,7 +260,7 @@ The wormhole protocol satisfies deposit binding under knowledge soundness of \(\
 \end{theorem}
 
 \begin{proof}
-Suppose \(\mathcal{B}\) wins. Then \(\mathsf{Verify}(\pi, x) = 1\) but the authenticated deposit \((\WA(s), c, a, v_{\mathrm{in}})\) is absent from the ZK tree at block \((h_B, b)\). By knowledge soundness, there exists an extractor that outputs a witness \(w\) satisfying \(\mathcal{R}_{\mathrm{leaf}}(x, w)\)---and hence conditions (C1)--(C5)---with probability \(1 - \epsilon_{\mathrm{ks}}\). Condition (C3) requires \(w\) to include a valid ZK tree inclusion proof for exactly this deposit tuple, and (C4) binds that proof to the root committed in \((h_B, b)\). If the leaf is absent, the inclusion path must be forged, which requires a collision in the tree's Poseidon hash (probability \(\epsilon_{\mathrm{coll}}\)). The blockchain's validation that \((h_B, b)\) refers to a real block ensures the committed root is the correct one for that height.
+Suppose \(\mathcal{B}\) wins. By knowledge soundness, the extractor outputs a witness \(w\) satisfying \(\mathcal{R}_{\mathrm{leaf}}(x, w)\)---and hence conditions (C1)--(C5)---except with probability \(\epsilon_{\mathrm{ks}}\). Because \(\mathcal{B}\) wins, no satisfying witness has its deposit recorded in the tree; in particular, the extracted \(w\)'s deposit tuple \((\WA(s), c, a, v_{\mathrm{in}})\) is absent from the ZK tree at block \((h_B, b)\). Yet condition (C3) requires \(w\) to include a ZK tree inclusion path for exactly this tuple that verifies against the root committed in \((h_B, b)\) per (C4). A verifying path for an absent leaf requires a collision in the tree's Poseidon hash (probability \(\epsilon_{\mathrm{coll}}\)). The blockchain's validation that \((h_B, b)\) refers to a real block ensures the committed root is the correct one for that height.
 \end{proof}
 
 \subsection{One-time withdrawal}
@@ -365,16 +367,16 @@ where \(\epsilon_{\mathrm{ro}}(q_H)\) is negligible in the hash output length \(
 
 \begin{theorem}[Nullifier Indistinguishability]
 \label{thm:nullifier-indist}
-In the random oracle model, real and dummy nullifiers are computationally indistinguishable: \(\epsilon_{\mathrm{ro}}(q_H) = O(q_H^2 / 2^{\lambda})\). Under the hash-security assumption of \cref{sec:model} for the concrete Poseidon2 instantiation, the same property holds computationally for all PPT adversaries.
+In the random oracle model, real and dummy nullifiers are computationally indistinguishable: \(\epsilon_{\mathrm{ro}}(q_H) = O(q_H^2 / 2^{\lambda})\).
 \end{theorem}
 
 \begin{proof}
 Write \(p = \mathsf{salt_{null}} \parallel s \parallel c\) and let \(x_0 = H(p)\), \(x_1 = H(u)\), so \(n_0 = H(x_0)\) and \(n_1 = H(x_1)\). The fixed salt and public counter \(c\) do not weaken the analysis: \(s\) is uniform and independent of \(u\), so \(p\) is unpredictable to \(\mathcal{B}\) before the challenge unless it queries \(H(p)\).
 
 In the random oracle model, \(x_0\) and \(x_1\) are uniform and independent on their first queries, and so are \(n_0\) and \(n_1\) unless \(\mathcal{B}\) has previously queried \(H(x_0)\) or \(H(x_1)\). Because \(s\) is uniform and unknown to \(\mathcal{B}\), the real preimage \(p\) is unpredictable (even though \(\mathsf{salt_{null}}\) and \(c\) are fixed or public), and the dummy preimage \(u\) is uniform and independent. The probability that any of \(\mathcal{B}\)'s \(q_H\) queries hits \(p\), \(u\), \(x_0\), or \(x_1\) before the challenge is therefore at most \(O(q_H^2 / 2^{\lambda})\) by a standard random-oracle union bound. Conditioned on no such query, \(n_0\) and \(n_1\) are identically distributed and independent of \(b\), so \(\Pr[b' = b] = 1/2\).
-
-For the concrete instantiation, replace the random oracle with Poseidon2 and appeal to the collision and preimage resistance assumed in \cref{sec:model}: any distinguisher with non-negligible advantage would yield a non-negligible break of \(H\).
 \end{proof}
+
+Instantiating \(H\) with Poseidon2 is heuristic, as is standard for random-oracle-based designs: collision and preimage resistance alone do not imply the pseudorandomness used above, but no structural property of Poseidon2 is known that would distinguish double-hash outputs of unpredictable inputs.
 
 \begin{definition}[Aggregate view]
 \label{def:aggregate-view}
@@ -408,7 +410,9 @@ Under the uniform prior over \(\mathcal{A}(Y)\), every plausible subset is equal
 \end{proof}
 
 \paragraph{Role of nullifier indistinguishability.}
-\cref{thm:nullifier-indist} addresses a different question: whether an adversary can tell real nullifiers from dummy padding, or infer how many real authorizations appear in a batch. This hides batch composition but does not change the deposit-unlinkability analysis above, which already treats only \(\mathcal{A}(Y)\). Without indistinguishability, an adversary who learns the number of real authorizations could restrict attention to subsets of that exact size, potentially shrinking the effective candidate set below \(k\).
+\Cref{thm:nullifier-indist} addresses a different question: whether an adversary can tell real nullifiers from dummy padding, or infer how many real authorizations appear in a batch. This hides batch composition but does not change the deposit-unlinkability analysis above, which already treats only \(\mathcal{A}(Y)\). Without indistinguishability, an adversary who learns the number of real authorizations could restrict attention to subsets of that exact size, potentially shrinking the effective candidate set below \(k\).
+
+One structural caveat applies in the implemented output layout: exit slots are positionally aligned with nullifier slots (slots \(2i\) and \(2i{+}1\) belong to authorization \(i\)), and each distinct exit account retains its grouped sum at one first-occurrence slot. An observer therefore learns that the authorizations owning non-zero exit slots are real, marking those specific nullifiers as real and yielding a lower bound of up to \(E\) on the real count (versus \(\lceil E/2 \rceil\) from the exits alone). Real authorizations whose outputs were grouped into earlier slots remain indistinguishable from dummies, and no nullifier-to-deposit linkage arises, so the deposit-unlinkability bound of \cref{thm:unlinkability} is unaffected.
 
 Because the proof system enforces an inequality rather than exact equality (condition C5), the adversary must consider any subset whose deposits can fund at least \(S\) after fees. Users may also withdraw less than their full balance, enlarging the volume-feasible region at the cost of burned value. The slot bound \(E \leq 2|I|\) is the main structural constraint beyond volume: a subset of size \(|I|\) cannot explain more than \(2|I|\) distinct exit accounts.
 
