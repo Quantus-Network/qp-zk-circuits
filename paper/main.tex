@@ -39,14 +39,14 @@ Post-quantum signature schemes such as ML-DSA impose public keys and signatures 
 
 Building on the wormhole mechanism from EIP-7503, we formalize a zero-knowledge *wormhole proof system* where funds are committed to addresses derived from secret preimages and later claimed by proving knowledge of the preimage in zero knowledge. We construct a two-layer recursive proof architecture using Plonky2 with FRI commitments. To achieve privacy against balance-linking adversaries, we introduce client-side dummy padding and local shuffling at the first aggregation layer, enlarging the effective anonymity set.
 
-We give complete game-based security definitions and proofs for deposit binding, one-time withdrawal, spend-path exclusivity, value conservation, nullifier indistinguishability, and transaction unlinkability. We prove that computing the size of the anonymity set is \#P-hard, which formally bounds the adversarial advantage. Our implementation using Plonky2 shows 20\,ms proving time per authorization with 1.6\,ms verification. Two-layer recursive aggregation scales to 256 authorizations with constant-time final verification of approximately 3.7\,ms. The marginal on-chain cost is only 96 bytes per authorization, over 50$\times$ smaller than a single ML-DSA signature.
+We give complete game-based security definitions and proofs for deposit binding, one-time withdrawal, spend-path exclusivity, value conservation, nullifier indistinguishability, and transaction unlinkability. We prove that computing the size of the anonymity set is \#P-hard, which formally bounds the adversarial advantage. Our implementation using Plonky2 shows 20\,ms proving time per authorization with 1.6\,ms verification. Two-layer recursive aggregation scales to 256 authorizations with constant-time final verification of approximately 3.7\,ms. The marginal on-chain cost is only 56 bytes per settled output, over 80$\times$ smaller than a single ML-DSA-87 signature.
 \end{abstract}
 
 % Text-only abstract required for IACR final version
 \begin{textabstract}
 Building on the wormhole mechanism from EIP-7503, we formalize a zero-knowledge wormhole proof system where funds are committed to addresses derived from secret preimages and later claimed by proving knowledge of the preimage. We construct a two-layer recursive proof architecture using Plonky2 with FRI commitments. Client-side dummy padding and local shuffling at the first aggregation layer enlarge the effective anonymity set against balance-linking adversaries.
 
-We give game-based security definitions and complete proofs for deposit binding, one-time withdrawal, spend-path exclusivity, value conservation, nullifier indistinguishability, and transaction unlinkability. We prove that computing the size of the anonymity set is #P-hard. Benchmarks show 20ms proving time per authorization and ~3.7ms constant-time verification for batches of 256, with a marginal on-chain cost of only 96 bytes per authorization, over 50x smaller than ML-DSA.
+We give game-based security definitions and complete proofs for deposit binding, one-time withdrawal, spend-path exclusivity, value conservation, nullifier indistinguishability, and transaction unlinkability. We prove that computing the size of the anonymity set is #P-hard. Benchmarks show 20ms proving time per authorization and ~3.7ms constant-time verification for batches of 256, with a marginal on-chain cost of only 56 bytes per settled output, over 80x smaller than an ML-DSA-87 signature.
 \end{textabstract}
 
 \section{Introduction}
@@ -55,7 +55,7 @@ The post-quantum transition poses a fundamental dilemma for blockchains. While S
 
 Verifying post-quantum signatures inside a zero-knowledge circuit and recursively aggregating them is one path, but the circuit cost remains substantial. This paper takes a different approach: users prove *knowledge of a secret preimage* corresponding to a public wormhole address rather than proving a signature. This idea builds on Ziggy's hash-preimage signatures and EIP-7503's wormhole concept, but we develop it into a practical post-quantum private settlement system.
 
-We formalize the wormhole proof relation, design a two-layer recursive aggregation protocol with client-side privacy mechanisms, prove six core security properties in the game-based style, and show that computing the effective anonymity set is \#P-hard. Our Plonky2 implementation achieves practical performance with only 96 bytes of marginal on-chain cost per authorization.
+We formalize the wormhole proof relation, design a two-layer recursive aggregation protocol with client-side privacy mechanisms, prove six core security properties in the game-based style, and show that computing the effective anonymity set is \#P-hard. Our Plonky2 implementation achieves practical performance with only 56 bytes of marginal on-chain cost per settled output.
 
 \subsection*{Our Contributions}
 
@@ -63,7 +63,7 @@ We formalize the wormhole proof relation, design a two-layer recursive aggregati
     \item Formalization of the wormhole proof relation and a precise security model for post-quantum private settlement.
     \item A two-layer recursive aggregation architecture with client-side dummy padding and shuffling that enlarges anonymity sets while remaining efficient.
     \item Proof that computing the size of the anonymity set is \#P-hard, together with game-based security proofs for deposit binding, one-time withdrawal, spend-path exclusivity, value conservation, nullifier indistinguishability, and transaction unlinkability.
-    \item A practical Plonky2 implementation achieving 20\,ms per authorization and 96 bytes marginal on-chain cost, more than 50$\times$ smaller than ML-DSA, with constant-time recursive verification.
+    \item A practical Plonky2 implementation achieving 20\,ms per authorization and 56 bytes marginal on-chain cost per settled output, over 80$\times$ smaller than an ML-DSA-87 signature, with constant-time recursive verification.
 \end{itemize}
 
 \subsection*{Paper Organization}
@@ -455,7 +455,7 @@ Second-layer verification time is effectively constant regardless of the number 
 
 \subsection{On-chain footprint}
 
-The final aggregate proof is constant-size regardless of the number of authorizations. The marginal cost per authorization consists only of the public outputs that must be published: one exit address (32 bytes), one amount (32 bytes), and one nullifier (32 bytes), totaling \textbf{96 bytes per authorization}. For comparison, an ML-DSA-65 signature alone is 3,309 bytes, and a full post-quantum transaction with public key would exceed 5~KB. Our approach thus achieves a $>$50$\times$ reduction in per-authorization data while providing privacy guarantees that signatures cannot offer.
+The final aggregate proof is constant-size regardless of the number of authorizations. The marginal cost consists only of the public outputs that must be published. Each authorization contributes two exit slots, each comprising an exit address (32 bytes) and a quantized amount (8 bytes, one field element), plus one nullifier (32 bytes): 112 bytes per authorization, or \textbf{56 bytes per settled output}. For comparison, an ML-DSA-87 signature alone is 4,627 bytes---over 80$\times$ larger---and a full post-quantum transaction with its 2,592-byte public key would exceed 7~KB, a $>$125$\times$ reduction in per-output data, while providing privacy guarantees that signatures cannot offer.
 
 \section{Related Work}
 \label{sec:related}
