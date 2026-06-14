@@ -1,0 +1,11 @@
+# Lean 4 formal-spec package for the qp-zk-circuits wormhole system.
+#
+# Phase 0 is intentionally dependency-free (no mathlib) so the spec builds in
+# seconds and stays hermetic. The field is modeled abstractly (see
+# `WormholeSpec/Basic.lean`). Phase 2 (interactive proofs) will add mathlib and
+# swap `Felt` for `ZMod GOLDILOCKS`; that is a one-module change by design.
+name = "wormholeSpec"
+defaultTargets = ["WormholeSpec"]
+
+[[lean_lib]]
+name = "WormholeSpec"

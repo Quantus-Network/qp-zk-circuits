@@ -27,5 +27,8 @@ wormhole-prover = { package = "qp-wormhole-prover", version = "3.0.0", path = ".
 wormhole-verifier = { package = "qp-wormhole-verifier", version = "3.0.0", path = "../verifier", default-features = true }
 zk-circuits-common = { package = "qp-zk-circuits-common", version = "3.0.0", path = "../../common" }
 
+[dev-dependencies]
+proptest = "1"
+
 [lints]
 workspace = true
