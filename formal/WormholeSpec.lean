@@ -13,6 +13,8 @@
   * `WormholeSpec.Aggregation` layer-0 / layer-1 aggregation relations
   * `WormholeSpec.Security`    reduction-style theorems (one-time withdrawal,
                                spend-path exclusivity) in the injective-RO model
+  * `WormholeSpec.Encoding`    byte↔felt encoding safety: 4-byte injective at the
+                               edges, 8-byte injective only on canonical inputs
 
   See `SPEC.md` for the clause-by-clause cross reference to the Rust source.
 -/
@@ -21,3 +23,4 @@ import WormholeSpec.Hash
 import WormholeSpec.Leaf
 import WormholeSpec.Aggregation
 import WormholeSpec.Security
+import WormholeSpec.Encoding

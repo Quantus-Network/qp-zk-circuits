@@ -14,7 +14,10 @@ spec + the differential safety net.
 | `WormholeSpec/Hash.lean` | Random-oracle interface, `WA`/`Null`/`leafHash`/`nodeHash`/`dummyNull` |
 | `WormholeSpec/Leaf.lean` | Leaf relation `Rleaf` (C1–C5, conditional dummy path) |
 | `WormholeSpec/Aggregation.lean` | `RL0`, `RL1` |
+| `WormholeSpec/Security.lean` | Deterministic cores of the reduction theorems (injective-RO model) |
+| `WormholeSpec/Encoding.lean` | Byte↔felt encoding safety (4-byte injective edges, 8-byte canonical-only) |
 | `../wormhole/tests/.../spec_differential.rs` | proptest harness: native oracles vs spec |
+| `../wormhole/tests/.../encoding_safety.rs` | proptest harness: encoding round-trips + witnessed `{0,p}` collision |
 
 ## Building
 
@@ -84,6 +87,28 @@ Deterministic cores of the game-based theorems, in the injective-RO model.
 | **thm** `same_deposit_same_nullifier` / `no_double_spend` | Thm (One-Time Withdrawal) | same deposit ⇒ same nullifier; `n₁ ≠ n₂` unsatisfiable |
 | **thm** `spend_path_unique` (`H pk = WA s → pk = H(salt_wh ‖ s) .toList`) | Thm (Spend-Path Exclusivity) | unique outer preimage; case (2) ⟶ case (1) |
 
+### Encoding safety (`Encoding.lean`)
+
+The wormhole code mixes two byte→felt encodings (`qp-zk-circuits-common::serialization`,
+thin wrappers over `qp-poseidon-core`). The spec models the per-limb field map
+`feltOf v = v % p` — exactly `GoldilocksField::from_noncanonical_u64` on a `u64`
+limb (`u64::from_le_bytes` being the std bijection bytes ↔ `[0,2^64)`).
+
+| Spec clause | Encoding | Rust source |
+|-------------|----------|-------------|
+| `feltOf_id_of_lt_2pow32` (32-bit limbs never reduce) | 4 bytes/felt + `0x01` terminator | `bytes_to_felts` / `felts_to_bytes` — `common/src/serialization.rs:113–127` |
+| `feltOf_inj_canonical` / `bytesToDigest_inj_canonical` (injective on canonical) | 8 bytes/felt | `bytes_to_digest` — `common/src/serialization.rs:173–179` |
+| `feltOf_not_injective` / `feltOf_collision_iff` (`{w, w+p}` collisions) | 8 bytes/felt | `from_noncanonical_u64` reduction — same |
+
+The argument: **edges** (attacker-controllable preimages) use the 4-byte
+encoding, whose limbs are all `< 2^32 ≤ p`, so it is injective *unconditionally*;
+**hash outputs** use the 8-byte encoding, which is injective *only* on canonical
+limbs (`< p`). Genuine Poseidon2 outputs are canonical by construction, so the
+8-byte path is safe **provided** no attacker-controllable, non-canonical byte
+string ever reaches it. That proviso is a property of the *callers* (gap 7), not
+of the encoding; `digest_decode_collides_off_canonical` in the Rust harness
+exhibits the `{0, p}` collision that makes the precondition load-bearing.
+
 ## Known gaps / TODOs (tracked for later phases)
 
 1. ~~Range-check set.~~ **Done.** Confirmed against `ZkLeaf::collect_32_bit_targets`:
@@ -109,6 +134,14 @@ Deterministic cores of the game-based theorems, in the injective-RO model.
    extractor (and likewise deposit binding, nullifier indistinguishability, and
    transaction unlinkability) require an explicit lazily-sampled RO game — the
    Phase-4 track, out of scope for the current deterministic spec.
+7. **Encoding call-site canonicality audit.** `Encoding.lean` proves the 8-byte
+   decode is injective *only* on canonical limbs (`< p`); safety therefore rests
+   on the consumer-side invariant that every input to `bytes_to_digest` /
+   `bytes_to_felts_compact` is a genuine (canonical) hash output or a
+   range-checked value, never raw attacker-controllable bytes. This is not
+   provable about the encoding in isolation — it requires auditing each call site
+   in `qp-zk-circuits` and `chain/pallets/zk-tree`. Pending: enumerate the
+   decoders' callers and discharge the precondition at each (Phase 1 follow-up).
 
 ## Intentionally-loose facts (must NOT be flagged as bugs)
 
