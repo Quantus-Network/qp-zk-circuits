@@ -105,7 +105,7 @@ The aggregator combines `N` leaf proofs into a single proof with a fixed public 
 
 - **Single-block storage proof constraint**: All real proofs (non-zero `block_hash`) must reference the same block for storage proofs.
 - **Two outputs per proof**: Each leaf supports `exit_account_1`/`output_amount_1` and `exit_account_2`/`output_amount_2`. Aggregation outputs 2\*`N` exit slots.
-- **Privacy via dummy hiding**: Proofs are shuffled before aggregation while keeping one real proof in slot 0 for reference values. Duplicate exit slots are zeroed (both sum and `exit_account`), making them indistinguishable from dummy padding slots.
+- **Privacy via dummy hiding**: Proofs are uniformly shuffled before aggregation; the circuit selects reference values from the first non-dummy slot in-circuit, so no slot position is special. Duplicate exit slots are zeroed (both sum and `exit_account`), making them indistinguishable from dummy padding slots.
 - **Dynamic dummy proofs**: Dummy proofs are generated on-the-fly for padding. They use sentinel values (`block_hash = 0`, `output_amount_1 = 0`, `output_amount_2 = 0`, `exit_account = 0`) so the leaf circuit can bypass validation. No dummy proof binaries are checked in.
 - **Public input types**: Public input parsing and aggregated outputs live in `wormhole/inputs` (`qp-wormhole-inputs`) and are shared by the circuit, prover, verifier, and aggregator.
 

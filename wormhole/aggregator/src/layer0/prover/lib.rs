@@ -31,8 +31,7 @@ use zk_circuits_common::{
 
 use crate::{
     common::utils::{
-        ensure_proof_public_input_len, is_dummy_leaf_proof, leaf_proof_asset_id,
-        load_verifier_data_from_bytes,
+        ensure_proof_public_input_len, leaf_proof_asset_id, load_verifier_data_from_bytes,
     },
     dummy_proof::{generate_random_nullifier_preimage, load_dummy_proof},
     layer0::{
@@ -250,8 +249,12 @@ impl Layer0AggregationProver {
             proofs.push(self.dummy_proof_template.clone());
         }
 
-        // Shuffle proofs to hide dummy positions while preserving a real proof in slot 0 (if any)
-        shuffle_proofs_preserving_first_real_layer0(&mut proofs);
+        // Uniformly shuffle proofs to hide dummy positions. The circuit selects its block
+        // reference from the first non-dummy slot in-circuit, so no position is special.
+        if proofs.len() > 1 {
+            let mut rng = rand::thread_rng();
+            proofs.shuffle(&mut rng);
+        }
 
         // Generate one dummy nullifier preimage per slot.
         // In-circuit hashes these only for dummy proofs.
@@ -279,26 +282,6 @@ impl Layer0AggregationProver {
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
-
-/// Shuffle proofs while ensuring a real proof remains in slot 0 (if any real proof exists).
-///
-/// This hides dummy proof positions while maintaining valid circuit semantics
-/// (slot 0 must contain a real proof for reference value extraction).
-fn shuffle_proofs_preserving_first_real_layer0(proofs: &mut [ProofWithPublicInputs<F, C, D>]) {
-    // Find the first real proof
-    if let Some(first_real_idx) = proofs
-        .iter()
-        .position(|p| !is_dummy_leaf_proof(p).unwrap_or(false))
-    {
-        proofs.swap(0, first_real_idx);
-    }
-
-    // Shuffle remaining proofs
-    if proofs.len() > 1 {
-        let mut rng = rand::thread_rng();
-        proofs[1..].shuffle(&mut rng);
-    }
-}
 
 /// If we're padding with dummy proofs (`asset_id = 0`), real proofs must also use `asset_id = 0`
 /// because the layer-0 circuit enforces asset_id equality across all proofs.
