@@ -1,0 +1,617 @@
+\documentclass{iacrcc}
+
+% License required for IACR
+\license{CC-by}
+
+% Packages (iacrcc includes amsmath, amssymb, amsthm, mathtools, hyperref, microtype)
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{xcolor}
+
+% cleveref must be loaded after hyperref (iacrcc handles this via after-hyperref.sty mechanism)
+% Create after-hyperref.sty for cleveref
+\IfFileExists{after-hyperref.sty}{}{\AtEndPreamble{\RequirePackage[nameinlink,noabbrev]{cleveref}}}
+
+\newcommand{\WA}{\mathsf{WA}}
+\newcommand{\Null}{\mathsf{Null}}
+\newcommand{\DNull}{\mathsf{DNull}}
+
+% Title with running head
+\title[running={Wormhole Proofs}]{Wormhole Proofs: Recursive Zero-Knowledge Hash-Based Authorization with \#P-Hard Privacy}
+
+% Authors using IACR format
+\addauthor[inst=1, email=chris@quantus.com, surname=Smith]{Christopher Smith}
+\addauthor[inst=1, email=ethan@quantus.com, surname=Cemer]{Ethan Cemer}
+
+% Affiliation
+\addaffiliation[country={USA}]{Quantus Labs}
+
+\begin{document}
+\maketitle
+
+% Keywords before abstract (IACR requirement)
+\keywords{zero-knowledge proofs, post-quantum cryptography, recursive aggregation, wormhole proofs, anonymity sets, subset sum}
+
+\begin{abstract}
+Post-quantum signature schemes such as ML-DSA impose public keys and signatures an order of magnitude larger than their elliptic-curve counterparts, substantially increasing communication and storage costs. An alternative approach replaces signature verification with \emph{hash-based authorization}: a prover demonstrates knowledge of a secret preimage tied to a public commitment, rather than presenting a signature. This sidesteps lattice-based operations entirely, requiring only hash evaluations and membership proofs.
+
+Building on the wormhole mechanism from EIP-7503, we formalize a zero-knowledge \emph{wormhole proof system} where funds are committed to addresses derived from secret preimages and later claimed by proving knowledge of the preimage in zero knowledge. We construct a two-layer recursive proof architecture using Plonky2 with FRI commitments. To achieve privacy against balance-linking adversaries, we introduce client-side dummy padding and local shuffling at the first aggregation layer, enlarging the effective anonymity set.
+
+We give complete game-based security definitions and proofs for deposit binding, one-time withdrawal, spend-path exclusivity, value conservation, nullifier indistinguishability, and transaction unlinkability. Under a uniform prior over deposit subsets consistent with the public view, adversarial identification advantage is bounded by \(1/k\) for an anonymity set of size \(k\); we further prove that even computing \(k\) is \#P-hard. Our implementation using Plonky2 shows 20\,ms proving time per authorization with 1.6\,ms verification. Two-layer recursive aggregation scales to 256 authorizations with near-constant final verification (approximately 3.7\,ms at the largest batch tested). The marginal on-chain cost is only 56 bytes per settled output, over 80$\times$ smaller than a single ML-DSA-87 signature.
+\end{abstract}
+
+% Text-only abstract required for IACR final version
+\begin{textabstract}
+Building on the wormhole mechanism from EIP-7503, we formalize a zero-knowledge wormhole proof system where funds are committed to addresses derived from secret preimages and later claimed by proving knowledge of the preimage. We construct a two-layer recursive proof architecture using Plonky2 with FRI commitments. Client-side dummy padding and local shuffling at the first aggregation layer enlarge the effective anonymity set against balance-linking adversaries.
+
+We give game-based security definitions and complete proofs for deposit binding, one-time withdrawal, spend-path exclusivity, value conservation, nullifier indistinguishability, and transaction unlinkability. We prove that computing the size of the anonymity set is #P-hard. Benchmarks show 20ms proving time per authorization and approximately 3.7ms verification for batches of 256, with a marginal on-chain cost of only 56 bytes per settled output, over 80x smaller than an ML-DSA-87 signature.
+\end{textabstract}
+
+\section{Introduction}
+
+The post-quantum transition poses a fundamental dilemma for blockchains. While Shor's algorithm breaks elliptic-curve signatures, the standardized post-quantum replacements such as ML-DSA have signatures and public keys an order of magnitude larger than their classical counterparts. Naively substituting them increases on-chain bandwidth and state growth dramatically, without addressing transaction privacy.
+
+Verifying post-quantum signatures inside a zero-knowledge circuit and recursively aggregating them is one path, but the circuit cost remains substantial. This paper takes a different approach: users prove \emph{knowledge of a secret preimage} corresponding to a public wormhole address rather than proving a signature. This idea builds on Ziggy's hash-preimage signatures and EIP-7503's wormhole concept, but we develop it into a practical post-quantum private settlement system.
+
+We formalize the wormhole proof relation, design a two-layer recursive aggregation protocol with client-side privacy mechanisms, prove six core security properties in the game-based style, and show that computing the effective anonymity set is \#P-hard. Our Plonky2 implementation achieves practical performance with only 56 bytes of marginal on-chain cost per settled output.
+
+\subsection*{Our Contributions}
+
+\begin{itemize}[leftmargin=1.5em]
+    \item Formalization of the wormhole proof relation and a precise security model for post-quantum private settlement.
+    \item A two-layer recursive aggregation architecture with client-side dummy padding and shuffling that enlarges anonymity sets while remaining efficient.
+    \item Proof that computing the size of the anonymity set is \#P-hard, together with game-based security proofs for deposit binding, one-time withdrawal, spend-path exclusivity, value conservation, nullifier indistinguishability, and transaction unlinkability.
+    \item A practical Plonky2 implementation achieving 20\,ms per authorization and 56 bytes marginal on-chain cost per settled output, over 80$\times$ smaller than an ML-DSA-87 signature, with near-constant recursive verification (under 4\,ms for up to 256 authorizations).
+\end{itemize}
+
+\subsection*{Paper Organization}
+
+\Cref{sec:background} reviews background on wormholes, privacy pools, and transparent recursion with FRI. \Cref{sec:model} defines our security model. After a protocol overview in \Cref{sec:overview} and formal interfaces in \Cref{sec:formal}, \Cref{sec:aggregation} details the recursive construction. \Cref{sec:security} contains our security definitions and proofs. We report performance in \Cref{sec:evaluation} and discuss related work in \Cref{sec:related}.
+
+\section{Background and Design Goals}
+\label{sec:background}
+
+\subsection{Wormholes and Privacy Pools}
+
+EIP-7503 proposes \emph{zero-knowledge wormholes}: deposit to secret-derived addresses, then prove knowledge of the secret to withdraw \cite{eip7503}. We extend this concept with post-quantum proving and recursive aggregation with dummy padding for privacy.
+
+Related systems include privacy pools and shielded ledgers like Zcash and Tornado Cash \cite{eip7503,privacypools,zcash,tornadocash}. Unlike fully shielded ledgers, deposits remain visible as ordinary transfer events on-chain; privacy comes from proving knowledge of a secret without revealing which deposit funded the withdrawal. The circuit authenticates deposits via inclusion in a consensus-maintained \emph{ZK tree}---a 4-ary sorted Poseidon Merkle tree of transfer events whose root is committed in the block header---rather than via encrypted note commitments or Merkle--Patricia storage proofs. Importantly, no ciphertexts are stored on-chain: in the standard post-quantum threat model (where Shor's algorithm breaks DLP- and factoring-based encryption but 256-bit hashes retain large quantum security margins), there is no harvested material that becomes decryptable later. Retroactive privacy rests only on the preimage resistance of the hash function---the same assumption underlying the system's soundness---rather than on any additional encryption assumption.
+
+\subsection{Transparent Recursion}
+
+We use Plonky2, combining PLONK arithmetization with FRI commitments for recursive verification without trusted setup \cite{plonky2,fri}. FRI is based on hash functions rather than elliptic curves, making it plausibly post-quantum secure: known quantum attacks on hash preimage search (Grover) and collision finding (BHT) improve over classical bounds, but 256-bit outputs retain comfortable margins at our security level. Poseidon2 provides efficient in-circuit hashing over prime fields \cite{poseidon2}.
+
+\paragraph{Security Parameters:}
+Our instantiation uses the Goldilocks field (\(p = 2^{64} - 2^{32} + 1\)) with a quadratic extension for 100-bit conjectured soundness. FRI is configured with 28 query rounds, rate \(1/8\) (blowup factor \(2^3\)), and 16 bits of proof-of-work grinding, yielding \(28 \times 3 + 16 = 100\) bits of conjectured security against proof forgery under Plonky2's standard FRI soundness conjecture; provable bounds in the Johnson list-decoding regime are lower \cite{plonky2,fri}. Poseidon2 outputs 4 field elements (256 bits), giving roughly 128-bit classical collision resistance and 256-bit classical preimage resistance. Against a quantum adversary, Grover search reduces preimage work to about \(2^{128}\) operations, while generic quantum collision attacks (e.g., BHT) reduce collision work to about \(2^{85}\) operations---still above our 100-bit soundness target. Hash output length, not the Goldilocks field size, therefore governs post-quantum hash margins.
+
+\subsection{Design goals}
+
+The protocol aims to satisfy four simultaneous goals:
+\begin{enumerate}[leftmargin=1.5em]
+    \item \textbf{Amortized Verification:} The marginal on-chain cost of verifying an additional withdrawal should be small.
+    \item \textbf{Deposit Binding:} Every withdrawal must be bound to a real deposit recorded in authenticated chain state.
+    \item \textbf{Replay Prevention:} A deposit should not authorize multiple withdrawals; nullifiers must uniquely bind proofs to deposits.
+    \item \textbf{Meaningful Privacy:} The chain should reveal only the public information needed for settlement: exits, amounts, the asset identifier, shared fee parameters, nullifiers, and a block hash with its block number. Funding accounts, secrets, and ZK tree inclusion proofs should remain private.
+\end{enumerate}
+
+\section{System, Adversary, and Trust Model}
+\label{sec:model}
+
+\subsection{Roles}
+
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{User / Prover:} Generates a secret, derives a wormhole address, deposits funds, and later produces a zero-knowledge proof to withdraw. First-layer aggregation should be performed locally to preserve privacy.
+    \item \textbf{Aggregator:} Combines multiple proofs into a single aggregate proof. This role may be the user, a third-party service, or a block producer. Higher-layer aggregation can be delegated since it operates only on public outputs.
+    \item \textbf{Blockchain / Verifier:} Validates the final proof, checks nullifier freshness, and settles withdrawals to the specified exit accounts.
+\end{itemize}
+
+\subsection{Adversarial capabilities}
+
+We assume a probabilistic polynomial-time adversary that can:
+\begin{itemize}[leftmargin=1.5em]
+    \item observe the full chain and all public proof outputs,
+    \item submit arbitrary deposits,
+    \item perform timing analysis, and
+    \item attempt to replay or malform proof submissions.
+\end{itemize}
+The adversary cannot:
+\begin{itemize}[leftmargin=1.5em]
+    \item break the collision resistance of the hash function,
+    \item break the knowledge soundness of the proof system, or
+    \item violate the chain's block-history availability.
+\end{itemize}
+
+\subsection{Trust assumptions}
+
+The protocol relies on the following assumptions.
+\begin{enumerate}[leftmargin=1.5em]
+    \item \textbf{Hash Security:} The Poseidon2 instantiation used by the system remains collision resistant and preimage resistant for the relevant security level \cite{poseidon2}.
+    \item \textbf{Proof Soundness:} The configured Plonky2 recursion stack remains knowledge sound under its standard assumptions \cite{plonky2,fri}.
+    \item \textbf{Authenticated History:} The blockchain can check that the public block hash and block number correspond to a valid block in chain history.
+    \item \textbf{Witness Availability:} Honest users can obtain the ZK tree inclusion proof needed to build a witness for their deposit.
+\end{enumerate}
+
+\section{Protocol Overview}
+\label{sec:overview}
+
+The protocol consists of five stages.
+
+\paragraph{1. Secret Generation and Deposit:}
+The user samples a secret \(s\) and derives a wormhole address
+\[
+\WA(s) = H(H(\mathsf{salt_{wh}} \parallel s)).
+\]
+Because this address is derived from a hash rather than a public key, no one can spend from it via ordinary signature-based authorization—wormhole addresses can receive funds but never have outgoing transactions. Anyone can deposit to a wormhole address through an ordinary on-chain transfer, creating a record that can later be authenticated inside the circuit. A user may receive funds from their own prior transfers or from third-party payments to wormhole addresses derived from secrets the user controls.
+
+\paragraph{2. Witness Acquisition:}
+To withdraw, the user gathers the deposit record (a transfer event to their wormhole address) and a ZK tree inclusion proof showing that event is included under the block's committed tree root. These form the private witness.
+
+\paragraph{3. Leaf Proof Generation:}
+The user chooses up to two exit outputs, computes a nullifier
+\[
+\Null(s,c) = H(H(\mathsf{salt_{null}} \parallel s \parallel c)),
+\]
+and produces a leaf proof. The proof reveals the nullifier, the exits, the output amounts, the asset identifier, the fee basis points, the block hash, and the block number, while keeping the secret and ZK tree inclusion proof private. Leaf proofs are not zero-knowledge. They are only seen by the user who generated them and then included in the first aggregation layer as private inputs.
+
+\paragraph{4. First-Layer Aggregation:}
+The user batches leaf proofs that share the same \texttt{block\_hash}, pads with dummy leaves if needed, shuffles the order, and produces a zero-knowledge wrapper proof that forwards grouped exits and nullifiers. A user may combine multiple deposits from distinct wormhole addresses (each derived from a different secret) into a single aggregated withdrawal. This step should be performed locally to preserve privacy.
+
+\paragraph{5. Settlement:}
+The blockchain verifies the aggregate proof, checks that the public \texttt{block\_hash} matches the referenced block number, verifies that the fee parameter matches the configured rate, rejects reused nullifiers, and settles the exits.
+
+\section{Formal Specification and Interfaces}
+\label{sec:formal}
+
+\subsection{Leaf public inputs}
+
+The leaf proof exposes the following public fields:
+\begin{itemize}[leftmargin=1.5em]
+    \item \texttt{asset\_id}: Token identifier.
+    \item \texttt{output\_amount\_1}, \texttt{output\_amount\_2}: Exit amounts (secondary is zero if unused).
+    \item \texttt{fee\_bps}: Fee parameter in basis points.
+    \item \texttt{nullifier}: Replay-prevention tag derived from secret and counter.
+    \item \texttt{exit\_account\_1}, \texttt{exit\_account\_2}: Destination accounts.
+    \item \texttt{block\_hash}: Commitment to block header fields.
+    \item \texttt{block\_number}: Height of the referenced block.
+\end{itemize}
+
+\subsection{Leaf private witness}
+
+The private witness includes:
+\begin{itemize}[leftmargin=1.5em]
+    \item \texttt{secret}: User secret from which nullifier and wormhole address are derived.
+    \item \texttt{counter}: Per-deposit counter (\texttt{transfer\_count}) used in nullifier derivation.
+    \item \texttt{wormhole\_account}: Derived wormhole address \(\WA(s)\).
+    \item \texttt{zk\_tree\_proof}: Merkle inclusion proof for the deposit transfer event in the block's ZK tree.
+    \item \texttt{input\_amount}: Deposited amount before fee deduction.
+    \item Header fields (\texttt{parent\_hash}, \texttt{state\_root}, \texttt{extrinsics\_root}, \texttt{zk\_tree\_root}, \texttt{digest}) used to recompute and bind the public \texttt{block\_hash}.
+\end{itemize}
+
+\subsection{Leaf relation}
+
+Let \(x = (a, v_1, v_2, f, n, \alpha_1, \alpha_2, h_B, b)\) denote the public input tuple and let \(w\) denote the witness described above. The leaf relation \(\mathcal{R}_{\mathrm{leaf}}\) holds when there exists a witness \(w\) such that:
+\begin{enumerate}[label=(C\arabic*),leftmargin=1.9em]
+    \item \textbf{Nullifier Correctness:} \(n = \Null(s,c)\).
+    \item \textbf{Wormhole-Address Correctness:} \(\alpha_{\mathrm{wh}} = \WA(s)\).
+    \item \textbf{Authenticated Inclusion:} The ZK tree inclusion proof verifies that a transfer event to \(\WA(s)\) with counter \(c\) and amount \(v_{\mathrm{in}}\) exists under the tree root committed in the block header.
+    \item \textbf{Block Binding:} The inclusion proof is bound to the public block hash \(h_B\) and block number \(b\) via the header's \texttt{zk\_tree\_root} field and the circuit's block-hash commitment.
+    \item \textbf{Fee Constraint:} The disclosed exits satisfy
+    \[
+    (v_1 + v_2) \cdot 10000 \leq v_{\mathrm{in}} \cdot (10000 - f).
+    \]
+\end{enumerate}
+
+The inequality in (C5) allows users to withdraw less than their full balance. This provides a privacy benefit: by forfeiting some value, a user can choose output amounts that blend with more deposits, enlarging their anonymity set. The difference between the deposit and the sum of outputs (beyond fees) is effectively burned.
+
+In the public input tuple and (C5), \(f\) denotes the fee in basis points. In the security and privacy analysis we overload \(f\) to mean the fractional rate \(f/10^4\), so that (C5) reads \(v_1 + v_2 \leq v_{\mathrm{in}}(1-f)\) and thresholds take the form \(S/(1-f)\).
+
+\subsection{On-chain verification}
+
+The proof system does not, by itself, settle a withdrawal. The blockchain must also:
+\begin{itemize}[leftmargin=1.5em]
+    \item verify the referenced block exists in chain history
+    \item check the fee parameter matches the configured rate
+    \item reject previously-seen nullifiers
+    \item credit exit accounts without increasing total supply
+\end{itemize}
+
+\section{Recursive Aggregation Architecture}
+\label{sec:aggregation}
+
+\subsection{First-layer aggregation}
+
+The first aggregation layer is privacy-sensitive and should be executed locally. A batch of up to \(N\) leaf proofs is aggregated as follows:
+\begin{itemize}[leftmargin=1.5em]
+    \item All real leaves must share the same \texttt{block\_hash}, \texttt{asset\_id}, and \texttt{fee\_bps}.
+    \item If fewer than \(N\) real leaves are available, the batch is padded with dummy leaves.
+    \item The leaf order is shuffled before wrapping.
+    \item Exits to identical accounts are grouped into a single summed output.
+    \item Real nullifiers are forwarded; dummy nullifiers are replaced by \(H(H(u))\) for prover-supplied random preimages \(u\), preventing a malicious prover from choosing a dummy tag that collides with a real one.
+\end{itemize}
+
+A delegated first-layer service would observe raw child proofs before padding and shuffling, collapsing much of the anonymity set quantified in \cref{sec:layer0privacy}.
+
+\subsection{Higher-layer aggregation}
+
+Higher layers aggregate already-wrapped proofs. Since they operate only on public outputs, they can be safely delegated, and zero-knowledge is not required in principle at these layers.
+
+\section{Security and Privacy Analysis}
+\label{sec:security}
+
+We formalize security via game-based definitions for the properties a wormhole system must satisfy. Let \(\mathcal{B}\) denote a probabilistic polynomial-time adversary, \(H\) a hash function, and \(\Pi = (\mathsf{Prove}, \mathsf{Verify})\) the proof system with knowledge soundness error \(\epsilon_{\mathrm{ks}}\).
+
+\subsection{Deposit binding}
+
+\begin{definition}[Deposit Binding Game]
+The \emph{deposit binding game} \(\mathsf{Game}_{\mathrm{bind}}^{\mathcal{B}}\) proceeds as follows:
+\begin{enumerate}
+    \item \(\mathcal{B}\) is given access to the blockchain state and may create arbitrary deposits.
+    \item \(\mathcal{B}\) outputs a proof \(\pi\) and public inputs \(x = (a, v_1, v_2, f, n, \alpha_1, \alpha_2, h_B, b)\).
+    \item \(\mathcal{B}\) wins if \(\mathsf{Verify}(\pi, x) = 1\) and there is \emph{no} witness \(w = (s, c, v_{\mathrm{in}}, \ldots)\) satisfying \(\mathcal{R}_{\mathrm{leaf}}(x, w)\) whose authenticated deposit---the ZK tree leaf recording a transfer to \(\WA(s)\) with counter \(c\), asset \(a\), and input amount \(v_{\mathrm{in}}\)---is actually recorded in the ZK tree at block \((h_B, b)\).
+\end{enumerate}
+We say the system satisfies \emph{deposit binding} if \(\Pr[\mathsf{Game}_{\mathrm{bind}}^{\mathcal{B}} = 1] \leq \epsilon_{\mathrm{ks}} + \epsilon_{\mathrm{coll}}\) for all PPT \(\mathcal{B}\), where \(\epsilon_{\mathrm{coll}}\) is the collision probability of \(H\).
+\end{definition}
+
+\begin{theorem}[Deposit Binding]
+The wormhole protocol satisfies deposit binding under knowledge soundness of \(\Pi\) and collision resistance of \(H\).
+\end{theorem}
+
+\begin{proof}
+Suppose \(\mathcal{B}\) wins. By knowledge soundness, the extractor outputs a witness \(w\) satisfying \(\mathcal{R}_{\mathrm{leaf}}(x, w)\)---and hence conditions (C1)--(C5)---except with probability \(\epsilon_{\mathrm{ks}}\). Because \(\mathcal{B}\) wins, no satisfying witness has its deposit recorded in the tree; in particular, the extracted \(w\)'s deposit tuple \((\WA(s), c, a, v_{\mathrm{in}})\) is absent from the ZK tree at block \((h_B, b)\). Yet condition (C3) requires \(w\) to include a ZK tree inclusion path for exactly this tuple that verifies against the root committed in \((h_B, b)\) per (C4). A verifying path for an absent leaf requires a collision in the tree's Poseidon hash (probability \(\epsilon_{\mathrm{coll}}\)). The blockchain's validation that \((h_B, b)\) refers to a real block ensures the committed root is the correct one for that height.
+\end{proof}
+
+\subsection{One-time withdrawal}
+
+\begin{definition}[Double-Spend Game]
+The \emph{double-spend game} \(\mathsf{Game}_{\mathrm{double}}^{\mathcal{B}}\) proceeds as follows:
+\begin{enumerate}
+    \item \(\mathcal{B}\) creates a single deposit of amount \(v\) to address \(\WA(s)\) for adversarially chosen \(s\).
+    \item \(\mathcal{B}\) outputs two proofs \((\pi_1, x_1)\) and \((\pi_2, x_2)\) with nullifiers \(n_1 \neq n_2\).
+    \item \(\mathcal{B}\) wins if both proofs verify and both claim outputs from the same deposit.
+\end{enumerate}
+We say the system satisfies \emph{one-time withdrawal} if \(\Pr[\mathsf{Game}_{\mathrm{double}}^{\mathcal{B}} = 1] \leq \epsilon_{\mathrm{ks}} + \epsilon_{\mathrm{coll}}\), where \(\epsilon_{\mathrm{coll}}\) is the collision probability of \(H\).
+\end{definition}
+
+\begin{theorem}[One-Time Withdrawal]
+\label{thm:one-time}
+The wormhole protocol satisfies one-time withdrawal under knowledge soundness of \(\Pi\) and collision resistance of \(H\).
+\end{theorem}
+
+\begin{proof}
+Suppose \(\mathcal{B}\) wins. By knowledge soundness, there exist witnesses \(w_1, w_2\) with secrets \(s_1, s_2\) and counters \(c_1, c_2\) such that both proofs reference the same deposit. Since both reference the same deposit address, \(\WA(s_1) = \WA(s_2)\), which by collision resistance implies \(s_1 = s_2\). The counter \(c\) is part of the ZK tree leaf and verified by the inclusion proof; since both proofs reference the same deposit, they must use the same counter \(c_1 = c_2\). But then \(n_1 = \Null(s_1, c_1) = \Null(s_2, c_2) = n_2\), contradicting \(n_1 \neq n_2\). Thus \(\mathcal{B}\) can only win by breaking knowledge soundness or finding a collision.
+\end{proof}
+
+Since the blockchain maintains a nullifier set and rejects duplicates, each deposit can be withdrawn at most once.
+
+\subsection{Spend-path exclusivity}
+
+\begin{definition}[Signature Forgery Game]
+The \emph{signature forgery game} \(\mathsf{Game}_{\mathrm{sig}}^{\mathcal{B}}\) proceeds as follows:
+\begin{enumerate}
+    \item Challenger samples \(s \gets \{0,1\}^{256}\) and publishes \(\WA(s)\).
+    \item \(\mathcal{B}\) outputs a keypair \((sk, pk)\) and a signature \(\sigma\) on an arbitrary message \(m\).
+    \item \(\mathcal{B}\) wins if \(H(pk) = \WA(s)\) and \(\mathsf{SigVerify}(pk, m, \sigma) = 1\).
+\end{enumerate}
+We say the system satisfies \emph{spend-path exclusivity} if \(\Pr[\mathsf{Game}_{\mathrm{sig}}^{\mathcal{B}} = 1] \leq \epsilon_{\mathrm{pre}}\), where \(\epsilon_{\mathrm{pre}}\) is the preimage resistance of \(H\).
+\end{definition}
+
+\begin{theorem}[Spend-Path Exclusivity]
+The wormhole protocol satisfies spend-path exclusivity under preimage resistance of \(H\).
+\end{theorem}
+
+\begin{proof}
+To win, \(\mathcal{B}\) must find \(pk\) such that \(H(pk) = \WA(s) = H(H(\mathsf{salt_{wh}} \parallel s))\). This requires either:
+\begin{enumerate}
+    \item producing the structured inner value itself, \(pk = H(\mathsf{salt_{wh}} \parallel s)\) for the challenge \(s\), as a public key \(\mathcal{B}\) controls, or
+    \item finding some other \(pk\) such that \(H(pk)\) equals the target address.
+\end{enumerate}
+Both are preimage attacks on the outer hash. For post-quantum schemes where \(|pk| > |H|\) (e.g., ML-DSA), case (1) is impossible since a 256-bit hash output cannot equal a larger public key. In either case, success probability is bounded by \(\epsilon_{\mathrm{pre}}\).
+\end{proof}
+
+\subsection{Value conservation}
+
+\begin{definition}[Inflation Game]
+The \emph{inflation game} \(\mathsf{Game}_{\mathrm{infl}}^{\mathcal{B}}\) proceeds as follows:
+\begin{enumerate}
+    \item \(\mathcal{B}\) creates deposits totaling value \(V\).
+    \item \(\mathcal{B}\) submits a sequence of valid proofs resulting in withdrawals totaling value \(W\).
+    \item \(\mathcal{B}\) wins if \(W > V \cdot (1 - f)\), where \(f\) is the fee rate.
+\end{enumerate}
+\end{definition}
+
+\begin{theorem}[Value Conservation]
+The wormhole protocol satisfies value conservation: no adversary can win \(\mathsf{Game}_{\mathrm{infl}}\) except with negligible probability.
+\end{theorem}
+
+\begin{proof}
+Value conservation follows from three properties:
+\begin{itemize}
+    \item Each leaf proof enforces (C5): outputs satisfy \((v_1 + v_2) \cdot 10000 \leq v_{\mathrm{in}} \cdot (10000 - f)\).
+    \item Aggregation preserves output sums; the wrapper only groups outputs to identical destinations.
+    \item One-time withdrawal (\cref{thm:one-time}) prevents double-counting any deposit.
+\end{itemize}
+Together with the blockchain's nullifier check, total settled value never exceeds total deposited value minus fees.
+\end{proof}
+
+
+\subsection{Anonymity sets}
+\label{sec:layer0privacy}
+
+An adversary observing a first-layer aggregate sees \(N\) nullifiers (some real, some dummies), grouped exits, and the public metadata \((b, a, f)\). Deposit unlinkability is analyzed by enumerating plausible funding subsets in \(\mathcal{D}(b,a)\); nullifier indistinguishability is a separate property that hides padding and batch composition. Throughout this subsection, \(H\) denotes the Poseidon2 hash used in-circuit, modeled as a random oracle with 256-bit outputs.
+
+\paragraph{Dummy nullifiers.}
+Real nullifiers are \(\Null(s,c) = H(H(\mathsf{salt_{null}} \parallel s \parallel c))\) as in \cref{sec:formal}. Dummy padding replaces each dummy slot with
+\[
+\DNull(u) = H(H(u)),
+\]
+where the prover samples \(u \gets \{0,1\}^{256}\) and the aggregation circuit recomputes \(H(H(u))\) from the witnessed preimage (matching the implementation).
+
+\begin{definition}[Nullifier Indistinguishability Game]
+The \emph{nullifier indistinguishability game} \(\mathsf{Game}_{\mathrm{null}}^{\mathcal{B}}\) proceeds as follows:
+\begin{enumerate}
+    \item Challenger samples secret \(s \gets \{0,1\}^{256}\), counter \(c \in \mathbb{N}\), and dummy preimage \(u \gets \{0,1\}^{256}\).
+    \item Challenger computes \(n_0 = \Null(s,c)\) and \(n_1 = \DNull(u)\).
+    \item Challenger flips \(b \gets \{0,1\}\) and sends \(n_b\) to \(\mathcal{B}\).
+    \item \(\mathcal{B}\) outputs guess \(b'\).
+    \item \(\mathcal{B}\) wins if \(b' = b\).
+\end{enumerate}
+We say nullifiers are \emph{indistinguishable} if for all PPT \(\mathcal{B}\) making at most \(q_H\) queries to the random oracle \(H\),
+\[
+\left|\Pr[\mathsf{Game}_{\mathrm{null}}^{\mathcal{B}} = 1] - \tfrac{1}{2}\right| \leq \epsilon_{\mathrm{ro}}(q_H),
+\]
+where \(\epsilon_{\mathrm{ro}}(q_H)\) is negligible in the hash output length \(\lambda = 256\) for fixed \(q_H\).
+\end{definition}
+
+\begin{theorem}[Nullifier Indistinguishability]
+\label{thm:nullifier-indist}
+In the random oracle model, real and dummy nullifiers are computationally indistinguishable: \(\epsilon_{\mathrm{ro}}(q_H) = O(q_H / 2^{\lambda})\).
+\end{theorem}
+
+\begin{proof}
+Write \(p = \mathsf{salt_{null}} \parallel s \parallel c\) and let \(x_0 = H(p)\), \(x_1 = H(u)\), so \(n_0 = H(x_0)\) and \(n_1 = H(x_1)\). The fixed salt and public counter \(c\) do not weaken the analysis: \(s\) is uniform and independent of \(u\), so \(p\) is unpredictable to \(\mathcal{B}\) before the challenge unless it queries \(H(p)\).
+
+In the random oracle model, \(x_0\) and \(x_1\) are uniform and independent on their first queries, and so are \(n_0\) and \(n_1\) unless \(\mathcal{B}\) has previously queried \(H(x_0)\) or \(H(x_1)\). Because \(s\) is uniform and unknown to \(\mathcal{B}\), the real preimage \(p\) is unpredictable (even though \(\mathsf{salt_{null}}\) and \(c\) are fixed or public), and the dummy preimage \(u\) is uniform and independent. The probability that any of \(\mathcal{B}\)'s \(q_H\) queries hits \(p\), \(u\), \(x_0\), or \(x_1\) before the challenge is therefore at most \(4 q_H / 2^{\lambda}\) by a union bound over the four unpredictable points. Conditioned on no such query, \(n_0\) and \(n_1\) are identically distributed and independent of \(b\), so \(\Pr[b' = b] = 1/2\).
+\end{proof}
+
+Instantiating \(H\) with Poseidon2 is heuristic, as is standard for random-oracle-based designs: collision and preimage resistance alone do not imply the pseudorandomness used above, but no structural property of Poseidon2 is known that would distinguish double-hash outputs of unpredictable inputs.
+
+\begin{definition}[Aggregate view]
+\label{def:aggregate-view}
+A first-layer aggregate \(Y\) exposes block number \(b\), asset identifier \(a\), fee rate \(f\), batch capacity \(N\), a multiset of \(N\) nullifiers, and grouped exits \(\{(\alpha_j, e_j)\}_{j=1}^{E}\) with total \(S = \sum_{j=1}^{E} e_j\).
+\end{definition}
+
+\begin{definition}[Plausible and routable deposit subsets]
+\label{def:anonymity-set}
+Let \(\mathcal{D}(b,a)\) be the unspent wormhole deposits recorded in the ZK tree at block \(b\) with asset \(a\), with amounts \(a_1, \ldots, a_M\). A subset \(I \subseteq \{1,\ldots,M\}\) is \emph{plausible} for \(Y\) if:
+\begin{enumerate}[label=(\roman*),leftmargin=2em]
+    \item \textbf{Batch size:} \(|I| \leq N\).
+    \item \textbf{Output slots:} \(E \leq 2|I|\), since each authorization exposes at most two outputs before grouping.
+    \item \textbf{Volume:} \(\sum_{i \in I} a_i \geq S/(1-f)\) (equivalently, \(\sum_{i \in I} a_i(1-f) \geq S\)).
+\end{enumerate}
+The \emph{plausible set} is
+\[
+\mathcal{A}(Y) = \{ I \subseteq \{1,\ldots,M\} \mid I \text{ is plausible for } Y \}.
+\]
+Conditions (i)--(iii) are necessary but not sufficient. Each authorization carries exactly two output slots---by design, a target output and a change output---so a subset must additionally admit a routing that reproduces the published per-account totals. Say \(I\) is \emph{routable} for \(Y\) if there exist contributions \(x_{ij} \geq 0\) of deposit \(i \in I\) to exit account \(j\) such that each deposit funds at most two distinct accounts, \(\sum_{i \in I} x_{ij} = e_j\) for every account \(j\), and \(\sum_{j} x_{ij} \leq a_i(1-f)\) for every \(i \in I\). The \emph{effective anonymity set} is
+\[
+\mathcal{F}(Y) = \{ I \in \mathcal{A}(Y) \mid I \text{ is routable for } Y \},
+\]
+and the true funding subset always lies in \(\mathcal{F}(Y)\). The inclusion \(\mathcal{F}(Y) \subseteq \mathcal{A}(Y)\) can be strict: after-fee caps \(\{100, 2\}\) cannot produce three exit accounts of \(34\) each, although \(E = 3 \leq 2|I| = 4\) and the volume bound holds. An adversary can therefore prune \(\mathcal{A}(Y)\) using the public per-account amounts, and the operative privacy guarantee is stated over \(\mathcal{F}(Y)\). The gap is small when each account total is coverable by a single deposit of the subset---in particular when deposit denominations are large relative to per-account exit amounts, or standardized---and can be large for heterogeneous amounts. The definition depends on exits and metadata only; published nullifiers do not identify deposits without inverting \(\Null(s,c)\).
+\end{definition}
+
+\begin{theorem}[Transaction Unlinkability]
+\label{thm:unlinkability}
+Let \(Y\) be a first-layer aggregate with \(|\mathcal{F}(Y)| = k \geq 1\). Assume the true funding subset is drawn uniformly from \(\mathcal{F}(Y)\). Then no PPT adversary can identify the true subset with probability greater than \(1/k\).
+\end{theorem}
+
+\begin{proof}
+An adversary attempting to identify the funding deposits observes \(Y\) and the deposit pool \(\mathcal{D}(b,a)\), computes \(\mathcal{F}(Y)\), and guesses which subset was used. Any guess outside \(\mathcal{F}(Y)\) is inconsistent with the public view---it violates the batch cap, the block/asset filter, or admits no routing matching the published per-account amounts---and can be ruled out without guessing.
+
+Under the uniform prior over \(\mathcal{F}(Y)\), every routable subset is equally likely, so success probability is at most \(1/k\). Any strategy exceeding \(1/k\) must use information outside this model (e.g., side channels, deposit clustering, or a non-uniform prior over user behavior). Nullifiers are not needed for this attack: each published nullifier is a one-way tag \(\Null(s,c)\) that does not reveal which deposit funded the withdrawal.
+\end{proof}
+
+\paragraph{Role of nullifier indistinguishability.}
+\Cref{thm:nullifier-indist} addresses a different question: whether an adversary can tell real nullifiers from dummy padding, or infer how many real authorizations appear in a batch. This hides batch composition but does not change the deposit-unlinkability analysis above, which already treats only \(\mathcal{F}(Y)\). Without indistinguishability, an adversary who learns the number of real authorizations could restrict attention to subsets of that exact size, potentially shrinking the effective candidate set below \(k\).
+
+One structural caveat applies in the implemented output layout: exit slots are positionally aligned with nullifier slots (slots \(2i\) and \(2i{+}1\) belong to authorization \(i\)), and each distinct exit account retains its grouped sum at one first-occurrence slot. An observer therefore learns that the authorizations owning non-zero exit slots are real, marking those specific nullifiers as real and yielding a lower bound of up to \(E\) on the real count (versus \(\lceil E/2 \rceil\) from the exits alone). Real authorizations whose outputs were grouped into earlier slots remain indistinguishable from dummies, and no nullifier-to-deposit linkage arises, so the deposit-unlinkability bound of \cref{thm:unlinkability} is unaffected.
+
+Because the proof system enforces an inequality rather than exact equality (condition C5), the adversary must consider any subset whose deposits can fund at least \(S\) after fees. Users may also withdraw less than their full balance, enlarging the volume-feasible region at the cost of burned value. Beyond volume, the binding structural constraint is routability: a subset of size \(|I|\) cannot explain more than \(2|I|\) distinct exit accounts, and each account total must decompose across deposits that reach it within their caps and two-account limits.
+
+\paragraph{Complexity of counting plausible subsets:}
+The decision version of subset sum is NP-complete \cite{subsetsum}. The counting version \textsc{\#SubsetSum} is \#P-complete \cite{valiant1979}: the standard reduction establishing NP-completeness of subset sum is parsimonious, so it transfers to the counting class. In the special case \(E = 1\) and \(N = M\), condition (ii) is vacuous, every volume-satisfying subset is trivially routable (all contributions target the single account), and \(\mathcal{F}(Y) = \mathcal{A}(Y)\) reduces to \textsc{\#SubsetSum} with threshold \(T = S/(1-f)\).
+
+\begin{theorem}[Hardness of Anonymity Set Computation]
+\label{thm:hardness}
+Computing \(|\mathcal{F}(Y)|\) (equivalently \(|\mathcal{A}(Y)|\)) is \#P-hard.
+\end{theorem}
+
+\begin{proof}
+We reduce from \textsc{\#SubsetSum}. Given an instance \((a_1, \ldots, a_M, T)\), construct an aggregate view with fee rate \(f = 0\) (avoiding any quantization of amounts), \(E = 1\), exit \((\alpha_1, e_1)\) where \(e_1 = T\), batch cap \(N = M\), and deposit pool \(\mathcal{D}(b,a)\) containing the same amounts. For any \(I \subseteq \{1,\ldots,M\}\), condition (iii) holds iff \(\sum_{i \in I} a_i \geq T\); condition (ii) holds because \(E = 1 \leq 2|I|\) for every non-empty \(I\); and any such subset is routable, since every deposit sends its entire contribution to the single account. Thus \(|\mathcal{F}(Y)| = |\mathcal{A}(Y)|\) equals the number of subsets summing to at least \(T\). Given oracle access to this count, two calls with thresholds \(T\) and \(T+1\) recover \textsc{\#SubsetSum} exactly as in the standard threshold-to-exact conversion. Hence computing either quantity is \#P-hard.
+\end{proof}
+
+Membership in \(\mathcal{F}(Y)\) is itself nontrivial: deciding routability is a transportation problem with a degree constraint (each deposit funds at most two accounts), which is NP-hard in general. We do not rely on this for privacy---batches are small enough that integer-programming solvers decide routability in practice---but it adds to the cost of pruning for an adversary scanning many candidate subsets.
+
+\paragraph{Burn Cost and Bounded Rationality:}
+A rational adversary may assume users are unwilling to burn significant value for privacy. Under bounded rationality, the effective anonymity set shrinks to routable subsets whose total deposit volume is at most \((1 + \delta) \cdot S/(1-f)\) for some small \(\delta\) (e.g., 1\%)---that is, at most slightly above the minimum volume required by condition (iii).
+
+\subsection{Privacy leakage}
+
+Output amounts, exit addresses, nullifiers, and timing are public. The unlinkability bound in \cref{thm:unlinkability} assumes a uniform prior over routable deposit subsets and analyzes the exit-driven candidate set \(\mathcal{F}(Y)\); behavioral amount patterns (e.g., round numbers), address reuse, deposit clustering, and timing correlation can shrink the effective set further. Nullifier indistinguishability (\cref{thm:nullifier-indist}) hides dummy padding but is orthogonal to deposit identification. First-layer padding enlarges the anonymity set, but this is plausible deniability, not full shielding.
+
+\section{Evaluation}
+\label{sec:evaluation}
+
+\subsection{Methodology}
+
+Benchmarks were executed on an Apple M2 Max with 12 CPU cores and 32~GB of RAM. Circuit artifacts were pre-generated; reported times measure only proving and verification. Prove times include witness assignment and proof generation. Verify times measure verification of a pre-generated proof.
+
+All first-layer measurements use repeated identical dummy leaf proofs with the same \texttt{block\_hash}. Second-layer benchmarks use repeated first-layer proofs.
+
+\subsection{Leaf proofs}
+
+Individual leaf proof generation takes approximately 20~ms, with verification in 1.6~ms. These times are dominated by proving; witness assignment is negligible.
+
+\subsection{First-layer aggregation}
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}rrr@{}}
+\toprule
+\(N\) leaf proofs & Prove (s) & Verify (ms) \\
+\midrule
+2  & 1.55 & 2.75 \\
+4  & 2.81 & 2.88 \\
+8  & 5.39 & 3.02 \\
+16 & 10.74 & 3.16 \\
+32 & 21.71 & 3.55 \\
+\bottomrule
+\end{tabular}
+\caption{First-layer aggregation times for \(N\) leaf proofs.}
+\label{tab:layer0-results}
+\end{table}
+
+Proving time scales with batch size, while verification remains in the millisecond range across all tested configurations.
+
+\subsection{Second-layer aggregation}
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}rrrr@{}}
+\toprule
+\(M\) first-layer proofs & Total leaves & Prove (s) & Verify (ms) \\
+\midrule
+2  & 16  & 0.92 & 2.72 \\
+4  & 32  & 1.88 & 2.86 \\
+8  & 64  & 3.84 & 3.03 \\
+16 & 128 & 7.97 & 3.24 \\
+32 & 256 & 16.69 & 3.74 \\
+\bottomrule
+\end{tabular}
+\caption{Second-layer aggregation times. Each first-layer proof aggregates 8 leaf proofs.}
+\label{tab:layer1-results}
+\end{table}
+
+Second-layer verification time grows slowly with batch size (2.72\,ms at 16 leaves to 3.74\,ms at 256 leaves), remaining in the low millisecond range and demonstrating the benefit of recursive composition.
+
+\subsection{On-chain footprint}
+
+The final aggregate proof is constant-size regardless of the number of authorizations. The marginal cost consists only of the public outputs that must be published. Each authorization contributes two exit slots, each comprising an exit address (32 bytes) and a quantized amount (8 bytes, one field element), plus one nullifier (32 bytes): 112 bytes per authorization, or \textbf{56 bytes per settled output}. For comparison, an ML-DSA-87 signature alone is 4,627 bytes---over 80$\times$ larger---and a full post-quantum transaction with its 2,592-byte public key would exceed 7~KB, a $>$125$\times$ reduction in per-output data, while providing privacy guarantees that signatures cannot offer.
+
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Wormholes and Privacy Pools:}
+EIP-7503 proposes proof-of-burn reminting via secret-derived addresses \cite{eip7503}. Privacy Pools adds compliance-aware privacy sets \cite{privacypools}. Our work extends this line with recursive proofs that authenticate deposits via a consensus-maintained ZK tree.
+
+\paragraph{Shielded Systems:}
+Zcash provides strong privacy through shielded notes; Tornado Cash popularized mixer-style privacy on Ethereum \cite{zcash,tornadocash}. Our approach offers lighter-weight private settlement over visible transfer events, authenticated via a consensus-maintained ZK tree rather than encrypted note commitments.
+
+\paragraph{Recursive Proofs:}
+Halo and Plonky2 are standard recursive proof systems \cite{halo,plonky2}. Plonky3 provides Poseidon2 primitives with a separate recursion track \cite{plonky3}. We use Plonky2 with Poseidon2 for recursive composition.
+
+\paragraph{Hash-Based Authorization:}
+The Ziggy signature scheme \cite{ziggy} uses a ZK-STARK to prove knowledge of a hash preimage, replacing lattice-based signatures with hash-based proofs.
+
+\paragraph{Post-Quantum Signatures:}
+Adoption of post-quantum signatures like ML-DSA and SLH-DSA raises questions about communication and verification cost \cite{mldsa}. Our approach compresses authorization into ZK proofs rather than publishing large signatures.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented a hash-based authorization scheme where users commit funds to addresses derived from secret preimages and later claim them by proving knowledge of the preimage in zero knowledge. This approach sidesteps post-quantum signature verification entirely, requiring only hash evaluations and membership proofs inside the circuit. Recursive aggregation via Plonky2/FRI amortizes verification cost, while first-layer dummy padding enlarges anonymity sets against balance-linking attacks. We formalized the withdrawal relation, proved six security properties via game-based definitions, showed that computing anonymity set size is \#P-hard, and demonstrated practical performance on commodity hardware.
+
+\section*{Acknowledgments}
+
+We thank the anonymous reviewers for their helpful feedback.
+
+\begin{thebibliography}{BBHR18}
+
+\bibitem[BBHR18]{fri}
+Eli Ben-Sasson, Iddo Bentov, Yinon Horesh, and Michael Riabzev.
+\newblock Fast Reed-Solomon Interactive Oracle Proofs of Proximity.
+\newblock In \emph{45th International Colloquium on Automata, Languages, and Programming (ICALP)}, 2018.
+\newblock \url{https://eprint.iacr.org/2017/568}
+
+\bibitem[BGH19]{halo}
+Sean Bowe, Jack Grigg, and Daira Hopwood.
+\newblock Recursive Proof Composition without a Trusted Setup.
+\newblock Cryptology ePrint Archive, Report 2019/1021, 2019.
+\newblock \url{https://eprint.iacr.org/2019/1021}
+
+\bibitem[BIN+23]{privacypools}
+Vitalik Buterin, Jacob Illum, Matthias Nadler, Fabian Sch\"{a}r, and Ameen Soleimani.
+\newblock Blockchain Privacy and Regulatory Compliance: Towards a Practical Equilibrium.
+\newblock SSRN, 2023.
+\newblock \url{https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4563364}
+
+\bibitem[Sta24]{ziggy}
+StarkWare.
+\newblock Ziggy: A Post-Quantum-Secure Signature Scheme Based on ZK-STARKs.
+\newblock ethSTARK repository, Ziggy branch, 2024.
+\newblock \url{https://github.com/starkware-libs/ethSTARK/tree/ziggy}
+
+\bibitem[GKS23]{poseidon2}
+Lorenzo Grassi, Dmitry Khovratovich, and Markus Schofnegger.
+\newblock Poseidon2: A Faster Version of the Poseidon Hash Function.
+\newblock Cryptology ePrint Archive, Report 2023/323, 2023.
+\newblock \url{https://eprint.iacr.org/2023/323}
+
+\bibitem[HBH+23]{zcash}
+Daira Hopwood, Sean Bowe, Taylor Hornby, and Nathan Wilcox.
+\newblock Zcash Protocol Specification.
+\newblock Protocol specification, 2023.
+\newblock \url{https://zips.z.cash/protocol/protocol.pdf}
+
+\bibitem[KBK+23]{eip7503}
+Keyvan Kambakhsh, Hamid Bateni, Amir Kahoori, and Nobitex Labs.
+\newblock EIP-7503: Zero-Knowledge Wormholes.
+\newblock Ethereum Improvement Proposal, 2023.
+\newblock \url{https://eips.ethereum.org/EIPS/eip-7503}
+
+\bibitem[NIST24]{mldsa}
+National Institute of Standards and Technology.
+\newblock Module-Lattice-Based Digital Signature Standard (FIPS 204).
+\newblock Federal Information Processing Standards Publication 204, 2024.
+\newblock \url{https://csrc.nist.gov/pubs/fips/204/final}
+
+\bibitem[Pol22]{plonky2}
+Polygon Zero Team.
+\newblock Plonky2: Fast Recursive Arguments with PLONK and FRI.
+\newblock Software repository, 2022.
+\newblock \url{https://github.com/0xPolygonZero/plonky2}
+
+\bibitem[PSS19]{tornadocash}
+Alexey Pertsev, Roman Semenov, and Roman Storm.
+\newblock Tornado Cash Privacy Solution.
+\newblock Project documentation, 2019.
+\newblock \url{https://tornado.cash}
+
+\bibitem[Plo24]{plonky3}
+Plonky3 Contributors.
+\newblock Plonky3.
+\newblock Software repository, 2024.
+\newblock \url{https://github.com/Plonky3/Plonky3}
+
+\bibitem[GJ79]{subsetsum}
+Michael~R. Garey and David~S. Johnson.
+\newblock \emph{Computers and Intractability: A Guide to the Theory of NP-Completeness}.
+\newblock W.~H. Freeman, 1979.
+
+\bibitem[Val79]{valiant1979}
+Leslie~G. Valiant.
+\newblock The Complexity of Enumeration and Reliability Problems.
+\newblock \emph{SIAM Journal on Computing}, 8(3):410--421, 1979.
+
+\bibitem[Sho97]{shor}
+Peter~W. Shor.
+\newblock Polynomial-Time Algorithms for Prime Factorization and Discrete Logarithms on a Quantum Computer.
+\newblock \emph{SIAM Journal on Computing}, 26(5):1484--1509, 1997.
+
+\end{thebibliography}
+
+\end{document}
