@@ -24,3 +24,4 @@ import WormholeSpec.Leaf
 import WormholeSpec.Aggregation
 import WormholeSpec.Security
 import WormholeSpec.Encoding
+import WormholeSpec.LeafBinding

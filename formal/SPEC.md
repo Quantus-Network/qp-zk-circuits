@@ -16,6 +16,7 @@ spec + the differential safety net.
 | `WormholeSpec/Aggregation.lean` | `RL0`, `RL1` |
 | `WormholeSpec/Security.lean` | Deterministic cores of the reduction theorems (injective-RO model) |
 | `WormholeSpec/Encoding.lean` | Byte↔felt encoding safety (4-byte injective edges, 8-byte canonical-only) |
+| `WormholeSpec/LeafBinding.lean` | Finding A: chain↔circuit leaf-recipient consistency (spendable ⟺ recipient = `WA(s)`) |
 | `../wormhole/tests/.../spec_differential.rs` | proptest harness: native oracles vs spec |
 | `../wormhole/tests/.../encoding_safety.rs` | proptest harness: encoding round-trips + witnessed `{0,p}` collision |
 
@@ -109,6 +110,27 @@ string ever reaches it. That proviso is a property of the *callers* (gap 7), not
 of the encoding; `digest_decode_collides_off_canonical` in the Rust harness
 exhibits the `{0, p}` collision that makes the precondition load-bearing.
 
+### Leaf-recipient binding (`LeafBinding.lean`) — Finding A, formalized
+
+In the circuit the recipient is witnessed as **felts** (the byte decode happens
+only off-circuit when the pallet builds the tree), so Finding A is a chain↔circuit
+*consistency* fact. Modeling `chainLeafHash` (pallet side, decodes recipient bytes)
+against `RandomOracle.leafHash` (circuit side, hashes felts, with C2 pinning them
+to `WA(s)`):
+
+| Spec clause | Content |
+|-------------|---------|
+| `chain_circuit_leaf_eq_iff` | pallet leaf = circuit `WA(s)` leaf ⟺ recipient *decodes* to `WA(s)` (`H` injective) |
+| `spendable_recipient_reduces_to_address` | **any** spendable recipient reduces to `WA(s)` — a non-canonical alias binds to the same address/nullifier, no advantage |
+| `spendable_iff_is_wormhole_address` | among **canonical** recipients the spendable one is **unique** = `WA(s)` |
+| `wormhole_address_canonical` | `WA(s)` is canonical (RO outputs are), so the honest recipient meets the precondition |
+| `distinct_secrets_distinct_recipients` | distinct secrets ⟹ distinct unique recipients (via `WA_inj`) |
+
+This converts Finding A's English argument into machine-checked facts: the
+byte-level non-injectivity only ever maps to the canonical reduction `WA(s)`, so it
+grants an attacker nothing. The computational "cannot produce `WA(s)` without `s`"
+step is the Phase-4 preimage game, as for the other security theorems.
+
 ## Known gaps / TODOs (tracked for later phases)
 
 1. ~~Range-check set.~~ **Done.** Confirmed against `ZkLeaf::collect_32_bit_targets`:
@@ -134,14 +156,41 @@ exhibits the `{0, p}` collision that makes the precondition load-bearing.
    extractor (and likewise deposit binding, nullifier indistinguishability, and
    transaction unlinkability) require an explicit lazily-sampled RO game — the
    Phase-4 track, out of scope for the current deterministic spec.
-7. **Encoding call-site canonicality audit.** `Encoding.lean` proves the 8-byte
-   decode is injective *only* on canonical limbs (`< p`); safety therefore rests
-   on the consumer-side invariant that every input to `bytes_to_digest` /
-   `bytes_to_felts_compact` is a genuine (canonical) hash output or a
-   range-checked value, never raw attacker-controllable bytes. This is not
-   provable about the encoding in isolation — it requires auditing each call site
-   in `qp-zk-circuits` and `chain/pallets/zk-tree`. Pending: enumerate the
-   decoders' callers and discharge the precondition at each (Phase 1 follow-up).
+7. **Encoding call-site canonicality audit.** ~~Pending.~~ **Done (no exploitable
+   bug).** `Encoding.lean` proves the 8-byte decode is injective *only* on
+   canonical limbs (`< p`). Auditing every caller of `bytes_to_digest` /
+   `bytes_to_felts_compact` across `qp-zk-circuits` and `chain`:
+
+   - **Most sites feed canonical inputs:** node hashing (children are Poseidon
+     outputs), `WA(s)` / nullifier digests, `parent_hash` / `zk_tree_root` /
+     `block_hash` (Poseidon outputs), and `asset_id` / `amount` / `transfer_count`
+     (range-checked `< 2^32`). The precondition holds directly.
+   - **Two sites feed genuinely non-canonical bytes,** but the non-injectivity is
+     neutralized downstream rather than by the encoding:
+     - **(A) zk-tree leaf recipient** (`hash_leaf` `to`, `tree.rs`): `record_transfer`
+       runs on *every* transfer, so `to` is arbitrary. Safe because the withdrawal
+       circuit binds the leaf's `to_account` felts to `WA(secret)` — a canonical
+       Poseidon output — and the numeric fields are range-checked, so the nullifier
+       `Null(s, count)` is pinned. A colliding recipient cannot target a victim's
+       `WA(s)` without a preimage break and confers no advantage. **Invariant
+       (load-bearing, implicit):** withdrawal soundness requires `to_account = WA(s)`
+       with `WA(s)` canonical; the leaf hash commits only to the *canonical
+       reduction* of the recipient, never the recipient bytes. Guarded with a
+       `debug_assert` + doc note in `hash_leaf`.
+     - **(B) block-header `state_root` / `extrinsics_root`** (`primitives/header`,
+       circuit `block_header`): substrate Blake2-256 → non-canonical. Irrelevant to
+       wormhole soundness (only `zk_tree_root`, canonical and at a fixed offset,
+       binds the proof). The substrate block hash is a *lossy* commitment to those
+       two roots, but a collision needs real Blake2 roots differing by exactly `p`
+       in a limb — not steerable. Comments corrected to stop calling Blake2 outputs
+       "hash outputs" (the canonical-felt notion).
+
+   **Conclusion:** the canonical-input precondition is satisfied for every
+   security-critical binding; the two non-canonical sites are safe by downstream
+   constraints, not by the encoding. Residual risk is *fragility* of the implicit
+   invariant (A), now documented and `debug_assert`-guarded. Invariant (A) is also
+   machine-checked in `LeafBinding.lean` (`spendable_iff_is_wormhole_address` and
+   `spendable_recipient_reduces_to_address`).
 
 ## Intentionally-loose facts (must NOT be flagged as bugs)
 
