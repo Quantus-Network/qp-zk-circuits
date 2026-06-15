@@ -9,16 +9,18 @@
       position-independent selection from the `illuzen/full-shuffle` fix), with
       an all-dummy batch settling to a zero block hash;
     * dummy-nullifier replacement `DNull(u) = H(H(u))`;
-    * value conservation of the exit totals.
+    * the exit *grouping/dedup* primitive (`groupExits`) that builds the `2N`
+      settled slots.
+
+  Value conservation is no longer asserted: `R_L0` now pins the exact in-circuit
+  grouping, and conservation (`outputExitTotal = rawOutputTotal`) is *derived* as
+  a theorem (`RL0_value_conservation`).
 
   NOTE the *weaker* layer-0 dummy sentinel: at layer 0 a child is treated as a
   dummy when `block_hash == 0` alone (`isDummyL0`), versus the leaf circuit's
-  `block_hash == 0 ∧ outputs == 0`. The two notions and their compatibility are
-  exactly the kind of obligation Phase 3 must discharge.
-
-  Exit *grouping/dedup* (merging equal exit accounts into one first-occurrence
-  slot) is abstracted here to total conservation; refining it to the full
-  multiset relation is a Phase-3 task (marked TODO).
+  `block_hash == 0 ∧ outputs == 0`. Their compatibility (dummy ⟹ zero outputs) is
+  the hypothesis of `rawOutputTotal_eq_inputExitTotal`, the obligation a full
+  leaf↔layer-0 composition proof must discharge.
 -/
 import WormholeSpec.Basic
 import WormholeSpec.Hash
@@ -46,16 +48,64 @@ structure Layer0Output where
     `abbrev` (reducible) so `Decidable` resolves through it via `DecidableEq Digest`. -/
 abbrev isDummyL0 (p : LeafPublic) : Prop := p.blockHash = Digest.zero
 
-/-- Boolean "is a real (non-dummy) child", for use with `List.find?`/`filter`. -/
+/-- Boolean "is a real (non-dummy) child", for use with `List.find?`. -/
 def isRealB (p : LeafPublic) : Bool := ! decide (isDummyL0 p)
 
-/-- Sum of output amounts over the non-dummy children (the value entering the batch). -/
-def inputExitTotal (leaves : List LeafPublic) : Nat :=
-  (leaves.map (fun p => if isDummyL0 p then 0 else p.outputAmount1 + p.outputAmount2)).sum
+/-- Total of the two output amounts over *every* child. This is exactly what the
+    in-circuit exit accumulator sums — it does not gate on the dummy flag. -/
+def rawOutputTotal : List LeafPublic → Felt
+  | [] => 0
+  | p :: rest => (p.outputAmount1 + p.outputAmount2) + rawOutputTotal rest
+
+/-- Output total restricted to non-dummy children (the value entering the batch,
+    once the leaf guarantee "dummy ⟹ zero outputs" is taken into account). -/
+def inputExitTotal : List LeafPublic → Felt
+  | [] => 0
+  | p :: rest =>
+      (if isDummyL0 p then 0 else p.outputAmount1 + p.outputAmount2) + inputExitTotal rest
+
+/-- The flattened `(account, amount)` outputs of all children, two per child.
+    These are the `2N` slot inputs to the grouping in
+    `build_layer0_wrapper_constraints`. -/
+def childPairs : List LeafPublic → List (Digest × Felt)
+  | [] => []
+  | p :: rest =>
+      (p.exitAccount1, p.outputAmount1) ::
+      (p.exitAccount2, p.outputAmount2) :: childPairs rest
+
+/-- Sum of the amounts whose account equals `k`. Mirrors the per-slot
+    `select(exit_j = key, amount_j, 0)` accumulation across all slots. -/
+def matchSum (k : Digest) : List (Digest × Felt) → Felt
+  | [] => 0
+  | (k', a') :: rest => (if k' = k then a' else 0) + matchSum k rest
+
+/-- Exit grouping/dedup, exactly as the circuit builds the `2N` output slots:
+    walking left to right with the set `seen` of keys already emitted, the first
+    occurrence of an account gets the full group sum (its own amount plus every
+    match further right), and any later occurrence is zeroed (so duplicates are
+    indistinguishable from unused slots). -/
+def groupAux (seen : List Digest) : List (Digest × Felt) → List ExitSlot
+  | [] => []
+  | (k, a) :: rest =>
+      (if k ∈ seen then ⟨0, Digest.zero⟩ else ⟨a + matchSum k rest, k⟩) ::
+        groupAux (k :: seen) rest
+
+/-- Top-level grouping (empty `seen`). -/
+def groupExits (xs : List (Digest × Felt)) : List ExitSlot := groupAux [] xs
 
 /-- Sum of the settled exit-slot amounts (the value leaving the batch). -/
-def outputExitTotal (out : Layer0Output) : Nat :=
-  (out.exitSlots.map (fun e => e.sum)).sum
+def slotsTotal : List ExitSlot → Felt
+  | [] => 0
+  | s :: rest => s.sum + slotsTotal rest
+
+/-- Sum of amounts over children whose accounts have not been emitted yet; the
+    recursive companion of "sum the slots that are first occurrences". -/
+def amtNotIn (seen : List Digest) : List (Digest × Felt) → Felt
+  | [] => 0
+  | (k, a) :: rest => (if k ∈ seen then 0 else a) + amtNotIn seen rest
+
+/-- Sum of the settled exit-slot amounts of a layer-0 output. -/
+def outputExitTotal (out : Layer0Output) : Felt := slotsTotal out.exitSlots
 
 /-- Metadata of each non-dummy child agrees with the aggregate header. -/
 def metadataConsistent (leaves : List LeafPublic) (out : Layer0Output) : Prop :=
@@ -95,11 +145,134 @@ def RL0 (ro : RandomOracle) (leaves : List LeafPublic) (us : List (List Felt))
   referenceFromFirstReal leaves out ∧
   nullifiersReplaced ro leaves us out.nullifiers ∧
   out.nullifiers.length = leaves.length ∧
-  -- Value conservation of exits.
-  outputExitTotal out = inputExitTotal leaves
-  -- TODO(Phase 3): full exit grouping/dedup as a multiset relation between the
-  -- children's (account, amount) outputs and `out.exitSlots`, plus the
-  -- `numExitSlots = 2 * leaves.length` slot accounting.
+  -- Primitive exit construction: the settled slots are *exactly* the in-circuit
+  -- group/dedup of every child's two (account, amount) outputs. Value
+  -- conservation is a derived theorem (`RL0_value_conservation`), not an
+  -- assumed conjunct.
+  out.exitSlots = groupExits (childPairs leaves)
+  -- TODO(Phase 3): `numExitSlots = 2 * leaves.length` slot accounting.
+
+-- ── Value conservation, derived from the grouping primitive ─────────────────
+
+/-- Re-protecting a key already in `seen` changes nothing. -/
+theorem amtNotIn_cons_mem {k : Digest} {seen : List Digest} (hk : k ∈ seen) :
+    ∀ xs, amtNotIn (k :: seen) xs = amtNotIn seen xs := by
+  intro xs
+  induction xs with
+  | nil => rfl
+  | cons hd tl ih =>
+      obtain ⟨k', a'⟩ := hd
+      have hiff : (k' ∈ k :: seen) ↔ (k' ∈ seen) := by
+        constructor
+        · intro h
+          rcases List.mem_cons.1 h with h' | h'
+          · exact h' ▸ hk
+          · exact h'
+        · intro h; exact List.mem_cons.2 (Or.inr h)
+      simp only [amtNotIn, ih]
+      by_cases hc : k' ∈ seen
+      · rw [if_pos hc, if_pos (hiff.2 hc)]
+      · rw [if_neg hc, if_neg (fun h => hc (hiff.1 h))]
+
+/-- The accumulator identity behind conservation: summing the matches of a fresh
+    key `k` (not yet in `seen`) plus the remaining not-yet-seen amounts equals
+    the not-yet-seen amounts without protecting `k`. -/
+theorem matchSum_amtNotIn {k : Digest} {seen : List Digest} (hk : k ∉ seen) :
+    ∀ xs, matchSum k xs + amtNotIn (k :: seen) xs = amtNotIn seen xs := by
+  intro xs
+  induction xs with
+  | nil => rfl
+  | cons hd tl ih =>
+      obtain ⟨k', a'⟩ := hd
+      simp only [matchSum, amtNotIn]
+      by_cases hkk : k' = k
+      · subst hkk
+        rw [if_pos rfl, if_pos List.mem_cons_self, if_neg hk]
+        simp only [Felt] at *; omega
+      · by_cases hs : k' ∈ seen
+        · rw [if_neg hkk, if_pos (List.mem_cons.2 (Or.inr hs)), if_pos hs]
+          simp only [Felt] at *; omega
+        · have h2 : k' ∉ k :: seen := by
+            intro h
+            rcases List.mem_cons.1 h with h' | h'
+            · exact hkk h'
+            · exact hs h'
+          rw [if_neg hkk, if_neg h2, if_neg hs]
+          simp only [Felt] at *; omega
+
+/-- The grouping conserves value: the settled slot total equals the total of all
+    not-yet-seen child amounts. -/
+theorem groupAux_conserves :
+    ∀ (seen : List Digest) (xs : List (Digest × Felt)),
+      slotsTotal (groupAux seen xs) = amtNotIn seen xs := by
+  intro seen xs
+  induction xs generalizing seen with
+  | nil => rfl
+  | cons hd tl ih =>
+      obtain ⟨k, a⟩ := hd
+      by_cases hk : k ∈ seen
+      · have e1 : groupAux seen ((k, a) :: tl)
+            = (⟨0, Digest.zero⟩ : ExitSlot) :: groupAux (k :: seen) tl := by
+          simp only [groupAux, if_pos hk]
+        rw [e1]
+        show (0 : Felt) + slotsTotal (groupAux (k :: seen) tl)
+            = amtNotIn seen ((k, a) :: tl)
+        rw [ih (k :: seen), amtNotIn_cons_mem hk tl]
+        have hR : amtNotIn seen ((k, a) :: tl) = 0 + amtNotIn seen tl := by
+          simp only [amtNotIn, if_pos hk]
+        rw [hR]
+      · have e1 : groupAux seen ((k, a) :: tl)
+            = (⟨a + matchSum k tl, k⟩ : ExitSlot) :: groupAux (k :: seen) tl := by
+          simp only [groupAux, if_neg hk]
+        have hm := matchSum_amtNotIn hk tl
+        rw [e1]
+        show (a + matchSum k tl) + slotsTotal (groupAux (k :: seen) tl)
+            = amtNotIn seen ((k, a) :: tl)
+        rw [ih (k :: seen)]
+        have hR : amtNotIn seen ((k, a) :: tl) = a + amtNotIn seen tl := by
+          simp only [amtNotIn, if_neg hk]
+        rw [hR]; simp only [Felt] at *; omega
+
+/-- `amtNotIn []` over the children's pairs is the raw output total. -/
+theorem amtNotIn_nil_childPairs (leaves : List LeafPublic) :
+    amtNotIn [] (childPairs leaves) = rawOutputTotal leaves := by
+  induction leaves with
+  | nil => rfl
+  | cons p rest ih =>
+      show p.outputAmount1 + (p.outputAmount2 + amtNotIn [] (childPairs rest))
+          = (p.outputAmount1 + p.outputAmount2) + rawOutputTotal rest
+      rw [ih]; simp only [Felt] at *; omega
+
+/-- Conservation for the top-level grouping of the children's outputs. -/
+theorem groupExits_childPairs (leaves : List LeafPublic) :
+    slotsTotal (groupExits (childPairs leaves)) = rawOutputTotal leaves := by
+  unfold groupExits
+  rw [groupAux_conserves [] (childPairs leaves), amtNotIn_nil_childPairs]
+
+/-- **Value conservation** (whitepaper §6.1): every layer-0 proof settles exactly
+    the value its children carry. Derived from the grouping primitive in `RL0`. -/
+theorem RL0_value_conservation {ro : RandomOracle} {leaves : List LeafPublic}
+    {us : List (List Felt)} {out : Layer0Output} (h : RL0 ro leaves us out) :
+    outputExitTotal out = rawOutputTotal leaves := by
+  unfold outputExitTotal
+  rw [h.2.2.2.2]
+  exact groupExits_childPairs leaves
+
+/-- Under the leaf↔layer-0 compatibility guarantee (a layer-0 dummy carries zero
+    outputs), the raw total coincides with the non-dummy total. -/
+theorem rawOutputTotal_eq_inputExitTotal {leaves : List LeafPublic}
+    (h : ∀ p ∈ leaves, isDummyL0 p → p.outputAmount1 = 0 ∧ p.outputAmount2 = 0) :
+    rawOutputTotal leaves = inputExitTotal leaves := by
+  induction leaves with
+  | nil => rfl
+  | cons p rest ih =>
+      have ihrest := ih (fun q hq => h q (List.mem_cons_of_mem _ hq))
+      by_cases hd : isDummyL0 p
+      · obtain ⟨h1, h2⟩ := h p List.mem_cons_self hd
+        simp only [rawOutputTotal, inputExitTotal, if_pos hd]
+        rw [ihrest]; simp only [Felt] at *; omega
+      · simp only [rawOutputTotal, inputExitTotal, if_neg hd]
+        rw [ihrest]
 
 /-- Public output of a layer-1 aggregation proof (see `layer1` constants). -/
 structure Layer1Output where
