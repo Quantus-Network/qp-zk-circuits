@@ -104,23 +104,27 @@ def computeRoot (ro : RandomOracle) (leaf : Digest) (levels : List MerkleLevel) 
 `R_leaf ro p w` holds iff witness `w` satisfies the leaf circuit for public
 inputs `p`.
 
-NOTE (Phase-1 confirmation): the exact membership of the 32-bit range-check set
-(`ZkLeaf::collect_32_bit_targets`) must be pinned by the differential tests. We
-assert the bounds we have confirmed from the source (output amounts, input
-amount, block number, and `fee_bps ≤ 10000`); `asset_id` and `transfer_count`
-bounds are marked TODO below rather than asserted, to avoid the spec
-over-claiming.
+RANGE-CHECK SET (confirmed against `ZkLeaf::collect_32_bit_targets`): the
+unconditional 32-bit checks cover `transfer_count` (both limbs), `asset_id`,
+`input_amount`, `output_amount_1`, `output_amount_2`, and `volume_fee_bps`.
+`block_number`'s 32-bit check lives separately in `BlockHeader::circuit` (also
+unconditional). `volume_fee_bps` additionally satisfies `≤ 10000` via the 14-bit
+`fee_complement` check in the fee constraint, which is the binding bound and
+subsumes its 32-bit check.
 -/
 def Rleaf (ro : RandomOracle) (p : LeafPublic) (w : LeafWitness) : Prop :=
   -- ── Always-on constraints ────────────────────────────────────────────────
-  -- Range checks (confirmed subset).
+  -- 32-bit range checks (`collect_32_bit_targets` + the block-header check).
   inRange 32 p.outputAmount1 ∧
   inRange 32 p.outputAmount2 ∧
   inRange 32 w.inputAmount ∧
+  inRange 32 p.assetId ∧
   inRange 32 p.blockNumber ∧
+  w.transferCount.length = 2 ∧
+  (∀ t ∈ w.transferCount, inRange 32 t) ∧
+  -- `volume_fee_bps ≤ 10000` (the binding fee-complement bound; subsumes its
+  -- own 32-bit range check).
   p.volumeFeeBps ≤ 10000 ∧
-  -- TODO(Phase 1): confirm and add `inRange 32 p.assetId` and range of
-  -- `w.transferCount` against `collect_32_bit_targets`.
   -- C5 fee / value conservation.
   feeOk p w ∧
   -- C2 wormhole-address derivation, plus the `to_account == account_id` wiring.

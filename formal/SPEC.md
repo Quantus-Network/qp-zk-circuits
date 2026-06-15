@@ -54,7 +54,8 @@ hermetic. Toolchain is pinned in `lean-toolchain` (Lean `v4.30`).
 | `computeRoot` / `stepUp` position insert | C3 | Merkle walk + position `select` — `zk_merkle_proof.rs:433–536` |
 | `depth ≤ maxDepth`, `pos < 4` | C3 | `enforce_target_less_than_const`, `range_check(position, 2)` — `zk_merkle_proof.rs:425–426,441–442` |
 | `feeOk` `(o₁+o₂)·10000 ≤ in·(10000−fee)` | C5 | `zk_merkle_proof.rs:409–417` |
-| `inRange 32 …` (outputs, input, block_number) | C5/C4 | `range_check(_, 32)` — `zk_merkle_proof.rs:404–407`, `block_header/mod.rs:71–73` |
+| `inRange 32 …` (transfer_count ×2, asset_id, input, outputs, volume_fee_bps) | C5/C3 | `ZkLeaf::collect_32_bit_targets` + `range_check(_,32)` — `zk_merkle_proof.rs:114–125,404–407` |
+| `inRange 32 block_number` | C4 | `range_check(_, 32)` — `block_header/mod.rs:71–73` |
 | `headerPreimage` order | C4 | `HeaderTargets::collect_to_vec` — `block_header/header.rs:63–75` |
 | root binding `zkTreeRoot = rootHash` | C4 | `connect_shared_targets` — `circuit.rs:331–338` |
 | dummy gating `¬isDummy → {C1, C4, root}` | §4 | `is_not_dummy` multiply-by-flag — `circuit.rs:251–338`, `zk_merkle_proof.rs:538–543` |
@@ -73,9 +74,10 @@ hermetic. Toolchain is pinned in `lean-toolchain` (Lean `v4.30`).
 
 ## Known gaps / TODOs (tracked for later phases)
 
-1. **Range-check set.** `Rleaf` asserts only the confirmed 32-bit bounds; confirm
-   `asset_id` and `transfer_count` against `ZkLeaf::collect_32_bit_targets`
-   (Phase 1 differential test will pin this).
+1. ~~Range-check set.~~ **Done.** Confirmed against `ZkLeaf::collect_32_bit_targets`:
+   `transfer_count` (both limbs), `asset_id`, `input_amount`, `output_amount_1`,
+   `output_amount_2`, `volume_fee_bps` (all unconditional 32-bit), plus
+   `block_number` in `BlockHeader::circuit`. `Rleaf` now asserts the full set.
 2. **Exit grouping/dedup.** `RL0` abstracts the exit merge to total conservation;
    refine to the full multiset relation + `numExitSlots = 2·N` (Phase 3).
 3. **L1 accounting.** `totalExitSlots` and aggregator-address binding semantics
