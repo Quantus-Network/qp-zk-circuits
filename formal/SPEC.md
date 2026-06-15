@@ -74,6 +74,16 @@ hermetic. Toolchain is pinned in `lean-toolchain` (Lean `v4.30`).
 | output layout (`Layer0Output`) | `aggregated_output` — `layer0/circuit/constants.rs` |
 | `RL1` forwarding + consistency | `build_layer1_wrapper_constraints` — `layer1/circuit/circuit_logic.rs` |
 
+### Security reductions (`Security.lean`)
+
+Deterministic cores of the game-based theorems, in the injective-RO model.
+
+| Spec clause | Paper | Notes |
+|-------------|-------|-------|
+| `WA_inj` (`WA s = WA s' → s = s'`) | §4.2 | collision resistance ⇒ injectivity, idealized |
+| **thm** `same_deposit_same_nullifier` / `no_double_spend` | Thm (One-Time Withdrawal) | same deposit ⇒ same nullifier; `n₁ ≠ n₂` unsatisfiable |
+| **thm** `spend_path_unique` (`H pk = WA s → pk = H(salt_wh ‖ s) .toList`) | Thm (Spend-Path Exclusivity) | unique outer preimage; case (2) ⟶ case (1) |
+
 ## Known gaps / TODOs (tracked for later phases)
 
 1. ~~Range-check set.~~ **Done.** Confirmed against `ZkLeaf::collect_32_bit_targets`:
@@ -93,6 +103,12 @@ hermetic. Toolchain is pinned in `lean-toolchain` (Lean `v4.30`).
 5. **`exit_account_1/2` are unconstrained at the leaf** — bound only at L0. The
    spec reflects this (no `Rleaf` clause references them); the binding obligation
    lives in `RL0`.
+6. **Game-based probabilistic accounting.** `Security.lean` proves the
+   *deterministic* cores of one-time withdrawal and spend-path exclusivity in the
+   injective-RO model. The `ε_coll`/`ε_pre` terms and the knowledge-soundness
+   extractor (and likewise deposit binding, nullifier indistinguishability, and
+   transaction unlinkability) require an explicit lazily-sampled RO game — the
+   Phase-4 track, out of scope for the current deterministic spec.
 
 ## Intentionally-loose facts (must NOT be flagged as bugs)
 
