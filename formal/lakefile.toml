@@ -1,0 +1,15 @@
+# Lean 4 formal-spec package for the qp-zk-circuits wormhole system.
+#
+# Phase 0/1 is intentionally dependency-free (core Lean + `omega` only) so it
+# builds in seconds and stays hermetic — no mathlib cache to fetch in CI.
+#
+# Phase 2 will add mathlib (pinned to the tag matching `lean-toolchain`) for the
+# concrete Goldilocks field `ZMod p`, finite-field lemmas, and the tactic
+# ecosystem used by the gadget soundness/completeness proofs. When that lands:
+#     lake update mathlib      # resolves mathlib + transitive deps
+#     lake exe cache get       # downloads prebuilt .olean cache (the big one)
+name = "wormholeSpec"
+defaultTargets = ["WormholeSpec"]
+
+[[lean_lib]]
+name = "WormholeSpec"
