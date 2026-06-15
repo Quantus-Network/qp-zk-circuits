@@ -11,6 +11,8 @@
   * `WormholeSpec.Hash`        random-oracle interface and derived hashes
   * `WormholeSpec.Leaf`        leaf relation R_leaf (C1–C5, conditional dummy path)
   * `WormholeSpec.Aggregation` layer-0 / layer-1 aggregation relations
+  * `WormholeSpec.Security`    reduction-style theorems (one-time withdrawal,
+                               spend-path exclusivity) in the injective-RO model
 
   See `SPEC.md` for the clause-by-clause cross reference to the Rust source.
 -/
@@ -18,3 +20,4 @@ import WormholeSpec.Basic
 import WormholeSpec.Hash
 import WormholeSpec.Leaf
 import WormholeSpec.Aggregation
+import WormholeSpec.Security
