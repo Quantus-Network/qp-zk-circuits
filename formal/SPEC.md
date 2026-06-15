@@ -69,6 +69,8 @@ hermetic. Toolchain is pinned in `lean-toolchain` (Lean `v4.30`).
 | `referenceFromFirstReal` (block ref = first non-dummy slot) | prefix-scan selection — `layer0/circuit/circuit_logic.rs` (the `illuzen/full-shuffle` fix) |
 | `nullifiersReplaced` `DNull(u)=H(H(u))` | `hash_dummy_nullifier_pre_image` — `circuit_logic.rs:338–346` |
 | `isDummyL0 = blockHash=0` (weaker sentinel) | dummy detection at L0 — `circuit_logic.rs` |
+| `groupExits` / `matchSum` (per-slot group sum + first-occurrence dedup) | exit-account grouping loop — `circuit_logic.rs:214–287` |
+| **thm** `RL0_value_conservation`: `outputExitTotal = rawOutputTotal` | derived from the grouping primitive (was an assumed conjunct) |
 | output layout (`Layer0Output`) | `aggregated_output` — `layer0/circuit/constants.rs` |
 | `RL1` forwarding + consistency | `build_layer1_wrapper_constraints` — `layer1/circuit/circuit_logic.rs` |
 
@@ -78,8 +80,12 @@ hermetic. Toolchain is pinned in `lean-toolchain` (Lean `v4.30`).
    `transfer_count` (both limbs), `asset_id`, `input_amount`, `output_amount_1`,
    `output_amount_2`, `volume_fee_bps` (all unconditional 32-bit), plus
    `block_number` in `BlockHeader::circuit`. `Rleaf` now asserts the full set.
-2. **Exit grouping/dedup.** `RL0` abstracts the exit merge to total conservation;
-   refine to the full multiset relation + `numExitSlots = 2·N` (Phase 3).
+2. ~~Exit grouping/dedup.~~ **Done (conservation).** `RL0` now pins the exact
+   in-circuit grouping (`groupExits`), and value conservation is the *derived*
+   theorem `RL0_value_conservation` (with `rawOutputTotal_eq_inputExitTotal`
+   bridging to the non-dummy total under the dummy⟹zero-outputs guarantee).
+   Remaining: the full per-account *multiset* characterization (which account
+   gets which sum) and `numExitSlots = 2·N` slot accounting (Phase 3).
 3. **L1 accounting.** `totalExitSlots` and aggregator-address binding semantics
    (Phase 3).
 4. **Dummy-notion compatibility.** Prove the leaf dummy (`blockHash=0 ∧ outs=0`)
