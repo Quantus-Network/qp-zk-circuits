@@ -47,100 +47,100 @@ fn secret_from_limbs(limbs: [u64; 4]) -> BytesDigest {
 }
 
 proptest! {
-    /// C2: `WA(s) = H(H(salt_wh ‖ s))`.
-    #[test]
-    fn wa_matches_double_hash(
-        a in 0u64..GOLDILOCKS,
-        b in 0u64..GOLDILOCKS,
-        c in 0u64..GOLDILOCKS,
-        d in 0u64..GOLDILOCKS,
-    ) {
-        let secret = secret_from_limbs([a, b, c, d]);
+/// C2: `WA(s) = H(H(salt_wh ‖ s))`.
+#[test]
+fn wa_matches_double_hash(
+    a in 0u64..GOLDILOCKS,
+    b in 0u64..GOLDILOCKS,
+    c in 0u64..GOLDILOCKS,
+    d in 0u64..GOLDILOCKS,
+) {
+    let secret = secret_from_limbs([a, b, c, d]);
 
-        let mut preimage: Vec<F> = string_to_felts(UNSPENDABLE_SALT).to_vec();
-        preimage.extend_from_slice(&bytes_to_digest(secret));
-        let expected = hh(&preimage);
+    let mut preimage: Vec<F> = string_to_felts(UNSPENDABLE_SALT).to_vec();
+    preimage.extend_from_slice(&bytes_to_digest(secret));
+    let expected = hh(&preimage);
 
-        let actual = UnspendableAccount::from_secret(secret).account_id;
-        prop_assert_eq!(actual, expected);
-    }
+    let actual = UnspendableAccount::from_secret(secret).account_id;
+    prop_assert_eq!(actual, expected);
+}
 
-    /// C1: `Null(s, c) = H(H(salt_null ‖ s ‖ c))`.
-    #[test]
-    fn nullifier_matches_double_hash(
-        a in 0u64..GOLDILOCKS,
-        b in 0u64..GOLDILOCKS,
-        c in 0u64..GOLDILOCKS,
-        d in 0u64..GOLDILOCKS,
-        transfer_count in any::<u64>(),
-    ) {
-        let secret = secret_from_limbs([a, b, c, d]);
+/// C1: `Null(s, c) = H(H(salt_null ‖ s ‖ c))`.
+#[test]
+fn nullifier_matches_double_hash(
+    a in 0u64..GOLDILOCKS,
+    b in 0u64..GOLDILOCKS,
+    c in 0u64..GOLDILOCKS,
+    d in 0u64..GOLDILOCKS,
+    transfer_count in any::<u64>(),
+) {
+    let secret = secret_from_limbs([a, b, c, d]);
 
-        let mut preimage: Vec<F> = string_to_felts(NULLIFIER_SALT).to_vec();
-        preimage.extend_from_slice(&bytes_to_digest(secret));
-        preimage.extend(u64_to_felts(transfer_count));
-        let expected = hh(&preimage);
+    let mut preimage: Vec<F> = string_to_felts(NULLIFIER_SALT).to_vec();
+    preimage.extend_from_slice(&bytes_to_digest(secret));
+    preimage.extend(u64_to_felts(transfer_count));
+    let expected = hh(&preimage);
 
-        let actual = Nullifier::from_preimage(secret, transfer_count).hash;
-        prop_assert_eq!(actual, expected);
-    }
+    let actual = Nullifier::from_preimage(secret, transfer_count).hash;
+    prop_assert_eq!(actual, expected);
+}
 
-    /// Determinism: the derivations are pure functions of their inputs.
-    #[test]
-    fn derivations_are_deterministic(
-        a in 0u64..GOLDILOCKS,
-        b in 0u64..GOLDILOCKS,
-        c in 0u64..GOLDILOCKS,
-        d in 0u64..GOLDILOCKS,
-        transfer_count in any::<u64>(),
-    ) {
-        let secret = secret_from_limbs([a, b, c, d]);
-        prop_assert_eq!(
-            UnspendableAccount::from_secret(secret).account_id,
-            UnspendableAccount::from_secret(secret).account_id
-        );
-        prop_assert_eq!(
-                Nullifier::from_preimage(secret, transfer_count).hash,
-                    Nullifier::from_preimage(secret, transfer_count).hash
-                );
-        }
-
-        /// C3: the ZK-tree leaf hash preimage is ordered
-        /// `to_account(4) ‖ transfer_count(2) ‖ asset_id(1) ‖ input_amount(1)`,
-        /// matching the spec's `leafHash` (`WormholeSpec.Hash`).
-        #[test]
-        fn leaf_hash_preimage_order(
-            a in 0u64..GOLDILOCKS,
-            b in 0u64..GOLDILOCKS,
-            c in 0u64..GOLDILOCKS,
-            d in 0u64..GOLDILOCKS,
-            transfer_count in any::<u64>(),
-            asset_id in any::<u32>(),
-            input_amount in any::<u32>(),
-            output_amount_1 in any::<u32>(),
-            output_amount_2 in any::<u32>(),
-            volume_fee_bps in any::<u32>(),
-        ) {
-            let to_account = bytes32_from_limbs([a, b, c, d]);
-
-            let leaf = ZkLeafData::new(
-                to_account,
-                transfer_count,
-                asset_id,
-                input_amount,
-                output_amount_1,
-                output_amount_2,
-                volume_fee_bps,
+/// Determinism: the derivations are pure functions of their inputs.
+#[test]
+fn derivations_are_deterministic(
+    a in 0u64..GOLDILOCKS,
+    b in 0u64..GOLDILOCKS,
+    c in 0u64..GOLDILOCKS,
+    d in 0u64..GOLDILOCKS,
+    transfer_count in any::<u64>(),
+) {
+    let secret = secret_from_limbs([a, b, c, d]);
+    prop_assert_eq!(
+        UnspendableAccount::from_secret(secret).account_id,
+        UnspendableAccount::from_secret(secret).account_id
+    );
+    prop_assert_eq!(
+            Nullifier::from_preimage(secret, transfer_count).hash,
+                Nullifier::from_preimage(secret, transfer_count).hash
             );
-            let actual = Poseidon2Hash::hash_no_pad(&leaf.collect_for_hash()).elements;
-
-            // Independently reconstruct the spec-documented preimage order.
-            let mut preimage: Vec<F> = ser_bytes_to_digest(&to_account).to_vec();
-            preimage.extend(u64_to_felts(transfer_count));
-            preimage.push(F::from_canonical_u32(asset_id));
-            preimage.push(F::from_canonical_u32(input_amount));
-            let expected = Poseidon2Hash::hash_no_pad(&preimage).elements;
-
-            prop_assert_eq!(actual, expected);
-        }
     }
+
+    /// C3: the ZK-tree leaf hash preimage is ordered
+    /// `to_account(4) ‖ transfer_count(2) ‖ asset_id(1) ‖ input_amount(1)`,
+    /// matching the spec's `leafHash` (`WormholeSpec.Hash`).
+    #[test]
+    fn leaf_hash_preimage_order(
+        a in 0u64..GOLDILOCKS,
+        b in 0u64..GOLDILOCKS,
+        c in 0u64..GOLDILOCKS,
+        d in 0u64..GOLDILOCKS,
+        transfer_count in any::<u64>(),
+        asset_id in any::<u32>(),
+        input_amount in any::<u32>(),
+        output_amount_1 in any::<u32>(),
+        output_amount_2 in any::<u32>(),
+        volume_fee_bps in any::<u32>(),
+    ) {
+        let to_account = bytes32_from_limbs([a, b, c, d]);
+
+        let leaf = ZkLeafData::new(
+            to_account,
+            transfer_count,
+            asset_id,
+            input_amount,
+            output_amount_1,
+            output_amount_2,
+            volume_fee_bps,
+        );
+        let actual = Poseidon2Hash::hash_no_pad(&leaf.collect_for_hash()).elements;
+
+        // Independently reconstruct the spec-documented preimage order.
+        let mut preimage: Vec<F> = ser_bytes_to_digest(&to_account).to_vec();
+        preimage.extend(u64_to_felts(transfer_count));
+        preimage.push(F::from_canonical_u32(asset_id));
+        preimage.push(F::from_canonical_u32(input_amount));
+        let expected = Poseidon2Hash::hash_no_pad(&preimage).elements;
+
+        prop_assert_eq!(actual, expected);
+    }
+}

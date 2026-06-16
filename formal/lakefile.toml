@@ -8,8 +8,8 @@
 # ecosystem used by the gadget soundness/completeness proofs. When that lands:
 #     lake update mathlib      # resolves mathlib + transitive deps
 #     lake exe cache get       # downloads prebuilt .olean cache (the big one)
-name = "wormholeSpec"
 defaultTargets = ["WormholeSpec"]
+name = "wormholeSpec"
 
 [[lean_lib]]
 name = "WormholeSpec"
