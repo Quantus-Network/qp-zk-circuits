@@ -10,6 +10,7 @@
 //! The independent recomputation mirrors:
 //!   * `RandomOracle.WA   s   = hh (wormholeSalt ++ s)`
 //!   * `RandomOracle.Null s c = hh (nullifierSalt ++ s ++ c)`
+//!
 //! from `formal/WormholeSpec/Hash.lean`.
 
 use plonky2::field::types::Field;
