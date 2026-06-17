@@ -93,12 +93,11 @@ jobs:
       # the kernel, so a later edit that breaks a proof fails CI instead of rotting
       # silently. elan/lake are installed from `formal/lean-toolchain` (Lean v4.30).
       #
-      # Defense-in-depth on top of `lake build`:
-      #   * leanchecker            — re-checks the compiled environment with an
-      #                              independent kernel checker (bundled on v4.30).
-      #   * nanoda + allow-sorry=false — external Rust type-checker that fails the
-      #                              build on ANY `sorry`, so no proof gap can slip
-      #                              in disguised as a complete theorem.
+      # Defense-in-depth: `leanchecker` re-checks the compiled environment with an
+      # independent kernel checker (bundled on v4.30). (We do *not* use `nanoda`,
+      # the external Rust checker, which currently crashes on the v4.30 export
+      # format; the no-`sorry` guarantee is enforced by the grep gate below, since
+      # `leanchecker` accepts `sorryAx` as a valid axiom.)
       - name: Build formal spec (lake build)
         # Pinned to a full commit SHA (supply-chain hardening). 38fbc41 == v1.5.0.
         uses: leanprover/lean-action@38fbc41a8c28c4cbaec22d7f7de508ec2e7c0dd9 # v1.5.0
@@ -106,8 +105,15 @@ jobs:
           lake-package-directory: "formal"
           use-mathlib-cache: "false"
           leanchecker: "true"
-          nanoda: "true"
-          nanoda-allow-sorry: "false"
+      # No-`sorry` gate: the spec must stay gap-free. Fail if any proof term uses a
+      # `sorry`/`admit`/`sorryAx` placeholder. (Keep the literal words out of
+      # comments/strings under `formal/` so this stays a clean signal.)
+      - name: Assert the spec contains no sorry/admit
+        run: |
+          if grep -rEn '\b(sorry|admit|sorryAx)\b' --include='*.lean' formal; then
+            echo "::error::formal spec contains a sorry/admit placeholder"
+            exit 1
+          fi
 
   slow-tests:
     name: 🐌 Slow Tests (Crypto-heavy)
