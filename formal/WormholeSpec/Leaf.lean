@@ -76,7 +76,16 @@ def LeafPublic.isDummy (p : LeafPublic) : Prop :=
 /-- C5 — fee / value conservation:
     `(out₁ + out₂) · 10000 ≤ input · (10000 − fee_bps)`. The `fee_bps ≤ 10000`
     side condition (range-checked to 14 bits in-circuit) keeps the truncated `Nat`
-    subtraction faithful to the field arithmetic. -/
+    subtraction faithful to the field arithmetic.
+
+    FIELD-FIDELITY NOTE (Phase-2 obligation). In-circuit the `≤` is *not* a native
+    comparison: the circuit computes `diff = rhs − lhs` in the field and
+    range-checks `diff` to 48 bits, which rejects the wrapped (huge) value produced
+    when `lhs > rhs` and so enforces `lhs ≤ rhs` without wraparound
+    (`zk_merkle_proof.rs:416–417`). This `Nat` `≤` is faithful to that field
+    computation *only because* of the 48-bit non-overflow check (the operands fit:
+    `lhs, rhs < 2⁴⁷` under the 32-bit amount and 14-bit fee bounds). Phase 2 must
+    model/retain that range check rather than read `≤` as field order. -/
 def feeOk (p : LeafPublic) (w : LeafWitness) : Prop :=
   (p.outputAmount1 + p.outputAmount2) * 10000 ≤ w.inputAmount * (10000 - p.volumeFeeBps)
 

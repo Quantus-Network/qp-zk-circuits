@@ -194,20 +194,26 @@ step is the Phase-4 preimage game, as for the other security theorems.
        `WA(s)` without a preimage break and confers no advantage. **Invariant
        (load-bearing, implicit):** withdrawal soundness requires `to_account = WA(s)`
        with `WA(s)` canonical; the leaf hash commits only to the *canonical
-       reduction* of the recipient, never the recipient bytes. Guarded with a
-       `debug_assert` + doc note in `hash_leaf`.
+       reduction* of the recipient, never the recipient bytes. The corresponding
+       chain-side guard (a `debug_assert` + doc note in `hash_leaf`) lives in the
+       chain/pallet repo and is tracked there separately — it is *not* part of this
+       PR (which touches only `formal/`, `Cargo.lock`, and `wormhole/tests/`). What
+       this PR contributes is the argument and its machine-checking in
+       `LeafBinding.lean`.
      - **(B) block-header `state_root` / `extrinsics_root`** (`primitives/header`,
        circuit `block_header`): substrate Blake2-256 → non-canonical. Irrelevant to
        wormhole soundness (only `zk_tree_root`, canonical and at a fixed offset,
        binds the proof). The substrate block hash is a *lossy* commitment to those
        two roots, but a collision needs real Blake2 roots differing by exactly `p`
-       in a limb — not steerable. Comments corrected to stop calling Blake2 outputs
-       "hash outputs" (the canonical-felt notion).
+       in a limb — not steerable. The misleading "hash outputs" comments on those
+       Blake2 fields are corrected in the chain repo (tracked separately, not in
+       this PR).
 
    **Conclusion:** the canonical-input precondition is satisfied for every
    security-critical binding; the two non-canonical sites are safe by downstream
    constraints, not by the encoding. Residual risk is *fragility* of the implicit
-   invariant (A), now documented and `debug_assert`-guarded. Invariant (A) is also
+   invariant (A). The chain-side documentation/guard for (A) and (B) is tracked in
+   the chain/pallet repo (separate PRs); within *this* PR, invariant (A) is
    machine-checked in `LeafBinding.lean` (`spendable_iff_is_wormhole_address` and
    `spendable_recipient_reduces_to_address`).
 

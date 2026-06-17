@@ -153,7 +153,13 @@ def nullifiersReplaced (ro : RandomOracle) :
 `RL0 ro leaves us out` holds iff the layer-0 wrapper accepts children `leaves`
 with dummy-nullifier preimages `us`, producing aggregate output `out`.
 
-`us` has one entry per child (used only on dummy slots).
+`us` has one entry per child (used only on dummy slots). This matches the circuit
+witness layout exactly: `AggregationCircuitTargets.dummy_nullifier_pre_images` is a
+`Vec<[Target; 4]>` allocated once *per leaf slot* (`for _ in 0..n_leaf`), not once
+per dummy — see `layer0/circuit/circuit_logic.rs:46–47, 76–85`. The wrapper reads
+slot `i`'s preimage only when slot `i` is a dummy (`select(is_dummy_i, …)`), so the
+per-child length bookkeeping here (`out.nullifiers.length = leaves.length`) lines up
+with the circuit.
 -/
 def RL0 (ro : RandomOracle) (leaves : List LeafPublic) (us : List (List Felt))
     (out : Layer0Output) : Prop :=

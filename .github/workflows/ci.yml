@@ -100,7 +100,8 @@ jobs:
       #                              build on ANY `sorry`, so no proof gap can slip
       #                              in disguised as a complete theorem.
       - name: Build formal spec (lake build)
-        uses: leanprover/lean-action@v1
+        # Pinned to a full commit SHA (supply-chain hardening). 38fbc41 == v1.5.0.
+        uses: leanprover/lean-action@38fbc41a8c28c4cbaec22d7f7de508ec2e7c0dd9 # v1.5.0
         with:
           lake-package-directory: "formal"
           use-mathlib-cache: "false"
