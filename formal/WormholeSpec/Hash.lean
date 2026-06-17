@@ -17,15 +17,40 @@
      idealization and is exactly what the deposit-binding / nullifier arguments
      rely on.
 
-  The Phase-4 game-based track (deposit binding, unlinkability, nullifier
-  indistinguishability) replaces this with an explicit lazily-sampled RO game;
-  this interface is the seam where that richer model plugs in.
+  WARNING — total injectivity is only consistent over an INFINITE `Felt`.
+  ---------------------------------------------------------------------
+  `HashInjective` quantifies over all of `List Felt` (infinite) into `Digest`
+  (`Felt⁴`). With the current `Felt := Nat` the codomain is infinite, an injective
+  `H` exists, and `RandomOracle` is inhabited — so the theorems downstream
+  (`WA_inj`, `same_deposit_same_nullifier`, `spend_path_unique`, the Finding-A
+  binding lemmas) are non-vacuous. But a *compressing* hash over a finite field is
+  never literally injective: if `Felt` is swapped to `ZMod goldilocks`, `Digest`
+  becomes finite, no injective `H : List Felt → Digest` exists (pigeonhole), and
+  `RandomOracle` becomes uninhabited. Every theorem taking `ro : RandomOracle`
+  would then be *vacuously* true and content-free. So this module must stay over
+  an infinite / abstract `Felt`; never instantiate it at the concrete field.
+
+  The faithful finite-field model is the Phase-4 game-based track (deposit
+  binding, unlinkability, nullifier indistinguishability): an explicit
+  lazily-sampled RO game with `ε_coll` / `ε_pre` advantage bounds, where
+  collisions are *negligibly rare* rather than *impossible*. This interface is the
+  seam where that richer model plugs in.
 -/
 import WormholeSpec.Basic
 
 namespace WormholeSpec
 
-/-- Spec-level injectivity for the hash (the RO "no collisions" idealization). -/
+/-- Build-time tripwire for the warning above. The RO idealization
+    (`HashInjective`) is consistent only over an *infinite* carrier; this `rfl`
+    pins `Felt` to `Nat`. If a future change redefines `Felt` as a finite field,
+    THIS line stops compiling — forcing the author to confront the vacuity issue
+    (move the RO modules to an abstract/infinite carrier, or the Phase-4 game)
+    rather than silently turning every RO-dependent theorem vacuous. -/
+example : Felt = Nat := rfl
+
+/-- Spec-level injectivity for the hash (the RO "no collisions" idealization).
+    Consistent ONLY over an infinite `Felt` (see the module-header warning): with
+    a finite field this is unsatisfiable and makes `RandomOracle` uninhabited. -/
 def HashInjective (H : List Felt → Digest) : Prop :=
   ∀ x y, H x = H y → x = y
 

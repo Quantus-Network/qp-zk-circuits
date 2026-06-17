@@ -32,14 +32,26 @@ hermetic. Toolchain is pinned in `lean-toolchain` (Lean `v4.30`).
 
 ## Modeling choices
 
-- **Field.** `Felt` is `Nat` as a placeholder (`Basic.lean`). The spec only needs
-  hash I/O and range bounds, both faithful over `Nat`. **Phase 2** swaps in
-  `abbrev Felt := ZMod 0xFFFFFFFF00000001` (mathlib) and the CVC5 finite-field
-  tactic; no other module references the representation.
+- **Field.** `Felt` is `Nat` (`Basic.lean`). Finite-field facts that the spec
+  needs (range checks, the 8-byte encoding's mod-`p` reduction) are modeled
+  *explicitly* over `Nat` with the modulus `goldilocks` — see `Encoding.lean` —
+  so they do not require `Felt` to be the field. **The representation is not a
+  free global swap:** redefining `Felt := ZMod goldilocks` workspace-wide would
+  make `Digest = Felt⁴` finite while `List Felt` stays infinite, so no injective
+  `H` exists (pigeonhole), `RandomOracle` becomes uninhabited, and every
+  RO-dependent theorem (`Security.lean`, `LeafBinding.lean`) silently turns
+  *vacuous*. Today `Felt = Nat` is infinite, so `RandomOracle` is inhabited and
+  those theorems have content. Phase-2 in-field arithmetic and Phase-4
+  game-based resistance therefore live in a separate concrete-field layer; the
+  RO modules stay over an infinite/abstract `Felt`. (See the warnings in
+  `Basic.lean` / `Hash.lean`.)
 - **Hash `H` as a random oracle.** Represented by an opaque total function `H`
   (capturing *determinism*) plus an `injective` field — the RO "no collisions"
-  idealization that soundness/security proofs may invoke (`Hash.lean`). The
-  Phase-4 game-based track replaces this with an explicit lazily-sampled RO game;
+  idealization that soundness/security proofs may invoke (`Hash.lean`). This
+  *total* injectivity is consistent only over an infinite `Felt`; a compressing
+  hash over a finite field is never literally injective, so the faithful
+  finite-field model is the Phase-4 game (collisions negligibly rare, not
+  impossible). The Phase-4 game-based track replaces this with an explicit lazily-sampled RO game;
   this structure is the seam.
 - **TCB.** Not re-verified: Plonky2's FRI/PLONK soundness, the `PoseidonGate`
   implementation, the Lean kernel. The claim is: *given a sound proof system and

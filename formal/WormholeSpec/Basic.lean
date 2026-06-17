@@ -3,14 +3,28 @@
 
   PHASE-0 MODELING CHOICE
   -----------------------
-  `Felt` is a *placeholder* for a Goldilocks field element. At the specification
-  level the only field facts the relations need are (a) hash I/O over felts and
-  (b) range bounds on small scalars, both of which `Nat` models faithfully.
+  `Felt` is a *placeholder* for a Goldilocks field element, currently `Nat`. At
+  the specification level the relations need only (a) hash I/O over felts and
+  (b) range / encoding facts on small scalars. The latter are modeled *explicitly*
+  over `Nat` with the modulus `goldilocks` (see `Encoding.lean`, which reasons
+  about `· % p` directly), so they never require `Felt` itself to be the finite
+  field.
 
-  Phase 2 (interactive proofs) replaces this single abbreviation with
-  `abbrev Felt := ZMod 0xFFFFFFFF00000001` from mathlib and adds the algebraic
-  reasoning (and the CVC5 finite-field tactic) needed for in-field arithmetic.
-  Nothing else in the spec references the representation, so the swap is local.
+  WARNING — the field representation is NOT a free global swap.
+  -----------------------------------------------------------
+  Do **not** redefine `abbrev Felt := ZMod goldilocks` workspace-wide. `Hash.lean`
+  models the hash as a *totally injective* `H : List Felt → Digest` (the
+  random-oracle idealization). That is satisfiable only while the carrier is
+  infinite — as `Nat` is, so `RandomOracle` is inhabited today and the security
+  theorems have content. Over a *finite* `Felt`, `Digest = Felt⁴` is finite while
+  `List Felt` is infinite, so by pigeonhole no injective `H` exists ⇒
+  `RandomOracle` becomes uninhabited ⇒ every RO-dependent theorem
+  (`Security.lean`, `LeafBinding.lean`) silently turns vacuous. See the matching
+  warning in `Hash.lean`.
+
+  Consequently the interactive in-field arithmetic (Phase 2) and the game-based
+  collision / preimage resistance (Phase 4) belong in their own concrete-field
+  layer; the RO-dependent modules must stay over an infinite / abstract `Felt`.
 -/
 
 namespace WormholeSpec
@@ -18,8 +32,9 @@ namespace WormholeSpec
 /-- A Goldilocks field element (Phase-0 placeholder; see module header). -/
 abbrev Felt : Type := Nat
 
-/-- The Goldilocks prime `2^64 - 2^32 + 1`. Documentation only at the spec level;
-    becomes the modulus of `Felt` in Phase 2. -/
+/-- The Goldilocks prime `2^64 - 2^32 + 1`. Used as the explicit modulus by the
+    encoding / range layer (`Encoding.lean`); the RO layer deliberately does *not*
+    make this the modulus of `Felt` (see the warning in the module header). -/
 def goldilocks : Nat := 0xFFFFFFFF00000001
 
 /-- A 256-bit digest: four field elements, matching `POSEIDON2_OUTPUT = 4` and the
