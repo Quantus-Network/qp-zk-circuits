@@ -81,6 +81,33 @@ jobs:
       - name: Check documentation
         run: cargo doc --workspace --locked --no-deps --all-features --document-private-items
 
+  formal-spec:
+    name: 📐 Formal Spec (Lean)
+    # needs: fast-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      # Builds the Lean 4 formal spec under `formal/`. The package is deliberately
+      # mathlib-free and builds in seconds; `lake build` type-checks every proof in
+      # the kernel, so a later edit that breaks a proof fails CI instead of rotting
+      # silently. elan/lake are installed from `formal/lean-toolchain` (Lean v4.30).
+      #
+      # Defense-in-depth on top of `lake build`:
+      #   * leanchecker            — re-checks the compiled environment with an
+      #                              independent kernel checker (bundled on v4.30).
+      #   * nanoda + allow-sorry=false — external Rust type-checker that fails the
+      #                              build on ANY `sorry`, so no proof gap can slip
+      #                              in disguised as a complete theorem.
+      - name: Build formal spec (lake build)
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: "formal"
+          use-mathlib-cache: "false"
+          leanchecker: "true"
+          nanoda: "true"
+          nanoda-allow-sorry: "false"
+
   slow-tests:
     name: 🐌 Slow Tests (Crypto-heavy)
     # needs: fast-checks
