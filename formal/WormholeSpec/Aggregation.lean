@@ -21,6 +21,22 @@
   `block_hash == 0 ∧ outputs == 0`. Their compatibility (dummy ⟹ zero outputs) is
   the hypothesis of `rawOutputTotal_eq_inputExitTotal`, the obligation a full
   leaf↔layer-0 composition proof must discharge.
+
+  CONSERVATION OVER `Nat` VS `ZMod p` (a Phase-2 caveat)
+  ------------------------------------------------------
+  `RL0_value_conservation` is an *exact* `Nat` identity, so it is economically
+  meaningful as stated. The in-circuit accumulators, however, live in the field:
+  over `ZMod goldilocks` (Phase 2) "conservation" would only be equality *mod p*,
+  and two distinct totals could be congruent. The result stays meaningful exactly
+  while the total cannot wrap — i.e. under the explicit hypothesis
+  `rawOutputTotal leaves < goldilocks`. That bound is *not* hand-waved: it is
+  discharged below (`rawOutputTotal_lt_modulus`) from the leaf circuit's 32-bit
+  output range checks plus a batch-size bound, with an enormous margin
+  (`n · 2³³ < p` holds for any `n < 2³¹`, versus realistic batches of a few
+  dozen). Phase 2 must (a) carry `rawOutputTotal leaves < goldilocks` as a
+  hypothesis on the field-level conservation statement, and (b) rework the
+  `omega`-based proofs here, since `omega` reasons over `Nat`/`Int` and does not
+  apply to `ZMod p` arithmetic.
 -/
 import WormholeSpec.Basic
 import WormholeSpec.Hash
@@ -257,6 +273,36 @@ theorem RL0_value_conservation {ro : RandomOracle} {leaves : List LeafPublic}
   unfold outputExitTotal
   rw [h.2.2.2.2]
   exact groupExits_childPairs leaves
+
+-- ── No-wraparound bound (makes the Phase-2 field hypothesis explicit) ────────
+
+/-- A per-output bound `M` lifts to a linear bound on the batch total: with each
+    of the two outputs `≤ M`, a batch of `n` children totals `≤ n · 2M`. -/
+theorem rawOutputTotal_le_linear {leaves : List LeafPublic} {M : Felt}
+    (h : ∀ p ∈ leaves, p.outputAmount1 ≤ M ∧ p.outputAmount2 ≤ M) :
+    rawOutputTotal leaves ≤ leaves.length * (2 * M) := by
+  induction leaves with
+  | nil => simp [rawOutputTotal]
+  | cons p rest ih =>
+      obtain ⟨h1, h2⟩ := h p List.mem_cons_self
+      have ihrest := ih (fun q hq => h q (List.mem_cons_of_mem _ hq))
+      -- `(n+1)·2M = n·2M + 2M`, so `omega` can treat the products as atoms.
+      have hexp : (rest.length + 1) * (2 * M) = rest.length * (2 * M) + 2 * M :=
+        Nat.succ_mul _ _
+      simp only [rawOutputTotal, List.length_cons, Felt] at *
+      omega
+
+/-- The explicit *no-wraparound* bound that the field model (Phase 2) must assume.
+    If the linear batch bound stays below the modulus, the `Nat` total does too,
+    so reducing mod `goldilocks` is lossless and the `Nat` conservation identity
+    transfers verbatim to `ZMod goldilocks`. Under the leaf circuit's 32-bit output
+    range checks (`M = 2³² − 1`) the side condition `n · 2M < goldilocks` holds for
+    every batch size `n < 2³¹`. -/
+theorem rawOutputTotal_lt_modulus {leaves : List LeafPublic} {M : Felt}
+    (hM : ∀ p ∈ leaves, p.outputAmount1 ≤ M ∧ p.outputAmount2 ≤ M)
+    (hbatch : leaves.length * (2 * M) < goldilocks) :
+    rawOutputTotal leaves < goldilocks :=
+  Nat.lt_of_le_of_lt (rawOutputTotal_le_linear hM) hbatch
 
 /-- Under the leaf↔layer-0 compatibility guarantee (a layer-0 dummy carries zero
     outputs), the raw total coincides with the non-dummy total. -/

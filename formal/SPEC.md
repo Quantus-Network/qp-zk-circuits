@@ -87,6 +87,7 @@ hermetic. Toolchain is pinned in `lean-toolchain` (Lean `v4.30`).
 | `isDummyL0 = blockHash=0` (weaker sentinel) | dummy detection at L0 — `circuit_logic.rs` |
 | `groupExits` / `matchSum` (per-slot group sum + first-occurrence dedup) | exit-account grouping loop — `circuit_logic.rs:214–287` |
 | **thm** `RL0_value_conservation`: `outputExitTotal = rawOutputTotal` | derived from the grouping primitive (was an assumed conjunct) |
+| **thm** `rawOutputTotal_lt_modulus`: total `< goldilocks` | explicit no-wraparound bound from 32-bit output range checks; Phase-2 field hypothesis (see note below) |
 | output layout (`Layer0Output`) | `aggregated_output` — `layer0/circuit/constants.rs` |
 | `RL1` forwarding + consistency | `build_layer1_wrapper_constraints` — `layer1/circuit/circuit_logic.rs` |
 
@@ -155,6 +156,12 @@ step is the Phase-4 preimage game, as for the other security theorems.
    bridging to the non-dummy total under the dummy⟹zero-outputs guarantee).
    Remaining: the full per-account *multiset* characterization (which account
    gets which sum) and `numExitSlots = 2·N` slot accounting (Phase 3).
+   **Field caveat:** conservation is an exact `Nat` identity; over `ZMod p`
+   (Phase 2) it is only equality mod `p`, so the field statement must carry
+   `rawOutputTotal leaves < goldilocks`. That bound is proved here
+   (`rawOutputTotal_lt_modulus`) from the 32-bit output range checks plus a
+   batch-size bound, and the `omega` proofs in `Aggregation.lean` will need
+   field reworking. (See the conservation note in the module header.)
 3. **L1 accounting.** `totalExitSlots` and aggregator-address binding semantics
    (Phase 3).
 4. **Dummy-notion compatibility.** Prove the leaf dummy (`blockHash=0 ∧ outs=0`)
