@@ -12,19 +12,23 @@
 
   WARNING — the field representation is NOT a free global swap.
   -----------------------------------------------------------
-  Do **not** redefine `abbrev Felt := ZMod goldilocks` workspace-wide. `Hash.lean`
-  models the hash as a *totally injective* `H : List Felt → Digest` (the
-  random-oracle idealization). That is satisfiable only while the carrier is
-  infinite — as `Nat` is, so `RandomOracle` is inhabited today and the security
-  theorems have content. Over a *finite* `Felt`, `Digest = Felt⁴` is finite while
-  `List Felt` is infinite, so by pigeonhole no injective `H` exists ⇒
-  `RandomOracle` becomes uninhabited ⇒ every RO-dependent theorem
-  (`Security.lean`, `LeafBinding.lean`) silently turns vacuous. See the matching
-  warning in `Hash.lean`.
+  Do **not** redefine `abbrev Felt := ZMod goldilocks` workspace-wide. The reason is
+  now the *arithmetic*, not the hash: `Encoding.lean` and `Aggregation.lean` discharge
+  byte-bound and value-conservation goals with `omega` over `Nat`, and those proofs
+  would have to be reworked for modular field arithmetic.
+
+  The hash interface no longer forces this choice. `Hash.lean` used to bake a *totally
+  injective* `H` into `RandomOracle`, which is satisfiable only over an infinite carrier
+  (over a finite `Felt`, pigeonhole kills injectivity, `RandomOracle` becomes
+  uninhabited, and every RO-dependent theorem turns vacuous). That field is gone:
+  collision resistance is now an *explicit hypothesis* (`RandomOracle.CollisionResistant`)
+  and the security results are stated as reductions that hold for any `H`. Collision
+  resistance is consistent over a finite field, so the oracle can be instantiated by the
+  concrete finite-field Poseidon2 sponge.
 
   Consequently the interactive in-field arithmetic (Phase 2) and the game-based
-  collision / preimage resistance (Phase 4) belong in their own concrete-field
-  layer; the RO-dependent modules must stay over an infinite / abstract `Felt`.
+  `ε_coll` / `ε_pre` accounting (Phase 4) still belong in their own layer, but the
+  modeling obstruction that pinned the RO modules to an infinite carrier is removed.
 -/
 
 namespace WormholeSpec
