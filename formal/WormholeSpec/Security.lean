@@ -146,10 +146,13 @@ example : ¬ collapsingRO.CollisionResistant := fun cr =>
   absurd (cr [] [0] rfl) (by decide)
 
 /-- And the reduction *constructs* a collision: two distinct secrets share the
-    (degenerate) wormhole address, and `WA_inj_or_collision` returns the right disjunct. -/
-example : HasCollision collapsingRO.H :=
-  (collapsingRO.WA_inj_or_collision (s := Digest.zero) (s' := ⟨1, 0, 0, 0⟩) rfl).resolve_left
-    (by decide)
+    (degenerate) wormhole address, so `WA_inj_or_collision` must return the collision
+    disjunct (the equality disjunct is impossible — the secrets differ). -/
+example : HasCollision collapsingRO.H := by
+  rcases collapsingRO.WA_inj_or_collision (s := Digest.zero) (s' := ⟨1, 0, 0, 0⟩) rfl with
+    heq | hcol
+  · exact absurd heq (by decide)   -- `Digest.zero = ⟨1,0,0,0⟩` is false: the secrets differ
+  · exact hcol                     -- the reduction handed us the collision in `H`
 
 end Demo
 
