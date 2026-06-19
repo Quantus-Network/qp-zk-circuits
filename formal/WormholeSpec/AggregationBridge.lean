@@ -21,6 +21,25 @@
 
   This file is the public-input-level half: given those conditionals, the constructed
   aggregate output satisfies `RL0` / `RL1`.
+
+  SCOPE / ASSURANCE (read honestly). With gadget-level faithfulness delegated to
+  `Plonky2Spec.Wrapper` and proof-system soundness to `Trusted.lean`, the theorems
+  *here* are deliberately thin, and that should be stated plainly:
+
+    * `layer0_bridge` does one piece of real work — relating the *functional*
+      `buildNullifiers` the circuit computes to the *relational* `nullifiersReplaced`
+      (`nullifiersReplaced_build`); its other conjuncts (`metaOk`, `ref`, `exits`) are
+      shared verbatim with `RL0`. So `layer0_sound` is "the `layer0_proof_sound` axiom
+      + that one modest nullifier lemma".
+    * `layer1_bridge` is the *identity*. The layer-1 wrapper conditions are
+      field-for-field `RL1`, so `Layer1Circuit` is *defined as* `RL1` (below) rather than
+      restated, and the bridge carries no logical content. Consequently `layer1_sound`
+      is "the `layer0_proof_sound` axiom + a structural repackaging" — near-trivial as
+      currently scoped.
+
+  This is the intended package boundary, not an oversight; the non-trivial content lives
+  in `Plonky2Spec.Wrapper` (gadgets), `Trusted.lean` (proof-system soundness), and the
+  layer-0 grouping/conservation proofs in `Aggregation.lean`.
 -/
 import WormholeSpec.Basic
 import WormholeSpec.Hash
@@ -94,7 +113,11 @@ theorem layer0_bridge {ro : RandomOracle} {leaves : List LeafPublic}
 /-- **Layer-0 soundness (end to end).** A satisfied layer-0 aggregation circuit whose
     recursion gadget accepted every child leaf proof attests both the layer-0 relation
     `RL0` *and* that each child's public inputs satisfy the leaf relation `Rleaf`
-    (the latter via the trusted `leaf_proof_sound`). -/
+    (the latter via the trusted `leaf_proof_sound`).
+
+    Honestly scoped, this is "the `leaf_proof_sound` axiom + `layer0_bridge`", and the
+    only real work inside the bridge is `nullifiersReplaced_build` (the rest of `RL0` is
+    shared verbatim with `Layer0Circuit`). -/
 theorem layer0_sound {ro : RandomOracle} {leaves : List LeafPublic}
     {us : List (List Felt)} {out : Layer0Output}
     (hacc : ∀ p ∈ leaves, LeafProofAccepted ro p)
@@ -106,25 +129,35 @@ theorem layer0_sound {ro : RandomOracle} {leaves : List LeafPublic}
 
 /-- The layer-1 wrapper constraints (`build_layer1_wrapper_constraints`): bind the
     aggregator address, enforce metadata consistency across the inner layer-0 outputs,
-    and forward the exit slots / nullifiers in order. -/
-structure Layer1Circuit (ro : RandomOracle) (inner : List Layer0Output)
-    (addr : Digest) (out : Layer1Output) : Prop where
-  addrEq : out.aggregatorAddress = addr
-  metaOk : ∀ o ∈ inner,
-      o.assetId = out.assetId ∧ o.volumeFeeBps = out.volumeFeeBps ∧
-      o.blockHash = out.blockHash ∧ o.blockNumber = out.blockNumber
-  exits : out.exitSlots = (inner.map (fun o => o.exitSlots)).flatten
-  nulls : out.nullifiers = (inner.map (fun o => o.nullifiers)).flatten
+    and forward the exit slots / nullifiers in order.
 
-/-- **Layer-1 bridge.** The wrapper constraints imply the spec relation `RL1`. -/
+    Unlike layer 0 — where the circuit's *functional* `buildNullifiers` has to be related
+    to the *relational* `nullifiersReplaced` (`nullifiersReplaced_build`, the real work)
+    — the layer-1 wrapper performs no functional decode: the four conditions it enforces
+    are *exactly* the four conjuncts of the spec relation `RL1`. To avoid restating that
+    body in two places (which would let the circuit predicate and the relation drift), we
+    *define* `Layer1Circuit` as `RL1` itself rather than as a separate structure; the
+    `layer1_bridge` below is then honestly the identity. -/
+abbrev Layer1Circuit (ro : RandomOracle) (inner : List Layer0Output)
+    (addr : Digest) (out : Layer1Output) : Prop :=
+  RL1 ro inner addr out
+
+/-- **Layer-1 bridge.** Definitionally the identity (`Layer1Circuit` *is* `RL1`): the
+    layer-1 wrapper enforces precisely `RL1`'s conjuncts, with no functional decode to
+    relate (contrast `layer0_bridge`, which must invoke `nullifiersReplaced_build`). Kept
+    only for naming parity with `layer0_bridge`; it carries no logical content. -/
 theorem layer1_bridge {ro : RandomOracle} {inner : List Layer0Output}
     {addr : Digest} {out : Layer1Output}
-    (h : Layer1Circuit ro inner addr out) : RL1 ro inner addr out :=
-  ⟨h.addrEq, h.metaOk, h.exits, h.nulls⟩
+    (h : Layer1Circuit ro inner addr out) : RL1 ro inner addr out := h
 
 /-- **Layer-1 soundness (end to end).** A satisfied layer-1 aggregation circuit whose
     recursion gadget accepted every inner layer-0 proof attests both `RL1` *and* that
-    each inner output satisfies `RL0` for some children (via `layer0_proof_sound`). -/
+    each inner output satisfies `RL0` for some children (via `layer0_proof_sound`).
+
+    As currently scoped this is near-trivial: the `RL1` half is `layer1_bridge` (the
+    identity above), so the only substantive content is the trusted `layer0_proof_sound`
+    axiom. The structural faithfulness of the layer-1 wrapper gadgets lives in
+    `Plonky2Spec.Wrapper`, not here. -/
 theorem layer1_sound {ro : RandomOracle} {inner : List Layer0Output}
     {addr : Digest} {out : Layer1Output}
     (hacc : ∀ o ∈ inner, Layer0ProofAccepted ro o)
