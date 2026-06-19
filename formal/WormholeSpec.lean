@@ -8,7 +8,7 @@
 
   Module map:
   * `WormholeSpec.Basic`       field/digest model, salts, range predicate
-  * `WormholeSpec.Hash`        random-oracle interface and derived hashes
+  * `WormholeSpec.Hash`        hash interface (`H`, `CollisionResistant`) and derived hashes
   * `WormholeSpec.Leaf`        leaf relation R_leaf (C1–C5, conditional dummy path)
   * `WormholeSpec.Aggregation` layer-0 / layer-1 aggregation relations
   * `WormholeSpec.Trusted`     the trusted base (T4): explicit `axiom`s for the
@@ -17,7 +17,8 @@
                                `RL0`/`RL1`, and (with `Trusted`) a satisfied
                                aggregation circuit attests its own + each child's relation
   * `WormholeSpec.Security`    reduction-style theorems (one-time withdrawal,
-                               spend-path exclusivity) in the injective-RO model
+                               spend-path exclusivity): `*_or_collision` reductions
+                               + corollaries under the `CollisionResistant` hypothesis
   * `WormholeSpec.Encoding`    byte↔felt encoding safety: 4-byte injective at the
                                edges, 8-byte injective only on canonical inputs
 
