@@ -67,8 +67,14 @@ variable (ro : RandomOracle)
 /-- Collision resistance, idealized: `H` has no collision (equivalently, `H` is
     injective). Now an explicit *assumption* threaded into the corollaries that need
     it — not a baked-in field — so `RandomOracle` itself stays inhabited (and
-    finite-field-ready). Computational reading: no *efficient* adversary produces a
-    `HasCollision` witness; the `ε_coll` accounting is the Phase-4 game. -/
+    finite-field-ready).
+
+    NAMING CAVEAT: as defined this is *perfect collision-freeness* (= full injectivity),
+    which is strictly **stronger** than the cryptographic "collision resistance" notion
+    (no *efficient* adversary finds a collision). We keep the name because the
+    deterministic core of the paper's reductions is exactly this idealization; the gap is
+    the probabilistic `ε_coll` accounting, deferred to the Phase-4 game. Computational
+    reading of this hypothesis: no efficient adversary produces a `HasCollision` witness. -/
 def CollisionResistant : Prop := ∀ x y, ro.H x = ro.H y → x = y
 
 /-- A collision-resistant oracle has no collision witness — used to discharge the

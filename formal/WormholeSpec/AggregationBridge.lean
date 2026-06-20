@@ -138,9 +138,9 @@ theorem layer0_sound {ro : RandomOracle} {leaves : List LeafPublic}
     body in two places (which would let the circuit predicate and the relation drift), we
     *define* `Layer1Circuit` as `RL1` itself rather than as a separate structure; the
     `layer1_bridge` below is then honestly the identity. -/
-abbrev Layer1Circuit (ro : RandomOracle) (inner : List Layer0Output)
+abbrev Layer1Circuit (_ro : RandomOracle) (inner : List Layer0Output)
     (addr : Digest) (out : Layer1Output) : Prop :=
-  RL1 ro inner addr out
+  RL1 _ro inner addr out
 
 /-- **Layer-1 bridge.** Definitionally the identity (`Layer1Circuit` *is* `RL1`): the
     layer-1 wrapper enforces precisely `RL1`'s conjuncts, with no functional decode to

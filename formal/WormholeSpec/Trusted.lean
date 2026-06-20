@@ -34,17 +34,26 @@ namespace WormholeSpec
 
 These stand for "the in-circuit recursive verifier accepted a child proof whose
 public inputs decode to this structure, under the *constant* (baked-in) child
-verifier key." They are abstract: the spec never inspects how the gadget works, only
-what its satisfaction attests (the soundness axioms below). Realized in Rust by
+verifier key." They are `opaque`, not `axiom`s: abstract predicates whose truth is
+never assumed (the spec never inspects how the gadget works, only what its
+satisfaction attests via the soundness *axioms* below), so they stay out of the
+trusted axiom set. Realized in Rust by
 `wormhole/aggregator/src/common/recursive.rs::add_recursive_verifiers`. -/
 
 /-- A layer-0 aggregation circuit accepted a recursive **leaf** proof whose 21-felt
-    public inputs decode to `p`. (Constant leaf verifier key; one per leaf slot.) -/
-axiom LeafProofAccepted (ro : RandomOracle) (p : LeafPublic) : Prop
+    public inputs decode to `p`. (Constant leaf verifier key; one per leaf slot.)
+
+    `opaque`, not `axiom`: this is an *abstract predicate* (its truth value is never
+    assumed), so it should not enlarge the trusted axiom set. Only the soundness facts
+    below (`leaf_proof_sound`, `layer0_proof_sound`) are genuine `axiom`s. -/
+opaque LeafProofAccepted (ro : RandomOracle) (p : LeafPublic) : Prop
 
 /-- A layer-1 aggregation circuit accepted a recursive **layer-0** proof whose public
-    inputs decode to `out`. (Constant layer-0 verifier key; one per inner slot.) -/
-axiom Layer0ProofAccepted (ro : RandomOracle) (out : Layer0Output) : Prop
+    inputs decode to `out`. (Constant layer-0 verifier key; one per inner slot.)
+
+    `opaque` for the same reason as `LeafProofAccepted`: an abstract predicate, not an
+    assumed truth. -/
+opaque Layer0ProofAccepted (ro : RandomOracle) (out : Layer0Output) : Prop
 
 /-! ### `verify_proof` soundness (T4) -/
 
