@@ -14,7 +14,7 @@ spec + the differential safety net.
 | `WormholeSpec/Hash.lean` | Random-oracle interface, `WA`/`Null`/`leafHash`/`nodeHash`/`dummyNull` |
 | `WormholeSpec/Leaf.lean` | Leaf relation `Rleaf` (C1–C5, conditional dummy path) |
 | `WormholeSpec/Aggregation.lean` | `RL0`, `RL1` |
-| `WormholeSpec/Security.lean` | Deterministic cores of the reduction theorems (injective-RO model) |
+| `WormholeSpec/Security.lean` | Deterministic cores of the reduction theorems (`*_or_collision` + collision-resistance corollaries) |
 | `WormholeSpec/Encoding.lean` | Byte↔felt encoding safety (4-byte injective edges, 8-byte canonical-only) |
 | `WormholeSpec/LeafBinding.lean` | Finding A: chain↔circuit leaf-recipient consistency (spendable ⟺ recipient = `WA(s)`) |
 | `../wormhole/tests/.../spec_differential.rs` | proptest harness: native oracles vs spec |
@@ -37,22 +37,22 @@ hermetic. Toolchain is pinned in `lean-toolchain` (Lean `v4.30`).
   *explicitly* over `Nat` with the modulus `goldilocks` — see `Encoding.lean` —
   so they do not require `Felt` to be the field. **The representation is not a
   free global swap:** redefining `Felt := ZMod goldilocks` workspace-wide would
-  make `Digest = Felt⁴` finite while `List Felt` stays infinite, so no injective
-  `H` exists (pigeonhole), `RandomOracle` becomes uninhabited, and every
-  RO-dependent theorem (`Security.lean`, `LeafBinding.lean`) silently turns
-  *vacuous*. Today `Felt = Nat` is infinite, so `RandomOracle` is inhabited and
-  those theorems have content. Phase-2 in-field arithmetic and Phase-4
-  game-based resistance therefore live in a separate concrete-field layer; the
-  RO modules stay over an infinite/abstract `Felt`. (See the warnings in
-  `Basic.lean` / `Hash.lean`.)
-- **Hash `H` as a random oracle.** Represented by an opaque total function `H`
-  (capturing *determinism*) plus an `injective` field — the RO "no collisions"
-  idealization that soundness/security proofs may invoke (`Hash.lean`). This
-  *total* injectivity is consistent only over an infinite `Felt`; a compressing
-  hash over a finite field is never literally injective, so the faithful
-  finite-field model is the Phase-4 game (collisions negligibly rare, not
-  impossible). The Phase-4 game-based track replaces this with an explicit lazily-sampled RO game;
-  this structure is the seam.
+  force the `Nat`-level arithmetic/encoding proofs (`Aggregation` conservation,
+  `Encoding` byte bounds, all `omega`) to be reworked for modular arithmetic. The
+  *hash interface* no longer pins the carrier (see next bullet). (See the warnings
+  in `Basic.lean` / `Hash.lean`.)
+- **Hash `H` with explicit collision resistance.** Represented by an opaque total
+  function `H` (capturing *determinism*); `RandomOracle` carries **no** idealizing
+  field, so it is inhabited by *any* `H` — including a compressing finite-field hash
+  (`Hash.lean`). Collision resistance is a *separate, opt-in* predicate
+  `RandomOracle.CollisionResistant`. The security results come in two forms: a
+  **reduction** (`*_or_collision`) provable for any `H` with no assumption ("a scheme
+  break constructs a collision in `H`"), and a **corollary** under
+  `CollisionResistant` that recovers the clean conclusion. This is what lets the
+  oracle be instantiated by the concrete finite-field Poseidon2 sponge
+  (`Plonky2Spec.Sponge`); the old `injective` field made `RandomOracle` *uninhabited*
+  over a finite field (pigeonhole) and every RO theorem vacuous. The `ε_coll`/`ε_pre`
+  probabilistic accounting is the Phase-4 game-based track; this interface is the seam.
 - **TCB.** Not re-verified: Plonky2's FRI/PLONK soundness, the `PoseidonGate`
   implementation, the Lean kernel. The claim is: *given a sound proof system and
   a correct Poseidon2 gate, the constraints implement these relations.*
@@ -93,13 +93,16 @@ hermetic. Toolchain is pinned in `lean-toolchain` (Lean `v4.30`).
 
 ### Security reductions (`Security.lean`)
 
-Deterministic cores of the game-based theorems, in the injective-RO model.
+Deterministic cores of the game-based theorems. Each has a **reduction** form
+(`*_or_collision`, no assumption, "break ⇒ explicit `H` collision") and a
+**corollary** under the explicit `CollisionResistant ro` hypothesis.
 
 | Spec clause | Paper | Notes |
 |-------------|-------|-------|
-| `WA_inj` (`WA s = WA s' → s = s'`) | §4.2 | collision resistance ⇒ injectivity, idealized |
-| **thm** `same_deposit_same_nullifier` / `no_double_spend` | Thm (One-Time Withdrawal) | same deposit ⇒ same nullifier; `n₁ ≠ n₂` unsatisfiable |
-| **thm** `spend_path_unique` (`H pk = WA s → pk = H(salt_wh ‖ s) .toList`) | Thm (Spend-Path Exclusivity) | unique outer preimage; case (2) ⟶ case (1) |
+| `WA_inj_or_collision` / `WA_inj` (`WA s = WA s' → s = s'`) | §4.2 | distinct secrets sharing an address ⇒ collision; injective under CR |
+| **thm** `same_deposit_same_nullifier` / `no_double_spend` | Thm (One-Time Withdrawal) | same deposit ⇒ same nullifier; `n₁ ≠ n₂` unsatisfiable (under CR) |
+| **thm** `spend_path_unique_or_collision` / `spend_path_unique` (`H pk = WA s → pk = H(salt_wh ‖ s) .toList`) | Thm (Spend-Path Exclusivity) | unique outer preimage (under CR); case (2) ⟶ case (1) |
+| `Demo.collapsingRO` | — | payoff: a non-injective `H` inhabiting `RandomOracle` (impossible under the old `injective` field) |
 
 ### Encoding safety (`Encoding.lean`)
 
@@ -133,7 +136,7 @@ to `WA(s)`):
 
 | Spec clause | Content |
 |-------------|---------|
-| `chain_circuit_leaf_eq_iff` | pallet leaf = circuit `WA(s)` leaf ⟺ recipient *decodes* to `WA(s)` (`H` injective) |
+| `chain_circuit_leaf_eq_iff` | pallet leaf = circuit `WA(s)` leaf ⟺ recipient *decodes* to `WA(s)` (under `CollisionResistant ro`) |
 | `spendable_recipient_reduces_to_address` | **any** spendable recipient reduces to `WA(s)` — a non-canonical alias binds to the same address/nullifier, no advantage |
 | `spendable_iff_is_wormhole_address` | among **canonical** recipients the spendable one is **unique** = `WA(s)` |
 | `wormhole_address_canonical` | `WA(s)` is canonical (RO outputs are), so the honest recipient meets the precondition |
@@ -170,8 +173,9 @@ step is the Phase-4 preimage game, as for the other security theorems.
    spec reflects this (no `Rleaf` clause references them); the binding obligation
    lives in `RL0`.
 6. **Game-based probabilistic accounting.** `Security.lean` proves the
-   *deterministic* cores of one-time withdrawal and spend-path exclusivity in the
-   injective-RO model. The `ε_coll`/`ε_pre` terms and the knowledge-soundness
+   *deterministic* cores of one-time withdrawal and spend-path exclusivity as
+   reductions to an `H` collision, clean under the `CollisionResistant` hypothesis.
+   The `ε_coll`/`ε_pre` terms and the knowledge-soundness
    extractor (and likewise deposit binding, nullifier indistinguishability, and
    transaction unlinkability) require an explicit lazily-sampled RO game — the
    Phase-4 track, out of scope for the current deterministic spec.

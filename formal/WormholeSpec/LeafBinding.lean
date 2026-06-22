@@ -19,7 +19,7 @@
 
   Results:
   * `chain_circuit_leaf_eq_iff` — a chain leaf and the circuit's `WA(s)` leaf hash
-    to the same value iff the recipient *decodes* to `WA(s)` (injective `H`);
+    to the same value iff the recipient *decodes* to `WA(s)` (collision-resistant `H`);
   * `spendable_recipient_reduces_to_address` — therefore ANY spendable recipient
     (canonical or not) reduces to `WA(s)`: a non-canonical alias binds to the same
     address and nullifier, conferring no advantage;
@@ -85,9 +85,9 @@ theorem wormhole_address_canonical (hco : ro.CanonicalOutputs) (s : Digest) :
   exact hco _ v hv
 
 /-- Chain↔circuit consistency: a pallet leaf and the circuit's `WA(s)` leaf agree
-    iff the recipient *decodes* to `WA(s)`. (`H` injective; cancel the common
-    `transfer_count ‖ asset ‖ amount` suffix.) -/
-theorem chain_circuit_leaf_eq_iff
+    iff the recipient *decodes* to `WA(s)`. (Collision-resistant `H`; cancel the
+    common `transfer_count ‖ asset ‖ amount` suffix.) -/
+theorem chain_circuit_leaf_eq_iff (cr : ro.CollisionResistant)
     {recipient transferCount : List Felt} {assetId inputAmount : Felt} {s : Digest} :
     ro.chainLeafHash recipient transferCount assetId inputAmount
         = ro.leafHash (ro.WA s) transferCount assetId inputAmount
@@ -95,36 +95,36 @@ theorem chain_circuit_leaf_eq_iff
   unfold chainLeafHash RandomOracle.leafHash
   constructor
   · intro h
-    have h2 := ro.injective _ _ h
+    have h2 := cr _ _ h
     exact List.append_cancel_right (List.append_cancel_right h2)
   · intro h
     rw [h]
 
 /-- ANY spendable recipient reduces to `WA(s)`: a non-canonical alias binds to the
     same address (and hence the same nullifier `Null(s, c)`), so it gains nothing. -/
-theorem spendable_recipient_reduces_to_address
+theorem spendable_recipient_reduces_to_address (cr : ro.CollisionResistant)
     {recipient transferCount : List Felt} {assetId inputAmount : Felt} {s : Digest}
     (h : ro.chainLeafHash recipient transferCount assetId inputAmount
         = ro.leafHash (ro.WA s) transferCount assetId inputAmount) :
     bytesToDigest recipient = (ro.WA s).toList :=
-  (ro.chain_circuit_leaf_eq_iff).1 h
+  (ro.chain_circuit_leaf_eq_iff cr).1 h
 
 /-- **Finding A core**: among *canonical* recipients, the recipient spendable for
     secret `s` is **unique** — it must be exactly the wormhole address `WA(s)`. No
     different canonical recipient can be crafted to be spendable. -/
-theorem spendable_iff_is_wormhole_address
+theorem spendable_iff_is_wormhole_address (cr : ro.CollisionResistant)
     {recipient transferCount : List Felt} {assetId inputAmount : Felt} {s : Digest}
     (hrec : ∀ v ∈ recipient, Canonical v) :
     ro.chainLeafHash recipient transferCount assetId inputAmount
         = ro.leafHash (ro.WA s) transferCount assetId inputAmount
       ↔ recipient = (ro.WA s).toList := by
-  rw [ro.chain_circuit_leaf_eq_iff, bytesToDigest_canonical_id hrec]
+  rw [ro.chain_circuit_leaf_eq_iff cr, bytesToDigest_canonical_id hrec]
 
 /-- Distinct secrets yield distinct unique recipients: a leaf spendable for `s` is
     never spendable for `s' ≠ s`. (Ties Finding A to `WA_inj`.) -/
-theorem distinct_secrets_distinct_recipients {s s' : Digest}
+theorem distinct_secrets_distinct_recipients (cr : ro.CollisionResistant) {s s' : Digest}
     (h : (ro.WA s).toList = (ro.WA s').toList) : s = s' :=
-  ro.WA_inj (Digest.toList_inj h)
+  ro.WA_inj cr (Digest.toList_inj h)
 
 end RandomOracle
 
