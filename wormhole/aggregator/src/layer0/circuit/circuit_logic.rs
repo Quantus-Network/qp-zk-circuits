@@ -2,7 +2,7 @@
 //!
 //! This circuit verifies `N` leaf wormhole proofs directly (without first building a
 //! dynamic merge circuit), then applies the wormhole-specific wrapper logic:
-//! - enforce block consistency across real proofs
+//! - enforce block hash and block number consistency across real proofs
 //! - enforce asset_id / volume_fee_bps consistency
 //! - dedupe exit accounts and sum output amounts (2 outputs per proof)
 //! - replace dummy nullifiers with hashes of externally provided random preimages
@@ -208,17 +208,23 @@ fn build_layer0_wrapper_constraints(
     // =========================================================================
     //
     // Constraint for each proof i:
-    //   is_dummy_i OR (block_i == block_ref)
+    //   is_dummy_i OR (block_i == block_ref AND block_number_i == block_number_ref)
     //
-    // Since block_ref is the first non-dummy slot's block hash, this forces every real
-    // proof to share that same block, regardless of slot order.
+    // Since block_ref / block_number_ref come from the first non-dummy slot, this forces
+    // every real proof to share the same block hash AND block number, regardless of slot
+    // order. The block number is enforced directly (not just derived from the block hash
+    // via the leaf's header binding) so the wrapper matches the formal spec's
+    // `metadataConsistent` clause without relying on collision resistance.
     //
     // Also enforce:
     //   asset_id_i == asset_ref
     //   volume_fee_bps_i == volume_fee_bps_ref
 
     for (i, pis_i) in leaf_pi_targets.iter().take(n_leaf).enumerate() {
-        let matches_ref = bytes_digest_eq(builder, block_hashes[i], block_ref);
+        let hash_matches = bytes_digest_eq(builder, block_hashes[i], block_ref);
+        let block_number_i = limb1_at_offset::<LEAF_PI_LEN, BLOCK_NUMBER_START>(pis_i, 0);
+        let number_matches = builder.is_equal(block_number_i, block_number_ref);
+        let matches_ref = builder.and(hash_matches, number_matches);
 
         // Enforce `is_dummy_i OR matches_ref == true`
         let valid_block_relation = builder.or(is_dummy_flags[i], matches_ref);
@@ -979,6 +985,61 @@ mod tests {
         assert!(
             res.is_err(),
             "expected failure because proofs are from different blocks"
+        );
+    }
+
+    /// Same block hash everywhere, but one proof reports a different block number.
+    /// Guards the direct block-number consistency constraint (the block hash alone
+    /// would pass).
+    #[test]
+    fn recursive_aggregation_tree_mismatched_block_number_fails() {
+        let output_felts: [F; 8] = core::array::from_fn(|_| F::from_canonical_u64(1));
+
+        let exits_felts: [[F; 8]; 8] = EXIT_ACCOUNTS.map(limbs8_u64_to_felts);
+        let common_block_hash = limbs4_u64_to_felts(BLOCK_HASHES[0]);
+        let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs4_u64_to_felts);
+
+        let asset_id = F::from_canonical_u64(TEST_ASSET_ID_U64);
+        let volume_fee_bps = F::from_canonical_u64(TEST_VOLUME_FEE_BPS);
+
+        let mut pis_list: Vec<[F; LEAF_PI_LEN]> = Vec::with_capacity(8);
+        for i in 0..8 {
+            let block_number = F::from_canonical_u64(if i == 3 { 43 } else { 42 });
+            pis_list.push(make_pi_from_felts(
+                asset_id,
+                output_felts[i],
+                F::ZERO,
+                volume_fee_bps,
+                nullifiers_felts[i],
+                exits_felts[i],
+                [F::ZERO; 8],
+                common_block_hash,
+                block_number,
+            ));
+        }
+
+        let leaves = pis_list
+            .into_iter()
+            .map(prove_fake_leaf_standalone)
+            .collect::<Vec<_>>();
+        let leaf_common = leaves[0].1.common.clone();
+        let leaf_verifier_only = leaves[0].1.verifier_only.clone();
+        let proofs = leaves
+            .into_iter()
+            .map(|(proof, _)| proof)
+            .collect::<Vec<_>>();
+        let dummy_nullifier_pre_images = deterministic_dummy_nullifier_pre_images(proofs.len());
+
+        let res = aggregate_proofs_layer0(
+            proofs,
+            leaf_common,
+            leaf_verifier_only,
+            dummy_nullifier_pre_images,
+        );
+
+        assert!(
+            res.is_err(),
+            "expected failure due to mismatched block numbers"
         );
     }
 

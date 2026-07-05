@@ -8,11 +8,12 @@
 //! 1. **Fixed structure**: Each internal node has exactly 4 children (vs variable MPT nodes)
 //! 2. **Sorted children**: Children are sorted before hashing, eliminating path indices
 //! 3. **Simpler leaf**: Only `(to, transfer_count, asset_id, amount)` - no `from` field
-//! 4. **Two hash modes**: Leaves use injective (4 bytes/felt), nodes use compact (8 bytes/felt)
+//! 4. **Compact encoding**: Leaf recipient and node children use compact (8 bytes/felt)
+//!    encoding, injective only for canonical limbs (guarded on the chain side)
 //!
 //! ## Verification algorithm:
 //!
-//! 1. Compute leaf hash using injective Poseidon
+//! 1. Compute leaf hash with Poseidon2 over the 8-felt leaf preimage
 //! 2. For each level from leaf to root:
 //!    - Combine current hash with 3 siblings
 //!    - Sort all 4 hashes
@@ -416,8 +417,10 @@ impl CircuitFragment for ZkMerkleProofData {
         let diff = builder.sub(rhs, lhs);
         builder.range_check(diff, 48); // ensures lhs <= rhs
 
-        // Compute leaf hash using injective Poseidon (matches chain's hash_leaf)
-        // The chain uses qp_poseidon_core::hash_bytes which is injective (4 bytes/felt)
+        // Compute leaf hash over the same 8-felt preimage as the chain's hash_leaf.
+        // The recipient uses the compact 8-bytes/felt encoding, which is injective only
+        // for canonical limbs (< Goldilocks prime); the chain enforces canonicality in
+        // hash_leaf. See formal/WormholeSpec/LeafBinding.lean for the binding analysis.
         let leaf_felts = targets.leaf.collect_for_hash();
         let leaf_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(leaf_felts);
 
