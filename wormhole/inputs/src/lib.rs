@@ -200,7 +200,7 @@ pub struct BlockData {
 
 /// Aggregated public inputs from multiple wormhole proofs.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AggregatedPublicCircuitInputs {
+pub struct PrivateBatchPublicInputs {
     /// Number of unique exit-account groups reported by the wrapper circuit.
     /// This is informational only; semantic validation remains the circuit's responsibility.
     pub num_unique_exits: u32,
@@ -291,7 +291,7 @@ impl PublicCircuitInputs {
     }
 }
 
-impl AggregatedPublicCircuitInputs {
+impl PrivateBatchPublicInputs {
     /// Parse aggregated public inputs from a slice of u64 values.
     pub fn try_from_u64_slice(pis: &[u64]) -> anyhow::Result<Self> {
         // Layout in the FINAL (deduped) wrapper proof PIs:
@@ -432,7 +432,7 @@ impl AggregatedPublicCircuitInputs {
             );
         }
 
-        Ok(AggregatedPublicCircuitInputs {
+        Ok(PrivateBatchPublicInputs {
             num_unique_exits,
             asset_id,
             volume_fee_bps,
@@ -445,11 +445,11 @@ impl AggregatedPublicCircuitInputs {
 
 #[cfg(test)]
 mod tests {
-    use super::{AggregatedPublicCircuitInputs, PUBLIC_INPUTS_FELTS_LEN};
+    use super::{PrivateBatchPublicInputs, PUBLIC_INPUTS_FELTS_LEN};
 
     #[test]
     fn aggregated_public_inputs_reject_malformed_padded_length() {
-        let err = AggregatedPublicCircuitInputs::try_from_u64_slice(&[0u64; 9]).unwrap_err();
+        let err = PrivateBatchPublicInputs::try_from_u64_slice(&[0u64; 9]).unwrap_err();
         assert!(err.to_string().contains(&format!(
             "malformed length 9 - expected 8 + N*{} felts",
             PUBLIC_INPUTS_FELTS_LEN
@@ -462,7 +462,7 @@ mod tests {
         pis[0] = 1; // num_unique_exits
         pis[7] = 42; // block_number
 
-        let parsed = AggregatedPublicCircuitInputs::try_from_u64_slice(&pis).unwrap();
+        let parsed = PrivateBatchPublicInputs::try_from_u64_slice(&pis).unwrap();
         assert_eq!(parsed.num_unique_exits, 1);
         assert_eq!(parsed.block_data.block_number, 42);
         assert_eq!(parsed.account_data.len(), 2);

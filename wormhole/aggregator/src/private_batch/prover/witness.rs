@@ -1,4 +1,4 @@
-//! Witness filling for the prebuilt layer-0 aggregation prover.
+//! Witness filling for the prebuilt private-batch aggregation prover.
 
 use anyhow::{anyhow, bail, Result};
 use plonky2::{
@@ -8,12 +8,12 @@ use plonky2::{
 
 use zk_circuits_common::circuit::{C, D, F};
 
-use crate::layer0::circuit::circuit_logic::AggregationCircuitTargets;
+use crate::private_batch::circuit::circuit_logic::PrivateBatchCircuitTargets;
 
-/// Fill the partial witness for the prebuilt layer-0 aggregation circuit.
-pub fn fill_layer0_aggregation_witness(
+/// Fill the partial witness for the prebuilt private-batch aggregation circuit.
+pub fn fill_private_batch_witness(
     pw: &mut PartialWitness<F>,
-    targets: &AggregationCircuitTargets,
+    targets: &PrivateBatchCircuitTargets,
     proofs: &[ProofWithPublicInputs<F, C, D>],
     dummy_nullifier_pre_images: &[[F; 4]],
 ) -> Result<()> {

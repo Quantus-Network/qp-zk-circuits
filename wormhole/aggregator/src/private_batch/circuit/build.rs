@@ -1,6 +1,6 @@
-//! Prebuild / serialization helpers for the monolithic Layer-0 aggregation circuit.
+//! Prebuild / serialization helpers for the monolithic Private-batch aggregation circuit.
 //!
-//! Generates: `aggregated_common.bin`, `aggregated_verifier.bin`, `aggregated_prover.bin`
+//! Generates: `private_batch_common.bin`, `private_batch_verifier.bin`, `private_batch_prover.bin`
 //!
 //! Expects `common.bin` and `verifier.bin` to already exist in the output directory.
 
@@ -13,12 +13,12 @@ use std::{
     fs::{create_dir_all, write},
     path::Path,
 };
-use zk_circuits_common::circuit::{wormhole_aggregator_circuit_config, C, D, F};
+use zk_circuits_common::circuit::{wormhole_private_batch_circuit_config, C, D, F};
 
-use crate::layer0::circuit::circuit_logic::Layer0AggregationCircuit;
+use crate::private_batch::circuit::circuit_logic::PrivateBatchCircuit;
 
-/// Generate prebuilt Layer-0 aggregation circuit binaries.
-pub fn generate_layer0_circuit_binaries<P: AsRef<Path>>(
+/// Generate prebuilt Private-batch aggregation circuit binaries.
+pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
     num_leaf_proofs: usize,
     include_prover: bool,
@@ -27,15 +27,15 @@ pub fn generate_layer0_circuit_binaries<P: AsRef<Path>>(
     create_dir_all(output_path)?;
 
     println!(
-        "Building prebuilt layer-0 aggregation circuit (num_leaf_proofs={})...",
+        "Building prebuilt private-batch aggregation circuit (num_leaf_proofs={})...",
         num_leaf_proofs
     );
 
     let leaf_common = load_leaf_common_data(&output_path.join("common.bin"))?;
     let leaf_verifier_only = load_leaf_verifier_only_data(&output_path.join("verifier.bin"))?;
 
-    let agg_circuit = Layer0AggregationCircuit::new(
-        wormhole_aggregator_circuit_config(),
+    let agg_circuit = PrivateBatchCircuit::new(
+        wormhole_private_batch_circuit_config(),
         leaf_common,
         &leaf_verifier_only,
         num_leaf_proofs,
@@ -55,18 +55,18 @@ pub fn generate_layer0_circuit_binaries<P: AsRef<Path>>(
     let agg_common_bytes = common_data
         .to_bytes(&gate_serializer)
         .map_err(|e| anyhow!("Failed to serialize aggregated common data: {}", e))?;
-    write(output_path.join("aggregated_common.bin"), agg_common_bytes)?;
-    println!("Saved {}/aggregated_common.bin", output_path.display());
+    write(output_path.join("private_batch_common.bin"), agg_common_bytes)?;
+    println!("Saved {}/private_batch_common.bin", output_path.display());
 
     let agg_verifier_only_bytes = verifier_data
         .verifier_only
         .to_bytes()
         .map_err(|e| anyhow!("Failed to serialize aggregated verifier data: {}", e))?;
     write(
-        output_path.join("aggregated_verifier.bin"),
+        output_path.join("private_batch_verifier.bin"),
         agg_verifier_only_bytes,
     )?;
-    println!("Saved {}/aggregated_verifier.bin", output_path.display());
+    println!("Saved {}/private_batch_verifier.bin", output_path.display());
 
     if include_prover {
         let agg_prover_only_bytes = prover_data
@@ -74,10 +74,10 @@ pub fn generate_layer0_circuit_binaries<P: AsRef<Path>>(
             .to_bytes(&generator_serializer, common_data)
             .map_err(|e| anyhow!("Failed to serialize aggregated prover data: {}", e))?;
         write(
-            output_path.join("aggregated_prover.bin"),
+            output_path.join("private_batch_prover.bin"),
             agg_prover_only_bytes,
         )?;
-        println!("Saved {}/aggregated_prover.bin", output_path.display());
+        println!("Saved {}/private_batch_prover.bin", output_path.display());
     } else {
         println!("Skipping aggregated prover binary generation");
     }

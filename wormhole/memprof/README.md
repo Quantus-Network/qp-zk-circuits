@@ -82,7 +82,7 @@ overall peak rss:      1498.3 MB
 ### Circuit-config knobs
 
 The aggregator's `CircuitConfig` is also reachable from the CLI as overrides on
-top of the production `wormhole_aggregator_circuit_config()` (currently
+top of the production `wormhole_private_batch_circuit_config()` (currently
 RowBlinding ZK, `num_wires=135`, `num_routed_wires=60`). Run
 `cargo run -p wormhole-memprof --release -- --help` for the full list. Safe
 (non-security-affecting) knobs include `--zk-mode {polyfri,rowblinding}`,

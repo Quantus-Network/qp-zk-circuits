@@ -118,13 +118,13 @@ To run the tests for this circuit, please follow the instructions in the [tests]
 The circuit builder generates leaf and aggregated circuit binaries alongside a `config.json` with aggregation configuration.
 Re-run this after any circuit changes.
 
-The `num_leaf-proofs` and `num-layer0-proofs` parameters control the number of proofs aggregated at each layer. For example, if you want to aggregate 16 leaf proofs per layer-1 proof, and then aggregate 4 layer-1 proofs per layer-2 proof, you would set `num-leaf-proofs` to 16 and `num-layer0-proofs` to 4. The `num-layer0-proofs` param is optional if you only need layer-0 aggregation support. 
+The `num_leaf-proofs` and `num-private_batch-proofs` parameters control the number of proofs aggregated at each layer. For example, if you want to aggregate 16 leaf proofs per public-batch proof, and then aggregate 4 public-batch proofs per layer-2 proof, you would set `num-leaf-proofs` to 16 and `num-private_batch-proofs` to 4. The `num-private_batch-proofs` param is optional if you only need private-batch aggregation support. 
 
 To build the circuit binary, run the following command from the root of the workspace:
 
 ```sh
-cargo run --release -p qp-wormhole-circuit-builder -- --num-leaf-proofs <N> -- --num-layer0-proofs <N> --output generated-bins
+cargo run --release -p qp-wormhole-circuit-builder -- --num-leaf-proofs <N> -- --num-private_batch-proofs <N> --output generated-bins
 ```
 
-This creates `common.bin`, `verifier.bin`, `prover.bin` (unless `--skip-prover`), `aggregated_common.bin`, `aggregated_verifier.bin`, `dummy_proof.bin`,
+This creates `common.bin`, `verifier.bin`, `prover.bin` (unless `--skip-prover`), `private_batch_common.bin`, `private_batch_verifier.bin`, `dummy_proof.bin`,
 and `config.json` inside `generated-bins/`.

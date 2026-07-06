@@ -33,7 +33,7 @@ structure MerkleLevel where
 
 /-- The 21-felt public input vector of a leaf proof (see `qp-wormhole-inputs`).
     `exitAccount1/2` are public but *unconstrained* at the leaf — they are bound
-    only by the layer-0 aggregator — so they deliberately appear here yet are
+    only by the private-batch aggregator — so they deliberately appear here yet are
     referenced by no clause of `R_leaf`. -/
 structure LeafPublic where
   assetId : Felt

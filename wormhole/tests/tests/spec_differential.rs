@@ -10,8 +10,8 @@
 //!   * `leafHash` preimage order (`WormholeSpec.Hash.leafHash`)
 //!   * `nodeHash` and the sort-vs-position-hint correspondence
 //!     (`WormholeSpec.Hash.nodeHash`, `WormholeSpec.Leaf.stepUp`)
-//!   * the layer-0 exit grouping/dedup and its value-conservation theorem
-//!     (`WormholeSpec.Aggregation.groupExits` / `RL0_value_conservation`)
+//!   * the private-batch exit grouping/dedup and its value-conservation theorem
+//!     (`WormholeSpec.Aggregation.groupExits` / `RPrivateBatch_value_conservation`)
 //!   * the block-reference prefix scan (`referenceFromFirstReal`)
 //!   * dummy-nullifier replacement `DNull(u)=H(H(u))` (`WormholeSpec.Hash.dummyNull`)
 //!   * the block-header preimage order (`WormholeSpec.Leaf.headerPreimage`)
@@ -72,8 +72,8 @@ fn digest_felts(limbs: [u64; 4]) -> [F; 4] {
     core::array::from_fn(|i| F::from_canonical_u64(limbs[i]))
 }
 
-/// Native reference for the layer-0 exit grouping/dedup primitive
-/// (`build_layer0_wrapper_constraints`), mirroring the Lean `groupExits`
+/// Native reference for the private-batch exit grouping/dedup primitive
+/// (`build_private_batch_constraints`), mirroring the Lean `groupExits`
 /// (`WormholeSpec.Aggregation`): walking left→right, the *first* occurrence of a
 /// key receives the full group sum (every matching amount), and any later
 /// occurrence is zeroed — so duplicates are indistinguishable from unused slots.
@@ -295,7 +295,7 @@ proptest! {
         prop_assert_eq!(hash_node_presorted(&sorted), hash_node(&children));
     }
 
-    /// Exit grouping conserves value (whitepaper §6.1 / `RL0_value_conservation`):
+    /// Exit grouping conserves value (whitepaper §6.1 / `RPrivateBatch_value_conservation`):
     /// the settled slot sums total exactly the input amounts.
     #[test]
     fn grouping_conserves_value(

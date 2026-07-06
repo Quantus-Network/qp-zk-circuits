@@ -1,7 +1,7 @@
-//! Layer-1 aggregation circuit (monolithic prebuilt-circuit form).
+//! Public-batch aggregation circuit (monolithic prebuilt-circuit form).
 //!
-//! Verifies N layer-0 aggregated proofs and emits a layer-1 aggregated proof.
-//! The layer-0 verifier key is baked in as constants to prevent verifier key substitution.
+//! Verifies N private-batch aggregated proofs and emits a public-batch aggregated proof.
+//! The private-batch verifier key is baked in as constants to prevent verifier key substitution.
 
 use plonky2::{
     field::types::Field,
@@ -25,53 +25,53 @@ use crate::common::recursive::add_recursive_verifiers;
 
 use super::constants::AGGREGATOR_ADDRESS_LEN;
 
-use super::constants as l1c;
+use super::constants as pbc;
 
-/// Runtime targets for the prebuilt layer-1 aggregation circuit.
+/// Runtime targets for the prebuilt public-batch aggregation circuit.
 #[derive(Debug, Clone)]
-pub struct Layer1AggregationCircuitTargets {
-    /// One proof target per layer-0 slot.
-    pub layer0_proofs: Vec<ProofWithPublicInputsTarget<D>>,
+pub struct PublicBatchCircuitTargets {
+    /// One proof target per private-batch slot.
+    pub private_batch_proofs: Vec<ProofWithPublicInputsTarget<D>>,
     /// Aggregator address (4 felts, 8 bytes/felt) for hash-derived accounts.
     pub aggregator_address: [Target; AGGREGATOR_ADDRESS_LEN],
 }
 
-pub struct Layer1AggregationCircuit {
+pub struct PublicBatchCircuit {
     builder: CircuitBuilder<F, D>,
-    targets: Layer1AggregationCircuitTargets,
+    targets: PublicBatchCircuitTargets,
 }
 
-impl Layer1AggregationCircuit {
-    /// Build a monolithic layer-1 aggregation circuit that verifies `n_inner` layer-0 aggregated proofs.
+impl PublicBatchCircuit {
+    /// Build a monolithic public-batch aggregation circuit that verifies `n_inner` private-batch aggregated proofs.
     ///
-    /// The `layer0_verifier_only` is baked in as constants to prevent verifier key substitution.
+    /// The `private_batch_verifier_only` is baked in as constants to prevent verifier key substitution.
     pub fn new(
         config: CircuitConfig,
-        layer0_common: CommonCircuitData<F, D>,
-        layer0_verifier_only: &VerifierOnlyCircuitData<C, D>,
+        private_batch_common: CommonCircuitData<F, D>,
+        private_batch_verifier_only: &VerifierOnlyCircuitData<C, D>,
         n_inner: usize,
-        layer0_num_leaves: usize,
+        private_batch_num_leaves: usize,
     ) -> Self {
         assert!(n_inner > 0, "n_inner must be > 0");
-        assert!(layer0_num_leaves > 0, "layer0_num_leaves must be > 0");
+        assert!(private_batch_num_leaves > 0, "private_batch_num_leaves must be > 0");
 
-        let expected_l0_pi_len = l1c::l0_pi_len(layer0_num_leaves);
+        let expected_l0_pi_len = pbc::private_batch_pi_len(private_batch_num_leaves);
 
         debug_assert_eq!(
-            layer0_common.num_public_inputs,
+            private_batch_common.num_public_inputs,
             expected_l0_pi_len,
-            "layer0_common.num_public_inputs ({}) != expected layer0 PI len ({}) for layer0_num_leaves={}",
-            layer0_common.num_public_inputs,
+            "private_batch_common.num_public_inputs ({}) != expected private_batch PI len ({}) for private_batch_num_leaves={}",
+            private_batch_common.num_public_inputs,
             expected_l0_pi_len,
-            layer0_num_leaves,
+            private_batch_num_leaves,
         );
 
         let mut builder = CircuitBuilder::<F, D>::new(config);
 
-        let layer0_proofs = add_recursive_verifiers::<F, C, D>(
+        let private_batch_proofs = add_recursive_verifiers::<F, C, D>(
             &mut builder,
-            &layer0_common,
-            layer0_verifier_only,
+            &private_batch_common,
+            private_batch_verifier_only,
             n_inner,
         );
 
@@ -80,18 +80,18 @@ impl Layer1AggregationCircuit {
             .try_into()
             .unwrap();
 
-        let targets = Layer1AggregationCircuitTargets {
-            layer0_proofs,
+        let targets = PublicBatchCircuitTargets {
+            private_batch_proofs,
             aggregator_address,
         };
 
         // Build wrapper constraints and register public inputs.
-        build_layer1_wrapper_constraints(&mut builder, &targets, n_inner, layer0_num_leaves);
+        build_public_batch_constraints(&mut builder, &targets, n_inner, private_batch_num_leaves);
 
         Self { builder, targets }
     }
 
-    pub fn targets(&self) -> Layer1AggregationCircuitTargets {
+    pub fn targets(&self) -> PublicBatchCircuitTargets {
         self.targets.clone()
     }
 
@@ -110,7 +110,7 @@ impl Layer1AggregationCircuit {
     /// Build circuit with profiling output. Prints gate counts before building.
     #[cfg(feature = "profile")]
     pub fn build_circuit_profiled(self) -> CircuitData<F, C, D> {
-        println!("\n=== Layer-1 Gate Instance Counts ===");
+        println!("\n=== Public-batch Gate Instance Counts ===");
         self.builder.print_gate_counts(0);
         self.builder.build()
     }
@@ -121,9 +121,9 @@ impl Layer1AggregationCircuit {
     }
 }
 
-/// Build the layer-1 wrapper constraints and register output public inputs.
+/// Build the public-batch wrapper constraints and register output public inputs.
 ///
-/// Output layout (layer-1):
+/// Output layout (public-batch):
 /// [aggregator_address(4),
 ///  asset_id(1),
 ///  volume_fee_bps(1),
@@ -132,26 +132,26 @@ impl Layer1AggregationCircuit {
 ///  total_exit_slots(1),
 ///  [sum(1), exit(4)] * total_exit_slots,
 ///  nullifier(4) * total_nullifiers]
-fn build_layer1_wrapper_constraints(
+fn build_public_batch_constraints(
     builder: &mut CircuitBuilder<F, D>,
-    targets: &Layer1AggregationCircuitTargets,
+    targets: &PublicBatchCircuitTargets,
     n_inner: usize,
-    layer0_num_leaves: usize,
+    private_batch_num_leaves: usize,
 ) {
     let one = builder.one();
 
-    let l0_pi_len = l1c::l0_pi_len(layer0_num_leaves);
-    let l0_exit_slots_per_proof = l1c::l0_exit_slots_count(layer0_num_leaves);
-    let l0_nullifiers_per_proof = l1c::l0_nullifiers_count(layer0_num_leaves);
+    let private_batch_pi_len = pbc::private_batch_pi_len(private_batch_num_leaves);
+    let private_batch_exit_slots_per_proof = pbc::private_batch_exit_slots_count(private_batch_num_leaves);
+    let private_batch_nullifiers_per_proof = pbc::private_batch_nullifiers_count(private_batch_num_leaves);
 
     // Convenience: references to each child proof's PI slice
-    let l0_pi_targets: Vec<&[Target]> = targets
-        .layer0_proofs
+    let private_batch_pi_targets: Vec<&[Target]> = targets
+        .private_batch_proofs
         .iter()
         .map(|p| p.public_inputs.as_slice())
         .collect();
 
-    debug_assert!(l0_pi_targets.iter().all(|pis| pis.len() == l0_pi_len));
+    debug_assert!(private_batch_pi_targets.iter().all(|pis| pis.len() == private_batch_pi_len));
 
     // -------------------------------------------------------------------------
     // Output PIs
@@ -162,23 +162,23 @@ fn build_layer1_wrapper_constraints(
     output_pis.extend_from_slice(&targets.aggregator_address);
 
     // 2) Reference values from proof 0
-    let asset_ref = l0_pi_targets[0][l1c::L0_ASSET_ID_OFFSET];
-    let fee_ref = l0_pi_targets[0][l1c::L0_VOLUME_FEE_BPS_OFFSET];
+    let asset_ref = private_batch_pi_targets[0][pbc::PRIVATE_BATCH_ASSET_ID_OFFSET];
+    let fee_ref = private_batch_pi_targets[0][pbc::PRIVATE_BATCH_VOLUME_FEE_BPS_OFFSET];
     output_pis.push(asset_ref);
     output_pis.push(fee_ref);
 
     let block_ref: [Target; 4] =
-        core::array::from_fn(|j| l0_pi_targets[0][l1c::L0_BLOCK_HASH_OFFSET + j]);
-    let block_number_ref = l0_pi_targets[0][l1c::L0_BLOCK_NUMBER_OFFSET];
+        core::array::from_fn(|j| private_batch_pi_targets[0][pbc::PRIVATE_BATCH_BLOCK_HASH_OFFSET + j]);
+    let block_number_ref = private_batch_pi_targets[0][pbc::PRIVATE_BATCH_BLOCK_NUMBER_OFFSET];
 
-    // 3) Enforce asset/fee consistency and block consistency across all layer-0 proofs
-    for pis_i in l0_pi_targets.iter().take(n_inner) {
+    // 3) Enforce asset/fee consistency and block consistency across all private-batch proofs
+    for pis_i in private_batch_pi_targets.iter().take(n_inner) {
         // asset_id and volume_fee_bps must match
-        builder.connect(pis_i[l1c::L0_ASSET_ID_OFFSET], asset_ref);
-        builder.connect(pis_i[l1c::L0_VOLUME_FEE_BPS_OFFSET], fee_ref);
+        builder.connect(pis_i[pbc::PRIVATE_BATCH_ASSET_ID_OFFSET], asset_ref);
+        builder.connect(pis_i[pbc::PRIVATE_BATCH_VOLUME_FEE_BPS_OFFSET], fee_ref);
 
         // block hash must match ref
-        let block_i: [Target; 4] = core::array::from_fn(|j| pis_i[l1c::L0_BLOCK_HASH_OFFSET + j]);
+        let block_i: [Target; 4] = core::array::from_fn(|j| pis_i[pbc::PRIVATE_BATCH_BLOCK_HASH_OFFSET + j]);
         let matches_ref = bytes_digest_eq(builder, block_i, block_ref);
         builder.connect(matches_ref.target, one);
     }
@@ -187,26 +187,26 @@ fn build_layer1_wrapper_constraints(
     output_pis.extend_from_slice(&block_ref);
     output_pis.push(block_number_ref);
 
-    // 4) Total exit slots across all layer-0 proofs
-    let total_exit_slots = n_inner * l0_exit_slots_per_proof;
+    // 4) Total exit slots across all private-batch proofs
+    let total_exit_slots = n_inner * private_batch_exit_slots_per_proof;
     output_pis.push(builder.constant(F::from_canonical_usize(total_exit_slots)));
 
-    // 5) Forward exit slots from all layer-0 proofs
-    let exit_slots_start = l1c::l0_exit_slots_start();
-    for pis_i in l0_pi_targets.iter().take(n_inner) {
-        for slot_idx in 0..l0_exit_slots_per_proof {
-            let slot_base = exit_slots_start + slot_idx * l1c::L0_EXIT_SLOT_LEN;
+    // 5) Forward exit slots from all private-batch proofs
+    let exit_slots_start = pbc::private_batch_exit_slots_start();
+    for pis_i in private_batch_pi_targets.iter().take(n_inner) {
+        for slot_idx in 0..private_batch_exit_slots_per_proof {
+            let slot_base = exit_slots_start + slot_idx * pbc::PRIVATE_BATCH_EXIT_SLOT_LEN;
             // [sum(1), exit_account(4)]
-            for j in 0..l1c::L0_EXIT_SLOT_LEN {
+            for j in 0..pbc::PRIVATE_BATCH_EXIT_SLOT_LEN {
                 output_pis.push(pis_i[slot_base + j]);
             }
         }
     }
 
-    // 6) Forward nullifiers from all layer-0 proofs
-    let nullifiers_start = l1c::l0_nullifiers_start(layer0_num_leaves);
-    for pis_i in l0_pi_targets.iter().take(n_inner) {
-        for n_idx in 0..l0_nullifiers_per_proof {
+    // 6) Forward nullifiers from all private-batch proofs
+    let nullifiers_start = pbc::private_batch_nullifiers_start(private_batch_num_leaves);
+    for pis_i in private_batch_pi_targets.iter().take(n_inner) {
+        for n_idx in 0..private_batch_nullifiers_per_proof {
             let base = nullifiers_start + n_idx * 4;
             for j in 0..4 {
                 output_pis.push(pis_i[base + j]);
@@ -214,7 +214,7 @@ fn build_layer1_wrapper_constraints(
         }
     }
 
-    // Register output public inputs (fixed length for fixed n_inner and layer0_num_leaves)
+    // Register output public inputs (fixed length for fixed n_inner and private_batch_num_leaves)
     builder.register_public_inputs(&output_pis);
 }
 
@@ -228,13 +228,13 @@ mod tests {
     use qp_wormhole_inputs::PUBLIC_INPUTS_FELTS_LEN as LEAF_PI_LEN;
 
     use super::super::constants::AGGREGATOR_ADDRESS_LEN;
-    use crate::layer0::circuit::circuit_logic::{
-        AggregationCircuitTargets, Layer0AggregationCircuit,
+    use crate::private_batch::circuit::circuit_logic::{
+        PrivateBatchCircuitTargets, PrivateBatchCircuit,
     };
     use test_helpers::fake_leaf::{build_fake_leaf_circuit, prove_fake_leaf};
 
-    const NUM_LEAVES: usize = 2; // 2 leaf proofs per layer-0 batch (fast)
-    const N_INNER: usize = 2; // 2 layer-0 proofs aggregated into one layer-1 proof
+    const NUM_LEAVES: usize = 2; // 2 leaf proofs per private-batch batch (fast)
+    const N_INNER: usize = 2; // 2 private-batch proofs aggregated into one public-batch proof
 
     /// Build one leaf PI array in the Bitcoin-style 2-output layout.
     ///
@@ -276,12 +276,12 @@ mod tests {
         out
     }
 
-    // ---------------- Layer-0 proving helpers ----------------
+    // ---------------- Private-batch proving helpers ----------------
 
-    /// Prove a layer-0 aggregated proof using the monolithic Layer0AggregationCircuit.
-    fn prove_layer0_batch(
-        l0_data: &CircuitData<F, C, D>,
-        l0_targets: &AggregationCircuitTargets,
+    /// Prove a private-batch aggregated proof using the monolithic PrivateBatchCircuit.
+    fn prove_private_batch_batch(
+        private_batch_data: &CircuitData<F, C, D>,
+        private_batch_targets: &PrivateBatchCircuitTargets,
         leaf_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
     ) -> ProofWithPublicInputs<F, C, D> {
         assert_eq!(leaf_proofs.len(), NUM_LEAVES);
@@ -291,57 +291,57 @@ mod tests {
         // NOTE: leaf_verifier_data is NOT set - it's baked in as constants
 
         // Fill each leaf proof target
-        for (pt, proof) in l0_targets.leaf_proofs.iter().zip(leaf_proofs.iter()) {
+        for (pt, proof) in private_batch_targets.leaf_proofs.iter().zip(leaf_proofs.iter()) {
             pw.set_proof_with_pis_target(pt, proof).unwrap();
         }
 
         // Dummy nullifier preimages: can be anything for non-dummy leaves (is_dummy=false), but must be filled.
-        for (i, limbs) in l0_targets.dummy_nullifier_pre_images.iter().enumerate() {
+        for (i, limbs) in private_batch_targets.dummy_nullifier_pre_images.iter().enumerate() {
             for (j, t) in limbs.iter().enumerate() {
                 let v = F::from_canonical_u64(1000 + (i as u64) * 10 + (j as u64));
                 pw.set_target(*t, v).unwrap();
             }
         }
 
-        l0_data.prove(pw).unwrap()
+        private_batch_data.prove(pw).unwrap()
     }
 
-    // ---------------- Layer-1 proving helpers ----------------
+    // ---------------- Public-batch proving helpers ----------------
 
-    /// Prove a layer-1 aggregated proof using Layer1AggregationCircuit.
-    fn prove_layer1(
-        l1_data: &CircuitData<F, C, D>,
-        l1_targets: &Layer1AggregationCircuitTargets,
-        layer0_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
+    /// Prove a public-batch aggregated proof using PublicBatchCircuit.
+    fn prove_public_batch(
+        public_batch_data: &CircuitData<F, C, D>,
+        public_batch_targets: &PublicBatchCircuitTargets,
+        private_batch_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
         aggregator_address: [F; AGGREGATOR_ADDRESS_LEN],
     ) -> Result<ProofWithPublicInputs<F, C, D>, anyhow::Error> {
-        assert_eq!(layer0_proofs.len(), N_INNER);
+        assert_eq!(private_batch_proofs.len(), N_INNER);
 
         let mut pw = PartialWitness::new();
 
-        // NOTE: layer0_verifier_data is NOT set - it's baked in as constants
+        // NOTE: private_batch_verifier_data is NOT set - it's baked in as constants
 
-        // Fill layer-0 proof targets
-        for (pt, proof) in l1_targets.layer0_proofs.iter().zip(layer0_proofs.iter()) {
+        // Fill private-batch proof targets
+        for (pt, proof) in public_batch_targets.private_batch_proofs.iter().zip(private_batch_proofs.iter()) {
             pw.set_proof_with_pis_target(pt, proof).unwrap();
         }
 
         // Fill aggregator address (4 felts, 8 bytes/felt)
         for (i, limb) in aggregator_address.iter().enumerate() {
-            pw.set_target(l1_targets.aggregator_address[i], *limb)
+            pw.set_target(public_batch_targets.aggregator_address[i], *limb)
                 .unwrap();
         }
 
-        l1_data
+        public_batch_data
             .prove(pw)
-            .map_err(|e| anyhow::anyhow!("layer1 prove failed: {}", e))
+            .map_err(|e| anyhow::anyhow!("public_batch prove failed: {}", e))
     }
 
     // ---------------- Tests ----------------
 
     /// Port of the old `two_layer_aggregation_pipeline` test, updated for:
-    /// - monolithic Layer0AggregationCircuit
-    /// - monolithic Layer1AggregationCircuit
+    /// - monolithic PrivateBatchCircuit
+    /// - monolithic PublicBatchCircuit
     /// - aggregator_address is a witness target
     #[test]
     fn two_layer_aggregation_pipeline_monolithic() {
@@ -407,46 +407,46 @@ mod tests {
             ),
         );
 
-        // ---- 2) Build monolithic Layer0AggregationCircuit once, prove two batches ----
+        // ---- 2) Build monolithic PrivateBatchCircuit once, prove two batches ----
         let leaf_common = leaf_data.common.clone();
         let leaf_verifier_only = leaf_data.verifier_only.clone();
 
         // SECURITY: leaf_verifier_only is baked in as constants at build time
-        let l0_circuit = Layer0AggregationCircuit::new(
+        let private_batch_circuit = PrivateBatchCircuit::new(
             CircuitConfig::standard_recursion_config(),
             leaf_common,
             &leaf_verifier_only,
             NUM_LEAVES,
         );
-        let l0_targets = l0_circuit.targets();
-        let l0_data = l0_circuit.build_circuit();
+        let private_batch_targets = private_batch_circuit.targets();
+        let private_batch_data = private_batch_circuit.build_circuit();
 
-        let l0_proof_a = prove_layer0_batch(
-            &l0_data,
-            &l0_targets,
+        let private_batch_proof_a = prove_private_batch_batch(
+            &private_batch_data,
+            &private_batch_targets,
             vec![leaf_a0.clone(), leaf_a1.clone()],
         );
-        let l0_proof_b = prove_layer0_batch(
-            &l0_data,
-            &l0_targets,
+        let private_batch_proof_b = prove_private_batch_batch(
+            &private_batch_data,
+            &private_batch_targets,
             vec![leaf_b0.clone(), leaf_b1.clone()],
         );
 
-        // Sanity: layer-0 proofs verify under layer-0 circuit data
-        l0_data.verify(l0_proof_a.clone()).unwrap();
-        l0_data.verify(l0_proof_b.clone()).unwrap();
+        // Sanity: private-batch proofs verify under private-batch circuit data
+        private_batch_data.verify(private_batch_proof_a.clone()).unwrap();
+        private_batch_data.verify(private_batch_proof_b.clone()).unwrap();
 
-        // ---- 3) Build monolithic Layer1AggregationCircuit and prove ----
-        // SECURITY: l0_data.verifier_only is baked in as constants at build time
-        let l1_circuit = Layer1AggregationCircuit::new(
+        // ---- 3) Build monolithic PublicBatchCircuit and prove ----
+        // SECURITY: private_batch_data.verifier_only is baked in as constants at build time
+        let public_batch_circuit = PublicBatchCircuit::new(
             CircuitConfig::standard_recursion_config(),
-            l0_data.common.clone(),
-            &l0_data.verifier_only,
+            private_batch_data.common.clone(),
+            &private_batch_data.verifier_only,
             N_INNER,
             NUM_LEAVES,
         );
-        let l1_targets = l1_circuit.targets();
-        let l1_data = l1_circuit.build_circuit();
+        let public_batch_targets = public_batch_circuit.targets();
+        let public_batch_data = public_batch_circuit.build_circuit();
 
         // 4 felts (8 bytes/felt) for hash-derived accounts
         let aggregator_address: [F; AGGREGATOR_ADDRESS_LEN] = [
@@ -456,95 +456,95 @@ mod tests {
             F::from_canonical_u64(0xBABE),
         ];
 
-        let l1_proof = prove_layer1(
-            &l1_data,
-            &l1_targets,
-            vec![l0_proof_a.clone(), l0_proof_b.clone()],
+        let public_batch_proof = prove_public_batch(
+            &public_batch_data,
+            &public_batch_targets,
+            vec![private_batch_proof_a.clone(), private_batch_proof_b.clone()],
             aggregator_address,
         )
-        .expect("layer-1 aggregation failed");
+        .expect("public-batch aggregation failed");
 
         // Verify proof
-        l1_data
-            .verify(l1_proof.clone())
-            .expect("layer-1 proof verification failed");
+        public_batch_data
+            .verify(public_batch_proof.clone())
+            .expect("public-batch proof verification failed");
 
         // ---- 4) Verify output PIs match expected layout + forwarded content ----
-        let pis = &l1_proof.public_inputs;
+        let pis = &public_batch_proof.public_inputs;
 
         // Expected PI length
-        let expected_len = l1c::l1_pi_len(N_INNER, NUM_LEAVES);
-        assert_eq!(pis.len(), expected_len, "unexpected layer-1 PI length");
+        let expected_len = pbc::public_batch_pi_len(N_INNER, NUM_LEAVES);
+        assert_eq!(pis.len(), expected_len, "unexpected public-batch PI length");
 
         // Aggregator address (4 felts, 8 bytes/felt)
         assert_eq!(
-            pis[l1c::AGGREGATOR_ADDRESS_START].to_canonical_u64(),
+            pis[pbc::AGGREGATOR_ADDRESS_START].to_canonical_u64(),
             0xDEAD
         );
         assert_eq!(
-            pis[l1c::AGGREGATOR_ADDRESS_START + 1].to_canonical_u64(),
+            pis[pbc::AGGREGATOR_ADDRESS_START + 1].to_canonical_u64(),
             0xBEEF
         );
         assert_eq!(
-            pis[l1c::AGGREGATOR_ADDRESS_START + 2].to_canonical_u64(),
+            pis[pbc::AGGREGATOR_ADDRESS_START + 2].to_canonical_u64(),
             0xCAFE
         );
         assert_eq!(
-            pis[l1c::AGGREGATOR_ADDRESS_START + 3].to_canonical_u64(),
+            pis[pbc::AGGREGATOR_ADDRESS_START + 3].to_canonical_u64(),
             0xBABE
         );
 
         // Asset ID and volume fee
-        assert_eq!(pis[l1c::ASSET_ID_START].to_canonical_u64(), 0); // asset_id = native
-        assert_eq!(pis[l1c::VOLUME_FEE_BPS_START].to_canonical_u64(), 10); // volume_fee_bps
+        assert_eq!(pis[pbc::ASSET_ID_START].to_canonical_u64(), 0); // asset_id = native
+        assert_eq!(pis[pbc::VOLUME_FEE_BPS_START].to_canonical_u64(), 10); // volume_fee_bps
 
         // Block hash
-        assert_eq!(pis[l1c::BLOCK_HASH_START].to_canonical_u64(), 0xAA01);
-        assert_eq!(pis[l1c::BLOCK_HASH_START + 1].to_canonical_u64(), 0xAA02);
-        assert_eq!(pis[l1c::BLOCK_HASH_START + 2].to_canonical_u64(), 0xAA03);
-        assert_eq!(pis[l1c::BLOCK_HASH_START + 3].to_canonical_u64(), 0xAA04);
+        assert_eq!(pis[pbc::BLOCK_HASH_START].to_canonical_u64(), 0xAA01);
+        assert_eq!(pis[pbc::BLOCK_HASH_START + 1].to_canonical_u64(), 0xAA02);
+        assert_eq!(pis[pbc::BLOCK_HASH_START + 2].to_canonical_u64(), 0xAA03);
+        assert_eq!(pis[pbc::BLOCK_HASH_START + 3].to_canonical_u64(), 0xAA04);
 
         // Block number
-        assert_eq!(pis[l1c::BLOCK_NUMBER_START].to_canonical_u64(), 42);
+        assert_eq!(pis[pbc::BLOCK_NUMBER_START].to_canonical_u64(), 42);
 
         // Total exit slots = N_INNER * (2 * NUM_LEAVES)
         assert_eq!(
-            pis[l1c::TOTAL_EXIT_SLOTS_START].to_canonical_u64(),
+            pis[pbc::TOTAL_EXIT_SLOTS_START].to_canonical_u64(),
             (N_INNER * 2 * NUM_LEAVES) as u64
         );
 
         // ---- Forwarding checks (exit slots + nullifiers) ----
 
-        // L1 exit slots region begins immediately after the header
-        let l1_exit_start = l1c::L1_HEADER_LEN;
-        let l0_exit_start = l1c::l0_exit_slots_start();
-        let l0_exit_len = l1c::l0_exit_slots_count(NUM_LEAVES) * l1c::L0_EXIT_SLOT_LEN;
+        // public-batch exit slots region begins immediately after the header
+        let public_batch_exit_start = pbc::L1_HEADER_LEN;
+        let private_batch_exit_start = pbc::private_batch_exit_slots_start();
+        let private_batch_exit_len = pbc::private_batch_exit_slots_count(NUM_LEAVES) * pbc::PRIVATE_BATCH_EXIT_SLOT_LEN;
 
-        // For each layer-0 proof, ensure its exit slot region is copied verbatim into layer-1 PIs.
-        for (i, l0p) in [l0_proof_a.clone(), l0_proof_b.clone()]
+        // For each private-batch proof, ensure its exit slot region is copied verbatim into public-batch PIs.
+        for (i, l0p) in [private_batch_proof_a.clone(), private_batch_proof_b.clone()]
             .into_iter()
             .enumerate()
         {
-            let src = &l0p.public_inputs[l0_exit_start..l0_exit_start + l0_exit_len];
-            let dst = &pis[l1_exit_start + i * l0_exit_len..l1_exit_start + (i + 1) * l0_exit_len];
-            assert_eq!(dst, src, "layer-1 exit slots mismatch for inner proof {i}");
+            let src = &l0p.public_inputs[private_batch_exit_start..private_batch_exit_start + private_batch_exit_len];
+            let dst = &pis[public_batch_exit_start + i * private_batch_exit_len..public_batch_exit_start + (i + 1) * private_batch_exit_len];
+            assert_eq!(dst, src, "public-batch exit slots mismatch for inner proof {i}");
         }
 
         // Nullifiers:
-        let l1_null_start = l1c::l1_nullifiers_start(N_INNER, NUM_LEAVES);
-        let l0_null_start = l1c::l0_nullifiers_start(NUM_LEAVES);
-        let l0_null_len = l1c::l0_nullifiers_count(NUM_LEAVES) * 4;
+        let public_batch_null_start = pbc::public_batch_nullifiers_start(N_INNER, NUM_LEAVES);
+        let private_batch_null_start = pbc::private_batch_nullifiers_start(NUM_LEAVES);
+        let private_batch_null_len = pbc::private_batch_nullifiers_count(NUM_LEAVES) * 4;
 
-        for (i, l0p) in [l0_proof_a, l0_proof_b].into_iter().enumerate() {
-            let src = &l0p.public_inputs[l0_null_start..l0_null_start + l0_null_len];
-            let dst = &pis[l1_null_start + i * l0_null_len..l1_null_start + (i + 1) * l0_null_len];
-            assert_eq!(dst, src, "layer-1 nullifiers mismatch for inner proof {i}");
+        for (i, l0p) in [private_batch_proof_a, private_batch_proof_b].into_iter().enumerate() {
+            let src = &l0p.public_inputs[private_batch_null_start..private_batch_null_start + private_batch_null_len];
+            let dst = &pis[public_batch_null_start + i * private_batch_null_len..public_batch_null_start + (i + 1) * private_batch_null_len];
+            assert_eq!(dst, src, "public-batch nullifiers mismatch for inner proof {i}");
         }
     }
 
-    /// Negative test: if two layer-0 proofs use different block hashes, layer-1 proving must fail.
+    /// Negative test: if two private-batch proofs use different block hashes, public-batch proving must fail.
     #[test]
-    fn layer1_mismatched_blocks_fails() {
+    fn public_batch_mismatched_blocks_fails() {
         let block_a: [u64; 4] = [0xAA01, 0xAA02, 0xAA03, 0xAA04];
         let block_b: [u64; 4] = [0xBB01, 0xBB02, 0xBB03, 0xBB04];
         let block_number = 42u32;
@@ -607,31 +607,31 @@ mod tests {
             ),
         );
 
-        // Layer-0 circuit
+        // Private-batch circuit
         // SECURITY: leaf verifier_only is baked in as constants at build time
-        let l0_circuit = Layer0AggregationCircuit::new(
+        let private_batch_circuit = PrivateBatchCircuit::new(
             CircuitConfig::standard_recursion_config(),
             leaf_data.common.clone(),
             &leaf_data.verifier_only,
             NUM_LEAVES,
         );
-        let l0_targets = l0_circuit.targets();
-        let l0_data = l0_circuit.build_circuit();
+        let private_batch_targets = private_batch_circuit.targets();
+        let private_batch_data = private_batch_circuit.build_circuit();
 
-        let l0_a = prove_layer0_batch(&l0_data, &l0_targets, vec![a0, a1]);
-        let l0_b = prove_layer0_batch(&l0_data, &l0_targets, vec![b0, b1]);
+        let private_batch_a = prove_private_batch_batch(&private_batch_data, &private_batch_targets, vec![a0, a1]);
+        let private_batch_b = prove_private_batch_batch(&private_batch_data, &private_batch_targets, vec![b0, b1]);
 
-        // Layer-1 circuit
+        // Public-batch circuit
         // SECURITY: l0 verifier_only is baked in as constants at build time
-        let l1_circuit = Layer1AggregationCircuit::new(
+        let public_batch_circuit = PublicBatchCircuit::new(
             CircuitConfig::standard_recursion_config(),
-            l0_data.common.clone(),
-            &l0_data.verifier_only,
+            private_batch_data.common.clone(),
+            &private_batch_data.verifier_only,
             N_INNER,
             NUM_LEAVES,
         );
-        let l1_targets = l1_circuit.targets();
-        let l1_data = l1_circuit.build_circuit();
+        let public_batch_targets = public_batch_circuit.targets();
+        let public_batch_data = public_batch_circuit.build_circuit();
 
         let agg_addr = [
             F::from_canonical_u64(1),
@@ -640,11 +640,11 @@ mod tests {
             F::from_canonical_u64(4),
         ];
 
-        let res = prove_layer1(&l1_data, &l1_targets, vec![l0_a, l0_b], agg_addr);
+        let res = prove_public_batch(&public_batch_data, &public_batch_targets, vec![private_batch_a, private_batch_b], agg_addr);
 
         assert!(
             res.is_err(),
-            "expected layer-1 proving to fail for mismatched blocks"
+            "expected public-batch proving to fail for mismatched blocks"
         );
     }
 }

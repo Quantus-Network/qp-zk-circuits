@@ -46,7 +46,7 @@ use qp_plonky2_verifier::util::serialization::DefaultGateSerializer;
 
 // Re-export input types from qp-wormhole-inputs
 pub use qp_wormhole_inputs::{
-    AggregatedPublicCircuitInputs, BlockData, BytesDigest, PublicCircuitInputs,
+    PrivateBatchPublicInputs, BlockData, BytesDigest, PublicCircuitInputs,
     PublicInputsByAccount,
 };
 
@@ -63,15 +63,15 @@ pub fn parse_public_inputs(
 }
 
 /// Parse aggregated public inputs from a proof.
-pub fn parse_aggregated_public_inputs(
+pub fn parse_private_batch_public_inputs(
     proof: &ProofWithPublicInputs<F, C, D>,
-) -> anyhow::Result<AggregatedPublicCircuitInputs> {
+) -> anyhow::Result<PrivateBatchPublicInputs> {
     let u64s: Vec<u64> = proof
         .public_inputs
         .iter()
         .map(|f| f.to_canonical_u64())
         .collect();
-    AggregatedPublicCircuitInputs::try_from_u64_slice(&u64s)
+    PrivateBatchPublicInputs::try_from_u64_slice(&u64s)
 }
 
 /// Verifier for Wormhole circuit proofs.

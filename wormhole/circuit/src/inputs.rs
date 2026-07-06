@@ -11,7 +11,7 @@ use zk_circuits_common::zk_merkle::SIBLINGS_PER_LEVEL;
 
 // Import public input types and constants from wormhole_inputs (single source of truth)
 pub use qp_wormhole_inputs::{
-    AggregatedPublicCircuitInputs, BlockData, PublicCircuitInputs, PublicInputsByAccount,
+    PrivateBatchPublicInputs, BlockData, PublicCircuitInputs, PublicInputsByAccount,
 };
 use qp_wormhole_inputs::{
     ASSET_ID_INDEX, BLOCK_HASH_END_INDEX, BLOCK_HASH_START_INDEX, BLOCK_NUMBER_INDEX,
@@ -152,14 +152,14 @@ impl ParsePublicInputs for PublicCircuitInputs {
     }
 }
 
-/// Trait for parsing `AggregatedPublicCircuitInputs` from field element slices.
-pub trait ParseAggregatedPublicInputs {
+/// Trait for parsing `PrivateBatchPublicInputs` from field element slices.
+pub trait ParsePrivateBatchPublicInputs {
     /// Parse aggregated public inputs from a slice of GoldilocksField elements.
-    fn try_from_felts(pis: &[GoldilocksField]) -> anyhow::Result<AggregatedPublicCircuitInputs>;
+    fn try_from_felts(pis: &[GoldilocksField]) -> anyhow::Result<PrivateBatchPublicInputs>;
 }
 
-impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
-    fn try_from_felts(pis: &[GoldilocksField]) -> anyhow::Result<AggregatedPublicCircuitInputs> {
+impl ParsePrivateBatchPublicInputs for PrivateBatchPublicInputs {
+    fn try_from_felts(pis: &[GoldilocksField]) -> anyhow::Result<PrivateBatchPublicInputs> {
         // Layout: [num_unique_exits, asset_id, volume_fee_bps, block_hash(4), block_number,
         //          [output_sum(1), exit_account(4)] * 2*N, nullifiers(4) * N, padding...]
 
@@ -178,8 +178,8 @@ impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
 
         let n_leaf = payload_len / PUBLIC_INPUTS_FELTS_LEN;
         // This invariant is enforced because an aggregator should never legitimately
-        // produce a PI vector with zero leaf proofs. See audit finding M-3: "Layer-1
-        // has no dummy bypass; all-dummy L0 batches break aggregation".
+        // produce a PI vector with zero leaf proofs. See audit finding M-3: "Public-batch
+        // has no dummy bypass; all-dummy private-batch batches break aggregation".
         anyhow::ensure!(n_leaf > 0, "AggregatedPI: need at least one leaf proof");
 
         // Helper to read a u32 from a felt
@@ -225,7 +225,7 @@ impl ParseAggregatedPublicInputs for AggregatedPublicCircuitInputs {
             .map(|(i, chunk)| read_digest(chunk).with_context(|| format!("nullifier[{}]", i)))
             .collect::<anyhow::Result<Vec<_>>>()?;
 
-        Ok(AggregatedPublicCircuitInputs {
+        Ok(PrivateBatchPublicInputs {
             num_unique_exits,
             asset_id,
             volume_fee_bps,
@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn aggregated_try_from_felts_rejects_empty_slice() {
         let result =
-            <AggregatedPublicCircuitInputs as ParseAggregatedPublicInputs>::try_from_felts(&[]);
+            <PrivateBatchPublicInputs as ParsePrivateBatchPublicInputs>::try_from_felts(&[]);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(
@@ -259,7 +259,7 @@ mod tests {
     fn aggregated_try_from_felts_rejects_short_slice() {
         // Only 5 elements when at least 8 are required for header
         let short_slice: Vec<GoldilocksField> = vec![GoldilocksField::ZERO; 5];
-        let result = <AggregatedPublicCircuitInputs as ParseAggregatedPublicInputs>::try_from_felts(
+        let result = <PrivateBatchPublicInputs as ParsePrivateBatchPublicInputs>::try_from_felts(
             &short_slice,
         );
         assert!(result.is_err());
@@ -275,7 +275,7 @@ mod tests {
     fn aggregated_try_from_felts_rejects_malformed_length() {
         // 9 elements: 8 header + 1 extra (not a multiple of PUBLIC_INPUTS_FELTS_LEN)
         let malformed_slice: Vec<GoldilocksField> = vec![GoldilocksField::ZERO; 9];
-        let result = <AggregatedPublicCircuitInputs as ParseAggregatedPublicInputs>::try_from_felts(
+        let result = <PrivateBatchPublicInputs as ParsePrivateBatchPublicInputs>::try_from_felts(
             &malformed_slice,
         );
         assert!(result.is_err());
@@ -291,7 +291,7 @@ mod tests {
     fn aggregated_try_from_felts_rejects_header_only() {
         // Exactly 8 elements (header only, n_leaf would be 0)
         let header_only: Vec<GoldilocksField> = vec![GoldilocksField::ZERO; 8];
-        let result = <AggregatedPublicCircuitInputs as ParseAggregatedPublicInputs>::try_from_felts(
+        let result = <PrivateBatchPublicInputs as ParsePrivateBatchPublicInputs>::try_from_felts(
             &header_only,
         );
         assert!(result.is_err());
@@ -308,7 +308,7 @@ mod tests {
         // Valid input: 8 header + 21 (one leaf worth of data)
         let valid_slice: Vec<GoldilocksField> =
             vec![GoldilocksField::ZERO; 8 + PUBLIC_INPUTS_FELTS_LEN];
-        let result = <AggregatedPublicCircuitInputs as ParseAggregatedPublicInputs>::try_from_felts(
+        let result = <PrivateBatchPublicInputs as ParsePrivateBatchPublicInputs>::try_from_felts(
             &valid_slice,
         );
         assert!(result.is_ok(), "Expected valid input to parse successfully");

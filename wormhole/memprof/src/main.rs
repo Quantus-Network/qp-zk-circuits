@@ -9,7 +9,7 @@
 //! Pipeline phases:
 //!   1. build leaf circuit (once)
 //!   2. generate N leaf proofs sequentially (or skip & use dummies)
-//!   3. build the layer-0 aggregation circuit
+//!   3. build the private-batch aggregation circuit
 //!   4. commit + prove the aggregation
 //!
 //! See `README.md` for usage examples.

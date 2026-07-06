@@ -13,7 +13,7 @@ spec + the differential safety net.
 | `WormholeSpec/Basic.lean` | Field/digest model, salts, `inRange` |
 | `WormholeSpec/Hash.lean` | Random-oracle interface, `WA`/`Null`/`leafHash`/`nodeHash`/`dummyNull` |
 | `WormholeSpec/Leaf.lean` | Leaf relation `Rleaf` (C1–C5, conditional dummy path) |
-| `WormholeSpec/Aggregation.lean` | `RL0`, `RL1` |
+| `WormholeSpec/Aggregation.lean` | `RPrivateBatch`, `RPublicBatch` |
 | `WormholeSpec/Security.lean` | Deterministic cores of the reduction theorems (`*_or_collision` + collision-resistance corollaries) |
 | `WormholeSpec/Encoding.lean` | Byte↔felt encoding safety (4-byte injective edges, 8-byte canonical-only) |
 | `WormholeSpec/LeafBinding.lean` | Finding A: chain↔circuit leaf-recipient consistency (spendable ⟺ recipient = `WA(s)`) |
@@ -81,15 +81,15 @@ hermetic. Toolchain is pinned in `lean-toolchain` (Lean `v4.30`).
 
 | Spec clause | Rust source |
 |-------------|-------------|
-| `metadataConsistent` (asset/fee/block across non-dummy) | `build_layer0_wrapper_constraints` — `layer0/circuit/circuit_logic.rs` |
-| `referenceFromFirstReal` (block ref = first non-dummy slot) | prefix-scan selection — `layer0/circuit/circuit_logic.rs` (the `illuzen/full-shuffle` fix) |
+| `metadataConsistent` (asset/fee/block across non-dummy) | `build_private_batch_constraints` — `private_batch/circuit/circuit_logic.rs` |
+| `referenceFromFirstReal` (block ref = first non-dummy slot) | prefix-scan selection — `private_batch/circuit/circuit_logic.rs` (the `illuzen/full-shuffle` fix) |
 | `nullifiersReplaced` `DNull(u)=H(H(u))` | `hash_dummy_nullifier_pre_image` — `circuit_logic.rs:338–346` |
-| `isDummyL0 = blockHash=0` (weaker sentinel) | dummy detection at L0 — `circuit_logic.rs` |
+| `isDummyPrivateBatch = blockHash=0` (weaker sentinel) | dummy detection at private-batch — `circuit_logic.rs` |
 | `groupExits` / `matchSum` (per-slot group sum + first-occurrence dedup) | exit-account grouping loop — `circuit_logic.rs:214–287` |
-| **thm** `RL0_value_conservation`: `outputExitTotal = rawOutputTotal` | derived from the grouping primitive (was an assumed conjunct) |
+| **thm** `RPrivateBatch_value_conservation`: `outputExitTotal = rawOutputTotal` | derived from the grouping primitive (was an assumed conjunct) |
 | **thm** `rawOutputTotal_lt_modulus`: total `< goldilocks` | explicit no-wraparound bound from 32-bit output range checks; Phase-2 field hypothesis (see note below) |
-| output layout (`Layer0Output`) | `aggregated_output` — `layer0/circuit/constants.rs` |
-| `RL1` forwarding + consistency | `build_layer1_wrapper_constraints` — `layer1/circuit/circuit_logic.rs` |
+| output layout (`PrivateBatchOutput`) | `aggregated_output` — `private_batch/circuit/constants.rs` |
+| `RPublicBatch` forwarding + consistency | `build_public_batch_constraints` — `public_batch/circuit/circuit_logic.rs` |
 
 ### Security reductions (`Security.lean`)
 
@@ -153,9 +153,9 @@ step is the Phase-4 preimage game, as for the other security theorems.
    `transfer_count` (both limbs), `asset_id`, `input_amount`, `output_amount_1`,
    `output_amount_2`, `volume_fee_bps` (all unconditional 32-bit), plus
    `block_number` in `BlockHeader::circuit`. `Rleaf` now asserts the full set.
-2. ~~Exit grouping/dedup.~~ **Done (conservation).** `RL0` now pins the exact
+2. ~~Exit grouping/dedup.~~ **Done (conservation).** `RPrivateBatch` now pins the exact
    in-circuit grouping (`groupExits`), and value conservation is the *derived*
-   theorem `RL0_value_conservation` (with `rawOutputTotal_eq_inputExitTotal`
+   theorem `RPrivateBatch_value_conservation` (with `rawOutputTotal_eq_inputExitTotal`
    bridging to the non-dummy total under the dummy⟹zero-outputs guarantee).
    Remaining: the full per-account *multiset* characterization (which account
    gets which sum) and `numExitSlots = 2·N` slot accounting (Phase 3).
@@ -165,13 +165,13 @@ step is the Phase-4 preimage game, as for the other security theorems.
    (`rawOutputTotal_lt_modulus`) from the 32-bit output range checks plus a
    batch-size bound, and the `omega` proofs in `Aggregation.lean` will need
    field reworking. (See the conservation note in the module header.)
-3. **L1 accounting.** `totalExitSlots` and aggregator-address binding semantics
+3. **public-batch accounting.** `totalExitSlots` and aggregator-address binding semantics
    (Phase 3).
 4. **Dummy-notion compatibility.** Prove the leaf dummy (`blockHash=0 ∧ outs=0`)
-   and L0 dummy (`blockHash=0`) interact safely (Phase 3).
-5. **`exit_account_1/2` are unconstrained at the leaf** — bound only at L0. The
+   and private-batch dummy (`blockHash=0`) interact safely (Phase 3).
+5. **`exit_account_1/2` are unconstrained at the leaf** — bound only at private-batch. The
    spec reflects this (no `Rleaf` clause references them); the binding obligation
-   lives in `RL0`.
+   lives in `RPrivateBatch`.
 6. **Game-based probabilistic accounting.** `Security.lean` proves the
    *deterministic* cores of one-time withdrawal and spend-path exclusivity as
    reductions to an `H` collision, clean under the `CollisionResistant` hypothesis.

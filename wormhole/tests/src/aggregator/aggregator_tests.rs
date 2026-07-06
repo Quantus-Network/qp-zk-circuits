@@ -7,7 +7,7 @@ use qp_wormhole_inputs::PublicCircuitInputs;
 use std::path::Path;
 use std::sync::Once;
 use test_helpers::TestInputs;
-use wormhole_aggregator::aggregator::{AggregationBackend, Layer0Aggregator};
+use wormhole_aggregator::aggregator::{AggregationBackend, PrivateBatchAggregator};
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::circuit::{C, D, F};
@@ -45,9 +45,9 @@ fn make_leaf_proof(inputs: &CircuitInputs) -> ProofWithPublicInputs<F, C, D> {
         .expect("Failed to create prover from binaries");
     prover.commit(inputs).unwrap().prove().unwrap()
 }
-fn make_aggregator() -> Layer0Aggregator {
+fn make_aggregator() -> PrivateBatchAggregator {
     setup_test_binaries();
-    Layer0Aggregator::new(TEST_OUTPUT_DIR).unwrap()
+    PrivateBatchAggregator::new(TEST_OUTPUT_DIR).unwrap()
 }
 
 #[test]

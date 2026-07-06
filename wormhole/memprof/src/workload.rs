@@ -1,7 +1,7 @@
 //! Pipeline phases under measurement:
 //!   1. build leaf circuit (extract prover data, common, verifier_only, targets, dummy proof)
 //!   2. generate N leaf proofs sequentially (reusing the prover circuit data)
-//!   3. build the layer-0 aggregation circuit
+//!   3. build the private-batch aggregation circuit
 //!   4. commit + prove the aggregation
 //!
 //! Uses dummy circuit inputs so the workload is self-contained.
@@ -13,7 +13,7 @@ use plonky2::plonk::circuit_data::{
 };
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use wormhole_aggregator::dummy_proof::load_dummy_proof;
-use wormhole_aggregator::layer0::prover::Layer0AggregationProver;
+use wormhole_aggregator::private_batch::prover::PrivateBatchProver;
 use wormhole_aggregator::{build_dummy_circuit_inputs, generate_dummy_proof};
 use wormhole_circuit::circuit::circuit_logic::{CircuitTargets, WormholeCircuit};
 use wormhole_prover::fill_witness;
@@ -102,7 +102,7 @@ pub fn aggregate_fresh(
     report: &mut PhaseReport,
 ) -> Result<ProofWithPublicInputs<F, C, D>> {
     report.phase_start("build_agg_circuit")?;
-    let prover = Layer0AggregationProver::new(
+    let prover = PrivateBatchProver::new(
         agg_config,
         leaf.common.clone(),
         &leaf.verifier_only,
@@ -132,7 +132,7 @@ pub fn build_agg_circuit_only(
     report: &mut PhaseReport,
 ) -> Result<()> {
     report.phase_start("build_agg_circuit_only")?;
-    let _ = Layer0AggregationProver::new(
+    let _ = PrivateBatchProver::new(
         agg_config,
         leaf.common.clone(),
         &leaf.verifier_only,

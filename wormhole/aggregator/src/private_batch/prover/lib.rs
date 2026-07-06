@@ -1,4 +1,4 @@
-//! Layer-0 aggregation prover (prebuilt-circuit proving API).
+//! Private-batch aggregation prover (prebuilt-circuit proving API).
 //!
 //! - `new(...)` / `new_from_*` constructors
 //! - `commit(...)` to fill the witness
@@ -34,23 +34,23 @@ use crate::{
         ensure_proof_public_input_len, leaf_proof_asset_id, load_verifier_data_from_bytes,
     },
     dummy_proof::{generate_random_nullifier_preimage, load_dummy_proof},
-    layer0::{
-        circuit::circuit_logic::{AggregationCircuitTargets, Layer0AggregationCircuit},
-        prover::witness::fill_layer0_aggregation_witness,
+    private_batch::{
+        circuit::circuit_logic::{PrivateBatchCircuitTargets, PrivateBatchCircuit},
+        prover::witness::fill_private_batch_witness,
     },
 };
 
 #[derive(Debug)]
-pub struct Layer0AggregationProver {
+pub struct PrivateBatchProver {
     pub circuit_data: ProverCircuitData<F, C, D>,
     partial_witness: PartialWitness<F>,
-    targets: Option<AggregationCircuitTargets>,
+    targets: Option<PrivateBatchCircuitTargets>,
     num_leaf_proofs: usize,
     dummy_proof_template: ProofWithPublicInputs<F, C, D>,
 }
 
-impl Layer0AggregationProver {
-    /// Build a fresh layer-0 aggregation prover from circuit definitions.
+impl PrivateBatchProver {
+    /// Build a fresh private-batch aggregation prover from circuit definitions.
     ///
     /// In production, prefer `new_from_binaries_dir(...)` to load prebuilt circuits.
     pub fn new(
@@ -60,7 +60,7 @@ impl Layer0AggregationProver {
         num_leaf_proofs: usize,
         dummy_proof_template: ProofWithPublicInputs<F, C, D>,
     ) -> Self {
-        let agg_circuit = Layer0AggregationCircuit::new(
+        let agg_circuit = PrivateBatchCircuit::new(
             agg_circuit_config,
             leaf_common,
             leaf_verifier_only,
@@ -79,15 +79,15 @@ impl Layer0AggregationProver {
         }
     }
 
-    /// Create a layer-0 aggregation prover from serialized bytes.
+    /// Create a private-batch aggregation prover from serialized bytes.
     ///
     /// Expected bytes:
-    /// - `aggregated_prover_only_bytes`: layer-0 aggregated prover-only circuit data
-    /// - `aggregated_common_bytes`: layer-0 aggregated common circuit data
+    /// - `aggregated_prover_only_bytes`: private-batch aggregated prover-only circuit data
+    /// - `aggregated_common_bytes`: private-batch aggregated common circuit data
     /// - `leaf_common_bytes`: leaf circuit common data (`common.bin`)
     /// - `leaf_verifier_only_bytes`: leaf verifier-only data (`verifier.bin`)
     /// - `dummy_proof_bytes`: serialized dummy leaf proof (`dummy_proof.bin`)
-    /// - `num_leaf_proofs`: number of leaf proofs aggregated by this layer-0 prover
+    /// - `num_leaf_proofs`: number of leaf proofs aggregated by this private-batch prover
     pub fn new_from_bytes(
         aggregated_prover_only_bytes: &[u8],
         aggregated_common_bytes: &[u8],
@@ -120,7 +120,7 @@ impl Layer0AggregationProver {
         // 3) Reconstruct the aggregation circuit to get targets.
         // NOTE: This builds a fresh circuit to extract target structure. The verifier key
         // must match what was used when the prebuilt binaries were created.
-        let circuit = Layer0AggregationCircuit::new(
+        let circuit = PrivateBatchCircuit::new(
             agg_common.config.clone(),
             leaf_verifier_data.common.clone(),
             &leaf_verifier_data.verifier_only,
@@ -146,7 +146,7 @@ impl Layer0AggregationProver {
         })
     }
 
-    /// Create a layer-0 aggregation prover from explicit file paths.
+    /// Create a private-batch aggregation prover from explicit file paths.
     #[cfg(feature = "std")]
     #[allow(clippy::too_many_arguments)]
     pub fn new_from_files(
@@ -190,8 +190,8 @@ impl Layer0AggregationProver {
     /// Convenience constructor that loads everything from a generated binaries directory.
     ///
     /// Expected files:
-    /// - `aggregated_prover.bin`
-    /// - `aggregated_common.bin`
+    /// - `private_batch_prover.bin`
+    /// - `private_batch_common.bin`
     /// - `common.bin`
     /// - `verifier.bin`
     /// - `dummy_proof.bin`
@@ -204,8 +204,8 @@ impl Layer0AggregationProver {
         let num_leaf_proofs = bins_config.num_leaf_proofs;
 
         Self::new_from_files(
-            &bins_dir.join("aggregated_prover.bin"),
-            &bins_dir.join("aggregated_common.bin"),
+            &bins_dir.join("private_batch_prover.bin"),
+            &bins_dir.join("private_batch_common.bin"),
             &bins_dir.join("common.bin"),
             &bins_dir.join("verifier.bin"),
             &bins_dir.join("dummy_proof.bin"),
@@ -217,7 +217,7 @@ impl Layer0AggregationProver {
     // Proving API
     // -------------------------------------------------------------------------
 
-    /// Number of leaf proofs aggregated by this layer-0 prover.
+    /// Number of leaf proofs aggregated by this private-batch prover.
     pub fn num_leaf_proofs(&self) -> usize {
         self.num_leaf_proofs
     }
@@ -227,7 +227,7 @@ impl Layer0AggregationProver {
     /// Performs padding with dummy proofs, shuffling, and witness filling.
     pub fn commit(mut self, mut proofs: Vec<ProofWithPublicInputs<F, C, D>>) -> Result<Self> {
         let Some(targets) = self.targets.take() else {
-            bail!("layer-0 aggregation prover has already committed to inputs");
+            bail!("private-batch aggregation prover has already committed to inputs");
         };
 
         if proofs.len() > self.num_leaf_proofs {
@@ -261,7 +261,7 @@ impl Layer0AggregationProver {
         let dummy_nullifier_pre_images =
             generate_dummy_nullifier_pre_images_for_slots(proofs.len());
 
-        fill_layer0_aggregation_witness(
+        fill_private_batch_witness(
             &mut self.partial_witness,
             &targets,
             &proofs,
@@ -271,11 +271,11 @@ impl Layer0AggregationProver {
         Ok(self)
     }
 
-    /// Generate the aggregated layer-0 proof after `commit(...)`.
+    /// Generate the aggregated private-batch proof after `commit(...)`.
     pub fn prove(self) -> Result<ProofWithPublicInputs<F, C, D>> {
         self.circuit_data
             .prove(self.partial_witness)
-            .map_err(|e| anyhow!("Failed to prove layer-0 aggregation circuit: {}", e))
+            .map_err(|e| anyhow!("Failed to prove private-batch aggregation circuit: {}", e))
     }
 }
 
@@ -284,14 +284,14 @@ impl Layer0AggregationProver {
 // -----------------------------------------------------------------------------
 
 /// If we're padding with dummy proofs (`asset_id = 0`), real proofs must also use `asset_id = 0`
-/// because the layer-0 circuit enforces asset_id equality across all proofs.
+/// because the private-batch circuit enforces asset_id equality across all proofs.
 fn assert_dummy_padding_asset_id_compatible(
     proofs: &[ProofWithPublicInputs<F, C, D>],
 ) -> Result<()> {
     for (idx, proof) in proofs.iter().enumerate() {
         ensure_proof_public_input_len(
             proof,
-            crate::layer0::circuit::constants::LEAF_PI_LEN,
+            crate::private_batch::circuit::constants::LEAF_PI_LEN,
             "leaf proof",
         )?;
         let real_asset_id = leaf_proof_asset_id(proof)?;
@@ -311,7 +311,7 @@ fn assert_dummy_padding_asset_id_compatible(
 
 /// Generate a dummy nullifier preimage for every slot.
 ///
-/// The layer-0 circuit hashes these for dummy slots (`block_hash == 0`) and ignores them
+/// The private-batch circuit hashes these for dummy slots (`block_hash == 0`) and ignores them
 /// for real slots via conditional select.
 fn generate_dummy_nullifier_pre_images_for_slots(n_slots: usize) -> Vec<[F; 4]> {
     (0..n_slots)

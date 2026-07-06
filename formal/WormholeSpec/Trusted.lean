@@ -20,7 +20,7 @@
   trusted seam, the rung labeled `(1)` in `qp-plonky2/formal/PLAN.md` §1.
 
   These axioms are intentionally confined to this file; only `AggregationBridge`'s
-  end-to-end soundness theorems (`layer0_sound`, `layer1_sound`) invoke them, so a
+  end-to-end soundness theorems (`private_batch_sound`, `public_batch_sound`) invoke them, so a
   `#print axioms` on any other result stays free of them.
 -/
 import WormholeSpec.Basic
@@ -40,26 +40,26 @@ satisfaction attests via the soundness *axioms* below), so they stay out of the
 trusted axiom set. Realized in Rust by
 `wormhole/aggregator/src/common/recursive.rs::add_recursive_verifiers`. -/
 
-/-- A layer-0 aggregation circuit accepted a recursive **leaf** proof whose 21-felt
+/-- A private-batch aggregation circuit accepted a recursive **leaf** proof whose 21-felt
     public inputs decode to `p`. (Constant leaf verifier key; one per leaf slot.)
 
     `opaque`, not `axiom`: this is an *abstract predicate* (its truth value is never
     assumed), so it should not enlarge the trusted axiom set. Only the soundness facts
-    below (`leaf_proof_sound`, `layer0_proof_sound`) are genuine `axiom`s. -/
+    below (`leaf_proof_sound`, `private_batch_proof_sound`) are genuine `axiom`s. -/
 opaque LeafProofAccepted (ro : RandomOracle) (p : LeafPublic) : Prop
 
-/-- A layer-1 aggregation circuit accepted a recursive **layer-0** proof whose public
-    inputs decode to `out`. (Constant layer-0 verifier key; one per inner slot.)
+/-- A public-batch aggregation circuit accepted a recursive **private-batch** proof whose public
+    inputs decode to `out`. (Constant private-batch verifier key; one per inner slot.)
 
     `opaque` for the same reason as `LeafProofAccepted`: an abstract predicate, not an
     assumed truth. -/
-opaque Layer0ProofAccepted (ro : RandomOracle) (out : Layer0Output) : Prop
+opaque PrivateBatchProofAccepted (ro : RandomOracle) (out : PrivateBatchOutput) : Prop
 
 /-! ### `verify_proof` soundness (T4) -/
 
 /--
 **TRUSTED (T4 + proof-system soundness (1)).** `verify_proof` soundness for the leaf
-circuit: if the layer-0 recursion gadget accepts a leaf proof (under the baked leaf
+circuit: if the private-batch recursion gadget accepts a leaf proof (under the baked leaf
 verifier key), then its public inputs satisfy the leaf relation `Rleaf` for some
 witness.
 
@@ -75,15 +75,15 @@ axiom leaf_proof_sound (ro : RandomOracle) (p : LeafPublic) :
 
 /--
 **TRUSTED (T4 + proof-system soundness (1)).** `verify_proof` soundness for the
-layer-0 circuit: if the layer-1 recursion gadget accepts a layer-0 proof (under the
-baked layer-0 verifier key), then its public inputs satisfy the layer-0 relation
-`RL0` for some children and dummy-nullifier preimages.
+private-batch circuit: if the public-batch recursion gadget accepts a private-batch proof (under the
+baked private-batch verifier key), then its public inputs satisfy the private-batch relation
+`RPrivateBatch` for some children and dummy-nullifier preimages.
 
-*Justification & discharge:* as `leaf_proof_sound`, with the layer-0 circuit ⟺ `RL0`
-bridge (`AggregationBridge.layer0_bridge`) playing the role of the child-circuit
+*Justification & discharge:* as `leaf_proof_sound`, with the private-batch circuit ⟺ `RPrivateBatch`
+bridge (`AggregationBridge.private_batch_bridge`) playing the role of the child-circuit
 bridge — so this axiom's (ii) component is itself a *theorem* here; only the
 proof-system-soundness component (i) remains genuinely trusted. -/
-axiom layer0_proof_sound (ro : RandomOracle) (out : Layer0Output) :
-    Layer0ProofAccepted ro out → ∃ leaves us, RL0 ro leaves us out
+axiom private_batch_proof_sound (ro : RandomOracle) (out : PrivateBatchOutput) :
+    PrivateBatchProofAccepted ro out → ∃ leaves us, RPrivateBatch ro leaves us out
 
 end WormholeSpec

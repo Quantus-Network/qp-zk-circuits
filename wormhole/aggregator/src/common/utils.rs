@@ -7,7 +7,7 @@ use plonky2::{
 };
 use zk_circuits_common::circuit::{C, D, F};
 
-use crate::layer0::circuit::constants::{aggregated_output, ASSET_ID_START, LEAF_PI_LEN};
+use crate::private_batch::circuit::constants::{aggregated_output, ASSET_ID_START, LEAF_PI_LEN};
 
 /// Load verifier circuit data (common + verifier-only) from serialized bytes.
 pub fn load_verifier_data_from_bytes(
@@ -56,10 +56,10 @@ pub fn leaf_proof_asset_id(proof: &ProofWithPublicInputs<F, C, D>) -> Result<u32
         .map_err(|_| anyhow!("leaf proof asset_id exceeds u32 range"))
 }
 
-pub fn l0_num_leaves_from_padded_pi_len(pi_len: usize) -> Result<usize> {
+pub fn private_batch_num_leaves_from_padded_pi_len(pi_len: usize) -> Result<usize> {
     if pi_len < aggregated_output::HEADER_LEN {
         return Err(anyhow!(
-            "layer-0 aggregated public input length {} is smaller than the fixed header {}",
+            "private-batch aggregated public input length {} is smaller than the fixed header {}",
             pi_len,
             aggregated_output::HEADER_LEN
         ));
@@ -68,7 +68,7 @@ pub fn l0_num_leaves_from_padded_pi_len(pi_len: usize) -> Result<usize> {
     let payload_len = pi_len - aggregated_output::HEADER_LEN;
     if !payload_len.is_multiple_of(LEAF_PI_LEN) {
         return Err(anyhow!(
-            "layer-0 aggregated public input length {} is malformed: expected {} + N*{}",
+            "private-batch aggregated public input length {} is malformed: expected {} + N*{}",
             pi_len,
             aggregated_output::HEADER_LEN,
             LEAF_PI_LEN
@@ -78,7 +78,7 @@ pub fn l0_num_leaves_from_padded_pi_len(pi_len: usize) -> Result<usize> {
     let num_leaves = payload_len / LEAF_PI_LEN;
     if num_leaves == 0 {
         return Err(anyhow!(
-            "layer-0 aggregated public input length {} encodes zero leaves",
+            "private-batch aggregated public input length {} encodes zero leaves",
             pi_len
         ));
     }
@@ -88,11 +88,11 @@ pub fn l0_num_leaves_from_padded_pi_len(pi_len: usize) -> Result<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::l0_num_leaves_from_padded_pi_len;
+    use super::private_batch_num_leaves_from_padded_pi_len;
 
     #[test]
-    fn l0_num_leaves_from_padded_pi_len_rejects_malformed_lengths() {
-        let err = l0_num_leaves_from_padded_pi_len(9).unwrap_err();
+    fn private_batch_num_leaves_from_padded_pi_len_rejects_malformed_lengths() {
+        let err = private_batch_num_leaves_from_padded_pi_len(9).unwrap_err();
         assert!(err.to_string().contains("malformed"));
     }
 }

@@ -1,6 +1,6 @@
 //! Build a customizable aggregator `CircuitConfig` from CLI overrides.
 //!
-//! The starting point is always `wormhole_aggregator_circuit_config()` (the
+//! The starting point is always `wormhole_private_batch_circuit_config()` (the
 //! production config). Each flag, when set, overrides the corresponding
 //! field on top of that baseline. Unset flags leave the production value
 //! untouched, so a profiler run with no agg-config flags is identical to
@@ -21,7 +21,7 @@
 use clap::{ArgGroup, Args, ValueEnum};
 use plonky2::plonk::circuit_data::CircuitConfig;
 use zk_circuits_common::circuit::{
-    wormhole_aggregator_circuit_config, wormhole_leaf_circuit_config,
+    wormhole_private_batch_circuit_config, wormhole_leaf_circuit_config,
 };
 
 #[derive(Copy, Clone, Debug, ValueEnum, PartialEq, Eq)]
@@ -156,7 +156,7 @@ impl AggConfigArgs {
     }
 
     pub fn build(&self) -> CircuitConfig {
-        let mut cfg = wormhole_aggregator_circuit_config();
+        let mut cfg = wormhole_private_batch_circuit_config();
 
         if let Some(mode) = self.zk_mode {
             cfg.zero_knowledge = match mode {
@@ -220,7 +220,7 @@ impl AggConfigArgs {
 }
 
 pub fn default_agg_config() -> CircuitConfig {
-    wormhole_aggregator_circuit_config()
+    wormhole_private_batch_circuit_config()
 }
 
 /// Production leaf config — `wormhole_leaf_circuit_config()` verbatim.

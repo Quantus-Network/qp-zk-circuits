@@ -127,4 +127,4 @@ _All security-preserving wins applied (rowblinding + nrw=54 + nw=135) and real l
 
 - All measurements are RSS / `phys_footprint` peaks captured by a background sampler in `wormhole-memprof`.
 - `--skip-leaf-gen --real-proofs 1` is used so each run isolates the aggregation step. The aggregation circuit is always built for the full `num_leaf_proofs`; padding leaves are dummies (matching production behavior). Leaf-proof generation is sequential at runtime and never exceeds ~80 MB peak.
-- Knobs that affect the aggregator's verifier hash (everything in `CircuitConfig`) require coordinated chain updates: rebuild `pallets/wormhole/build.rs`-generated `aggregated_verifier.bin` and `aggregated_common.bin` with the same config.
+- Knobs that affect the aggregator's verifier hash (everything in `CircuitConfig`) require coordinated chain updates: rebuild `pallets/wormhole/build.rs`-generated `private_batch_verifier.bin` and `private_batch_common.bin` with the same config.
