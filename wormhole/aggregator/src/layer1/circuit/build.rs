@@ -13,7 +13,7 @@ use plonky2::plonk::circuit_data::{
 };
 use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
 
-use zk_circuits_common::circuit::{wormhole_aggregator_circuit_config, C, D, F};
+use zk_circuits_common::circuit::{wormhole_layer1_circuit_config, C, D, F};
 
 use crate::common::utils::l0_num_leaves_from_padded_pi_len;
 use crate::layer1::circuit::circuit_logic::Layer1AggregationCircuit;
@@ -35,8 +35,10 @@ pub fn generate_layer1_circuit_binaries<P: AsRef<Path>>(
 
     let layer0_num_leaves = l0_num_leaves_from_padded_pi_len(layer0_common.num_public_inputs)?;
 
+    // Non-ZK config: layer-1 witnesses (layer-0 proofs) are already public data and their
+    // public inputs are forwarded verbatim, so blinding buys nothing and slows proving.
     let layer1_circuit = Layer1AggregationCircuit::new(
-        wormhole_aggregator_circuit_config(),
+        wormhole_layer1_circuit_config(),
         layer0_common,
         &layer0_verifier_only,
         num_layer0_proofs,

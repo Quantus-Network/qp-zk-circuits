@@ -32,10 +32,11 @@ pub fn wormhole_leaf_circuit_config() -> CircuitConfig {
     CircuitConfig::standard_recursion_config() // zero_knowledge: false
 }
 
-/// Circuit config for aggregation circuits (ZK enabled via row blinding).
+/// Circuit config for layer-0 aggregation circuits (ZK enabled via row blinding).
 ///
-/// The aggregated proofs are verified on-chain, so they must use ZK to prevent leaking
-/// witness information to the public.
+/// Layer-0 is the *private* aggregation layer: its witnesses are the leaf proofs, whose
+/// own witnesses (spend secrets, Merkle paths) must never leak. This is the one layer in
+/// the stack that requires zero-knowledge.
 ///
 /// This config uses:
 /// - Row blinding ZK mode (lower memory than PolyFri, same security)
@@ -51,6 +52,18 @@ pub fn wormhole_aggregator_circuit_config() -> CircuitConfig {
         num_routed_wires: 60,
         ..CircuitConfig::standard_recursion_zk_config()
     }
+}
+
+/// Circuit config for layer-1 aggregation circuits (non-ZK).
+///
+/// Layer-1 is the *public* aggregation layer: its witnesses are layer-0 proofs, which are
+/// (a) themselves zero-knowledge, so their bytes reveal nothing about the leaves, and
+/// (b) handed to the aggregator in plaintext anyway, with every layer-0 public input
+/// forwarded verbatim into the layer-1 public inputs. A non-ZK layer-1 proof therefore
+/// cannot leak anything that is not already public. Disabling ZK (row blinding) here
+/// significantly speeds up proving, mirroring `wormhole_leaf_circuit_config`.
+pub fn wormhole_layer1_circuit_config() -> CircuitConfig {
+    CircuitConfig::standard_recursion_config() // zero_knowledge: false
 }
 
 pub trait CircuitFragment {

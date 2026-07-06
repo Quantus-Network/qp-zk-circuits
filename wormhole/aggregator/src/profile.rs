@@ -43,7 +43,9 @@ mod tests {
     use crate::layer0::circuit::circuit_logic::Layer0AggregationCircuit;
     use crate::layer1::circuit::circuit_logic::Layer1AggregationCircuit;
     use test_helpers::fake_leaf::build_fake_leaf_circuit_data_only;
-    use zk_circuits_common::circuit::wormhole_aggregator_circuit_config;
+    use zk_circuits_common::circuit::{
+        wormhole_aggregator_circuit_config, wormhole_layer1_circuit_config,
+    };
 
     #[test]
     fn profile_layer0_circuit() {
@@ -137,7 +139,7 @@ mod tests {
             // Build layer-1 aggregation circuit
             let start = std::time::Instant::now();
             let l1_circuit = Layer1AggregationCircuit::new(
-                wormhole_aggregator_circuit_config(),
+                wormhole_layer1_circuit_config(),
                 l0_common.clone(),
                 &l0_verifier_only,
                 num_l0_proofs,

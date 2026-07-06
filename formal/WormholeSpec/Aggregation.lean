@@ -343,8 +343,10 @@ outputs `inner` under aggregator address `addr`.
 
 Higher layers operate on already-wrapped public outputs: they enforce metadata
 consistency and forward exit slots / nullifiers in order. (The implementation
-currently keeps these layers zero-knowledge as well; that is a perf choice, not
-a soundness requirement — see paper §6.2.)
+builds this layer *without* zero-knowledge — `wormhole_layer1_circuit_config` —
+since its witnesses, the layer-0 proofs, are themselves ZK and their public
+inputs are forwarded verbatim; blinding here would cost prover time and hide
+nothing. See paper §6.2.)
 -/
 def RL1 (_ro : RandomOracle) (inner : List Layer0Output) (addr : Digest)
     (out : Layer1Output) : Prop :=
