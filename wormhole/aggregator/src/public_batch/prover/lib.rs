@@ -46,6 +46,10 @@ pub struct PublicBatchProver {
     partial_witness: PartialWitness<F>,
     targets: Option<PublicBatchCircuitTargets>,
     num_private_batch_proofs: usize,
+    /// Dummy private-batch proof (over all-dummy leaves, `block_hash == 0`) used to
+    /// pad partial public batches. The circuit zeroes dummy inners' exit slots and
+    /// nullifiers, so one template can fill several slots without collisions.
+    dummy_proof_template: ProofWithPublicInputs<F, C, D>,
 }
 
 impl PublicBatchProver {
@@ -59,6 +63,7 @@ impl PublicBatchProver {
         private_batch_verifier_only: &VerifierOnlyCircuitData<C, D>,
         num_private_batch_proofs: usize,
         private_batch_num_leaves: usize,
+        dummy_proof_template: ProofWithPublicInputs<F, C, D>,
     ) -> Self {
         let public_batch_circuit = PublicBatchCircuit::new(
             public_batch_circuit_config,
@@ -76,6 +81,7 @@ impl PublicBatchProver {
             partial_witness: PartialWitness::new(),
             targets,
             num_private_batch_proofs,
+            dummy_proof_template,
         }
     }
 
@@ -85,6 +91,7 @@ impl PublicBatchProver {
         public_batch_common_bytes: &[u8],
         private_batch_common_bytes: &[u8],
         private_batch_verifier_only_bytes: &[u8],
+        dummy_private_batch_proof_bytes: &[u8],
         config: (usize, usize), // (num_leaf_proofs, num_private_batch_proofs)
     ) -> Result<Self> {
         let gate_serializer = DefaultGateSerializer;
@@ -123,6 +130,13 @@ impl PublicBatchProver {
 
         let targets = Some(circuit.targets());
 
+        // 3) Load the dummy private-batch proof template used to pad partial batches
+        let dummy_proof_template = ProofWithPublicInputs::<F, C, D>::from_bytes(
+            dummy_private_batch_proof_bytes.to_vec(),
+            &private_batch_verifier_data.common,
+        )
+        .map_err(|e| anyhow!("failed to deserialize dummy private-batch proof: {}", e))?;
+
         Ok(Self {
             circuit_data: ProverCircuitData {
                 prover_only: public_batch_prover_only,
@@ -131,6 +145,7 @@ impl PublicBatchProver {
             partial_witness: PartialWitness::new(),
             targets,
             num_private_batch_proofs,
+            dummy_proof_template,
         })
     }
 
@@ -141,6 +156,7 @@ impl PublicBatchProver {
         public_batch_common_path: &Path,
         private_batch_common_path: &Path,
         private_batch_verifier_path: &Path,
+        dummy_private_batch_proof_path: &Path,
         config: (usize, usize),
     ) -> Result<Self> {
         let public_batch_prover_only_bytes = fs::read(public_batch_prover_path)
@@ -152,12 +168,15 @@ impl PublicBatchProver {
             .with_context(|| format!("Failed to read {:?}", private_batch_common_path))?;
         let private_batch_verifier_only_bytes = fs::read(private_batch_verifier_path)
             .with_context(|| format!("Failed to read {:?}", private_batch_verifier_path))?;
+        let dummy_private_batch_proof_bytes = fs::read(dummy_private_batch_proof_path)
+            .with_context(|| format!("Failed to read {:?}", dummy_private_batch_proof_path))?;
 
         Self::new_from_bytes(
             &public_batch_prover_only_bytes,
             &public_batch_common_bytes,
             &private_batch_common_bytes,
             &private_batch_verifier_only_bytes,
+            &dummy_private_batch_proof_bytes,
             config,
         )
     }
@@ -167,8 +186,9 @@ impl PublicBatchProver {
     /// Expected files:
     /// - `public_batch_prover.bin`
     /// - `public_batch_common.bin`
-    /// - `private_batch_common.bin`      (private-batch common)
-    /// - `private_batch_verifier.bin`    (private-batch verifier-only)
+    /// - `private_batch_common.bin`             (private-batch common)
+    /// - `private_batch_verifier.bin`           (private-batch verifier-only)
+    /// - `dummy_private_batch_proof.bin`        (padding template)
     /// - `config.json`
     ///
     #[cfg(feature = "std")]
@@ -187,6 +207,7 @@ impl PublicBatchProver {
             &bins_dir.join("public_batch_common.bin"),
             &bins_dir.join("private_batch_common.bin"),
             &bins_dir.join("private_batch_verifier.bin"),
+            &bins_dir.join("dummy_private_batch_proof.bin"),
             config,
         )
     }
@@ -196,22 +217,36 @@ impl PublicBatchProver {
     }
 
     /// Commit private-batch aggregated proofs into the public-batch circuit witness.
+    ///
+    /// Partial batches are padded with the dummy private-batch proof template.
+    /// The circuit exempts dummies (`block_hash == 0`) from metadata consistency
+    /// and zeroes their forwarded exit slots and nullifiers.
     pub fn commit(mut self, inputs: PublicBatchInputs) -> Result<Self> {
         let Some(targets) = self.targets.take() else {
             bail!("public-batch aggregation prover has already committed to inputs");
         };
 
-        let proofs = inputs.proofs;
+        let mut proofs = inputs.proofs;
         let aggregator_address = inputs.aggregator_address;
 
         let aggregator_address_felts = bytes_to_digest(aggregator_address);
 
-        if proofs.len() != self.num_private_batch_proofs {
+        if proofs.is_empty() {
+            bail!("no private-batch proofs to aggregate");
+        }
+        if proofs.len() > self.num_private_batch_proofs {
             bail!(
-                "Expected {} private-batch proofs, but got {}",
+                "Expected at most {} private-batch proofs, but got {}",
                 self.num_private_batch_proofs,
                 proofs.len()
             );
+        }
+
+        // Pad partial batches with the dummy template. No shuffle: forwarding is
+        // order-preserving by design (per-segment attribution on-chain).
+        let num_dummies_needed = self.num_private_batch_proofs - proofs.len();
+        for _ in 0..num_dummies_needed {
+            proofs.push(self.dummy_proof_template.clone());
         }
 
         fill_public_batch_witness(

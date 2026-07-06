@@ -36,17 +36,41 @@ pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
 
     let agg_circuit = PrivateBatchCircuit::new(
         wormhole_private_batch_circuit_config(),
-        leaf_common,
+        leaf_common.clone(),
         &leaf_verifier_only,
         num_leaf_proofs,
     );
 
+    let agg_targets = agg_circuit.targets();
     let circuit_data = agg_circuit.build_circuit();
 
     let gate_serializer = DefaultGateSerializer;
     let generator_serializer = DefaultGeneratorSerializer::<C, D> {
         _phantom: Default::default(),
     };
+
+    // Generate the dummy private-batch proof template (an all-dummy batch) used to pad
+    // partial public batches. Must happen BEFORE consuming circuit_data below
+    // (prove() borrows, prover_data() moves). Only possible/needed when proving
+    // artifacts are requested (requires the leaf dummy proof from the same run).
+    if include_prover {
+        let dummy_batch_proof_bytes = generate_dummy_private_batch_proof(
+            &circuit_data,
+            &agg_targets,
+            &leaf_common,
+            output_path,
+            num_leaf_proofs,
+        )?;
+        write(
+            output_path.join("dummy_private_batch_proof.bin"),
+            &dummy_batch_proof_bytes,
+        )?;
+        println!(
+            "Saved {}/dummy_private_batch_proof.bin ({} bytes)",
+            output_path.display(),
+            dummy_batch_proof_bytes.len()
+        );
+    }
 
     let verifier_data = circuit_data.verifier_data();
     let prover_data = circuit_data.prover_data();
@@ -82,6 +106,48 @@ pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
         println!("Skipping aggregated prover binary generation");
     }
     Ok(())
+}
+
+/// Prove a private batch consisting entirely of dummy leaf proofs.
+///
+/// The resulting proof has `block_hash == 0` (the public-batch dummy sentinel),
+/// zeroed exit slots, and dummy-replaced nullifiers, and is used by the
+/// public-batch prover to pad partial batches. Requires `dummy_proof.bin`
+/// (the leaf dummy proof) from the same generation run.
+fn generate_dummy_private_batch_proof(
+    circuit_data: &plonky2::plonk::circuit_data::CircuitData<F, C, D>,
+    targets: &crate::private_batch::circuit::circuit_logic::PrivateBatchCircuitTargets,
+    leaf_common: &CommonCircuitData<F, D>,
+    bins_dir: &Path,
+    num_leaf_proofs: usize,
+) -> Result<Vec<u8>> {
+    use plonky2::iop::witness::PartialWitness;
+    use zk_circuits_common::utils::bytes_to_digest;
+
+    println!("Generating dummy private-batch proof for public-batch padding...");
+
+    let dummy_leaf_bytes = std::fs::read(bins_dir.join("dummy_proof.bin"))
+        .with_context(|| format!("Failed to read {}/dummy_proof.bin", bins_dir.display()))?;
+    let dummy_leaf = crate::dummy_proof::load_dummy_proof(dummy_leaf_bytes, leaf_common)
+        .map_err(|e| anyhow!("Failed to deserialize dummy leaf proof: {}", e))?;
+
+    let proofs = vec![dummy_leaf; num_leaf_proofs];
+    let dummy_nullifier_pre_images: Vec<[F; 4]> = (0..num_leaf_proofs)
+        .map(|_| bytes_to_digest(crate::dummy_proof::generate_random_nullifier_preimage()))
+        .collect();
+
+    let mut pw = PartialWitness::new();
+    crate::private_batch::prover::fill_private_batch_witness(
+        &mut pw,
+        targets,
+        &proofs,
+        &dummy_nullifier_pre_images,
+    )?;
+
+    let proof = circuit_data
+        .prove(pw)
+        .map_err(|e| anyhow!("Failed to prove dummy private batch: {}", e))?;
+    Ok(proof.to_bytes())
 }
 
 fn load_leaf_common_data(common_path: &Path) -> Result<CommonCircuitData<F, D>> {

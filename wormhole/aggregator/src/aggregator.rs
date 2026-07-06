@@ -204,13 +204,14 @@ impl AggregationBackend for PublicBatchAggregator {
     }
 
     fn aggregate(&mut self) -> Result<Proof> {
-        let cap = self.batch_size();
+        if self.buf.len() == 0 {
+            bail!("there are no private-batch proofs to aggregate");
+        }
 
-        // We require a full batch for public_batch. No padding allowed
-        let batch = self
-            .buf
-            .drain_exact(cap)
-            .with_context(|| "No dummy padding for public-batch: need a full batch of private-batch proofs")?;
+        // Partial batches are fine: PublicBatchProver::commit pads with the dummy
+        // private-batch proof template (no shuffle - forwarding stays order-preserving
+        // so the chain can attribute each segment to its inner proof).
+        let batch = self.buf.take_all();
 
         // Load the public-batch prover
         let prover = PublicBatchProver::new_from_binaries_dir(&self.bins_dir)

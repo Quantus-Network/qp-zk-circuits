@@ -76,7 +76,7 @@ pub const BLOCK_HASH_START: usize = VOLUME_FEE_BPS_START + 1; // 6, 4 felts
 pub const BLOCK_NUMBER_START: usize = BLOCK_HASH_START + 4; // 10
 pub const TOTAL_EXIT_SLOTS_START: usize = BLOCK_NUMBER_START + 1; // 11
 
-pub const L1_HEADER_LEN: usize = TOTAL_EXIT_SLOTS_START + 1; // 12 = 4 + 1 + 1 + 4 + 1 + 1
+pub const PUBLIC_BATCH_HEADER_LEN: usize = TOTAL_EXIT_SLOTS_START + 1; // 12 = 4 + 1 + 1 + 4 + 1 + 1
 
 #[inline]
 pub const fn public_batch_total_exit_slots(n_inner: usize, private_batch_num_leaves: usize) -> usize {
@@ -90,17 +90,17 @@ pub const fn public_batch_total_nullifiers(n_inner: usize, private_batch_num_lea
 
 #[inline]
 pub const fn public_batch_exit_slots_start() -> usize {
-    L1_HEADER_LEN
+    PUBLIC_BATCH_HEADER_LEN
 }
 
 #[inline]
 pub const fn public_batch_nullifiers_start(n_inner: usize, private_batch_num_leaves: usize) -> usize {
-    L1_HEADER_LEN + public_batch_total_exit_slots(n_inner, private_batch_num_leaves) * PRIVATE_BATCH_EXIT_SLOT_LEN
+    PUBLIC_BATCH_HEADER_LEN + public_batch_total_exit_slots(n_inner, private_batch_num_leaves) * PRIVATE_BATCH_EXIT_SLOT_LEN
 }
 
 #[inline]
 pub const fn public_batch_pi_len(n_inner: usize, private_batch_num_leaves: usize) -> usize {
-    L1_HEADER_LEN
+    PUBLIC_BATCH_HEADER_LEN
         + public_batch_total_exit_slots(n_inner, private_batch_num_leaves) * PRIVATE_BATCH_EXIT_SLOT_LEN
         + public_batch_total_nullifiers(n_inner, private_batch_num_leaves) * 4
 }

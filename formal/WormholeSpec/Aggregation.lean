@@ -337,12 +337,47 @@ structure PublicBatchOutput where
   exitSlots : List ExitSlot
   nullifiers : List Digest
 
+/-- Public-batch dummy sentinel: an all-dummy private batch, identified by
+    `block_hash == 0` — the same shape as `isDummyPrivateBatch` one layer down.
+    Such inner proofs pad partial public batches. -/
+abbrev isDummyInner (o : PrivateBatchOutput) : Prop := o.blockHash = Digest.zero
+
+/-- Boolean "is a real (non-dummy) inner", for use with `List.find?`. -/
+def isRealInnerB (o : PrivateBatchOutput) : Bool := ! decide (isDummyInner o)
+
+/-- The exit slots an inner contributes to the public output: a dummy inner's
+    slots are zeroed (`select(is_dummy, 0, slot)`), a real inner's are forwarded
+    verbatim. Zeroing is an enforced invariant, not a construction detail. -/
+def forwardedSlots (o : PrivateBatchOutput) : List ExitSlot :=
+  if isDummyInner o then o.exitSlots.map (fun _ => ⟨0, Digest.zero⟩) else o.exitSlots
+
+/-- The nullifiers an inner contributes: a dummy inner's nullifiers are zeroed so
+    its replacement nullifiers (`DNull(u)` values from the all-dummy private
+    batch) never reach the chain, and one padding template can fill several
+    slots without collisions. Real nullifiers are hash outputs, never zero. -/
+def forwardedNullifiers (o : PrivateBatchOutput) : List Digest :=
+  if isDummyInner o then o.nullifiers.map (fun _ => Digest.zero) else o.nullifiers
+
+/-- The public-batch header comes from the first non-dummy inner (prefix scan);
+    an all-dummy public batch settles to a zero block hash, which the on-chain
+    verifier rejects. -/
+def innerReferenceFromFirstReal (inner : List PrivateBatchOutput)
+    (out : PublicBatchOutput) : Prop :=
+  match inner.find? isRealInnerB with
+  | some o => out.blockHash = o.blockHash ∧ out.blockNumber = o.blockNumber ∧
+              out.assetId = o.assetId ∧ out.volumeFeeBps = o.volumeFeeBps
+  | none   => out.blockHash = Digest.zero
+
 /--
 `RPublicBatch ro inner addr out` holds iff the public-batch wrapper aggregates the private-batch
 outputs `inner` under aggregator address `addr`.
 
 Higher layers operate on already-wrapped public outputs: they enforce metadata
-consistency and forward exit slots / nullifiers in order. (The implementation
+consistency across non-dummy inners, take the header from the first non-dummy
+inner, and forward exit slots / nullifiers in order (zeroing dummies'). There
+is NO shuffling and NO cross-inner grouping: order-preserving forwarding keeps
+each inner proof's segment attributable, which the chain's per-segment denial
+relies on. Dummies here serve batch-filling, not privacy. (The implementation
 builds this layer *without* zero-knowledge — `wormhole_public_batch_circuit_config` —
 since its witnesses, the private-batch proofs, are themselves ZK and their public
 inputs are forwarded verbatim; blinding here would cost prover time and hide
@@ -351,13 +386,16 @@ nothing. See paper §6.2.)
 def RPublicBatch (_ro : RandomOracle) (inner : List PrivateBatchOutput) (addr : Digest)
     (out : PublicBatchOutput) : Prop :=
   out.aggregatorAddress = addr ∧
-  (∀ o ∈ inner,
+  innerReferenceFromFirstReal inner out ∧
+  (∀ o ∈ inner, ¬ isDummyInner o →
       o.assetId = out.assetId ∧
       o.volumeFeeBps = out.volumeFeeBps ∧
-      o.blockHash = out.blockHash ∧
-      o.blockNumber = out.blockNumber) ∧
-  out.exitSlots = (inner.map (fun o => o.exitSlots)).flatten ∧
-  out.nullifiers = (inner.map (fun o => o.nullifiers)).flatten
+      o.blockHash = out.blockHash) ∧
+  out.exitSlots = (inner.map forwardedSlots).flatten ∧
+  out.nullifiers = (inner.map forwardedNullifiers).flatten
+  -- NOTE: the wrapper does not constrain per-inner `blockNumber` equality; it
+  -- forwards the first non-dummy inner's number. Hash equality pins the number
+  -- transitively through the leaf circuit's header parse.
   -- TODO(Phase 3): `totalExitSlots` accounting and the public-batch aggregator-address
   -- binding semantics.
 
