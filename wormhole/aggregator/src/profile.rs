@@ -71,7 +71,7 @@ mod tests {
             let start = std::time::Instant::now();
             let private_batch_circuit = PrivateBatchCircuit::new(
                 wormhole_private_batch_circuit_config(),
-                leaf_common,
+                &leaf_common,
                 &leaf_verifier_only,
                 num_leaves,
             );
@@ -115,7 +115,7 @@ mod tests {
         // Build private-batch circuit to get its common data for public_batch
         let private_batch_circuit = PrivateBatchCircuit::new(
             wormhole_private_batch_circuit_config(),
-            leaf_data.common.clone(),
+            &leaf_data.common,
             &leaf_data.verifier_only,
             private_batch_num_leaves,
         );
@@ -198,7 +198,7 @@ mod tests {
         for num_leaves in [2, 4, 8, 16] {
             let private_batch_circuit = PrivateBatchCircuit::new(
                 wormhole_private_batch_circuit_config(),
-                leaf_common.clone(),
+                &leaf_common,
                 &leaf_verifier_only,
                 num_leaves,
             );

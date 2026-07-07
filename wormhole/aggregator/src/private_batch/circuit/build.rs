@@ -36,7 +36,7 @@ pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
 
     let agg_circuit = PrivateBatchCircuit::new(
         wormhole_private_batch_circuit_config(),
-        leaf_common.clone(),
+        &leaf_common,
         &leaf_verifier_only,
         num_leaf_proofs,
     );

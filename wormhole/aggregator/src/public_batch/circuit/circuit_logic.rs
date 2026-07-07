@@ -484,7 +484,7 @@ mod tests {
         // SECURITY: leaf_verifier_only is baked in as constants at build time
         let private_batch_circuit = PrivateBatchCircuit::new(
             CircuitConfig::standard_recursion_config(),
-            leaf_common,
+            &leaf_common,
             &leaf_verifier_only,
             NUM_LEAVES,
         );
@@ -660,7 +660,7 @@ mod tests {
 
         let private_batch_circuit = PrivateBatchCircuit::new(
             CircuitConfig::standard_recursion_config(),
-            leaf_data.common.clone(),
+            &leaf_data.common,
             &leaf_data.verifier_only,
             NUM_LEAVES,
         );
@@ -848,7 +848,7 @@ mod tests {
         // SECURITY: leaf verifier_only is baked in as constants at build time
         let private_batch_circuit = PrivateBatchCircuit::new(
             CircuitConfig::standard_recursion_config(),
-            leaf_data.common.clone(),
+            &leaf_data.common,
             &leaf_data.verifier_only,
             NUM_LEAVES,
         );

@@ -62,7 +62,7 @@ impl PrivateBatchProver {
     ) -> Self {
         let agg_circuit = PrivateBatchCircuit::new(
             agg_circuit_config,
-            leaf_common,
+            &leaf_common,
             leaf_verifier_only,
             num_leaf_proofs,
         );
@@ -122,7 +122,7 @@ impl PrivateBatchProver {
         // must match what was used when the prebuilt binaries were created.
         let circuit = PrivateBatchCircuit::new(
             agg_common.config.clone(),
-            leaf_verifier_data.common.clone(),
+            &leaf_verifier_data.common,
             &leaf_verifier_data.verifier_only,
             num_leaf_proofs,
         );

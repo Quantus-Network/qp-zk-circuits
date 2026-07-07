@@ -58,7 +58,7 @@ impl PrivateBatchCircuit {
     /// The `leaf_verifier_only` is baked in as constants to prevent verifier key substitution.
     pub fn new(
         config: CircuitConfig,
-        leaf_common: CommonCircuitData<F, D>,
+        leaf_common: &CommonCircuitData<F, D>,
         leaf_verifier_only: &VerifierOnlyCircuitData<C, D>,
         n_leaf: usize,
     ) -> Self {
@@ -445,7 +445,7 @@ mod tests {
         // SECURITY: leaf_verifier_only is now baked in at build time
         let agg_circuit = PrivateBatchCircuit::new(
             agg_config.clone(),
-            leaf_common.clone(),
+            &leaf_common,
             &leaf_verifier_only,
             n_leaf,
         );
@@ -466,7 +466,7 @@ mod tests {
         // Build verifier data from the same config/leaf common so we can verify the result.
         // NOTE: Must use the same leaf_verifier_only to get matching circuit digest
         let verifier_data =
-            PrivateBatchCircuit::new(agg_config, leaf_common, &leaf_verifier_only, n_leaf)
+            PrivateBatchCircuit::new(&agg_config, &leaf_common, &leaf_verifier_only, n_leaf)
                 .build_verifier();
 
         Ok((agg_proof, verifier_data))
@@ -1610,7 +1610,7 @@ mod tests {
         let private_batch_config = CircuitConfig::standard_recursion_config();
         let private_batch_circuit = PrivateBatchCircuit::new(
             private_batch_config,
-            legit_circuit.common.clone(),
+            &legit_circuit.common,
             &legit_circuit.verifier_only, // SECURITY: Baked as constants
             1,
         );
@@ -1667,7 +1667,7 @@ mod tests {
         let private_batch_config = CircuitConfig::standard_recursion_config();
         let private_batch_circuit = PrivateBatchCircuit::new(
             private_batch_config,
-            legit_circuit.common.clone(),
+            &legit_circuit.common,
             &legit_circuit.verifier_only,
             1,
         );
