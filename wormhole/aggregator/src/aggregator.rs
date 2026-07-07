@@ -134,18 +134,6 @@ impl ProofBuffer {
     fn take_all(&mut self) -> Vec<Proof> {
         std::mem::take(&mut self.buf)
     }
-
-    /// Drain exactly `n` proofs from the front (error if insufficient).
-    fn drain_exact(&mut self, n: usize) -> Result<Vec<Proof>> {
-        if self.buf.len() < n {
-            bail!(
-                "not enough proofs buffered (have {}, need {})",
-                self.buf.len(),
-                n
-            );
-        }
-        Ok(self.buf.drain(0..n).collect())
-    }
 }
 
 // ============================================================================
@@ -181,7 +169,11 @@ impl PublicBatchAggregator {
     }
 
     fn load_verifier(&self) -> Result<VerifierCircuitData<F, C, D>> {
-        load_verifier_from_bins(&self.bins_dir, "public_batch_common.bin", "public_batch_verifier.bin")
+        load_verifier_from_bins(
+            &self.bins_dir,
+            "public_batch_common.bin",
+            "public_batch_verifier.bin",
+        )
     }
 }
 

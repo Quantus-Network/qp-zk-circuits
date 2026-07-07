@@ -86,7 +86,10 @@ mod tests {
             println!("Build time: {:?}", build_time);
 
             // Print metrics
-            print_circuit_metrics(&format!("Private-batch (n={})", num_leaves), &private_batch_data.common);
+            print_circuit_metrics(
+                &format!("Private-batch (n={})", num_leaves),
+                &private_batch_data.common,
+            );
 
             // Calculate gates per leaf
             let total_gates = 1 << private_batch_data.common.degree_bits();
@@ -192,7 +195,9 @@ mod tests {
         println!("  Degree bits: {}", leaf_common.degree_bits());
         println!("  Public inputs: {}", leaf_common.num_public_inputs);
 
-        println!("\n| Leaves | private-batch Degree | private-batch Gates | private-batch PI Len |");
+        println!(
+            "\n| Leaves | private-batch Degree | private-batch Gates | private-batch PI Len |"
+        );
         println!("|--------|-----------|----------|-----------|");
 
         for num_leaves in [2, 4, 8, 16] {

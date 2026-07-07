@@ -53,7 +53,10 @@ impl PublicBatchCircuit {
         private_batch_num_leaves: usize,
     ) -> Self {
         assert!(n_inner > 0, "n_inner must be > 0");
-        assert!(private_batch_num_leaves > 0, "private_batch_num_leaves must be > 0");
+        assert!(
+            private_batch_num_leaves > 0,
+            "private_batch_num_leaves must be > 0"
+        );
 
         let expected_l0_pi_len = pbc::private_batch_pi_len(private_batch_num_leaves);
 
@@ -155,8 +158,10 @@ fn build_public_batch_constraints(
     let zero = builder.zero();
 
     let private_batch_pi_len = pbc::private_batch_pi_len(private_batch_num_leaves);
-    let private_batch_exit_slots_per_proof = pbc::private_batch_exit_slots_count(private_batch_num_leaves);
-    let private_batch_nullifiers_per_proof = pbc::private_batch_nullifiers_count(private_batch_num_leaves);
+    let private_batch_exit_slots_per_proof =
+        pbc::private_batch_exit_slots_count(private_batch_num_leaves);
+    let private_batch_nullifiers_per_proof =
+        pbc::private_batch_nullifiers_count(private_batch_num_leaves);
 
     // Convenience: references to each child proof's PI slice
     let private_batch_pi_targets: Vec<&[Target]> = targets
@@ -165,7 +170,9 @@ fn build_public_batch_constraints(
         .map(|p| p.public_inputs.as_slice())
         .collect();
 
-    debug_assert!(private_batch_pi_targets.iter().all(|pis| pis.len() == private_batch_pi_len));
+    debug_assert!(private_batch_pi_targets
+        .iter()
+        .all(|pis| pis.len() == private_batch_pi_len));
 
     // -------------------------------------------------------------------------
     // Dummy detection (sentinel: inner block_hash == 0, i.e. an all-dummy
@@ -299,7 +306,7 @@ mod tests {
 
     use super::super::constants::AGGREGATOR_ADDRESS_LEN;
     use crate::private_batch::circuit::circuit_logic::{
-        PrivateBatchCircuitTargets, PrivateBatchCircuit,
+        PrivateBatchCircuit, PrivateBatchCircuitTargets,
     };
     use test_helpers::fake_leaf::{build_fake_leaf_circuit, prove_fake_leaf};
 
@@ -361,12 +368,20 @@ mod tests {
         // NOTE: leaf_verifier_data is NOT set - it's baked in as constants
 
         // Fill each leaf proof target
-        for (pt, proof) in private_batch_targets.leaf_proofs.iter().zip(leaf_proofs.iter()) {
+        for (pt, proof) in private_batch_targets
+            .leaf_proofs
+            .iter()
+            .zip(leaf_proofs.iter())
+        {
             pw.set_proof_with_pis_target(pt, proof).unwrap();
         }
 
         // Dummy nullifier preimages: can be anything for non-dummy leaves (is_dummy=false), but must be filled.
-        for (i, limbs) in private_batch_targets.dummy_nullifier_pre_images.iter().enumerate() {
+        for (i, limbs) in private_batch_targets
+            .dummy_nullifier_pre_images
+            .iter()
+            .enumerate()
+        {
             for (j, t) in limbs.iter().enumerate() {
                 let v = F::from_canonical_u64(1000 + (i as u64) * 10 + (j as u64));
                 pw.set_target(*t, v).unwrap();
@@ -392,7 +407,11 @@ mod tests {
         // NOTE: private_batch_verifier_data is NOT set - it's baked in as constants
 
         // Fill private-batch proof targets
-        for (pt, proof) in public_batch_targets.private_batch_proofs.iter().zip(private_batch_proofs.iter()) {
+        for (pt, proof) in public_batch_targets
+            .private_batch_proofs
+            .iter()
+            .zip(private_batch_proofs.iter())
+        {
             pw.set_proof_with_pis_target(pt, proof).unwrap();
         }
 
@@ -503,8 +522,12 @@ mod tests {
         );
 
         // Sanity: private-batch proofs verify under private-batch circuit data
-        private_batch_data.verify(private_batch_proof_a.clone()).unwrap();
-        private_batch_data.verify(private_batch_proof_b.clone()).unwrap();
+        private_batch_data
+            .verify(private_batch_proof_a.clone())
+            .unwrap();
+        private_batch_data
+            .verify(private_batch_proof_b.clone())
+            .unwrap();
 
         // ---- 3) Build monolithic PublicBatchCircuit and prove ----
         // SECURITY: private_batch_data.verifier_only is baked in as constants at build time
@@ -588,16 +611,22 @@ mod tests {
         // public-batch exit slots region begins immediately after the header
         let public_batch_exit_start = pbc::PUBLIC_BATCH_HEADER_LEN;
         let private_batch_exit_start = pbc::private_batch_exit_slots_start();
-        let private_batch_exit_len = pbc::private_batch_exit_slots_count(NUM_LEAVES) * pbc::PRIVATE_BATCH_EXIT_SLOT_LEN;
+        let private_batch_exit_len =
+            pbc::private_batch_exit_slots_count(NUM_LEAVES) * pbc::PRIVATE_BATCH_EXIT_SLOT_LEN;
 
         // For each private-batch proof, ensure its exit slot region is copied verbatim into public-batch PIs.
         for (i, l0p) in [private_batch_proof_a.clone(), private_batch_proof_b.clone()]
             .into_iter()
             .enumerate()
         {
-            let src = &l0p.public_inputs[private_batch_exit_start..private_batch_exit_start + private_batch_exit_len];
-            let dst = &pis[public_batch_exit_start + i * private_batch_exit_len..public_batch_exit_start + (i + 1) * private_batch_exit_len];
-            assert_eq!(dst, src, "public-batch exit slots mismatch for inner proof {i}");
+            let src = &l0p.public_inputs
+                [private_batch_exit_start..private_batch_exit_start + private_batch_exit_len];
+            let dst = &pis[public_batch_exit_start + i * private_batch_exit_len
+                ..public_batch_exit_start + (i + 1) * private_batch_exit_len];
+            assert_eq!(
+                dst, src,
+                "public-batch exit slots mismatch for inner proof {i}"
+            );
         }
 
         // Nullifiers:
@@ -605,10 +634,18 @@ mod tests {
         let private_batch_null_start = pbc::private_batch_nullifiers_start(NUM_LEAVES);
         let private_batch_null_len = pbc::private_batch_nullifiers_count(NUM_LEAVES) * 4;
 
-        for (i, l0p) in [private_batch_proof_a, private_batch_proof_b].into_iter().enumerate() {
-            let src = &l0p.public_inputs[private_batch_null_start..private_batch_null_start + private_batch_null_len];
-            let dst = &pis[public_batch_null_start + i * private_batch_null_len..public_batch_null_start + (i + 1) * private_batch_null_len];
-            assert_eq!(dst, src, "public-batch nullifiers mismatch for inner proof {i}");
+        for (i, l0p) in [private_batch_proof_a, private_batch_proof_b]
+            .into_iter()
+            .enumerate()
+        {
+            let src = &l0p.public_inputs
+                [private_batch_null_start..private_batch_null_start + private_batch_null_len];
+            let dst = &pis[public_batch_null_start + i * private_batch_null_len
+                ..public_batch_null_start + (i + 1) * private_batch_null_len];
+            assert_eq!(
+                dst, src,
+                "public-batch nullifiers mismatch for inner proof {i}"
+            );
         }
     }
 
@@ -855,8 +892,10 @@ mod tests {
         let private_batch_targets = private_batch_circuit.targets();
         let private_batch_data = private_batch_circuit.build_circuit();
 
-        let private_batch_a = prove_private_batch_batch(&private_batch_data, &private_batch_targets, vec![a0, a1]);
-        let private_batch_b = prove_private_batch_batch(&private_batch_data, &private_batch_targets, vec![b0, b1]);
+        let private_batch_a =
+            prove_private_batch_batch(&private_batch_data, &private_batch_targets, vec![a0, a1]);
+        let private_batch_b =
+            prove_private_batch_batch(&private_batch_data, &private_batch_targets, vec![b0, b1]);
 
         // Public-batch circuit
         // SECURITY: l0 verifier_only is baked in as constants at build time
@@ -877,7 +916,12 @@ mod tests {
             F::from_canonical_u64(4),
         ];
 
-        let res = prove_public_batch(&public_batch_data, &public_batch_targets, vec![private_batch_a, private_batch_b], agg_addr);
+        let res = prove_public_batch(
+            &public_batch_data,
+            &public_batch_targets,
+            vec![private_batch_a, private_batch_b],
+            agg_addr,
+        );
 
         assert!(
             res.is_err(),

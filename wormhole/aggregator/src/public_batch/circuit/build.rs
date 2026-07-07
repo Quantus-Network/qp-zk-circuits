@@ -33,7 +33,8 @@ pub fn generate_public_batch_circuit_binaries<P: AsRef<Path>>(
     let private_batch_verifier_only = load_private_batch_verifier_only_from_bins(output_dir)
         .context("Failed to load private-batch verifier data")?;
 
-    let private_batch_num_leaves = private_batch_num_leaves_from_padded_pi_len(private_batch_common.num_public_inputs)?;
+    let private_batch_num_leaves =
+        private_batch_num_leaves_from_padded_pi_len(private_batch_common.num_public_inputs)?;
 
     // Non-ZK config: public-batch witnesses (private-batch proofs) are already public data and their
     // public inputs are forwarded verbatim, so blinding buys nothing and slows proving.
@@ -78,7 +79,9 @@ fn load_private_batch_common_from_bins(bins_dir: &Path) -> Result<CommonCircuitD
         .map_err(|e| anyhow!("Failed to deserialize private_batch_common.bin: {}", e))
 }
 
-fn load_private_batch_verifier_only_from_bins(bins_dir: &Path) -> Result<VerifierOnlyCircuitData<C, D>> {
+fn load_private_batch_verifier_only_from_bins(
+    bins_dir: &Path,
+) -> Result<VerifierOnlyCircuitData<C, D>> {
     let bytes = std::fs::read(bins_dir.join("private_batch_verifier.bin")).with_context(|| {
         format!(
             "Failed to read {}",

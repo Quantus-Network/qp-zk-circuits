@@ -11,7 +11,7 @@ use zk_circuits_common::zk_merkle::SIBLINGS_PER_LEVEL;
 
 // Import public input types and constants from wormhole_inputs (single source of truth)
 pub use qp_wormhole_inputs::{
-    PrivateBatchPublicInputs, BlockData, PublicCircuitInputs, PublicInputsByAccount,
+    BlockData, PrivateBatchPublicInputs, PublicCircuitInputs, PublicInputsByAccount,
 };
 use qp_wormhole_inputs::{
     ASSET_ID_INDEX, BLOCK_HASH_END_INDEX, BLOCK_HASH_START_INDEX, BLOCK_NUMBER_INDEX,

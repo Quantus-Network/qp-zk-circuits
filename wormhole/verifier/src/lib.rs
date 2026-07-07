@@ -46,7 +46,7 @@ use qp_plonky2_verifier::util::serialization::DefaultGateSerializer;
 
 // Re-export input types from qp-wormhole-inputs
 pub use qp_wormhole_inputs::{
-    PrivateBatchPublicInputs, PublicBatchPublicInputs, BlockData, BytesDigest, PublicCircuitInputs,
+    BlockData, BytesDigest, PrivateBatchPublicInputs, PublicBatchPublicInputs, PublicCircuitInputs,
     PublicInputsByAccount,
 };
 

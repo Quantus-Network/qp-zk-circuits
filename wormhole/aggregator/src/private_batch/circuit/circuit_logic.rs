@@ -68,7 +68,7 @@ impl PrivateBatchCircuit {
 
         let leaf_proofs = add_recursive_verifiers::<F, C, D>(
             &mut builder,
-            &leaf_common,
+            leaf_common,
             leaf_verifier_only,
             n_leaf,
         );
@@ -454,19 +454,14 @@ mod tests {
 
         let mut pw = PartialWitness::new();
         // NOTE: leaf_verifier_only is no longer passed here - it's baked in as constants
-        fill_private_batch_witness(
-            &mut pw,
-            &targets,
-            &leaf_proofs,
-            &dummy_nullifier_pre_images,
-        )?;
+        fill_private_batch_witness(&mut pw, &targets, &leaf_proofs, &dummy_nullifier_pre_images)?;
 
         let agg_proof = prover_data.prove(pw)?;
 
         // Build verifier data from the same config/leaf common so we can verify the result.
         // NOTE: Must use the same leaf_verifier_only to get matching circuit digest
         let verifier_data =
-            PrivateBatchCircuit::new(&agg_config, &leaf_common, &leaf_verifier_only, n_leaf)
+            PrivateBatchCircuit::new(agg_config, &leaf_common, &leaf_verifier_only, n_leaf)
                 .build_verifier();
 
         Ok((agg_proof, verifier_data))
@@ -1650,7 +1645,9 @@ mod tests {
         }
 
         // private-batch proof generation should FAIL because the proof doesn't match the baked verifier key
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| private_batch_data.prove(pw)));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            private_batch_data.prove(pw)
+        }));
         assert!(
             result.is_err() || result.unwrap().is_err(),
             "private-batch should reject proofs from malicious circuit"
@@ -1706,7 +1703,11 @@ mod tests {
             }
         }
 
-        let private_batch_proof = private_batch_data.prove(pw).expect("private-batch prove should succeed");
-        private_batch_data.verify(private_batch_proof).expect("private-batch verify should succeed");
+        let private_batch_proof = private_batch_data
+            .prove(pw)
+            .expect("private-batch prove should succeed");
+        private_batch_data
+            .verify(private_batch_proof)
+            .expect("private-batch verify should succeed");
     }
 }

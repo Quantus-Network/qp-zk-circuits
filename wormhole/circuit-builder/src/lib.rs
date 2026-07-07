@@ -114,7 +114,11 @@ pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
 
     // If num_private_batch_proofs is specified, generate public-batch aggregation circuit binaries
     if let Some(num_private_batch_proofs) = config.num_private_batch_proofs {
-        generate_public_batch_circuit_binaries(output_path, num_private_batch_proofs, include_prover)?;
+        generate_public_batch_circuit_binaries(
+            output_path,
+            num_private_batch_proofs,
+            include_prover,
+        )?;
     }
 
     // Save config file alongside binaries

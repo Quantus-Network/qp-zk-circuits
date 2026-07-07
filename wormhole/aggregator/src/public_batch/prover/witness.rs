@@ -32,7 +32,11 @@ pub fn fill_public_batch_witness(
         pw.set_target(*target, *value)?;
     }
 
-    for (proof_t, proof) in targets.private_batch_proofs.iter().zip(private_batch_proofs.iter()) {
+    for (proof_t, proof) in targets
+        .private_batch_proofs
+        .iter()
+        .zip(private_batch_proofs.iter())
+    {
         pw.set_proof_with_pis_target(proof_t, proof)?;
     }
 

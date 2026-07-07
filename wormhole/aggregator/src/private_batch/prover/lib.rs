@@ -35,7 +35,7 @@ use crate::{
     },
     dummy_proof::{generate_random_nullifier_preimage, load_dummy_proof},
     private_batch::{
-        circuit::circuit_logic::{PrivateBatchCircuitTargets, PrivateBatchCircuit},
+        circuit::circuit_logic::{PrivateBatchCircuit, PrivateBatchCircuitTargets},
         prover::witness::fill_private_batch_witness,
     },
 };

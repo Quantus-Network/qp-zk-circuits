@@ -2,7 +2,9 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use plonky2::plonk::circuit_data::CommonCircuitData;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use plonky2::util::serialization::DefaultGateSerializer;
-use qp_wormhole_aggregator::aggregator::{AggregationBackend, PrivateBatchAggregator, PublicBatchAggregator};
+use qp_wormhole_aggregator::aggregator::{
+    AggregationBackend, PrivateBatchAggregator, PublicBatchAggregator,
+};
 use qp_wormhole_aggregator::config::CircuitBinsConfig;
 use qp_wormhole_aggregator::dummy_proof::load_dummy_proof;
 use qp_wormhole_aggregator::private_batch::circuit::build::generate_private_batch_circuit_binaries;
@@ -46,8 +48,9 @@ macro_rules! aggregate_proofs_benchmark {
 
             // Call "generate_private_batch_circuit_binaries" before we instantiate a new wormhole aggregator,
             // to ensure the binaries represent the circuit with the correct number of leaf proofs.
-            generate_private_batch_circuit_binaries(BINS_DIR, $num_leaf_proofs, true)
-                .expect("Failed to generate private_batch circuit binaries for aggregation benchmark");
+            generate_private_batch_circuit_binaries(BINS_DIR, $num_leaf_proofs, true).expect(
+                "Failed to generate private_batch circuit binaries for aggregation benchmark",
+            );
             let config = CircuitBinsConfig::new($num_leaf_proofs, None)
                 .expect("Failed to create circuit bins config for aggregation benchmark");
             config
@@ -80,8 +83,9 @@ macro_rules! verify_aggregate_proof_benchmark {
 
             // Call "generate_private_batch_circuit_binaries" before we instantiate a new wormhole aggregator,
             // to ensure the binaries represent the circuit with the correct number of leaf proofs.
-            generate_private_batch_circuit_binaries(BINS_DIR, $num_leaf_proofs, true)
-                .expect("Failed to generate private_batch circuit binaries for aggregation benchmark");
+            generate_private_batch_circuit_binaries(BINS_DIR, $num_leaf_proofs, true).expect(
+                "Failed to generate private_batch circuit binaries for aggregation benchmark",
+            );
             let config = CircuitBinsConfig::new($num_leaf_proofs, None)
                 .expect("Failed to create circuit bins config for aggregation benchmark");
             config
@@ -115,14 +119,21 @@ macro_rules! prove_public_batch_benchmark {
     ($fn_name:ident, $num_private_batch_proofs:expr) => {
         pub fn $fn_name(c: &mut Criterion) {
             generate_private_batch_circuit_binaries(BINS_DIR, PUBLIC_BATCH_INNER_NUM_LEAVES, true)
-                .expect("Failed to generate private_batch circuit binaries for public_batch benchmark");
+                .expect(
+                    "Failed to generate private_batch circuit binaries for public_batch benchmark",
+                );
 
             let proof = generate_dummy_private_batch_proof();
             generate_public_batch_circuit_binaries(BINS_DIR, $num_private_batch_proofs, true)
-                .expect("Failed to generate public_batch circuit binaries for public_batch benchmark");
+                .expect(
+                    "Failed to generate public_batch circuit binaries for public_batch benchmark",
+                );
 
-            let config = CircuitBinsConfig::new(PUBLIC_BATCH_INNER_NUM_LEAVES, Some($num_private_batch_proofs))
-                .expect("Failed to create circuit bins config for aggregation benchmark");
+            let config = CircuitBinsConfig::new(
+                PUBLIC_BATCH_INNER_NUM_LEAVES,
+                Some($num_private_batch_proofs),
+            )
+            .expect("Failed to create circuit bins config for aggregation benchmark");
             config
                 .save(BINS_DIR)
                 .expect("Failed to save circuit bins config for aggregation benchmark");
@@ -140,7 +151,9 @@ macro_rules! prove_public_batch_benchmark {
                         || {
                             let mut aggregator =
                                 PublicBatchAggregator::new(BINS_DIR, aggregator_address).unwrap();
-                            for proof in std::iter::repeat(proof.clone()).take($num_private_batch_proofs) {
+                            for proof in
+                                std::iter::repeat(proof.clone()).take($num_private_batch_proofs)
+                            {
                                 aggregator.push_proof(proof).unwrap();
                             }
                             aggregator
@@ -160,15 +173,22 @@ macro_rules! verify_public_batch_benchmark {
     ($fn_name:ident, $num_private_batch_proofs:expr) => {
         pub fn $fn_name(c: &mut Criterion) {
             generate_private_batch_circuit_binaries(BINS_DIR, PUBLIC_BATCH_INNER_NUM_LEAVES, true)
-                .expect("Failed to generate private_batch circuit binaries for public_batch benchmark");
+                .expect(
+                    "Failed to generate private_batch circuit binaries for public_batch benchmark",
+                );
 
             let proof = generate_dummy_private_batch_proof();
 
             generate_public_batch_circuit_binaries(BINS_DIR, $num_private_batch_proofs, true)
-                .expect("Failed to generate public_batch circuit binaries for public_batch benchmark");
+                .expect(
+                    "Failed to generate public_batch circuit binaries for public_batch benchmark",
+                );
 
-            let config = CircuitBinsConfig::new(PUBLIC_BATCH_INNER_NUM_LEAVES, Some($num_private_batch_proofs))
-                .expect("Failed to create circuit bins config for aggregation benchmark");
+            let config = CircuitBinsConfig::new(
+                PUBLIC_BATCH_INNER_NUM_LEAVES,
+                Some($num_private_batch_proofs),
+            )
+            .expect("Failed to create circuit bins config for aggregation benchmark");
             config
                 .save(BINS_DIR)
                 .expect("Failed to save circuit bins config for aggregation benchmark");
@@ -186,7 +206,9 @@ macro_rules! verify_public_batch_benchmark {
                         || {
                             let mut aggregator =
                                 PublicBatchAggregator::new(BINS_DIR, aggregator_address).unwrap();
-                            for proof in std::iter::repeat(proof.clone()).take($num_private_batch_proofs) {
+                            for proof in
+                                std::iter::repeat(proof.clone()).take($num_private_batch_proofs)
+                            {
                                 aggregator.push_proof(proof).unwrap();
                             }
                             (aggregator.aggregate().unwrap(), aggregator)

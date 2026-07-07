@@ -22,9 +22,11 @@ use crate::private_batch::circuit::constants::aggregated_output;
 // Re-export private-batch aggregated output constants for use in public-batch circuit.
 // These describe the layout of each private-batch proof's public inputs.
 pub use aggregated_output::{
-    ASSET_ID_OFFSET as PRIVATE_BATCH_ASSET_ID_OFFSET, BLOCK_HASH_OFFSET as PRIVATE_BATCH_BLOCK_HASH_OFFSET,
-    BLOCK_NUMBER_OFFSET as PRIVATE_BATCH_BLOCK_NUMBER_OFFSET, EXIT_SLOT_LEN as PRIVATE_BATCH_EXIT_SLOT_LEN,
-    HEADER_LEN as PRIVATE_BATCH_HEADER_LEN, NUM_EXIT_SLOTS_OFFSET as PRIVATE_BATCH_NUM_EXIT_SLOTS_OFFSET,
+    ASSET_ID_OFFSET as PRIVATE_BATCH_ASSET_ID_OFFSET,
+    BLOCK_HASH_OFFSET as PRIVATE_BATCH_BLOCK_HASH_OFFSET,
+    BLOCK_NUMBER_OFFSET as PRIVATE_BATCH_BLOCK_NUMBER_OFFSET,
+    EXIT_SLOT_LEN as PRIVATE_BATCH_EXIT_SLOT_LEN, HEADER_LEN as PRIVATE_BATCH_HEADER_LEN,
+    NUM_EXIT_SLOTS_OFFSET as PRIVATE_BATCH_NUM_EXIT_SLOTS_OFFSET,
     VOLUME_FEE_BPS_OFFSET as PRIVATE_BATCH_VOLUME_FEE_BPS_OFFSET,
 };
 
@@ -45,7 +47,8 @@ pub const fn private_batch_exit_slots_start() -> usize {
 
 #[inline]
 pub const fn private_batch_nullifiers_start(private_batch_num_leaves: usize) -> usize {
-    PRIVATE_BATCH_HEADER_LEN + private_batch_exit_slots_count(private_batch_num_leaves) * PRIVATE_BATCH_EXIT_SLOT_LEN
+    PRIVATE_BATCH_HEADER_LEN
+        + private_batch_exit_slots_count(private_batch_num_leaves) * PRIVATE_BATCH_EXIT_SLOT_LEN
 }
 
 #[inline]
@@ -79,12 +82,18 @@ pub const TOTAL_EXIT_SLOTS_START: usize = BLOCK_NUMBER_START + 1; // 11
 pub const PUBLIC_BATCH_HEADER_LEN: usize = TOTAL_EXIT_SLOTS_START + 1; // 12 = 4 + 1 + 1 + 4 + 1 + 1
 
 #[inline]
-pub const fn public_batch_total_exit_slots(n_inner: usize, private_batch_num_leaves: usize) -> usize {
+pub const fn public_batch_total_exit_slots(
+    n_inner: usize,
+    private_batch_num_leaves: usize,
+) -> usize {
     n_inner * private_batch_exit_slots_count(private_batch_num_leaves)
 }
 
 #[inline]
-pub const fn public_batch_total_nullifiers(n_inner: usize, private_batch_num_leaves: usize) -> usize {
+pub const fn public_batch_total_nullifiers(
+    n_inner: usize,
+    private_batch_num_leaves: usize,
+) -> usize {
     n_inner * private_batch_nullifiers_count(private_batch_num_leaves)
 }
 
@@ -94,13 +103,19 @@ pub const fn public_batch_exit_slots_start() -> usize {
 }
 
 #[inline]
-pub const fn public_batch_nullifiers_start(n_inner: usize, private_batch_num_leaves: usize) -> usize {
-    PUBLIC_BATCH_HEADER_LEN + public_batch_total_exit_slots(n_inner, private_batch_num_leaves) * PRIVATE_BATCH_EXIT_SLOT_LEN
+pub const fn public_batch_nullifiers_start(
+    n_inner: usize,
+    private_batch_num_leaves: usize,
+) -> usize {
+    PUBLIC_BATCH_HEADER_LEN
+        + public_batch_total_exit_slots(n_inner, private_batch_num_leaves)
+            * PRIVATE_BATCH_EXIT_SLOT_LEN
 }
 
 #[inline]
 pub const fn public_batch_pi_len(n_inner: usize, private_batch_num_leaves: usize) -> usize {
     PUBLIC_BATCH_HEADER_LEN
-        + public_batch_total_exit_slots(n_inner, private_batch_num_leaves) * PRIVATE_BATCH_EXIT_SLOT_LEN
+        + public_batch_total_exit_slots(n_inner, private_batch_num_leaves)
+            * PRIVATE_BATCH_EXIT_SLOT_LEN
         + public_batch_total_nullifiers(n_inner, private_batch_num_leaves) * 4
 }

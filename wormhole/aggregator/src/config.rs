@@ -153,7 +153,9 @@ mod tests {
     #[test]
     fn new_rejects_zero_num_private_batch_proofs() {
         let err = CircuitBinsConfig::new(16, Some(0)).unwrap_err();
-        assert!(err.to_string().contains("num_private_batch_proofs must be > 0"));
+        assert!(err
+            .to_string()
+            .contains("num_private_batch_proofs must be > 0"));
     }
 
     #[test]

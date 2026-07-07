@@ -56,7 +56,10 @@ fn main() -> anyhow::Result<()> {
         NUM_LEAF_PROOFS,
         true,
     )?;
-    println!("Setup done in {:.1}s\n", setup_start.elapsed().as_secs_f64());
+    println!(
+        "Setup done in {:.1}s\n",
+        setup_start.elapsed().as_secs_f64()
+    );
 
     let mut results = Vec::new();
 
@@ -79,7 +82,10 @@ fn main() -> anyhow::Result<()> {
         let load_start = Instant::now();
         let prover = PublicBatchProver::new_from_binaries_dir(&dir)?;
         let load_time = load_start.elapsed();
-        println!("  prover load from bins:     {:.1}s", load_time.as_secs_f64());
+        println!(
+            "  prover load from bins:     {:.1}s",
+            load_time.as_secs_f64()
+        );
 
         // 3) Prove an all-dummy-padded batch (1 template proof, M-1 dummies).
         let dummy_bytes = fs::read(dir.join("dummy_private_batch_proof.bin"))?;
@@ -88,11 +94,9 @@ fn main() -> anyhow::Result<()> {
             &DefaultGateSerializer,
         )
         .map_err(|e| anyhow::anyhow!("failed to load private-batch common data: {e}"))?;
-        let template = ProofWithPublicInputs::<F, C, D>::from_bytes(
-            dummy_bytes,
-            &private_batch_common,
-        )
-        .map_err(|e| anyhow::anyhow!("failed to load dummy template: {e}"))?;
+        let template =
+            ProofWithPublicInputs::<F, C, D>::from_bytes(dummy_bytes, &private_batch_common)
+                .map_err(|e| anyhow::anyhow!("failed to load dummy template: {e}"))?;
 
         let prove_start = Instant::now();
         let prover = prover.commit(PublicBatchInputs {
@@ -109,7 +113,14 @@ fn main() -> anyhow::Result<()> {
             proof.public_inputs.len()
         );
 
-        results.push((m, build_time, load_time, prove_time, proof_size, prover_bin_size));
+        results.push((
+            m,
+            build_time,
+            load_time,
+            prove_time,
+            proof_size,
+            prover_bin_size,
+        ));
         println!();
     }
 

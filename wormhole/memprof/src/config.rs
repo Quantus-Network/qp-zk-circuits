@@ -21,7 +21,7 @@
 use clap::{ArgGroup, Args, ValueEnum};
 use plonky2::plonk::circuit_data::CircuitConfig;
 use zk_circuits_common::circuit::{
-    wormhole_private_batch_circuit_config, wormhole_leaf_circuit_config,
+    wormhole_leaf_circuit_config, wormhole_private_batch_circuit_config,
 };
 
 #[derive(Copy, Clone, Debug, ValueEnum, PartialEq, Eq)]

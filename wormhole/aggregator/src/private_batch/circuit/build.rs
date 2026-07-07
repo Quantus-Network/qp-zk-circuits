@@ -79,7 +79,10 @@ pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
     let agg_common_bytes = common_data
         .to_bytes(&gate_serializer)
         .map_err(|e| anyhow!("Failed to serialize aggregated common data: {}", e))?;
-    write(output_path.join("private_batch_common.bin"), agg_common_bytes)?;
+    write(
+        output_path.join("private_batch_common.bin"),
+        agg_common_bytes,
+    )?;
     println!("Saved {}/private_batch_common.bin", output_path.display());
 
     let agg_verifier_only_bytes = verifier_data

@@ -517,8 +517,7 @@ impl PublicBatchPublicInputs {
 
         let slots_per_inner = exit_slots_per_inner(num_leaf_proofs);
         let nulls_per_inner = nullifiers_per_inner(num_leaf_proofs);
-        let total_exit_slots_expected =
-            (num_private_batch_proofs * slots_per_inner) as u32;
+        let total_exit_slots_expected = (num_private_batch_proofs * slots_per_inner) as u32;
 
         let aggregator_address = hash_u64s_to_bytes_digest(&pis[0..AGGREGATOR_ADDRESS_LEN])
             .context("PublicBatchPI: parsing aggregator_address")?;
@@ -530,8 +529,8 @@ impl PublicBatchPublicInputs {
             .try_into()
             .context("PublicBatchPI: volume_fee_bps exceeds u32 range")?;
 
-        let block_hash = hash_u64s_to_bytes_digest(&pis[6..10])
-            .context("PublicBatchPI: parsing block_hash")?;
+        let block_hash =
+            hash_u64s_to_bytes_digest(&pis[6..10]).context("PublicBatchPI: parsing block_hash")?;
         let block_number: u32 = pis[10]
             .try_into()
             .context("PublicBatchPI: block_number exceeds u32 range")?;
@@ -561,9 +560,8 @@ impl PublicBatchPublicInputs {
                 .with_context(|| format!("PublicBatchPI: exit slot {} sum exceeds u32", i))?;
             cursor += 1;
 
-            let exit_account = hash_u64s_to_bytes_digest(&pis[cursor..cursor + 4]).with_context(
-                || format!("PublicBatchPI: parsing exit slot {} account", i),
-            )?;
+            let exit_account = hash_u64s_to_bytes_digest(&pis[cursor..cursor + 4])
+                .with_context(|| format!("PublicBatchPI: parsing exit slot {} account", i))?;
             cursor += 4;
 
             account_data.push(PublicInputsByAccount {
