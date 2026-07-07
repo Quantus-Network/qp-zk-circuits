@@ -229,16 +229,6 @@ impl PublicBatchProver {
         let mut proofs = inputs.proofs;
         let aggregator_address = inputs.aggregator_address;
 
-        // Re-validate limb canonicality even though BytesDigest::try_from already checks:
-        // `new_unchecked` can bypass it, and `bytes_to_digest` silently reduces limbs
-        // mod p, which would redirect the on-chain rebate to a different account.
-        BytesDigest::try_from(*aggregator_address).map_err(|e| {
-            anyhow!(
-                "aggregator address is not representable as 4 Goldilocks felts \
-                 (must be a hash-derived account): {}",
-                e
-            )
-        })?;
         let aggregator_address_felts = bytes_to_digest(aggregator_address);
 
         if proofs.is_empty() {
