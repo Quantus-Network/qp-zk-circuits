@@ -497,8 +497,7 @@ impl PublicBatchPublicInputs {
         num_leaf_proofs: usize,
     ) -> anyhow::Result<Self> {
         use public_batch_pi::{
-            exit_slots_per_inner, nullifiers_per_inner, pi_len, AGGREGATOR_ADDRESS_LEN, EXIT_SLOT_LEN,
-            HEADER_LEN,
+            exit_slots_per_inner, nullifiers_per_inner, pi_len, AGGREGATOR_ADDRESS_LEN, HEADER_LEN,
         };
 
         if num_private_batch_proofs == 0 || num_leaf_proofs == 0 {
