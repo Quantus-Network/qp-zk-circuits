@@ -1,7 +1,7 @@
 //! High-level aggregation orchestrator backends.
 //!
-//! - Layer0Aggregator: client/privacy-preserving aggregation (pads/shuffles inside Layer0AggregationProver::commit).
-//! - Layer1Aggregator: delegated aggregation ( expects full batches of layer-0 proofs).
+//! - PrivateBatchAggregator: client/privacy-preserving aggregation (pads/shuffles inside PrivateBatchProver::commit).
+//! - PublicBatchAggregator: delegated aggregation ( expects full batches of private-batch proofs).
 //!
 //! Shared utilities:
 //! - verifier loading from {common.bin, verifier.bin}
@@ -20,10 +20,10 @@ use std::fs;
 
 use zk_circuits_common::circuit::{C, D, F};
 
-use crate::layer1::prover::{Layer1AggregationInputs, Layer1AggregationProver};
+use crate::public_batch::prover::{PublicBatchInputs, PublicBatchProver};
 use crate::{
     common::utils::{ensure_proof_public_input_len, leaf_proof_asset_id},
-    layer0::prover::Layer0AggregationProver,
+    private_batch::prover::PrivateBatchProver,
     CircuitBinsConfig,
 };
 
@@ -33,7 +33,7 @@ pub enum CircuitType {
     Leaf,
 }
 
-/// Generic trait that both layer-0 and layer-1 backends implement.
+/// Generic trait that both private-batch and public-batch backends implement.
 pub trait AggregationBackend: Send + Sync {
     /// Push a proof into the backend's internal buffer.
     fn push_proof(&mut self, proof: Proof) -> Result<()>;
@@ -118,6 +118,10 @@ impl ProofBuffer {
         self.buf.len()
     }
 
+    fn is_empty(&self) -> bool {
+        self.buf.is_empty()
+    }
+
     fn cap(&self) -> usize {
         self.cap
     }
@@ -134,63 +138,55 @@ impl ProofBuffer {
     fn take_all(&mut self) -> Vec<Proof> {
         std::mem::take(&mut self.buf)
     }
-
-    /// Drain exactly `n` proofs from the front (error if insufficient).
-    fn drain_exact(&mut self, n: usize) -> Result<Vec<Proof>> {
-        if self.buf.len() < n {
-            bail!(
-                "not enough proofs buffered (have {}, need {})",
-                self.buf.len(),
-                n
-            );
-        }
-        Ok(self.buf.drain(0..n).collect())
-    }
 }
 
 // ============================================================================
 // Layer 1 backend (delegated aggregation)
 // ============================================================================
 
-pub struct Layer1Aggregator {
+pub struct PublicBatchAggregator {
     bins_dir: PathBuf,
     aggregator_address: BytesDigest,
     buf: ProofBuffer,
-    expected_layer0_pi_len: usize,
+    expected_private_batch_pi_len: usize,
 }
 
-impl Layer1Aggregator {
+impl PublicBatchAggregator {
     pub fn new<P: AsRef<Path>>(bins_dir: P, aggregator_address: BytesDigest) -> Result<Self> {
         let bins_dir = bins_dir.as_ref().to_path_buf();
 
         // Load config
         let config = CircuitBinsConfig::load(&bins_dir)?;
 
-        let num_layer0_proofs = config
-            .num_layer0_proofs
-            .ok_or_else(|| anyhow!("config is missing num_layer0_proofs. Please regenerate the binaries and set \"num_layer0_proofs\""))?;
-        let expected_layer0_pi_len =
-            load_common_from_bins(&bins_dir, "aggregated_common.bin")?.num_public_inputs;
+        let num_private_batch_proofs = config
+            .num_private_batch_proofs
+            .ok_or_else(|| anyhow!("config is missing num_private_batch_proofs. Please regenerate the binaries and set \"num_private_batch_proofs\""))?;
+        let expected_private_batch_pi_len =
+            load_common_from_bins(&bins_dir, "private_batch_common.bin")?.num_public_inputs;
 
         Ok(Self {
             bins_dir,
             aggregator_address,
-            buf: ProofBuffer::new(num_layer0_proofs),
-            expected_layer0_pi_len,
+            buf: ProofBuffer::new(num_private_batch_proofs),
+            expected_private_batch_pi_len,
         })
     }
 
     fn load_verifier(&self) -> Result<VerifierCircuitData<F, C, D>> {
-        load_verifier_from_bins(&self.bins_dir, "layer1_common.bin", "layer1_verifier.bin")
+        load_verifier_from_bins(
+            &self.bins_dir,
+            "public_batch_common.bin",
+            "public_batch_verifier.bin",
+        )
     }
 }
 
-impl AggregationBackend for Layer1Aggregator {
+impl AggregationBackend for PublicBatchAggregator {
     fn push_proof(&mut self, proof: Proof) -> Result<()> {
         ensure_proof_public_input_len(
             &proof,
-            self.expected_layer0_pi_len,
-            "layer-0 aggregated proof",
+            self.expected_private_batch_pi_len,
+            "private-batch aggregated proof",
         )?;
         self.buf.push(proof)
     }
@@ -204,39 +200,40 @@ impl AggregationBackend for Layer1Aggregator {
     }
 
     fn aggregate(&mut self) -> Result<Proof> {
-        let cap = self.batch_size();
+        if self.buf.is_empty() {
+            bail!("there are no private-batch proofs to aggregate");
+        }
 
-        // We require a full batch for layer1. No padding allowed
-        let batch = self
-            .buf
-            .drain_exact(cap)
-            .with_context(|| "No dummy padding for layer-1: need a full batch of layer-0 proofs")?;
+        // Partial batches are fine: PublicBatchProver::commit pads with the dummy
+        // private-batch proof template (no shuffle - forwarding stays order-preserving
+        // so the chain can attribute each segment to its inner proof).
+        let batch = self.buf.take_all();
 
-        // Load the layer-1 prover
-        let prover = Layer1AggregationProver::new_from_binaries_dir(&self.bins_dir)
-            .context("failed to load prebuilt layer-1 prover")?;
+        // Load the public-batch prover
+        let prover = PublicBatchProver::new_from_binaries_dir(&self.bins_dir)
+            .context("failed to load prebuilt public-batch prover")?;
 
         let prover = prover
-            .commit(Layer1AggregationInputs {
+            .commit(PublicBatchInputs {
                 proofs: batch,
                 aggregator_address: self.aggregator_address,
             })
-            .context("failed to commit layer-0 proofs to layer-1 prover")?;
+            .context("failed to commit private-batch proofs to public-batch prover")?;
 
-        prover.prove().context("layer-1 proving failed")
+        prover.prove().context("public-batch proving failed")
     }
 
     fn verify(&self, proof: Proof) -> Result<()> {
         let verifier = self.load_verifier()?;
         verifier
             .verify(proof)
-            .map_err(|e| anyhow!("layer-1 aggregated proof verification failed: {}", e))
+            .map_err(|e| anyhow!("public-batch aggregated proof verification failed: {}", e))
     }
 
     fn load_common_data(&self, circuit_type: CircuitType) -> Result<CommonCircuitData<F, D>> {
         let common_file = match circuit_type {
-            CircuitType::Root => "layer1_common.bin",
-            CircuitType::Leaf => "aggregated_common.bin",
+            CircuitType::Root => "public_batch_common.bin",
+            CircuitType::Leaf => "private_batch_common.bin",
         };
 
         load_common_from_bins(&self.bins_dir, common_file)
@@ -247,13 +244,13 @@ impl AggregationBackend for Layer1Aggregator {
 // Layer 0 backend (client-side aggregation)
 // ============================================================================
 
-pub struct Layer0Aggregator {
+pub struct PrivateBatchAggregator {
     bins_dir: PathBuf,
     buf: ProofBuffer,
     expected_leaf_pi_len: usize,
 }
 
-impl Layer0Aggregator {
+impl PrivateBatchAggregator {
     pub fn new<P: AsRef<Path>>(bins_dir: P) -> Result<Self> {
         let bins_dir = bins_dir.as_ref().to_path_buf();
 
@@ -269,21 +266,21 @@ impl Layer0Aggregator {
         })
     }
 
-    fn build_prover(&self) -> Result<Layer0AggregationProver> {
-        Layer0AggregationProver::new_from_binaries_dir(&self.bins_dir)
-            .context("failed to load prebuilt layer-0 prover from binaries dir")
+    fn build_prover(&self) -> Result<PrivateBatchProver> {
+        PrivateBatchProver::new_from_binaries_dir(&self.bins_dir)
+            .context("failed to load prebuilt private-batch prover from binaries dir")
     }
 
     fn load_verifier(&self) -> Result<VerifierCircuitData<F, C, D>> {
         load_verifier_from_bins(
             &self.bins_dir,
-            "aggregated_common.bin",
-            "aggregated_verifier.bin",
+            "private_batch_common.bin",
+            "private_batch_verifier.bin",
         )
     }
 }
 
-impl AggregationBackend for Layer0Aggregator {
+impl AggregationBackend for PrivateBatchAggregator {
     fn push_proof(&mut self, proof: Proof) -> Result<()> {
         ensure_proof_public_input_len(&proof, self.expected_leaf_pi_len, "leaf proof")?;
         self.buf.push(proof)
@@ -298,11 +295,11 @@ impl AggregationBackend for Layer0Aggregator {
     }
 
     fn aggregate(&mut self) -> Result<Proof> {
-        if self.buf.len() == 0 {
+        if self.buf.is_empty() {
             bail!("there are no leaf proofs to aggregate");
         }
 
-        // Layer-0 prover commit does padding/shuffling/dummy-nullifier-preimage handling,
+        // Private-batch prover commit does padding/shuffling/dummy-nullifier-preimage handling,
         // so we can pass any non-empty batch. The wrapper's same-block / same-asset invariants are
         // intentional protocol rules and remain enforced in-circuit; this preflight only rejects
         // malformed or dummy-padding-incompatible inputs earlier.
@@ -312,7 +309,7 @@ impl AggregationBackend for Layer0Aggregator {
                 let asset_id = leaf_proof_asset_id(proof)?;
                 if asset_id != 0 {
                     bail!(
-                        "proof {} has asset_id={}, but layer-0 dummy padding requires all real proofs to use asset_id=0",
+                        "proof {} has asset_id={}, but private-batch dummy padding requires all real proofs to use asset_id=0",
                         idx,
                         asset_id
                     );
@@ -323,21 +320,21 @@ impl AggregationBackend for Layer0Aggregator {
         let prover = self.build_prover()?;
         let prover = prover
             .commit(proofs)
-            .context("failed to commit leaf proofs to layer-0 aggregation prover")?;
+            .context("failed to commit leaf proofs to private-batch aggregation prover")?;
 
-        prover.prove().context("layer-0 proving failed")
+        prover.prove().context("private-batch proving failed")
     }
 
     fn verify(&self, proof: Proof) -> Result<()> {
         let verifier = self.load_verifier()?;
         verifier
             .verify(proof)
-            .map_err(|e| anyhow!("layer-0 aggregated proof verification failed: {}", e))
+            .map_err(|e| anyhow!("private-batch aggregated proof verification failed: {}", e))
     }
 
     fn load_common_data(&self, circuit_type: CircuitType) -> Result<CommonCircuitData<F, D>> {
         let common_file = match circuit_type {
-            CircuitType::Root => "aggregated_common.bin",
+            CircuitType::Root => "private_batch_common.bin",
             CircuitType::Leaf => "common.bin",
         };
 

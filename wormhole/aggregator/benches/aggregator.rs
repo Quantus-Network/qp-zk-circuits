@@ -2,18 +2,20 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use plonky2::plonk::circuit_data::CommonCircuitData;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use plonky2::util::serialization::DefaultGateSerializer;
-use qp_wormhole_aggregator::aggregator::{AggregationBackend, Layer0Aggregator, Layer1Aggregator};
+use qp_wormhole_aggregator::aggregator::{
+    AggregationBackend, PrivateBatchAggregator, PublicBatchAggregator,
+};
 use qp_wormhole_aggregator::config::CircuitBinsConfig;
 use qp_wormhole_aggregator::dummy_proof::load_dummy_proof;
-use qp_wormhole_aggregator::layer0::circuit::build::generate_layer0_circuit_binaries;
-use qp_wormhole_aggregator::layer1::circuit::build::generate_layer1_circuit_binaries;
+use qp_wormhole_aggregator::private_batch::circuit::build::generate_private_batch_circuit_binaries;
+use qp_wormhole_aggregator::public_batch::circuit::build::generate_public_batch_circuit_binaries;
 use qp_wormhole_inputs::BytesDigest;
 use zk_circuits_common::circuit::{C, D, F};
 
 /// Generate dummy proofs from the circuit config (no external files needed).
 /// Path is relative to CARGO_MANIFEST_DIR (the aggregator crate root).
 const BINS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../generated-bins");
-const LAYER1_L0_NUM_LEAVES: usize = 8; // Must be consistent with the layer0 circuit binaries used in layer1 benchmarks.
+const PUBLIC_BATCH_INNER_NUM_LEAVES: usize = 8; // Must be consistent with the private_batch circuit binaries used in public_batch benchmarks.
 const LAYER1_AGGREGATOR_ADDRESS: [u8; 32] = [42u8; 32];
 
 type Proof = ProofWithPublicInputs<F, C, D>;
@@ -28,11 +30,11 @@ fn load_dummy_leaf_proof() -> Proof {
         .expect("Failed to deserialize common circuit data");
     load_dummy_proof(proof_bytes, &common).expect("Failed to load dummy proof from bytes")
 }
-// Implement a helper to generate a dummy layer-0 proof with "LAYER1_L0_NUM_LEAVES"
-fn generate_dummy_layer0_proof() -> Proof {
+// Implement a helper to generate a dummy private-batch proof with "PUBLIC_BATCH_INNER_NUM_LEAVES"
+fn generate_dummy_private_batch_proof() -> Proof {
     let dummy_leaf_proof = load_dummy_leaf_proof();
-    let mut aggregator = Layer0Aggregator::new(BINS_DIR).unwrap();
-    for _ in 0..LAYER1_L0_NUM_LEAVES {
+    let mut aggregator = PrivateBatchAggregator::new(BINS_DIR).unwrap();
+    for _ in 0..PUBLIC_BATCH_INNER_NUM_LEAVES {
         aggregator.push_proof(dummy_leaf_proof.clone()).unwrap();
     }
     aggregator.aggregate().unwrap()
@@ -44,10 +46,11 @@ macro_rules! aggregate_proofs_benchmark {
         pub fn $fn_name(c: &mut Criterion) {
             let proof = load_dummy_leaf_proof();
 
-            // Call "generate_layer0_circuit_binaries" before we instantiate a new wormhole aggregator,
+            // Call "generate_private_batch_circuit_binaries" before we instantiate a new wormhole aggregator,
             // to ensure the binaries represent the circuit with the correct number of leaf proofs.
-            generate_layer0_circuit_binaries(BINS_DIR, $num_leaf_proofs, true)
-                .expect("Failed to generate layer0 circuit binaries for aggregation benchmark");
+            generate_private_batch_circuit_binaries(BINS_DIR, $num_leaf_proofs, true).expect(
+                "Failed to generate private_batch circuit binaries for aggregation benchmark",
+            );
             let config = CircuitBinsConfig::new($num_leaf_proofs, None)
                 .expect("Failed to create circuit bins config for aggregation benchmark");
             config
@@ -57,7 +60,7 @@ macro_rules! aggregate_proofs_benchmark {
             c.bench_function(&format!("aggregate_proofs_{}", $num_leaf_proofs), |b| {
                 b.iter_batched(
                     || {
-                        let mut aggregator = Layer0Aggregator::new(BINS_DIR).unwrap();
+                        let mut aggregator = PrivateBatchAggregator::new(BINS_DIR).unwrap();
                         for proof in std::iter::repeat(proof.clone()).take($num_leaf_proofs) {
                             aggregator.push_proof(proof).unwrap();
                         }
@@ -78,10 +81,11 @@ macro_rules! verify_aggregate_proof_benchmark {
         pub fn $fn_name(c: &mut Criterion) {
             let proof = load_dummy_leaf_proof();
 
-            // Call "generate_layer0_circuit_binaries" before we instantiate a new wormhole aggregator,
+            // Call "generate_private_batch_circuit_binaries" before we instantiate a new wormhole aggregator,
             // to ensure the binaries represent the circuit with the correct number of leaf proofs.
-            generate_layer0_circuit_binaries(BINS_DIR, $num_leaf_proofs, true)
-                .expect("Failed to generate layer0 circuit binaries for aggregation benchmark");
+            generate_private_batch_circuit_binaries(BINS_DIR, $num_leaf_proofs, true).expect(
+                "Failed to generate private_batch circuit binaries for aggregation benchmark",
+            );
             let config = CircuitBinsConfig::new($num_leaf_proofs, None)
                 .expect("Failed to create circuit bins config for aggregation benchmark");
             config
@@ -93,7 +97,7 @@ macro_rules! verify_aggregate_proof_benchmark {
                 |b| {
                     b.iter_batched(
                         || {
-                            let mut aggregator = Layer0Aggregator::new(BINS_DIR).unwrap();
+                            let mut aggregator = PrivateBatchAggregator::new(BINS_DIR).unwrap();
                             for proof in std::iter::repeat(proof.clone()).take($num_leaf_proofs) {
                                 aggregator.push_proof(proof).unwrap();
                             }
@@ -111,18 +115,25 @@ macro_rules! verify_aggregate_proof_benchmark {
     };
 }
 
-macro_rules! prove_layer1_benchmark {
-    ($fn_name:ident, $num_layer0_proofs:expr) => {
+macro_rules! prove_public_batch_benchmark {
+    ($fn_name:ident, $num_private_batch_proofs:expr) => {
         pub fn $fn_name(c: &mut Criterion) {
-            generate_layer0_circuit_binaries(BINS_DIR, LAYER1_L0_NUM_LEAVES, true)
-                .expect("Failed to generate layer0 circuit binaries for layer1 benchmark");
+            generate_private_batch_circuit_binaries(BINS_DIR, PUBLIC_BATCH_INNER_NUM_LEAVES, true)
+                .expect(
+                    "Failed to generate private_batch circuit binaries for public_batch benchmark",
+                );
 
-            let proof = generate_dummy_layer0_proof();
-            generate_layer1_circuit_binaries(BINS_DIR, $num_layer0_proofs, true)
-                .expect("Failed to generate layer1 circuit binaries for layer1 benchmark");
+            let proof = generate_dummy_private_batch_proof();
+            generate_public_batch_circuit_binaries(BINS_DIR, $num_private_batch_proofs, true)
+                .expect(
+                    "Failed to generate public_batch circuit binaries for public_batch benchmark",
+                );
 
-            let config = CircuitBinsConfig::new(LAYER1_L0_NUM_LEAVES, Some($num_layer0_proofs))
-                .expect("Failed to create circuit bins config for aggregation benchmark");
+            let config = CircuitBinsConfig::new(
+                PUBLIC_BATCH_INNER_NUM_LEAVES,
+                Some($num_private_batch_proofs),
+            )
+            .expect("Failed to create circuit bins config for aggregation benchmark");
             config
                 .save(BINS_DIR)
                 .expect("Failed to save circuit bins config for aggregation benchmark");
@@ -132,15 +143,17 @@ macro_rules! prove_layer1_benchmark {
 
             c.bench_function(
                 &format!(
-                    "prove_layer1_{}_l0leaves_{}",
-                    $num_layer0_proofs, LAYER1_L0_NUM_LEAVES
+                    "prove_public_batch_{}_l0leaves_{}",
+                    $num_private_batch_proofs, PUBLIC_BATCH_INNER_NUM_LEAVES
                 ),
                 |b| {
                     b.iter_batched(
                         || {
                             let mut aggregator =
-                                Layer1Aggregator::new(BINS_DIR, aggregator_address).unwrap();
-                            for proof in std::iter::repeat(proof.clone()).take($num_layer0_proofs) {
+                                PublicBatchAggregator::new(BINS_DIR, aggregator_address).unwrap();
+                            for proof in
+                                std::iter::repeat(proof.clone()).take($num_private_batch_proofs)
+                            {
                                 aggregator.push_proof(proof).unwrap();
                             }
                             aggregator
@@ -156,19 +169,26 @@ macro_rules! prove_layer1_benchmark {
     };
 }
 
-macro_rules! verify_layer1_benchmark {
-    ($fn_name:ident, $num_layer0_proofs:expr) => {
+macro_rules! verify_public_batch_benchmark {
+    ($fn_name:ident, $num_private_batch_proofs:expr) => {
         pub fn $fn_name(c: &mut Criterion) {
-            generate_layer0_circuit_binaries(BINS_DIR, LAYER1_L0_NUM_LEAVES, true)
-                .expect("Failed to generate layer0 circuit binaries for layer1 benchmark");
+            generate_private_batch_circuit_binaries(BINS_DIR, PUBLIC_BATCH_INNER_NUM_LEAVES, true)
+                .expect(
+                    "Failed to generate private_batch circuit binaries for public_batch benchmark",
+                );
 
-            let proof = generate_dummy_layer0_proof();
+            let proof = generate_dummy_private_batch_proof();
 
-            generate_layer1_circuit_binaries(BINS_DIR, $num_layer0_proofs, true)
-                .expect("Failed to generate layer1 circuit binaries for layer1 benchmark");
+            generate_public_batch_circuit_binaries(BINS_DIR, $num_private_batch_proofs, true)
+                .expect(
+                    "Failed to generate public_batch circuit binaries for public_batch benchmark",
+                );
 
-            let config = CircuitBinsConfig::new(LAYER1_L0_NUM_LEAVES, Some($num_layer0_proofs))
-                .expect("Failed to create circuit bins config for aggregation benchmark");
+            let config = CircuitBinsConfig::new(
+                PUBLIC_BATCH_INNER_NUM_LEAVES,
+                Some($num_private_batch_proofs),
+            )
+            .expect("Failed to create circuit bins config for aggregation benchmark");
             config
                 .save(BINS_DIR)
                 .expect("Failed to save circuit bins config for aggregation benchmark");
@@ -178,15 +198,17 @@ macro_rules! verify_layer1_benchmark {
 
             c.bench_function(
                 &format!(
-                    "verify_layer1_{}_l0leaves_{}",
-                    $num_layer0_proofs, LAYER1_L0_NUM_LEAVES
+                    "verify_public_batch_{}_l0leaves_{}",
+                    $num_private_batch_proofs, PUBLIC_BATCH_INNER_NUM_LEAVES
                 ),
                 |b| {
                     b.iter_batched(
                         || {
                             let mut aggregator =
-                                Layer1Aggregator::new(BINS_DIR, aggregator_address).unwrap();
-                            for proof in std::iter::repeat(proof.clone()).take($num_layer0_proofs) {
+                                PublicBatchAggregator::new(BINS_DIR, aggregator_address).unwrap();
+                            for proof in
+                                std::iter::repeat(proof.clone()).take($num_private_batch_proofs)
+                            {
                                 aggregator.push_proof(proof).unwrap();
                             }
                             (aggregator.aggregate().unwrap(), aggregator)
@@ -226,17 +248,17 @@ verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_25, 25);
 verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_36, 36);
 verify_aggregate_proof_benchmark!(bench_verify_aggregate_proof_49, 49);
 
-prove_layer1_benchmark!(bench_prove_layer1_2, 2);
-prove_layer1_benchmark!(bench_prove_layer1_4, 4);
-prove_layer1_benchmark!(bench_prove_layer1_8, 8);
-prove_layer1_benchmark!(bench_prove_layer1_16, 16);
-prove_layer1_benchmark!(bench_prove_layer1_32, 32);
+prove_public_batch_benchmark!(bench_prove_public_batch_2, 2);
+prove_public_batch_benchmark!(bench_prove_public_batch_4, 4);
+prove_public_batch_benchmark!(bench_prove_public_batch_8, 8);
+prove_public_batch_benchmark!(bench_prove_public_batch_16, 16);
+prove_public_batch_benchmark!(bench_prove_public_batch_32, 32);
 
-verify_layer1_benchmark!(bench_verify_layer1_2, 2);
-verify_layer1_benchmark!(bench_verify_layer1_4, 4);
-verify_layer1_benchmark!(bench_verify_layer1_8, 8);
-verify_layer1_benchmark!(bench_verify_layer1_16, 16);
-verify_layer1_benchmark!(bench_verify_layer1_32, 32);
+verify_public_batch_benchmark!(bench_verify_public_batch_2, 2);
+verify_public_batch_benchmark!(bench_verify_public_batch_4, 4);
+verify_public_batch_benchmark!(bench_verify_public_batch_8, 8);
+verify_public_batch_benchmark!(bench_verify_public_batch_16, 16);
+verify_public_batch_benchmark!(bench_verify_public_batch_32, 32);
 
 criterion_group!(
     name = benches;
@@ -246,7 +268,7 @@ criterion_group!(
               bench_verify_aggregate_proof_2, bench_verify_aggregate_proof_4, bench_verify_aggregate_proof_8, bench_verify_aggregate_proof_16, bench_verify_aggregate_proof_32,
               bench_aggregate_proofs_9, bench_aggregate_proofs_25, bench_aggregate_proofs_36, bench_aggregate_proofs_49,
               bench_verify_aggregate_proof_9, bench_verify_aggregate_proof_25, bench_verify_aggregate_proof_36, bench_verify_aggregate_proof_49,
-              bench_prove_layer1_2, bench_prove_layer1_4, bench_prove_layer1_8, bench_prove_layer1_16, bench_prove_layer1_32,
-              bench_verify_layer1_2, bench_verify_layer1_4, bench_verify_layer1_8, bench_verify_layer1_16, bench_verify_layer1_32,
+              bench_prove_public_batch_2, bench_prove_public_batch_4, bench_prove_public_batch_8, bench_prove_public_batch_16, bench_prove_public_batch_32,
+              bench_verify_public_batch_2, bench_verify_public_batch_4, bench_verify_public_batch_8, bench_verify_public_batch_16, bench_verify_public_batch_32,
 );
 criterion_main!(benches);

@@ -2,8 +2,8 @@ pub mod aggregator;
 pub mod common;
 pub mod config;
 pub mod dummy_proof;
-pub mod layer0;
-pub mod layer1;
+pub mod private_batch;
+pub mod public_batch;
 
 #[cfg(feature = "profile")]
 pub mod profile;

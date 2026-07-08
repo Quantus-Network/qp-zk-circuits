@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Result};
 use std::fs::{create_dir_all, write};
 use std::path::Path;
-use wormhole_aggregator::layer1::circuit::generate_layer1_circuit_binaries;
+use wormhole_aggregator::public_batch::circuit::generate_public_batch_circuit_binaries;
 
 use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
-use wormhole_aggregator::layer0::circuit::build::generate_layer0_circuit_binaries;
+use wormhole_aggregator::private_batch::circuit::build::generate_private_batch_circuit_binaries;
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use zk_circuits_common::circuit::{wormhole_leaf_circuit_config, C, D};
 
@@ -90,7 +90,7 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
 /// * `output_dir` - Directory to write the binaries to
 /// * `include_prover` - Whether to include the prover binary
 /// * `num_leaf_proofs` - Number of leaf proofs aggregated into a single proof (must be > 0)
-/// * `num_layer0_proofs` - Optional param for number of inner proofs (for layer-1 circuit). Set to none if you only want layer-0 aggregation.
+/// * `num_private_batch_proofs` - Optional param for number of inner proofs (for public-batch circuit). Set to none if you only want private-batch aggregation.
 ///
 /// # Errors
 /// Returns an error if proof counts are invalid (zero or exceed maximum bounds).
@@ -99,10 +99,10 @@ pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
     include_prover: bool,
     num_leaf_proofs: usize,
-    num_layer0_proofs: Option<usize>,
+    num_private_batch_proofs: Option<usize>,
 ) -> Result<()> {
     // Validate proof counts upfront before any writes to avoid partial artifact generation
-    let config = CircuitBinsConfig::new(num_leaf_proofs, num_layer0_proofs)?;
+    let config = CircuitBinsConfig::new(num_leaf_proofs, num_private_batch_proofs)?;
 
     let output_path = output_dir.as_ref();
 
@@ -110,11 +110,15 @@ pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
     generate_circuit_binaries(output_path, include_prover)?;
 
     // Generate aggregated circuit binaries
-    generate_layer0_circuit_binaries(output_path, config.num_leaf_proofs, include_prover)?;
+    generate_private_batch_circuit_binaries(output_path, config.num_leaf_proofs, include_prover)?;
 
-    // If num_layer0_proofs is specified, generate layer-1 aggregation circuit binaries
-    if let Some(num_layer0_proofs) = config.num_layer0_proofs {
-        generate_layer1_circuit_binaries(output_path, num_layer0_proofs, include_prover)?;
+    // If num_private_batch_proofs is specified, generate public-batch aggregation circuit binaries
+    if let Some(num_private_batch_proofs) = config.num_private_batch_proofs {
+        generate_public_batch_circuit_binaries(
+            output_path,
+            num_private_batch_proofs,
+            include_prover,
+        )?;
     }
 
     // Save config file alongside binaries

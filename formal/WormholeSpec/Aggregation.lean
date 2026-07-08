@@ -1,8 +1,8 @@
 /-
-  Layer-0 and layer-1 aggregation relations.
+  Private-batch and public-batch aggregation relations.
 
-  These capture the wrapper constraints in `build_layer0_wrapper_constraints` and
-  `build_layer1_wrapper_constraints`:
+  These capture the wrapper constraints in `build_private_batch_constraints` and
+  `build_public_batch_constraints`:
 
     * metadata consistency across non-dummy children (asset_id, fee, block);
     * the block reference being taken from the first non-dummy slot (the
@@ -14,17 +14,17 @@
 
   Value conservation is no longer asserted: `R_L0` now pins the exact in-circuit
   grouping, and conservation (`outputExitTotal = rawOutputTotal`) is *derived* as
-  a theorem (`RL0_value_conservation`).
+  a theorem (`RPrivateBatch_value_conservation`).
 
-  NOTE the *weaker* layer-0 dummy sentinel: at layer 0 a child is treated as a
-  dummy when `block_hash == 0` alone (`isDummyL0`), versus the leaf circuit's
+  NOTE the *weaker* private-batch dummy sentinel: at layer 0 a child is treated as a
+  dummy when `block_hash == 0` alone (`isDummyPrivateBatch`), versus the leaf circuit's
   `block_hash == 0 ∧ outputs == 0`. Their compatibility (dummy ⟹ zero outputs) is
   the hypothesis of `rawOutputTotal_eq_inputExitTotal`, the obligation a full
-  leaf↔layer-0 composition proof must discharge.
+  leaf↔private-batch composition proof must discharge.
 
   CONSERVATION OVER `Nat` VS `ZMod p` (a Phase-2 caveat)
   ------------------------------------------------------
-  `RL0_value_conservation` is an *exact* `Nat` identity, so it is economically
+  `RPrivateBatch_value_conservation` is an *exact* `Nat` identity, so it is economically
   meaningful as stated. The in-circuit accumulators, however, live in the field:
   over `ZMod goldilocks` (Phase 2) "conservation" would only be equality *mod p*,
   and two distinct totals could be congruent. The result stays meaningful exactly
@@ -50,8 +50,8 @@ structure ExitSlot where
   account : Digest
   deriving Repr
 
-/-- Public output of a layer-0 aggregation proof (see `aggregated_output`). -/
-structure Layer0Output where
+/-- Public output of a private-batch aggregation proof (see `aggregated_output`). -/
+structure PrivateBatchOutput where
   numExitSlots : Felt
   assetId : Felt
   volumeFeeBps : Felt
@@ -60,12 +60,12 @@ structure Layer0Output where
   exitSlots : List ExitSlot
   nullifiers : List Digest
 
-/-- Layer-0 dummy sentinel: `block_hash == 0` (weaker than the leaf's notion).
+/-- Private-batch dummy sentinel: `block_hash == 0` (weaker than the leaf's notion).
     `abbrev` (reducible) so `Decidable` resolves through it via `DecidableEq Digest`. -/
-abbrev isDummyL0 (p : LeafPublic) : Prop := p.blockHash = Digest.zero
+abbrev isDummyPrivateBatch (p : LeafPublic) : Prop := p.blockHash = Digest.zero
 
 /-- Boolean "is a real (non-dummy) child", for use with `List.find?`. -/
-def isRealB (p : LeafPublic) : Bool := ! decide (isDummyL0 p)
+def isRealB (p : LeafPublic) : Bool := ! decide (isDummyPrivateBatch p)
 
 /-- Total of the two output amounts over *every* child. This is exactly what the
     in-circuit exit accumulator sums — it does not gate on the dummy flag. -/
@@ -78,11 +78,11 @@ def rawOutputTotal : List LeafPublic → Felt
 def inputExitTotal : List LeafPublic → Felt
   | [] => 0
   | p :: rest =>
-      (if isDummyL0 p then 0 else p.outputAmount1 + p.outputAmount2) + inputExitTotal rest
+      (if isDummyPrivateBatch p then 0 else p.outputAmount1 + p.outputAmount2) + inputExitTotal rest
 
 /-- The flattened `(account, amount)` outputs of all children, two per child.
     These are the `2N` slot inputs to the grouping in
-    `build_layer0_wrapper_constraints`. -/
+    `build_private_batch_constraints`. -/
 def childPairs : List LeafPublic → List (Digest × Felt)
   | [] => []
   | p :: rest =>
@@ -120,12 +120,12 @@ def amtNotIn (seen : List Digest) : List (Digest × Felt) → Felt
   | [] => 0
   | (k, a) :: rest => (if k ∈ seen then 0 else a) + amtNotIn seen rest
 
-/-- Sum of the settled exit-slot amounts of a layer-0 output. -/
-def outputExitTotal (out : Layer0Output) : Felt := slotsTotal out.exitSlots
+/-- Sum of the settled exit-slot amounts of a private-batch output. -/
+def outputExitTotal (out : PrivateBatchOutput) : Felt := slotsTotal out.exitSlots
 
 /-- Metadata of each non-dummy child agrees with the aggregate header. -/
-def metadataConsistent (leaves : List LeafPublic) (out : Layer0Output) : Prop :=
-  ∀ p ∈ leaves, ¬ isDummyL0 p →
+def metadataConsistent (leaves : List LeafPublic) (out : PrivateBatchOutput) : Prop :=
+  ∀ p ∈ leaves, ¬ isDummyPrivateBatch p →
     p.assetId = out.assetId ∧
     p.volumeFeeBps = out.volumeFeeBps ∧
     p.blockHash = out.blockHash ∧
@@ -133,43 +133,43 @@ def metadataConsistent (leaves : List LeafPublic) (out : Layer0Output) : Prop :=
 
 /-- The block reference is the first non-dummy child; an all-dummy batch yields a
     zero block hash (and settles nothing). -/
-def referenceFromFirstReal (leaves : List LeafPublic) (out : Layer0Output) : Prop :=
+def referenceFromFirstReal (leaves : List LeafPublic) (out : PrivateBatchOutput) : Prop :=
   match leaves.find? isRealB with
   | some p => out.blockHash = p.blockHash ∧ out.blockNumber = p.blockNumber ∧
               out.assetId = p.assetId ∧ out.volumeFeeBps = p.volumeFeeBps
   | none   => out.blockHash = Digest.zero
 
-/-- Per-slot nullifier output: real children forward `nullifier`; layer-0 dummies
+/-- Per-slot nullifier output: real children forward `nullifier`; private-batch dummies
     are replaced by `DNull(u)` for the witnessed preimage `u`. -/
 def nullifiersReplaced (ro : RandomOracle) :
     List LeafPublic → List (List Felt) → List Digest → Prop
   | [],      [],      []      => True
   | p :: ps, u :: us, n :: ns =>
-      (n = if isDummyL0 p then ro.dummyNull u else p.nullifier) ∧
+      (n = if isDummyPrivateBatch p then ro.dummyNull u else p.nullifier) ∧
       nullifiersReplaced ro ps us ns
   | _,       _,       _       => False
 
 /--
-`RL0 ro leaves us out` holds iff the layer-0 wrapper accepts children `leaves`
+`RPrivateBatch ro leaves us out` holds iff the private-batch wrapper accepts children `leaves`
 with dummy-nullifier preimages `us`, producing aggregate output `out`.
 
 `us` has one entry per child (used only on dummy slots). This matches the circuit
-witness layout exactly: `AggregationCircuitTargets.dummy_nullifier_pre_images` is a
+witness layout exactly: `PrivateBatchCircuitTargets.dummy_nullifier_pre_images` is a
 `Vec<[Target; 4]>` allocated once *per leaf slot* (`for _ in 0..n_leaf`), not once
-per dummy — see `layer0/circuit/circuit_logic.rs:46–47, 76–85`. The wrapper reads
+per dummy — see `private_batch/circuit/circuit_logic.rs:46–47, 76–85`. The wrapper reads
 slot `i`'s preimage only when slot `i` is a dummy (`select(is_dummy_i, …)`), so the
 per-child length bookkeeping here (`out.nullifiers.length = leaves.length`) lines up
 with the circuit.
 -/
-def RL0 (ro : RandomOracle) (leaves : List LeafPublic) (us : List (List Felt))
-    (out : Layer0Output) : Prop :=
+def RPrivateBatch (ro : RandomOracle) (leaves : List LeafPublic) (us : List (List Felt))
+    (out : PrivateBatchOutput) : Prop :=
   metadataConsistent leaves out ∧
   referenceFromFirstReal leaves out ∧
   nullifiersReplaced ro leaves us out.nullifiers ∧
   out.nullifiers.length = leaves.length ∧
   -- Primitive exit construction: the settled slots are *exactly* the in-circuit
   -- group/dedup of every child's two (account, amount) outputs. Value
-  -- conservation is a derived theorem (`RL0_value_conservation`), not an
+  -- conservation is a derived theorem (`RPrivateBatch_value_conservation`), not an
   -- assumed conjunct.
   out.exitSlots = groupExits (childPairs leaves)
   -- TODO(Phase 3): `numExitSlots = 2 * leaves.length` slot accounting.
@@ -271,10 +271,10 @@ theorem groupExits_childPairs (leaves : List LeafPublic) :
   unfold groupExits
   rw [groupAux_conserves [] (childPairs leaves), amtNotIn_nil_childPairs]
 
-/-- **Value conservation** (whitepaper §6.1): every layer-0 proof settles exactly
-    the value its children carry. Derived from the grouping primitive in `RL0`. -/
-theorem RL0_value_conservation {ro : RandomOracle} {leaves : List LeafPublic}
-    {us : List (List Felt)} {out : Layer0Output} (h : RL0 ro leaves us out) :
+/-- **Value conservation** (whitepaper §6.1): every private-batch proof settles exactly
+    the value its children carry. Derived from the grouping primitive in `RPrivateBatch`. -/
+theorem RPrivateBatch_value_conservation {ro : RandomOracle} {leaves : List LeafPublic}
+    {us : List (List Felt)} {out : PrivateBatchOutput} (h : RPrivateBatch ro leaves us out) :
     outputExitTotal out = rawOutputTotal leaves := by
   unfold outputExitTotal
   rw [h.2.2.2.2]
@@ -310,24 +310,24 @@ theorem rawOutputTotal_lt_modulus {leaves : List LeafPublic} {M : Felt}
     rawOutputTotal leaves < goldilocks :=
   Nat.lt_of_le_of_lt (rawOutputTotal_le_linear hM) hbatch
 
-/-- Under the leaf↔layer-0 compatibility guarantee (a layer-0 dummy carries zero
+/-- Under the leaf↔private-batch compatibility guarantee (a private-batch dummy carries zero
     outputs), the raw total coincides with the non-dummy total. -/
 theorem rawOutputTotal_eq_inputExitTotal {leaves : List LeafPublic}
-    (h : ∀ p ∈ leaves, isDummyL0 p → p.outputAmount1 = 0 ∧ p.outputAmount2 = 0) :
+    (h : ∀ p ∈ leaves, isDummyPrivateBatch p → p.outputAmount1 = 0 ∧ p.outputAmount2 = 0) :
     rawOutputTotal leaves = inputExitTotal leaves := by
   induction leaves with
   | nil => rfl
   | cons p rest ih =>
       have ihrest := ih (fun q hq => h q (List.mem_cons_of_mem _ hq))
-      by_cases hd : isDummyL0 p
+      by_cases hd : isDummyPrivateBatch p
       · obtain ⟨h1, h2⟩ := h p List.mem_cons_self hd
         simp only [rawOutputTotal, inputExitTotal, if_pos hd]
         rw [ihrest]; simp only [Felt] at *; omega
       · simp only [rawOutputTotal, inputExitTotal, if_neg hd]
         rw [ihrest]
 
-/-- Public output of a layer-1 aggregation proof (see `layer1` constants). -/
-structure Layer1Output where
+/-- Public output of a public-batch aggregation proof (see `public_batch` constants). -/
+structure PublicBatchOutput where
   aggregatorAddress : Digest
   assetId : Felt
   volumeFeeBps : Felt
@@ -337,26 +337,66 @@ structure Layer1Output where
   exitSlots : List ExitSlot
   nullifiers : List Digest
 
+/-- Public-batch dummy sentinel: an all-dummy private batch, identified by
+    `block_hash == 0` — the same shape as `isDummyPrivateBatch` one layer down.
+    Such inner proofs pad partial public batches. -/
+abbrev isDummyInner (o : PrivateBatchOutput) : Prop := o.blockHash = Digest.zero
+
+/-- Boolean "is a real (non-dummy) inner", for use with `List.find?`. -/
+def isRealInnerB (o : PrivateBatchOutput) : Bool := ! decide (isDummyInner o)
+
+/-- The exit slots an inner contributes to the public output: a dummy inner's
+    slots are zeroed (`select(is_dummy, 0, slot)`), a real inner's are forwarded
+    verbatim. Zeroing is an enforced invariant, not a construction detail. -/
+def forwardedSlots (o : PrivateBatchOutput) : List ExitSlot :=
+  if isDummyInner o then o.exitSlots.map (fun _ => ⟨0, Digest.zero⟩) else o.exitSlots
+
+/-- The nullifiers an inner contributes: a dummy inner's nullifiers are zeroed so
+    its replacement nullifiers (`DNull(u)` values from the all-dummy private
+    batch) never reach the chain, and one padding template can fill several
+    slots without collisions. Real nullifiers are hash outputs, never zero. -/
+def forwardedNullifiers (o : PrivateBatchOutput) : List Digest :=
+  if isDummyInner o then o.nullifiers.map (fun _ => Digest.zero) else o.nullifiers
+
+/-- The public-batch header comes from the first non-dummy inner (prefix scan);
+    an all-dummy public batch settles to a zero block hash, which the on-chain
+    verifier rejects. -/
+def innerReferenceFromFirstReal (inner : List PrivateBatchOutput)
+    (out : PublicBatchOutput) : Prop :=
+  match inner.find? isRealInnerB with
+  | some o => out.blockHash = o.blockHash ∧ out.blockNumber = o.blockNumber ∧
+              out.assetId = o.assetId ∧ out.volumeFeeBps = o.volumeFeeBps
+  | none   => out.blockHash = Digest.zero
+
 /--
-`RL1 ro inner addr out` holds iff the layer-1 wrapper aggregates the layer-0
+`RPublicBatch ro inner addr out` holds iff the public-batch wrapper aggregates the private-batch
 outputs `inner` under aggregator address `addr`.
 
 Higher layers operate on already-wrapped public outputs: they enforce metadata
-consistency and forward exit slots / nullifiers in order. (The implementation
-currently keeps these layers zero-knowledge as well; that is a perf choice, not
-a soundness requirement — see paper §6.2.)
+consistency across non-dummy inners, take the header from the first non-dummy
+inner, and forward exit slots / nullifiers in order (zeroing dummies'). There
+is NO shuffling and NO cross-inner grouping: order-preserving forwarding keeps
+each inner proof's segment attributable, which the chain's per-segment denial
+relies on. Dummies here serve batch-filling, not privacy. (The implementation
+builds this layer *without* zero-knowledge — `wormhole_public_batch_circuit_config` —
+since its witnesses, the private-batch proofs, are themselves ZK and their public
+inputs are forwarded verbatim; blinding here would cost prover time and hide
+nothing. See paper §6.2.)
 -/
-def RL1 (_ro : RandomOracle) (inner : List Layer0Output) (addr : Digest)
-    (out : Layer1Output) : Prop :=
+def RPublicBatch (_ro : RandomOracle) (inner : List PrivateBatchOutput) (addr : Digest)
+    (out : PublicBatchOutput) : Prop :=
   out.aggregatorAddress = addr ∧
-  (∀ o ∈ inner,
+  innerReferenceFromFirstReal inner out ∧
+  (∀ o ∈ inner, ¬ isDummyInner o →
       o.assetId = out.assetId ∧
       o.volumeFeeBps = out.volumeFeeBps ∧
-      o.blockHash = out.blockHash ∧
-      o.blockNumber = out.blockNumber) ∧
-  out.exitSlots = (inner.map (fun o => o.exitSlots)).flatten ∧
-  out.nullifiers = (inner.map (fun o => o.nullifiers)).flatten
-  -- TODO(Phase 3): `totalExitSlots` accounting and the layer-1 aggregator-address
+      o.blockHash = out.blockHash) ∧
+  out.exitSlots = (inner.map forwardedSlots).flatten ∧
+  out.nullifiers = (inner.map forwardedNullifiers).flatten
+  -- NOTE: the wrapper does not constrain per-inner `blockNumber` equality; it
+  -- forwards the first non-dummy inner's number. Hash equality pins the number
+  -- transitively through the leaf circuit's header parse.
+  -- TODO(Phase 3): `totalExitSlots` accounting and the public-batch aggregator-address
   -- binding semantics.
 
 end WormholeSpec

@@ -19,7 +19,10 @@ pub const MAX_PROOF_COUNT: usize = 1024;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CircuitBinsConfig {
     pub num_leaf_proofs: usize,
-    pub num_layer0_proofs: Option<usize>,
+    /// Number of private-batch proofs per public batch (None = private batch only).
+    /// Accepts the legacy `num_layer0_proofs` key when loading older config.json files.
+    #[serde(alias = "num_layer0_proofs")]
+    pub num_private_batch_proofs: Option<usize>,
 }
 
 impl CircuitBinsConfig {
@@ -28,11 +31,11 @@ impl CircuitBinsConfig {
     /// # Errors
     /// Returns an error if:
     /// - `num_leaf_proofs` is 0 or exceeds `MAX_PROOF_COUNT`
-    /// - `num_layer0_proofs` is `Some(0)` or exceeds `MAX_PROOF_COUNT`
-    pub fn new(num_leaf_proofs: usize, num_layer0_proofs: Option<usize>) -> Result<Self> {
+    /// - `num_private_batch_proofs` is `Some(0)` or exceeds `MAX_PROOF_COUNT`
+    pub fn new(num_leaf_proofs: usize, num_private_batch_proofs: Option<usize>) -> Result<Self> {
         let config = Self {
             num_leaf_proofs,
-            num_layer0_proofs,
+            num_private_batch_proofs,
         };
         config.validate()?;
         Ok(config)
@@ -53,13 +56,13 @@ impl CircuitBinsConfig {
                 MAX_PROOF_COUNT
             );
         }
-        if let Some(n) = self.num_layer0_proofs {
+        if let Some(n) = self.num_private_batch_proofs {
             if n == 0 {
-                bail!("num_layer0_proofs must be > 0 when specified");
+                bail!("num_private_batch_proofs must be > 0 when specified");
             }
             if n > MAX_PROOF_COUNT {
                 bail!(
-                    "num_layer0_proofs ({}) exceeds maximum allowed ({})",
+                    "num_private_batch_proofs ({}) exceeds maximum allowed ({})",
                     n,
                     MAX_PROOF_COUNT
                 );
@@ -122,21 +125,21 @@ mod tests {
 
         let loaded = CircuitBinsConfig::load(&dir).unwrap();
         assert_eq!(loaded.num_leaf_proofs, 7);
-        assert_eq!(loaded.num_layer0_proofs, Some(4));
+        assert_eq!(loaded.num_private_batch_proofs, Some(4));
 
         fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn config_without_layer1() {
-        let dir = temp_dir("no-layer1");
+    fn config_without_public_batch() {
+        let dir = temp_dir("no-public_batch");
 
         let config = CircuitBinsConfig::new(8, None).unwrap();
         config.save(&dir).unwrap();
 
         let loaded = CircuitBinsConfig::load(&dir).unwrap();
         assert_eq!(loaded.num_leaf_proofs, 8);
-        assert_eq!(loaded.num_layer0_proofs, None);
+        assert_eq!(loaded.num_private_batch_proofs, None);
 
         fs::remove_dir_all(dir).unwrap();
     }
@@ -148,9 +151,11 @@ mod tests {
     }
 
     #[test]
-    fn new_rejects_zero_num_layer0_proofs() {
+    fn new_rejects_zero_num_private_batch_proofs() {
         let err = CircuitBinsConfig::new(16, Some(0)).unwrap_err();
-        assert!(err.to_string().contains("num_layer0_proofs must be > 0"));
+        assert!(err
+            .to_string()
+            .contains("num_private_batch_proofs must be > 0"));
     }
 
     #[test]
@@ -160,7 +165,7 @@ mod tests {
     }
 
     #[test]
-    fn new_rejects_excessive_num_layer0_proofs() {
+    fn new_rejects_excessive_num_private_batch_proofs() {
         let err = CircuitBinsConfig::new(16, Some(MAX_PROOF_COUNT + 1)).unwrap_err();
         assert!(err.to_string().contains("exceeds maximum"));
     }
@@ -169,7 +174,7 @@ mod tests {
     fn load_rejects_invalid_config() {
         let dir = temp_dir("invalid-config");
         // Write a config with zero num_leaf_proofs directly (bypassing new())
-        let invalid_json = r#"{"num_leaf_proofs": 0, "num_layer0_proofs": 4}"#;
+        let invalid_json = r#"{"num_leaf_proofs": 0, "num_private_batch_proofs": 4}"#;
         fs::write(dir.join("config.json"), invalid_json).unwrap();
 
         let err = CircuitBinsConfig::load(&dir).unwrap_err();

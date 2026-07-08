@@ -32,10 +32,11 @@ pub fn wormhole_leaf_circuit_config() -> CircuitConfig {
     CircuitConfig::standard_recursion_config() // zero_knowledge: false
 }
 
-/// Circuit config for aggregation circuits (ZK enabled via row blinding).
+/// Circuit config for private-batch aggregation circuits (ZK enabled via row blinding).
 ///
-/// The aggregated proofs are verified on-chain, so they must use ZK to prevent leaking
-/// witness information to the public.
+/// Private-batch is the *private* aggregation layer: its witnesses are the leaf proofs, whose
+/// own witnesses (spend secrets, Merkle paths) must never leak. This is the one layer in
+/// the stack that requires zero-knowledge.
 ///
 /// This config uses:
 /// - Row blinding ZK mode (lower memory than PolyFri, same security)
@@ -45,12 +46,24 @@ pub fn wormhole_leaf_circuit_config() -> CircuitConfig {
 /// Memory usage by batch size (with this config):
 /// - 7 leaves: degree_bits=15, ~1.5 GB peak (recommended for mobile)
 /// - 8+ leaves: degree_bits=16, ~2.5 GB peak (requires 6GB+ device RAM)
-pub fn wormhole_aggregator_circuit_config() -> CircuitConfig {
+pub fn wormhole_private_batch_circuit_config() -> CircuitConfig {
     CircuitConfig {
         num_wires: 135,
         num_routed_wires: 60,
         ..CircuitConfig::standard_recursion_zk_config()
     }
+}
+
+/// Circuit config for public-batch aggregation circuits (non-ZK).
+///
+/// Public-batch is the *public* aggregation layer: its witnesses are private-batch proofs, which are
+/// (a) themselves zero-knowledge, so their bytes reveal nothing about the leaves, and
+/// (b) handed to the aggregator in plaintext anyway, with every private-batch public input
+/// forwarded verbatim into the public-batch public inputs. A non-ZK public-batch proof therefore
+/// cannot leak anything that is not already public. Disabling ZK (row blinding) here
+/// significantly speeds up proving, mirroring `wormhole_leaf_circuit_config`.
+pub fn wormhole_public_batch_circuit_config() -> CircuitConfig {
+    CircuitConfig::standard_recursion_config() // zero_knowledge: false
 }
 
 pub trait CircuitFragment {

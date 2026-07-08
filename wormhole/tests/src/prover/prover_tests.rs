@@ -8,7 +8,7 @@ use qp_wormhole_inputs::PublicCircuitInputs;
 use test_helpers::TestInputs;
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_prover::WormholeProver;
-use zk_circuits_common::circuit::{wormhole_aggregator_circuit_config, C, D, F};
+use zk_circuits_common::circuit::{wormhole_private_batch_circuit_config, C, D, F};
 use zk_circuits_common::zk_merkle::{Hash256, ARITY, MAX_DEPTH, SIBLINGS_PER_LEVEL};
 
 #[cfg(test)]
@@ -127,7 +127,7 @@ fn export_test_proof() {
 fn export_test_proof_zk() {
     const FILE_PATH: &str = "../../dummy_proof_zk.bin";
 
-    let circuit_config = wormhole_aggregator_circuit_config();
+    let circuit_config = wormhole_private_batch_circuit_config();
 
     let prover = WormholeProver::new(circuit_config);
     let inputs = CircuitInputs::test_inputs_0();

@@ -1,4 +1,4 @@
-//! Monolithic prebuilt Layer-0 aggregation circuit.
+//! Monolithic prebuilt Private-batch aggregation circuit.
 //!
 //! This circuit verifies `N` leaf wormhole proofs directly (without first building a
 //! dynamic merge circuit), then applies the wormhole-specific wrapper logic:
@@ -38,27 +38,27 @@ use super::constants::{
     VOLUME_FEE_BPS_START,
 };
 
-/// Runtime targets for the prebuilt layer-0 aggregation circuit.
+/// Runtime targets for the prebuilt private-batch aggregation circuit.
 #[derive(Debug, Clone)]
-pub struct AggregationCircuitTargets {
+pub struct PrivateBatchCircuitTargets {
     /// One proof target per leaf slot.
     pub leaf_proofs: Vec<ProofWithPublicInputsTarget<D>>,
     /// One dummy-nullifier preimage target (4 felts) per leaf slot.
     pub dummy_nullifier_pre_images: Vec<[Target; 4]>,
 }
 
-pub struct Layer0AggregationCircuit {
+pub struct PrivateBatchCircuit {
     builder: CircuitBuilder<F, D>,
-    targets: AggregationCircuitTargets,
+    targets: PrivateBatchCircuitTargets,
 }
 
-impl Layer0AggregationCircuit {
-    /// Build a monolithic layer-0 aggregation circuit that verifies `n_leaf` wormhole leaf proofs.
+impl PrivateBatchCircuit {
+    /// Build a monolithic private-batch aggregation circuit that verifies `n_leaf` wormhole leaf proofs.
     ///
     /// The `leaf_verifier_only` is baked in as constants to prevent verifier key substitution.
     pub fn new(
         config: CircuitConfig,
-        leaf_common: CommonCircuitData<F, D>,
+        leaf_common: &CommonCircuitData<F, D>,
         leaf_verifier_only: &VerifierOnlyCircuitData<C, D>,
         n_leaf: usize,
     ) -> Self {
@@ -68,7 +68,7 @@ impl Layer0AggregationCircuit {
 
         let leaf_proofs = add_recursive_verifiers::<F, C, D>(
             &mut builder,
-            &leaf_common,
+            leaf_common,
             leaf_verifier_only,
             n_leaf,
         );
@@ -84,18 +84,18 @@ impl Layer0AggregationCircuit {
             ]);
         }
 
-        let targets = AggregationCircuitTargets {
+        let targets = PrivateBatchCircuitTargets {
             leaf_proofs,
             dummy_nullifier_pre_images,
         };
 
         // Build the wormhole-specific wrapper logic directly in this circuit.
-        build_layer0_wrapper_constraints(&mut builder, &targets, n_leaf);
+        build_private_batch_constraints(&mut builder, &targets, n_leaf);
 
         Self { builder, targets }
     }
 
-    pub fn targets(&self) -> AggregationCircuitTargets {
+    pub fn targets(&self) -> PrivateBatchCircuitTargets {
         self.targets.clone()
     }
 
@@ -114,7 +114,7 @@ impl Layer0AggregationCircuit {
     /// Build circuit with profiling output. Prints gate counts before building.
     #[cfg(feature = "profile")]
     pub fn build_circuit_profiled(self) -> CircuitData<F, C, D> {
-        println!("\n=== Layer-0 Gate Instance Counts ===");
+        println!("\n=== Private-batch Gate Instance Counts ===");
         self.builder.print_gate_counts(0);
         self.builder.build()
     }
@@ -125,9 +125,9 @@ impl Layer0AggregationCircuit {
     }
 }
 
-fn build_layer0_wrapper_constraints(
+fn build_private_batch_constraints(
     builder: &mut CircuitBuilder<F, D>,
-    targets: &AggregationCircuitTargets,
+    targets: &PrivateBatchCircuitTargets,
     n_leaf: usize,
 ) {
     let one = builder.one();
@@ -341,7 +341,7 @@ fn build_layer0_wrapper_constraints(
     let expected_len = aggregated_output::pi_len(n_leaf);
     assert!(
         output_pis.len() <= expected_len,
-        "layer-0 output PI length {} exceeds expected {}",
+        "private-batch output PI length {} exceeds expected {}",
         output_pis.len(),
         expected_len
     );
@@ -396,24 +396,24 @@ mod tests {
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
 
-    use zk_circuits_common::circuit::{wormhole_aggregator_circuit_config, C, D, F};
+    use zk_circuits_common::circuit::{wormhole_private_batch_circuit_config, C, D, F};
 
-    use crate::layer0::{
+    use crate::private_batch::{
         circuit::{
-            circuit_logic::Layer0AggregationCircuit,
+            circuit_logic::PrivateBatchCircuit,
             constants::{
                 aggregated_output, ASSET_ID_START, BLOCK_HASH_START, BLOCK_NUMBER_START,
                 EXIT_1_START, EXIT_2_START, LEAF_PI_LEN, NULLIFIER_START, OUTPUT_AMOUNT_1_START,
                 OUTPUT_AMOUNT_2_START, VOLUME_FEE_BPS_START,
             },
         },
-        prover::witness::fill_layer0_aggregation_witness,
+        prover::witness::fill_private_batch_witness,
     };
 
     const TEST_ASSET_ID_U64: u64 = 0;
     const TEST_VOLUME_FEE_BPS: u64 = 10; // 0.1% = 10 bps
 
-    // ---------------- Root PI header layout (layer-0 aggregation output) ----------------
+    // ---------------- Root PI header layout (private-batch aggregation output) ----------------
     // [ num_exit_slots(1), asset_id(1), volume_fee_bps(1), block_hash(4), block_number(1), ... ]
     const ROOT_NUM_EXIT_SLOTS_IDX: usize = 0;
     const ROOT_ASSET_ID_IDX: usize = 1;
@@ -426,8 +426,8 @@ mod tests {
 
     use test_helpers::fake_leaf::{build_fake_leaf_circuit, prove_fake_leaf_standalone};
 
-    /// Build and prove the layer-0 aggregation circuit using the split witness-filler path.
-    fn aggregate_proofs_layer0(
+    /// Build and prove the private-batch aggregation circuit using the split witness-filler path.
+    fn aggregate_proofs_private_batch(
         leaf_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
         leaf_common: CommonCircuitData<F, D>,
         leaf_verifier_only: VerifierOnlyCircuitData<C, D>,
@@ -441,11 +441,11 @@ mod tests {
             "dummy_nullifier_pre_images must have one entry per leaf slot"
         );
 
-        let agg_config = wormhole_aggregator_circuit_config();
+        let agg_config = wormhole_private_batch_circuit_config();
         // SECURITY: leaf_verifier_only is now baked in at build time
-        let agg_circuit = Layer0AggregationCircuit::new(
+        let agg_circuit = PrivateBatchCircuit::new(
             agg_config.clone(),
-            leaf_common.clone(),
+            &leaf_common,
             &leaf_verifier_only,
             n_leaf,
         );
@@ -454,19 +454,14 @@ mod tests {
 
         let mut pw = PartialWitness::new();
         // NOTE: leaf_verifier_only is no longer passed here - it's baked in as constants
-        fill_layer0_aggregation_witness(
-            &mut pw,
-            &targets,
-            &leaf_proofs,
-            &dummy_nullifier_pre_images,
-        )?;
+        fill_private_batch_witness(&mut pw, &targets, &leaf_proofs, &dummy_nullifier_pre_images)?;
 
         let agg_proof = prover_data.prove(pw)?;
 
         // Build verifier data from the same config/leaf common so we can verify the result.
         // NOTE: Must use the same leaf_verifier_only to get matching circuit digest
         let verifier_data =
-            Layer0AggregationCircuit::new(agg_config, leaf_common, &leaf_verifier_only, n_leaf)
+            PrivateBatchCircuit::new(agg_config, &leaf_common, &leaf_verifier_only, n_leaf)
                 .build_verifier();
 
         Ok((agg_proof, verifier_data))
@@ -775,7 +770,7 @@ mod tests {
 
         let dummy_nullifier_pre_images = deterministic_dummy_nullifier_pre_images(proofs.len());
 
-        let (root_proof, root_verifier) = aggregate_proofs_layer0(
+        let (root_proof, root_verifier) = aggregate_proofs_private_batch(
             proofs,
             leaf_common,
             leaf_verifier_only,
@@ -969,7 +964,7 @@ mod tests {
             .collect::<Vec<_>>();
         let dummy_nullifier_pre_images = deterministic_dummy_nullifier_pre_images(proofs.len());
 
-        let res = aggregate_proofs_layer0(
+        let res = aggregate_proofs_private_batch(
             proofs,
             leaf_common,
             leaf_verifier_only,
@@ -1024,7 +1019,7 @@ mod tests {
             .collect::<Vec<_>>();
         let dummy_nullifier_pre_images = deterministic_dummy_nullifier_pre_images(proofs.len());
 
-        let res = aggregate_proofs_layer0(
+        let res = aggregate_proofs_private_batch(
             proofs,
             leaf_common,
             leaf_verifier_only,
@@ -1082,7 +1077,7 @@ mod tests {
                 F::ZERO,
                 F::ZERO,
                 volume_fee_bps,
-                *nullifier, // layer-0 replaces dummy nullifiers with hashes of provided preimages
+                *nullifier, // private-batch replaces dummy nullifiers with hashes of provided preimages
                 dummy_exit,
                 dummy_exit,
                 dummy_block_hash,
@@ -1104,7 +1099,7 @@ mod tests {
 
         let dummy_nullifier_pre_images = deterministic_dummy_nullifier_pre_images(proofs.len());
 
-        let (root_proof, root_verifier) = aggregate_proofs_layer0(
+        let (root_proof, root_verifier) = aggregate_proofs_private_batch(
             proofs,
             leaf_common,
             leaf_verifier_only,
@@ -1225,7 +1220,7 @@ mod tests {
 
             let dummy_nullifier_pre_images = deterministic_dummy_nullifier_pre_images(proofs.len());
 
-            let (root_proof, root_verifier) = aggregate_proofs_layer0(
+            let (root_proof, root_verifier) = aggregate_proofs_private_batch(
                 proofs,
                 leaf_common,
                 leaf_verifier_only,
@@ -1314,7 +1309,7 @@ mod tests {
 
         let dummy_nullifier_pre_images = deterministic_dummy_nullifier_pre_images(proofs.len());
 
-        let (root_proof, root_verifier) = aggregate_proofs_layer0(
+        let (root_proof, root_verifier) = aggregate_proofs_private_batch(
             proofs,
             leaf_common,
             leaf_verifier_only,
@@ -1396,7 +1391,7 @@ mod tests {
             .collect::<Vec<_>>();
         let dummy_nullifier_pre_images = deterministic_dummy_nullifier_pre_images(proofs.len());
 
-        let res = aggregate_proofs_layer0(
+        let res = aggregate_proofs_private_batch(
             proofs,
             leaf_common,
             leaf_verifier_only,
@@ -1453,7 +1448,7 @@ mod tests {
             .collect::<Vec<_>>();
         let dummy_nullifier_pre_images = deterministic_dummy_nullifier_pre_images(proofs.len());
 
-        let res = aggregate_proofs_layer0(
+        let res = aggregate_proofs_private_batch(
             proofs,
             leaf_common,
             leaf_verifier_only,
@@ -1525,7 +1520,7 @@ mod tests {
 
         let dummy_nullifier_pre_images = deterministic_dummy_nullifier_pre_images(proofs.len());
 
-        let (root_proof, root_verifier) = aggregate_proofs_layer0(
+        let (root_proof, root_verifier) = aggregate_proofs_private_batch(
             proofs,
             leaf_common,
             leaf_verifier_only,
@@ -1596,26 +1591,26 @@ mod tests {
         (builder.build::<C>(), targets)
     }
 
-    /// Test that L0 rejects proofs from a malicious circuit when built with
+    /// Test that private-batch rejects proofs from a malicious circuit when built with
     /// the legitimate verifier key baked in as constants.
     #[test]
-    fn layer0_rejects_malicious_circuit_proofs() {
+    fn private_batch_rejects_malicious_circuit_proofs() {
         // Build the "legitimate" leaf circuit (with real constraints)
         let (legit_circuit, _legit_targets) = build_fake_leaf_circuit();
 
         // Build a MALICIOUS circuit (no constraints)
         let (malicious_circuit, malicious_targets) = build_malicious_leaf_circuit();
 
-        // Build L0 with LEGITIMATE verifier key baked in
-        let l0_config = CircuitConfig::standard_recursion_config();
-        let l0_circuit = Layer0AggregationCircuit::new(
-            l0_config,
-            legit_circuit.common.clone(),
+        // Build private-batch with LEGITIMATE verifier key baked in
+        let private_batch_config = CircuitConfig::standard_recursion_config();
+        let private_batch_circuit = PrivateBatchCircuit::new(
+            private_batch_config,
+            &legit_circuit.common,
             &legit_circuit.verifier_only, // SECURITY: Baked as constants
             1,
         );
-        let l0_targets = l0_circuit.targets();
-        let l0_data = l0_circuit.build_circuit();
+        let private_batch_targets = private_batch_circuit.targets();
+        let private_batch_data = private_batch_circuit.build_circuit();
 
         // Generate a malicious proof with FAKE values
         let fake_public_inputs: [u64; LEAF_PI_LEN] = [
@@ -1638,41 +1633,43 @@ mod tests {
 
         let malicious_proof = malicious_circuit.prove(pw).expect("prove malicious");
 
-        // Try to use malicious proof in L0 - this should FAIL
+        // Try to use malicious proof in private-batch - this should FAIL
         let mut pw = PartialWitness::new();
-        pw.set_proof_with_pis_target(&l0_targets.leaf_proofs[0], &malicious_proof)
+        pw.set_proof_with_pis_target(&private_batch_targets.leaf_proofs[0], &malicious_proof)
             .unwrap();
 
-        for pre_image in &l0_targets.dummy_nullifier_pre_images {
+        for pre_image in &private_batch_targets.dummy_nullifier_pre_images {
             for (i, &t) in pre_image.iter().enumerate() {
                 pw.set_target(t, F::from_canonical_u64(i as u64)).unwrap();
             }
         }
 
-        // L0 proof generation should FAIL because the proof doesn't match the baked verifier key
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| l0_data.prove(pw)));
+        // private-batch proof generation should FAIL because the proof doesn't match the baked verifier key
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            private_batch_data.prove(pw)
+        }));
         assert!(
             result.is_err() || result.unwrap().is_err(),
-            "L0 should reject proofs from malicious circuit"
+            "private-batch should reject proofs from malicious circuit"
         );
     }
 
-    /// Test that L0 correctly accepts legitimate proofs after the security fix.
+    /// Test that private-batch correctly accepts legitimate proofs after the security fix.
     #[test]
-    fn layer0_accepts_legitimate_proofs_after_fix() {
+    fn private_batch_accepts_legitimate_proofs_after_fix() {
         // Build legitimate circuit
         let (legit_circuit, legit_targets) = build_fake_leaf_circuit();
 
-        // Build L0 with legitimate verifier key baked in
-        let l0_config = CircuitConfig::standard_recursion_config();
-        let l0_circuit = Layer0AggregationCircuit::new(
-            l0_config,
-            legit_circuit.common.clone(),
+        // Build private-batch with legitimate verifier key baked in
+        let private_batch_config = CircuitConfig::standard_recursion_config();
+        let private_batch_circuit = PrivateBatchCircuit::new(
+            private_batch_config,
+            &legit_circuit.common,
             &legit_circuit.verifier_only,
             1,
         );
-        let l0_targets = l0_circuit.targets();
-        let l0_data = l0_circuit.build_circuit();
+        let private_batch_targets = private_batch_circuit.targets();
+        let private_batch_data = private_batch_circuit.build_circuit();
 
         // Generate a LEGITIMATE proof with valid values
         let valid_public_inputs: [u64; LEAF_PI_LEN] = [
@@ -1695,18 +1692,22 @@ mod tests {
 
         let legit_proof = legit_circuit.prove(pw).expect("prove legit");
 
-        // Use legitimate proof in L0 - this should succeed
+        // Use legitimate proof in private-batch - this should succeed
         let mut pw = PartialWitness::new();
-        pw.set_proof_with_pis_target(&l0_targets.leaf_proofs[0], &legit_proof)
+        pw.set_proof_with_pis_target(&private_batch_targets.leaf_proofs[0], &legit_proof)
             .unwrap();
 
-        for pre_image in &l0_targets.dummy_nullifier_pre_images {
+        for pre_image in &private_batch_targets.dummy_nullifier_pre_images {
             for (i, &t) in pre_image.iter().enumerate() {
                 pw.set_target(t, F::from_canonical_u64(i as u64)).unwrap();
             }
         }
 
-        let l0_proof = l0_data.prove(pw).expect("L0 prove should succeed");
-        l0_data.verify(l0_proof).expect("L0 verify should succeed");
+        let private_batch_proof = private_batch_data
+            .prove(pw)
+            .expect("private-batch prove should succeed");
+        private_batch_data
+            .verify(private_batch_proof)
+            .expect("private-batch verify should succeed");
     }
 }

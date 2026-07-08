@@ -25,14 +25,14 @@ struct Args {
     #[arg(short, long, default_value = "generated-bins")]
     output: String,
 
-    /// Number of leaf proofs aggregated into a single layer-0 proof (must be 1-1024)
+    /// Number of leaf proofs aggregated into a single private-batch proof (must be 1-1024)
     #[arg(short, long, value_parser = parse_proof_count)]
     num_leaf_proofs: usize,
 
-    /// Number of inner layer0 proofs aggregated into a single layer-1 proof (must be 1-1024 if specified)
-    /// Omit this flag to only generate layer-0 artifacts.
+    /// Number of inner private-batch proofs aggregated into a single public-batch proof (must be 1-1024 if specified)
+    /// Omit this flag to only generate private-batch artifacts.
     #[arg(short, long, value_parser = parse_proof_count)]
-    num_layer0_proofs: Option<usize>,
+    num_private_batch_proofs: Option<usize>,
 
     /// Skip prover binary generation (only generate verifier binaries)
     #[arg(long)]
@@ -47,15 +47,15 @@ fn main() -> Result<()> {
     // 2. CircuitBinsConfig::new inside generate_all_circuit_binaries (full validation)
 
     println!(
-        "Generating circuit binaries (num_leaf_proofs={}, num_layer0_proofs={})",
+        "Generating circuit binaries (num_leaf_proofs={}, num_private_batch_proofs={})",
         args.num_leaf_proofs,
-        args.num_layer0_proofs.unwrap_or(0),
+        args.num_private_batch_proofs.unwrap_or(0),
     );
 
     generate_all_circuit_binaries(
         &args.output,
         !args.skip_prover,
         args.num_leaf_proofs,
-        args.num_layer0_proofs,
+        args.num_private_batch_proofs,
     )
 }

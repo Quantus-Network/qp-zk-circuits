@@ -1,4 +1,4 @@
-//! Layer-0 aggregation constants and public-input layout helpers.
+//! Private-batch aggregation constants and public-input layout helpers.
 
 /// Public inputs per leaf proof (Bitcoin-style 2-output layout)
 ///
@@ -26,7 +26,7 @@ pub const EXIT_2_START: usize = 12; // 4 felts
 pub const BLOCK_HASH_START: usize = 16; // 4 felts
 pub const BLOCK_NUMBER_START: usize = 20; // 1 felt
 
-/// Layer-0 aggregated proof output layout constants.
+/// Private-batch aggregated proof output layout constants.
 ///
 /// Output layout:
 /// ```text
@@ -76,7 +76,7 @@ pub mod aggregated_output {
         HEADER_LEN + exit_slots_count(num_leaves) * EXIT_SLOT_LEN
     }
 
-    /// Total public-input length for the layer-0 aggregation circuit.
+    /// Total public-input length for the private-batch aggregation circuit.
     ///
     /// We intentionally pad to `N * LEAF_PI_LEN + 8` to match the legacy wrapper sizing:
     /// - merged root PI length = `N * LEAF_PI_LEN`

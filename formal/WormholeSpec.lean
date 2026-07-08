@@ -10,11 +10,11 @@
   * `WormholeSpec.Basic`       field/digest model, salts, range predicate
   * `WormholeSpec.Hash`        hash interface (`H`, `CollisionResistant`) and derived hashes
   * `WormholeSpec.Leaf`        leaf relation R_leaf (C1–C5, conditional dummy path)
-  * `WormholeSpec.Aggregation` layer-0 / layer-1 aggregation relations
+  * `WormholeSpec.Aggregation` private-batch / public-batch aggregation relations
   * `WormholeSpec.Trusted`     the trusted base (T4): explicit `axiom`s for the
                                recursive-verifier (`verify_proof`) soundness
-  * `WormholeSpec.AggregationBridge`  the L0/L1 wrapper *circuit constraints* imply
-                               `RL0`/`RL1`, and (with `Trusted`) a satisfied
+  * `WormholeSpec.AggregationBridge`  the private-batch/public-batch wrapper *circuit constraints* imply
+                               `RPrivateBatch`/`RPublicBatch`, and (with `Trusted`) a satisfied
                                aggregation circuit attests its own + each child's relation
   * `WormholeSpec.Security`    reduction-style theorems (one-time withdrawal,
                                spend-path exclusivity): `*_or_collision` reductions

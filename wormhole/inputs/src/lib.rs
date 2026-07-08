@@ -200,7 +200,7 @@ pub struct BlockData {
 
 /// Aggregated public inputs from multiple wormhole proofs.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AggregatedPublicCircuitInputs {
+pub struct PrivateBatchPublicInputs {
     /// Number of unique exit-account groups reported by the wrapper circuit.
     /// This is informational only; semantic validation remains the circuit's responsibility.
     pub num_unique_exits: u32,
@@ -218,6 +218,49 @@ pub struct AggregatedPublicCircuitInputs {
     pub account_data: Vec<PublicInputsByAccount>,
     /// The nullifiers of each individual transfer proof.
     pub nullifiers: Vec<BytesDigest>,
+}
+
+/// Public inputs from a public-batch aggregation proof.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicBatchPublicInputs {
+    /// Aggregator address (4 felts, hash-derived account).
+    pub aggregator_address: BytesDigest,
+    /// The asset ID of the set (0 for native token).
+    pub asset_id: u32,
+    /// Volume fee rate in basis points.
+    pub volume_fee_bps: u32,
+    /// Block data shared by all non-dummy inner private batches.
+    pub block_data: BlockData,
+    /// Total exit slots across all inner proofs (structural constant).
+    pub total_exit_slots: u32,
+    /// Flattened exit slots from all inner private batches, in order.
+    pub account_data: Vec<PublicInputsByAccount>,
+    /// Flattened nullifiers from all inner private batches, in order.
+    pub nullifiers: Vec<BytesDigest>,
+}
+
+/// Public-batch PI layout constants (mirrors `public_batch/circuit/constants.rs`).
+pub mod public_batch_pi {
+    pub const AGGREGATOR_ADDRESS_LEN: usize = 4;
+    pub const HEADER_LEN: usize = 12; // 4 + 1 + 1 + 4 + 1 + 1
+    pub const EXIT_SLOT_LEN: usize = 5; // sum(1) + exit_account(4)
+
+    #[inline]
+    pub const fn exit_slots_per_inner(num_leaf_proofs: usize) -> usize {
+        num_leaf_proofs * 2
+    }
+
+    #[inline]
+    pub const fn nullifiers_per_inner(num_leaf_proofs: usize) -> usize {
+        num_leaf_proofs
+    }
+
+    #[inline]
+    pub const fn pi_len(num_private_batch_proofs: usize, num_leaf_proofs: usize) -> usize {
+        HEADER_LEN
+            + num_private_batch_proofs * exit_slots_per_inner(num_leaf_proofs) * EXIT_SLOT_LEN
+            + num_private_batch_proofs * nullifiers_per_inner(num_leaf_proofs) * 4
+    }
 }
 
 /// Helper to convert 4 u64 values (hash output) to a BytesDigest.
@@ -291,7 +334,7 @@ impl PublicCircuitInputs {
     }
 }
 
-impl AggregatedPublicCircuitInputs {
+impl PrivateBatchPublicInputs {
     /// Parse aggregated public inputs from a slice of u64 values.
     pub fn try_from_u64_slice(pis: &[u64]) -> anyhow::Result<Self> {
         // Layout in the FINAL (deduped) wrapper proof PIs:
@@ -432,7 +475,7 @@ impl AggregatedPublicCircuitInputs {
             );
         }
 
-        Ok(AggregatedPublicCircuitInputs {
+        Ok(PrivateBatchPublicInputs {
             num_unique_exits,
             asset_id,
             volume_fee_bps,
@@ -443,13 +486,120 @@ impl AggregatedPublicCircuitInputs {
     }
 }
 
+impl PublicBatchPublicInputs {
+    /// Parse public-batch public inputs from a slice of u64 values.
+    ///
+    /// `num_private_batch_proofs` and `num_leaf_proofs` must match the circuit
+    /// parameters used to generate the proof (embedded in the on-chain verifier).
+    pub fn try_from_u64_slice(
+        pis: &[u64],
+        num_private_batch_proofs: usize,
+        num_leaf_proofs: usize,
+    ) -> anyhow::Result<Self> {
+        use public_batch_pi::{
+            exit_slots_per_inner, nullifiers_per_inner, pi_len, AGGREGATOR_ADDRESS_LEN, HEADER_LEN,
+        };
+
+        if num_private_batch_proofs == 0 || num_leaf_proofs == 0 {
+            bail!("PublicBatchPI: num_private_batch_proofs and num_leaf_proofs must be > 0");
+        }
+
+        let expected_len = pi_len(num_private_batch_proofs, num_leaf_proofs);
+        if pis.len() != expected_len {
+            bail!(
+                "PublicBatchPI: expected {} felts (n_inner={}, n_leaves={}), got {}",
+                expected_len,
+                num_private_batch_proofs,
+                num_leaf_proofs,
+                pis.len()
+            );
+        }
+
+        let slots_per_inner = exit_slots_per_inner(num_leaf_proofs);
+        let nulls_per_inner = nullifiers_per_inner(num_leaf_proofs);
+        let total_exit_slots_expected = (num_private_batch_proofs * slots_per_inner) as u32;
+
+        let aggregator_address = hash_u64s_to_bytes_digest(&pis[0..AGGREGATOR_ADDRESS_LEN])
+            .context("PublicBatchPI: parsing aggregator_address")?;
+
+        let asset_id: u32 = pis[4]
+            .try_into()
+            .context("PublicBatchPI: asset_id exceeds u32 range")?;
+        let volume_fee_bps: u32 = pis[5]
+            .try_into()
+            .context("PublicBatchPI: volume_fee_bps exceeds u32 range")?;
+
+        let block_hash =
+            hash_u64s_to_bytes_digest(&pis[6..10]).context("PublicBatchPI: parsing block_hash")?;
+        let block_number: u32 = pis[10]
+            .try_into()
+            .context("PublicBatchPI: block_number exceeds u32 range")?;
+
+        let total_exit_slots: u32 = pis[11]
+            .try_into()
+            .context("PublicBatchPI: total_exit_slots exceeds u32 range")?;
+        if total_exit_slots != total_exit_slots_expected {
+            bail!(
+                "PublicBatchPI: total_exit_slots {} != expected {}",
+                total_exit_slots,
+                total_exit_slots_expected
+            );
+        }
+
+        let block_data = BlockData {
+            block_hash,
+            block_number,
+        };
+
+        let mut cursor = HEADER_LEN;
+        let total_slots = num_private_batch_proofs * slots_per_inner;
+        let mut account_data = Vec::with_capacity(total_slots);
+        for i in 0..total_slots {
+            let summed_output_amount: u32 = pis[cursor]
+                .try_into()
+                .with_context(|| format!("PublicBatchPI: exit slot {} sum exceeds u32", i))?;
+            cursor += 1;
+
+            let exit_account = hash_u64s_to_bytes_digest(&pis[cursor..cursor + 4])
+                .with_context(|| format!("PublicBatchPI: parsing exit slot {} account", i))?;
+            cursor += 4;
+
+            account_data.push(PublicInputsByAccount {
+                summed_output_amount,
+                exit_account,
+            });
+        }
+
+        let total_nullifiers = num_private_batch_proofs * nulls_per_inner;
+        let mut nullifiers = Vec::with_capacity(total_nullifiers);
+        for i in 0..total_nullifiers {
+            let n = hash_u64s_to_bytes_digest(&pis[cursor..cursor + 4])
+                .with_context(|| format!("PublicBatchPI: parsing nullifier {}", i))?;
+            cursor += 4;
+            nullifiers.push(n);
+        }
+
+        debug_assert_eq!(cursor, expected_len);
+
+        Ok(PublicBatchPublicInputs {
+            aggregator_address,
+            asset_id,
+            volume_fee_bps,
+            block_data,
+            total_exit_slots,
+            account_data,
+            nullifiers,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{AggregatedPublicCircuitInputs, PUBLIC_INPUTS_FELTS_LEN};
+    use super::{PrivateBatchPublicInputs, PUBLIC_INPUTS_FELTS_LEN};
 
     #[test]
     fn aggregated_public_inputs_reject_malformed_padded_length() {
-        let err = AggregatedPublicCircuitInputs::try_from_u64_slice(&[0u64; 9]).unwrap_err();
+        let err = PrivateBatchPublicInputs::try_from_u64_slice(&[0u64; 9]).unwrap_err();
         assert!(err.to_string().contains(&format!(
             "malformed length 9 - expected 8 + N*{} felts",
             PUBLIC_INPUTS_FELTS_LEN
@@ -462,7 +612,7 @@ mod tests {
         pis[0] = 1; // num_unique_exits
         pis[7] = 42; // block_number
 
-        let parsed = AggregatedPublicCircuitInputs::try_from_u64_slice(&pis).unwrap();
+        let parsed = PrivateBatchPublicInputs::try_from_u64_slice(&pis).unwrap();
         assert_eq!(parsed.num_unique_exits, 1);
         assert_eq!(parsed.block_data.block_number, 42);
         assert_eq!(parsed.account_data.len(), 2);
