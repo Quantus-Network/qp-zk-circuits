@@ -118,6 +118,10 @@ impl ProofBuffer {
         self.buf.len()
     }
 
+    fn is_empty(&self) -> bool {
+        self.buf.is_empty()
+    }
+
     fn cap(&self) -> usize {
         self.cap
     }
@@ -196,7 +200,7 @@ impl AggregationBackend for PublicBatchAggregator {
     }
 
     fn aggregate(&mut self) -> Result<Proof> {
-        if self.buf.len() == 0 {
+        if self.buf.is_empty() {
             bail!("there are no private-batch proofs to aggregate");
         }
 
@@ -291,7 +295,7 @@ impl AggregationBackend for PrivateBatchAggregator {
     }
 
     fn aggregate(&mut self) -> Result<Proof> {
-        if self.buf.len() == 0 {
+        if self.buf.is_empty() {
             bail!("there are no leaf proofs to aggregate");
         }
 

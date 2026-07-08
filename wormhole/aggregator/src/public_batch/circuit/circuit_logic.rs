@@ -237,6 +237,9 @@ fn build_public_batch_constraints(
 
     // 3) Enforce asset/fee/block consistency across all non-dummy private-batch
     //    proofs: `is_dummy_i OR matches_ref`.
+    //    block_number is not checked here: each inner private-batch proof already
+    //    binds block_hash and block_number together (via the leaf header parse), so
+    //    block_hash equality transitively pins the number.
     for (i, pis_i) in private_batch_pi_targets.iter().take(n_inner).enumerate() {
         let asset_matches = builder.is_equal(pis_i[pbc::PRIVATE_BATCH_ASSET_ID_OFFSET], asset_ref);
         let asset_ok = builder.or(is_dummy_flags[i], asset_matches);
