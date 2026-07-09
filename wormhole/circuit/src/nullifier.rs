@@ -46,12 +46,22 @@ pub const NULLIFIER_SIZE_FELTS: usize =
 /// Type alias for the secret as a fixed-size array (4 field elements for 32 bytes)
 pub type Secret = Digest;
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(PartialEq, Eq, Clone)]
 pub struct Nullifier {
     pub hash: Digest,
     /// Secret encoded with 8 bytes/felt (4 field elements for 32 bytes)
     pub secret: Secret,
     transfer_count: [F; TRANSFER_COUNT_NUM_TARGETS],
+}
+
+impl core::fmt::Debug for Nullifier {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Nullifier")
+            .field("hash", &self.hash)
+            .field("secret", &"[REDACTED]")
+            .field("transfer_count", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl Nullifier {

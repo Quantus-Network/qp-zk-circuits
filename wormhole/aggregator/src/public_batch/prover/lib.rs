@@ -22,12 +22,15 @@ use qp_wormhole_inputs::BytesDigest;
 use std::{fs, path::Path};
 
 use zk_circuits_common::{
-    circuit::{C, D, F},
+    circuit::{wormhole_public_batch_circuit_config, C, D, F},
     utils::bytes_to_digest,
 };
 
 use crate::{
-    common::utils::load_verifier_data_from_bytes,
+    common::utils::{
+        canonical_public_batch_verifier_data, ensure_common_matches_canonical,
+        load_canonical_private_batch_verifier_data,
+    },
     public_batch::{
         circuit::circuit_logic::{PublicBatchCircuit, PublicBatchCircuitTargets},
         prover::witness::fill_public_batch_witness,
@@ -99,10 +102,29 @@ impl PublicBatchProver {
             _phantom: Default::default(),
         };
 
-        // 1) Load prebuilt public-batch circuit prover data
+        let (num_leaf_proofs, num_private_batch_proofs) = config;
+
+        // 1) Load and pin private-batch verifier data to the canonical circuit.
+        let private_batch_verifier_data = load_canonical_private_batch_verifier_data(
+            private_batch_common_bytes,
+            private_batch_verifier_only_bytes,
+            num_leaf_proofs,
+        )?;
+
+        // 2) Load prebuilt public-batch circuit prover data and pin common data.
         let public_batch_common =
             CommonCircuitData::from_bytes(public_batch_common_bytes.to_vec(), &gate_serializer)
                 .map_err(|e| anyhow!("failed to deserialize public_batch common data: {}", e))?;
+        let canonical_public = canonical_public_batch_verifier_data(
+            &private_batch_verifier_data,
+            num_private_batch_proofs,
+            num_leaf_proofs,
+        );
+        ensure_common_matches_canonical(
+            &public_batch_common,
+            &canonical_public.common,
+            "public_batch",
+        )?;
 
         let public_batch_prover_only = ProverOnlyCircuitData::from_bytes(
             public_batch_prover_only_bytes,
@@ -111,17 +133,8 @@ impl PublicBatchProver {
         )
         .map_err(|e| anyhow!("failed to deserialize public_batch prover data: {}", e))?;
 
-        // 2) Load private-batch verifier data (needed for witness filling and dummy proof parsing)
-        let private_batch_verifier_data = load_verifier_data_from_bytes(
-            private_batch_common_bytes,
-            private_batch_verifier_only_bytes,
-            "private_batch",
-        )?;
-
-        let (num_leaf_proofs, num_private_batch_proofs) = config;
-
         let circuit = PublicBatchCircuit::new(
-            public_batch_common.config.clone(),
+            wormhole_public_batch_circuit_config(),
             private_batch_verifier_data.common.clone(),
             &private_batch_verifier_data.verifier_only,
             num_private_batch_proofs,

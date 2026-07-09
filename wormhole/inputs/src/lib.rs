@@ -32,6 +32,13 @@ const GOLDILOCKS_ORDER: u64 = 0xFFFFFFFF00000001;
 /// but is not exposed as a public input since block_hash already commits to it.
 pub const PUBLIC_INPUTS_FELTS_LEN: usize = 21;
 
+/// Canonical leaf circuit security target (bits). Must match
+/// `CircuitConfig::standard_recursion_config().security_bits` in qp-plonky2.
+pub const CANONICAL_LEAF_SECURITY_BITS: usize = 100;
+
+/// Canonical leaf circuit public-input length.
+pub const CANONICAL_LEAF_NUM_PUBLIC_INPUTS: usize = PUBLIC_INPUTS_FELTS_LEN;
+
 // Index constants for parsing public inputs
 pub const ASSET_ID_INDEX: usize = 0;
 pub const OUTPUT_AMOUNT_1_INDEX: usize = 1;

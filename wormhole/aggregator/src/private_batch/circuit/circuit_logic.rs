@@ -152,11 +152,10 @@ fn build_private_batch_constraints(
     // Output: [num_exit_slots, asset_id, volume_fee_bps, block_hash(4), block_number, ...]
     let num_exit_slots_t = builder.constant(F::from_canonical_u64((n_leaf * 2) as u64));
 
-    // asset_id / volume_fee_bps refs come from slot 0. This is positionally safe because
-    // equality is enforced across ALL slots (dummies included) below.
+    // `asset_id` must match across every slot, including dummies. This keeps the historical
+    // partial-batch rule that dummy padding is only compatible with native-asset (`asset_id = 0`)
+    // proofs, which the prover/wrapper preflight enforces before padding.
     let asset_ref = limb1_at_offset::<LEAF_PI_LEN, ASSET_ID_START>(leaf_pi_targets[0], 0);
-    let volume_fee_bps_ref =
-        limb1_at_offset::<LEAF_PI_LEN, VOLUME_FEE_BPS_START>(leaf_pi_targets[0], 0);
 
     // Dummy sentinel at the wrapper level is `block_hash == [0;4]`.
     // Leaf circuit itself uses a stronger dummy condition (block_hash==0 && outputs==0).
@@ -173,27 +172,36 @@ fn build_private_batch_constraints(
         block_hashes.push(block_i);
     }
 
-    // Select the reference block hash / block number from the FIRST NON-DUMMY slot via a
-    // prefix scan. This makes the circuit position-independent: the prover may place real
-    // and dummy proofs in any order (uniform shuffle), which is required for the privacy
-    // argument that real and dummy slots are indistinguishable.
+    // Select the reference block hash / block number / volume_fee_bps from the FIRST
+    // NON-DUMMY slot via a prefix scan. This makes the circuit position-independent: the
+    // prover may place real and dummy proofs in any order (uniform shuffle), which is
+    // required for the privacy argument that real and dummy slots are indistinguishable.
     //
     // If every slot is a dummy, the references remain zero, which the on-chain verifier
     // rejects as a block reference (and an all-dummy batch settles nothing anyway).
     let mut found_real = builder._false();
     let mut block_ref = [zero, zero, zero, zero];
     let mut block_number_ref = zero;
+    let mut volume_fee_bps_ref = zero;
     for i in 0..n_leaf {
         let is_real_i = builder.not(is_dummy_flags[i]);
         let not_found_yet = builder.not(found_real);
         let take_i = builder.and(is_real_i, not_found_yet);
+        let pis_i = leaf_pi_targets[i];
 
         for j in 0..4 {
             block_ref[j] = builder.select(take_i, block_hashes[i][j], block_ref[j]);
         }
-        let block_number_i =
-            limb1_at_offset::<LEAF_PI_LEN, BLOCK_NUMBER_START>(leaf_pi_targets[i], 0);
-        block_number_ref = builder.select(take_i, block_number_i, block_number_ref);
+        block_number_ref = builder.select(
+            take_i,
+            pis_i[BLOCK_NUMBER_START],
+            block_number_ref,
+        );
+        volume_fee_bps_ref = builder.select(
+            take_i,
+            pis_i[VOLUME_FEE_BPS_START],
+            volume_fee_bps_ref,
+        );
 
         found_real = builder.or(found_real, is_real_i);
     }
@@ -215,7 +223,7 @@ fn build_private_batch_constraints(
     //
     // Also enforce:
     //   asset_id_i == asset_ref
-    //   volume_fee_bps_i == volume_fee_bps_ref
+    //   is_dummy_i OR (volume_fee_bps_i == volume_fee_bps_ref)
 
     for (i, pis_i) in leaf_pi_targets.iter().take(n_leaf).enumerate() {
         let matches_ref = bytes_digest_eq(builder, block_hashes[i], block_ref);
@@ -228,9 +236,13 @@ fn build_private_batch_constraints(
         let asset_i = limb1_at_offset::<LEAF_PI_LEN, ASSET_ID_START>(pis_i, 0);
         builder.connect(asset_i, asset_ref);
 
-        // Enforce volume_fee_bps consistency
         let volume_fee_bps_i = limb1_at_offset::<LEAF_PI_LEN, VOLUME_FEE_BPS_START>(pis_i, 0);
-        builder.connect(volume_fee_bps_i, volume_fee_bps_ref);
+
+        // Enforce volume_fee_bps consistency across real proofs only; dummy slots use a fixed
+        // reusable template fee and must not constrain padded partial batches.
+        let fee_matches_ref = builder.is_equal(volume_fee_bps_i, volume_fee_bps_ref);
+        let valid_fee_relation = builder.or(is_dummy_flags[i], fee_matches_ref);
+        builder.connect(valid_fee_relation.target, one);
     }
 
     // Output block reference (all-dummy case yields zeros, which is fine)

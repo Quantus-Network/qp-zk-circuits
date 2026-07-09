@@ -25,13 +25,15 @@ use rand::seq::SliceRandom;
 use std::{fs, path::Path};
 
 use zk_circuits_common::{
-    circuit::{C, D, F},
+    circuit::{wormhole_private_batch_circuit_config, C, D, F},
     utils::bytes_to_digest,
 };
 
 use crate::{
     common::utils::{
-        ensure_proof_public_input_len, leaf_proof_asset_id, load_verifier_data_from_bytes,
+        ensure_common_matches_canonical, ensure_proof_public_input_len,
+        leaf_proof_asset_id, load_canonical_leaf_verifier_data,
+        canonical_private_batch_verifier_data,
     },
     dummy_proof::{generate_random_nullifier_preimage, load_dummy_proof},
     private_batch::{
@@ -101,10 +103,17 @@ impl PrivateBatchProver {
             _phantom: Default::default(),
         };
 
-        // 1) Load prebuilt aggregation circuit prover data
+        // 1) Load and pin leaf verifier data to the canonical Wormhole leaf circuit.
+        let leaf_verifier_data =
+            load_canonical_leaf_verifier_data(leaf_common_bytes, leaf_verifier_only_bytes)?;
+
+        // 2) Load prebuilt aggregation circuit prover data and pin common data.
         let agg_common =
             CommonCircuitData::from_bytes(aggregated_common_bytes.to_vec(), &gate_serializer)
                 .map_err(|e| anyhow!("failed to deserialize aggregated common data: {}", e))?;
+        let canonical_agg =
+            canonical_private_batch_verifier_data(&leaf_verifier_data, num_leaf_proofs);
+        ensure_common_matches_canonical(&agg_common, &canonical_agg.common, "private_batch")?;
 
         let agg_prover_only = ProverOnlyCircuitData::from_bytes(
             aggregated_prover_only_bytes,
@@ -113,15 +122,9 @@ impl PrivateBatchProver {
         )
         .map_err(|e| anyhow!("failed to deserialize aggregated prover data: {}", e))?;
 
-        // 2) Load leaf verifier data (needed to reconstruct targets + parse dummy proof)
-        let leaf_verifier_data =
-            load_verifier_data_from_bytes(leaf_common_bytes, leaf_verifier_only_bytes, "leaf")?;
-
-        // 3) Reconstruct the aggregation circuit to get targets.
-        // NOTE: This builds a fresh circuit to extract target structure. The verifier key
-        // must match what was used when the prebuilt binaries were created.
+        // 3) Reconstruct the aggregation circuit to get targets using the canonical config.
         let circuit = PrivateBatchCircuit::new(
-            agg_common.config.clone(),
+            wormhole_private_batch_circuit_config(),
             &leaf_verifier_data.common,
             &leaf_verifier_data.verifier_only,
             num_leaf_proofs,

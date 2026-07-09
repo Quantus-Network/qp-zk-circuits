@@ -21,14 +21,23 @@ use qp_wormhole_inputs::{
 };
 
 /// Inputs required to commit to the wormhole circuit.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CircuitInputs {
     pub public: PublicCircuitInputs,
     pub private: PrivateCircuitInputs,
 }
 
+impl core::fmt::Debug for CircuitInputs {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CircuitInputs")
+            .field("public", &self.public)
+            .field("private", &self.private)
+            .finish()
+    }
+}
+
 /// All of the private inputs required for the circuit.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PrivateCircuitInputs {
     /// Raw bytes of the secret of the nullifier and the unspendable account
     pub secret: BytesDigest,
@@ -62,6 +71,24 @@ pub struct PrivateCircuitInputs {
     /// Position hints (0-3) for each level indicating where current hash
     /// should be inserted among the sorted siblings.
     pub zk_merkle_positions: Vec<u8>,
+}
+
+impl core::fmt::Debug for PrivateCircuitInputs {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PrivateCircuitInputs")
+            .field("secret", &"[REDACTED]")
+            .field("transfer_count", &self.transfer_count)
+            .field("unspendable_account", &self.unspendable_account)
+            .field("parent_hash", &self.parent_hash)
+            .field("state_root", &self.state_root)
+            .field("extrinsics_root", &self.extrinsics_root)
+            .field("digest", &"[REDACTED]")
+            .field("input_amount", &self.input_amount)
+            .field("zk_tree_root", &self.zk_tree_root)
+            .field("zk_merkle_siblings", &"[REDACTED]")
+            .field("zk_merkle_positions", &"[REDACTED]")
+            .finish()
+    }
 }
 
 // ============================================================================
@@ -315,5 +342,27 @@ mod tests {
         let parsed = result.unwrap();
         assert_eq!(parsed.account_data.len(), 2); // 2 outputs per leaf
         assert_eq!(parsed.nullifiers.len(), 1); // 1 nullifier per leaf
+    }
+
+    #[test]
+    fn private_circuit_inputs_debug_redacts_secret() {
+        let secret = BytesDigest::try_from([0xab; 32].as_slice()).unwrap();
+        let inputs = PrivateCircuitInputs {
+            secret,
+            transfer_count: 1,
+            unspendable_account: BytesDigest::default(),
+            parent_hash: BytesDigest::default(),
+            state_root: BytesDigest::default(),
+            extrinsics_root: BytesDigest::default(),
+            digest: [0u8; DIGEST_LOGS_SIZE],
+            input_amount: 100,
+            zk_tree_root: [0u8; 32],
+            zk_merkle_siblings: vec![],
+            zk_merkle_positions: vec![],
+        };
+        let dump = format!("{:?}", inputs);
+        assert!(dump.contains("[REDACTED]"));
+        assert!(!dump.contains("abababab"));
+        assert!(!dump.contains("secret: BytesDigest"));
     }
 }
