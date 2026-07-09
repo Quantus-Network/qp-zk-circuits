@@ -21,14 +21,23 @@ use qp_wormhole_inputs::{
 };
 
 /// Inputs required to commit to the wormhole circuit.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CircuitInputs {
     pub public: PublicCircuitInputs,
     pub private: PrivateCircuitInputs,
 }
 
+impl core::fmt::Debug for CircuitInputs {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CircuitInputs")
+            .field("public", &self.public)
+            .field("private", &"<redacted>")
+            .finish()
+    }
+}
+
 /// All of the private inputs required for the circuit.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PrivateCircuitInputs {
     /// Raw bytes of the secret of the nullifier and the unspendable account
     pub secret: BytesDigest,
@@ -62,6 +71,21 @@ pub struct PrivateCircuitInputs {
     /// Position hints (0-3) for each level indicating where current hash
     /// should be inserted among the sorted siblings.
     pub zk_merkle_positions: Vec<u8>,
+}
+
+impl core::fmt::Debug for PrivateCircuitInputs {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PrivateCircuitInputs")
+            .field("secret", &"<redacted>")
+            .field("transfer_count", &self.transfer_count)
+            .field("unspendable_account", &"<redacted>")
+            .field("parent_hash", &self.parent_hash)
+            .field("state_root", &self.state_root)
+            .field("extrinsics_root", &self.extrinsics_root)
+            .field("input_amount", &self.input_amount)
+            .field("zk_merkle_siblings_len", &self.zk_merkle_siblings.len())
+            .finish()
+    }
 }
 
 // ============================================================================

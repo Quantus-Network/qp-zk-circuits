@@ -35,7 +35,10 @@ use crate::{
     },
     dummy_proof::{generate_random_nullifier_preimage, load_dummy_proof},
     private_batch::{
-        circuit::circuit_logic::{PrivateBatchCircuit, PrivateBatchCircuitTargets},
+        circuit::{
+            circuit_logic::{PrivateBatchCircuit, PrivateBatchCircuitTargets},
+            constants::LEAF_PI_LEN,
+        },
         prover::witness::fill_private_batch_witness,
     },
 };
@@ -116,6 +119,14 @@ impl PrivateBatchProver {
         // 2) Load leaf verifier data (needed to reconstruct targets + parse dummy proof)
         let leaf_verifier_data =
             load_verifier_data_from_bytes(leaf_common_bytes, leaf_verifier_only_bytes, "leaf")?;
+
+        if leaf_verifier_data.common.num_public_inputs != LEAF_PI_LEN {
+            bail!(
+                "leaf circuit has {} public inputs, expected {} for canonical Wormhole leaf circuit",
+                leaf_verifier_data.common.num_public_inputs,
+                LEAF_PI_LEN
+            );
+        }
 
         // 3) Reconstruct the aggregation circuit to get targets.
         // NOTE: This builds a fresh circuit to extract target structure. The verifier key

@@ -32,7 +32,7 @@ use alloc::vec::Vec;
 #[cfg(feature = "std")]
 use std::vec::Vec;
 
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 #[cfg(feature = "std")]
 use std::path::Path;
 
@@ -47,7 +47,7 @@ use qp_plonky2_verifier::util::serialization::DefaultGateSerializer;
 // Re-export input types from qp-wormhole-inputs
 pub use qp_wormhole_inputs::{
     BlockData, BytesDigest, PrivateBatchPublicInputs, PublicBatchPublicInputs, PublicCircuitInputs,
-    PublicInputsByAccount,
+    PublicInputsByAccount, PUBLIC_INPUTS_FELTS_LEN,
 };
 
 /// Parse public inputs from a proof.
@@ -96,7 +96,27 @@ pub struct WormholeVerifier {
     pub circuit_data: VerifierCircuitData<F, C, D>,
 }
 
+const MINIMUM_SECURITY_BITS: usize = 100;
+
 impl WormholeVerifier {
+    fn validate_canonical_circuit(common: &CommonCircuitData<F, D>) -> anyhow::Result<()> {
+        if common.num_public_inputs != PUBLIC_INPUTS_FELTS_LEN {
+            bail!(
+                "loaded circuit has {} public inputs, but canonical Wormhole leaf circuit expects {}",
+                common.num_public_inputs,
+                PUBLIC_INPUTS_FELTS_LEN
+            );
+        }
+        if common.config.security_bits < MINIMUM_SECURITY_BITS {
+            bail!(
+                "loaded circuit has security_bits={}, which is below the minimum acceptable threshold of {}",
+                common.config.security_bits,
+                MINIMUM_SECURITY_BITS
+            );
+        }
+        Ok(())
+    }
+
     /// Creates a new [`WormholeVerifier`] from verifier and common data bytes.
     pub fn new_from_bytes(verifier_bytes: &[u8], common_bytes: &[u8]) -> anyhow::Result<Self> {
         let verifier_only = VerifierOnlyCircuitData::from_bytes(verifier_bytes.to_vec())
@@ -104,6 +124,8 @@ impl WormholeVerifier {
 
         let common = CommonCircuitData::from_bytes(common_bytes.to_vec(), &DefaultGateSerializer)
             .map_err(|e| anyhow!("failed to deserialize common circuit data: {}", e))?;
+
+        Self::validate_canonical_circuit(&common)?;
 
         let circuit_data = VerifierCircuitData {
             verifier_only,
