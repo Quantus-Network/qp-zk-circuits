@@ -22,10 +22,10 @@ use zk_circuits_common::circuit::{C, D, F};
 use crate::public_batch::prover::{PublicBatchInputs, PublicBatchProver};
 use crate::{
     common::utils::{
-        ensure_proof_public_input_len, ensure_verifier_data_matches_canonical,
-        leaf_proof_asset_id, load_canonical_leaf_verifier_data,
-        load_canonical_private_batch_verifier_data, load_verifier_data_from_bytes,
-        canonical_public_batch_verifier_data,
+        canonical_public_batch_verifier_data, ensure_proof_public_input_len,
+        ensure_verifier_data_matches_canonical, leaf_proof_asset_id,
+        load_canonical_leaf_verifier_data, load_canonical_private_batch_verifier_data,
+        load_verifier_data_from_bytes,
     },
     private_batch::prover::PrivateBatchProver,
     CircuitBinsConfig,
@@ -82,12 +82,13 @@ fn load_private_batch_verifier_from_bins(
             bins_dir.join("private_batch_common.bin").display()
         )
     })?;
-    let verifier_bytes = fs::read(bins_dir.join("private_batch_verifier.bin")).with_context(|| {
-        format!(
-            "failed to read {}",
-            bins_dir.join("private_batch_verifier.bin").display()
-        )
-    })?;
+    let verifier_bytes =
+        fs::read(bins_dir.join("private_batch_verifier.bin")).with_context(|| {
+            format!(
+                "failed to read {}",
+                bins_dir.join("private_batch_verifier.bin").display()
+            )
+        })?;
     load_canonical_private_batch_verifier_data(&common_bytes, &verifier_bytes, num_leaf_proofs)
 }
 
@@ -187,7 +188,9 @@ impl PublicBatchAggregator {
             .ok_or_else(|| anyhow!("config is missing num_private_batch_proofs. Please regenerate the binaries and set \"num_private_batch_proofs\""))?;
         let num_leaf_proofs = config.num_leaf_proofs;
         let expected_private_batch_pi_len =
-            load_private_batch_verifier_from_bins(&bins_dir, num_leaf_proofs)?.common.num_public_inputs;
+            load_private_batch_verifier_from_bins(&bins_dir, num_leaf_proofs)?
+                .common
+                .num_public_inputs;
 
         Ok(Self {
             bins_dir,
@@ -260,9 +263,11 @@ impl AggregationBackend for PublicBatchAggregator {
     fn load_common_data(&self, circuit_type: CircuitType) -> Result<CommonCircuitData<F, D>> {
         match circuit_type {
             CircuitType::Root => Ok(self.load_verifier()?.common),
-            CircuitType::Leaf => {
-                Ok(load_private_batch_verifier_from_bins(&self.bins_dir, self.num_leaf_proofs)?.common)
-            }
+            CircuitType::Leaf => Ok(load_private_batch_verifier_from_bins(
+                &self.bins_dir,
+                self.num_leaf_proofs,
+            )?
+            .common),
         }
     }
 }

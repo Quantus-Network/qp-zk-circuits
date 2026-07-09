@@ -31,9 +31,8 @@ use zk_circuits_common::{
 
 use crate::{
     common::utils::{
-        ensure_common_matches_canonical, ensure_proof_public_input_len,
-        leaf_proof_asset_id, load_canonical_leaf_verifier_data,
-        canonical_private_batch_verifier_data,
+        canonical_private_batch_verifier_data, ensure_common_matches_canonical,
+        ensure_proof_public_input_len, leaf_proof_asset_id, load_canonical_leaf_verifier_data,
     },
     dummy_proof::{generate_random_nullifier_preimage, load_dummy_proof},
     private_batch::{

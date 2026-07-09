@@ -51,11 +51,7 @@ pub fn load_canonical_leaf_verifier_data(
     verifier_only_bytes: &[u8],
 ) -> Result<VerifierCircuitData<F, C, D>> {
     let loaded = load_verifier_data_from_bytes(common_bytes, verifier_only_bytes, "leaf")?;
-    ensure_verifier_data_matches_canonical(
-        &loaded,
-        &canonical_leaf_verifier_data(),
-        "leaf",
-    )?;
+    ensure_verifier_data_matches_canonical(&loaded, &canonical_leaf_verifier_data(), "leaf")?;
     Ok(loaded)
 }
 
@@ -104,10 +100,13 @@ pub fn ensure_verifier_data_matches_canonical(
 ) -> Result<()> {
     ensure_common_matches_canonical(&loaded.common, &canonical.common, label)?;
 
-    let loaded_vo = loaded
-        .verifier_only
-        .to_bytes()
-        .map_err(|e| anyhow!("failed to serialize loaded {} verifier-only data: {}", label, e))?;
+    let loaded_vo = loaded.verifier_only.to_bytes().map_err(|e| {
+        anyhow!(
+            "failed to serialize loaded {} verifier-only data: {}",
+            label,
+            e
+        )
+    })?;
     let canonical_vo = canonical.verifier_only.to_bytes().map_err(|e| {
         anyhow!(
             "failed to serialize canonical {} verifier-only data: {}",

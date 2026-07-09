@@ -192,16 +192,9 @@ fn build_private_batch_constraints(
         for j in 0..4 {
             block_ref[j] = builder.select(take_i, block_hashes[i][j], block_ref[j]);
         }
-        block_number_ref = builder.select(
-            take_i,
-            pis_i[BLOCK_NUMBER_START],
-            block_number_ref,
-        );
-        volume_fee_bps_ref = builder.select(
-            take_i,
-            pis_i[VOLUME_FEE_BPS_START],
-            volume_fee_bps_ref,
-        );
+        block_number_ref = builder.select(take_i, pis_i[BLOCK_NUMBER_START], block_number_ref);
+        volume_fee_bps_ref =
+            builder.select(take_i, pis_i[VOLUME_FEE_BPS_START], volume_fee_bps_ref);
 
         found_real = builder.or(found_real, is_real_i);
     }
