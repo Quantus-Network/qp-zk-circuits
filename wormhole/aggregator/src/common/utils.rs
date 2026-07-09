@@ -17,14 +17,11 @@ use zk_circuits_common::circuit::{
 
 use crate::private_batch::circuit::{
     circuit_logic::PrivateBatchCircuit,
-    constants::{aggregated_output, ASSET_ID_START, LEAF_PI_LEN, VOLUME_FEE_BPS_START},
+    constants::{aggregated_output, ASSET_ID_START, LEAF_PI_LEN},
 };
 use crate::public_batch::circuit::circuit_logic::PublicBatchCircuit;
 
 /// Load verifier circuit data (common + verifier-only) from serialized bytes.
-///
-/// When `canonical` is provided, the loaded artifacts are pinned to that exact
-/// verifier data (byte-identical common + verifier-only).
 pub fn load_verifier_data_from_bytes(
     common_bytes: &[u8],
     verifier_only_bytes: &[u8],
@@ -55,15 +52,16 @@ pub fn load_canonical_leaf_verifier_data(
     Ok(loaded)
 }
 
-/// Load private-batch verifier data pinned to the canonical private-batch circuit for `num_leaf_proofs`.
+/// Load private-batch verifier data pinned to the canonical private-batch circuit for
+/// `num_leaf_proofs`. `leaf` must be canonical leaf verifier data (loaded pinned or rebuilt).
 pub fn load_canonical_private_batch_verifier_data(
     common_bytes: &[u8],
     verifier_only_bytes: &[u8],
+    leaf: &VerifierCircuitData<F, C, D>,
     num_leaf_proofs: usize,
 ) -> Result<VerifierCircuitData<F, C, D>> {
     let loaded = load_verifier_data_from_bytes(common_bytes, verifier_only_bytes, "private_batch")?;
-    let leaf = canonical_leaf_verifier_data();
-    let canonical = canonical_private_batch_verifier_data(&leaf, num_leaf_proofs);
+    let canonical = canonical_private_batch_verifier_data(leaf, num_leaf_proofs);
     ensure_verifier_data_matches_canonical(&loaded, &canonical, "private_batch")?;
     Ok(loaded)
 }
@@ -198,14 +196,6 @@ pub fn leaf_proof_asset_id(proof: &ProofWithPublicInputs<F, C, D>) -> Result<u32
         .to_canonical_u64()
         .try_into()
         .map_err(|_| anyhow!("leaf proof asset_id exceeds u32 range"))
-}
-
-pub fn leaf_proof_volume_fee_bps(proof: &ProofWithPublicInputs<F, C, D>) -> Result<u32> {
-    ensure_proof_public_input_len(proof, LEAF_PI_LEN, "leaf proof")?;
-    proof.public_inputs[VOLUME_FEE_BPS_START]
-        .to_canonical_u64()
-        .try_into()
-        .map_err(|_| anyhow!("leaf proof volume_fee_bps exceeds u32 range"))
 }
 
 pub fn private_batch_num_leaves_from_padded_pi_len(pi_len: usize) -> Result<usize> {

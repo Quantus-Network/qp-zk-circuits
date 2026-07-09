@@ -28,7 +28,7 @@ use zk_circuits_common::{
 
 use crate::{
     common::utils::{
-        canonical_public_batch_verifier_data, ensure_common_matches_canonical,
+        canonical_leaf_verifier_data, ensure_common_matches_canonical,
         load_canonical_private_batch_verifier_data,
     },
     public_batch::{
@@ -108,18 +108,26 @@ impl PublicBatchProver {
         let private_batch_verifier_data = load_canonical_private_batch_verifier_data(
             private_batch_common_bytes,
             private_batch_verifier_only_bytes,
+            &canonical_leaf_verifier_data(),
             num_leaf_proofs,
         )?;
 
-        // 2) Load prebuilt public-batch circuit prover data and pin common data.
-        let public_batch_common =
-            CommonCircuitData::from_bytes(public_batch_common_bytes.to_vec(), &gate_serializer)
-                .map_err(|e| anyhow!("failed to deserialize public_batch common data: {}", e))?;
-        let canonical_public = canonical_public_batch_verifier_data(
-            &private_batch_verifier_data,
+        // 2) Reconstruct the canonical public-batch circuit once: it provides both the
+        // witness targets and the canonical common data used to pin the prebuilt artifacts.
+        let circuit = PublicBatchCircuit::new(
+            wormhole_public_batch_circuit_config(),
+            private_batch_verifier_data.common.clone(),
+            &private_batch_verifier_data.verifier_only,
             num_private_batch_proofs,
             num_leaf_proofs,
         );
+        let targets = Some(circuit.targets());
+        let canonical_public = circuit.build_verifier();
+
+        // 3) Load prebuilt public-batch circuit prover data and pin common data.
+        let public_batch_common =
+            CommonCircuitData::from_bytes(public_batch_common_bytes.to_vec(), &gate_serializer)
+                .map_err(|e| anyhow!("failed to deserialize public_batch common data: {}", e))?;
         ensure_common_matches_canonical(
             &public_batch_common,
             &canonical_public.common,
@@ -133,17 +141,7 @@ impl PublicBatchProver {
         )
         .map_err(|e| anyhow!("failed to deserialize public_batch prover data: {}", e))?;
 
-        let circuit = PublicBatchCircuit::new(
-            wormhole_public_batch_circuit_config(),
-            private_batch_verifier_data.common.clone(),
-            &private_batch_verifier_data.verifier_only,
-            num_private_batch_proofs,
-            num_leaf_proofs,
-        );
-
-        let targets = Some(circuit.targets());
-
-        // 3) Load the dummy private-batch proof template used to pad partial batches
+        // 4) Load the dummy private-batch proof template used to pad partial batches
         let dummy_proof_template = ProofWithPublicInputs::<F, C, D>::from_bytes(
             dummy_private_batch_proof_bytes.to_vec(),
             &private_batch_verifier_data.common,

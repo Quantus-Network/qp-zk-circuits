@@ -48,7 +48,7 @@ use qp_plonky2_verifier::util::serialization::DefaultGateSerializer;
 // Re-export input types from qp-wormhole-inputs
 pub use qp_wormhole_inputs::{
     BlockData, BytesDigest, PrivateBatchPublicInputs, PublicBatchPublicInputs, PublicCircuitInputs,
-    PublicInputsByAccount, CANONICAL_LEAF_NUM_PUBLIC_INPUTS, CANONICAL_LEAF_SECURITY_BITS,
+    PublicInputsByAccount, MIN_LEAF_SECURITY_BITS, PUBLIC_INPUTS_FELTS_LEN,
 };
 
 /// Parse public inputs from a proof.
@@ -122,33 +122,30 @@ impl WormholeVerifier {
     fn ensure_loaded_matches_canonical_leaf_profile(
         common: &CommonCircuitData<F, D>,
     ) -> anyhow::Result<()> {
-        let cfg = &common.config;
         let expected = CircuitConfig::standard_recursion_config();
 
-        if cfg.security_bits != CANONICAL_LEAF_SECURITY_BITS
-            || cfg.security_bits != expected.security_bits
-            || cfg.zero_knowledge != expected.zero_knowledge
-            || cfg.num_wires != expected.num_wires
-            || cfg.num_routed_wires != expected.num_routed_wires
-            || cfg.num_constants != expected.num_constants
-            || cfg.use_base_arithmetic_gate != expected.use_base_arithmetic_gate
-            || cfg.num_challenges != expected.num_challenges
-            || cfg.max_quotient_degree_factor != expected.max_quotient_degree_factor
-            || cfg.fri_config != expected.fri_config
-        {
+        if expected.security_bits < MIN_LEAF_SECURITY_BITS {
             return Err(anyhow!(
-                "loaded verifier circuit config does not match the canonical Wormhole leaf config \
-                 (security_bits loaded={}, expected={})",
-                cfg.security_bits,
-                CANONICAL_LEAF_SECURITY_BITS
+                "canonical recursion config provides only {} security bits, below the required minimum of {}",
+                expected.security_bits,
+                MIN_LEAF_SECURITY_BITS
             ));
         }
 
-        if common.num_public_inputs != CANONICAL_LEAF_NUM_PUBLIC_INPUTS {
+        if common.config != expected {
+            return Err(anyhow!(
+                "loaded verifier circuit config does not match the canonical Wormhole leaf config \
+                 (security_bits loaded={}, expected={})",
+                common.config.security_bits,
+                expected.security_bits
+            ));
+        }
+
+        if common.num_public_inputs != PUBLIC_INPUTS_FELTS_LEN {
             return Err(anyhow!(
                 "loaded verifier common data has {} public inputs, expected {} for the canonical Wormhole leaf circuit",
                 common.num_public_inputs,
-                CANONICAL_LEAF_NUM_PUBLIC_INPUTS
+                PUBLIC_INPUTS_FELTS_LEN
             ));
         }
 

@@ -31,8 +31,8 @@ use zk_circuits_common::{
 
 use crate::{
     common::utils::{
-        canonical_private_batch_verifier_data, ensure_common_matches_canonical,
-        ensure_proof_public_input_len, leaf_proof_asset_id, load_canonical_leaf_verifier_data,
+        ensure_common_matches_canonical, ensure_proof_public_input_len, leaf_proof_asset_id,
+        load_canonical_leaf_verifier_data,
     },
     dummy_proof::{generate_random_nullifier_preimage, load_dummy_proof},
     private_batch::{
@@ -106,12 +106,21 @@ impl PrivateBatchProver {
         let leaf_verifier_data =
             load_canonical_leaf_verifier_data(leaf_common_bytes, leaf_verifier_only_bytes)?;
 
-        // 2) Load prebuilt aggregation circuit prover data and pin common data.
+        // 2) Reconstruct the canonical aggregation circuit once: it provides both the
+        // witness targets and the canonical common data used to pin the prebuilt artifacts.
+        let circuit = PrivateBatchCircuit::new(
+            wormhole_private_batch_circuit_config(),
+            &leaf_verifier_data.common,
+            &leaf_verifier_data.verifier_only,
+            num_leaf_proofs,
+        );
+        let targets = Some(circuit.targets());
+        let canonical_agg = circuit.build_verifier();
+
+        // 3) Load prebuilt aggregation circuit prover data and pin common data.
         let agg_common =
             CommonCircuitData::from_bytes(aggregated_common_bytes.to_vec(), &gate_serializer)
                 .map_err(|e| anyhow!("failed to deserialize aggregated common data: {}", e))?;
-        let canonical_agg =
-            canonical_private_batch_verifier_data(&leaf_verifier_data, num_leaf_proofs);
         ensure_common_matches_canonical(&agg_common, &canonical_agg.common, "private_batch")?;
 
         let agg_prover_only = ProverOnlyCircuitData::from_bytes(
@@ -120,16 +129,6 @@ impl PrivateBatchProver {
             &agg_common,
         )
         .map_err(|e| anyhow!("failed to deserialize aggregated prover data: {}", e))?;
-
-        // 3) Reconstruct the aggregation circuit to get targets using the canonical config.
-        let circuit = PrivateBatchCircuit::new(
-            wormhole_private_batch_circuit_config(),
-            &leaf_verifier_data.common,
-            &leaf_verifier_data.verifier_only,
-            num_leaf_proofs,
-        );
-
-        let targets = Some(circuit.targets());
 
         // 4) Load dummy proof template compatible with the leaf verifier common data
         let dummy_proof_template =
