@@ -62,7 +62,7 @@ pub fn load_canonical_private_batch_verifier_data(
     num_leaf_proofs: usize,
 ) -> Result<VerifierCircuitData<F, C, D>> {
     let loaded = load_verifier_data_from_bytes(common_bytes, verifier_only_bytes, "private_batch")?;
-    let canonical = canonical_private_batch_verifier_data(leaf, num_leaf_proofs);
+    let canonical = canonical_private_batch_verifier_data(leaf, num_leaf_proofs)?;
     ensure_verifier_data_matches_canonical(&loaded, &canonical, "private_batch")?;
     Ok(loaded)
 }
@@ -148,29 +148,29 @@ pub fn canonical_leaf_verifier_data() -> VerifierCircuitData<F, C, D> {
 pub fn canonical_private_batch_verifier_data(
     leaf: &VerifierCircuitData<F, C, D>,
     num_leaf_proofs: usize,
-) -> VerifierCircuitData<F, C, D> {
-    PrivateBatchCircuit::new(
+) -> Result<VerifierCircuitData<F, C, D>> {
+    Ok(PrivateBatchCircuit::new(
         wormhole_private_batch_circuit_config(),
         &leaf.common,
         &leaf.verifier_only,
         num_leaf_proofs,
-    )
-    .build_verifier()
+    )?
+    .build_verifier())
 }
 
 pub fn canonical_public_batch_verifier_data(
     private_batch: &VerifierCircuitData<F, C, D>,
     num_private_batch_proofs: usize,
     num_leaf_proofs: usize,
-) -> VerifierCircuitData<F, C, D> {
-    PublicBatchCircuit::new(
+) -> Result<VerifierCircuitData<F, C, D>> {
+    Ok(PublicBatchCircuit::new(
         wormhole_public_batch_circuit_config(),
         private_batch.common.clone(),
         &private_batch.verifier_only,
         num_private_batch_proofs,
         num_leaf_proofs,
-    )
-    .build_verifier()
+    )?
+    .build_verifier())
 }
 
 pub fn ensure_proof_public_input_len(

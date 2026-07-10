@@ -26,7 +26,7 @@ const BIT_32_LIMB_MASK: u64 = 0xFFFF_FFFF;
 /// request cannot exhaust the process (audit #97066).
 pub const MAX_SERIALIZED_BYTES: usize = 1 << 20; // 1 MiB
 /// Maximum felt count accepted by [`felts_to_bytes`].
-pub const MAX_SERIALIZED_FELTS: usize = 1 << 18; // 256k felts (~1 MiB at 4 bytes/felt)
+pub const MAX_SERIALIZED_FELTS: usize = (MAX_SERIALIZED_BYTES + BYTES_PER_FELT) / BYTES_PER_FELT;
 
 // ============================================================================
 // Internal helpers for Plonky2 GoldilocksField conversion
@@ -250,6 +250,15 @@ mod tests {
             let reconstructed = felts_to_bytes(&felts).unwrap();
             assert_eq!(original, reconstructed);
         }
+    }
+
+    #[test]
+    fn test_maximum_bytes_round_trip() {
+        let original = vec![0x5au8; MAX_SERIALIZED_BYTES];
+        let felts = bytes_to_felts(&original).unwrap();
+        assert_eq!(felts.len(), MAX_SERIALIZED_FELTS);
+        let reconstructed = felts_to_bytes(&felts).unwrap();
+        assert_eq!(reconstructed, original);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_inputs::{EXIT_ACCOUNT_1_END_INDEX, EXIT_ACCOUNT_1_START_INDEX};
-use test_helpers::TestInputs;
+use test_helpers::{fake_leaf::build_fake_leaf_circuit, TestInputs};
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use wormhole_circuit::inputs::CircuitInputs;
 use wormhole_circuit::substrate_account::SubstrateAccount;
@@ -59,6 +59,24 @@ fn borrowed_verify_keeps_proof_available() {
     verifier.verify_ref(&verifier_proof).unwrap();
 
     assert_eq!(proof.public_inputs.len(), 21);
+}
+
+#[test]
+fn verifier_loader_rejects_same_profile_substituted_circuit() {
+    // This fake circuit deliberately uses the same recursion config and the same
+    // 21-public-input shape as Wormhole, but enforces only three range checks.
+    let (fake, _) = build_fake_leaf_circuit();
+    assert_eq!(fake.common.config, CIRCUIT_CONFIG);
+    assert_eq!(fake.common.num_public_inputs, 21);
+
+    let verifier_bytes = fake.verifier_only.to_bytes().unwrap();
+    let common_bytes = fake
+        .common
+        .to_bytes(&plonky2::util::serialization::DefaultGateSerializer)
+        .unwrap();
+    let err = WormholeVerifier::new_from_bytes(&verifier_bytes, &common_bytes)
+        .expect_err("same-profile substituted circuit must be rejected");
+    assert!(err.to_string().contains("does not match the canonical"));
 }
 
 #[test]

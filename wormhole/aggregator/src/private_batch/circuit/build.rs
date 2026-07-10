@@ -42,7 +42,7 @@ pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
         &leaf_common,
         &leaf_verifier_only,
         num_leaf_proofs,
-    );
+    )?;
 
     let agg_targets = agg_circuit.targets();
     let circuit_data = agg_circuit.build_circuit();

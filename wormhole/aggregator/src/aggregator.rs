@@ -107,7 +107,7 @@ fn load_public_batch_verifier_from_bins(
         private_batch,
         num_private_batch_proofs,
         num_leaf_proofs,
-    );
+    )?;
     ensure_verifier_data_matches_canonical(&loaded, &canonical, "public_batch")?;
     Ok(loaded)
 }

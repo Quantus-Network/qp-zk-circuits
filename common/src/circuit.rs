@@ -19,6 +19,10 @@ pub type F = GoldilocksField; // Goldilocks field
 
 /// Maximum number of hex-encoded storage-proof nodes accepted in [`TransferProofJson`].
 pub const MAX_STORAGE_PROOF_NODES: usize = 1024;
+/// Maximum hex-string length of one storage-proof node.
+pub const MAX_STORAGE_PROOF_NODE_HEX_LEN: usize = 1 << 20;
+/// Maximum aggregate hex-string length across all storage-proof nodes.
+pub const MAX_STORAGE_PROOF_HEX_BYTES: usize = 1 << 20;
 /// Maximum number of Merkle indices accepted in [`TransferProofJson`].
 pub const MAX_MERKLE_INDICES: usize = 1024;
 /// Maximum byte length of the hex `state_root` string in [`TransferProofJson`].
@@ -52,6 +56,24 @@ impl TransferProofJson {
                 "storage_proof exceeds {} nodes",
                 MAX_STORAGE_PROOF_NODES
             ));
+        }
+        let mut total_storage_proof_bytes = 0usize;
+        for (index, node) in self.storage_proof.iter().enumerate() {
+            if node.len() > MAX_STORAGE_PROOF_NODE_HEX_LEN {
+                return Err(format!(
+                    "storage_proof node {} exceeds {} bytes",
+                    index, MAX_STORAGE_PROOF_NODE_HEX_LEN
+                ));
+            }
+            total_storage_proof_bytes = total_storage_proof_bytes
+                .checked_add(node.len())
+                .ok_or_else(|| String::from("storage_proof total byte length overflow"))?;
+            if total_storage_proof_bytes > MAX_STORAGE_PROOF_HEX_BYTES {
+                return Err(format!(
+                    "storage_proof exceeds {} total bytes",
+                    MAX_STORAGE_PROOF_HEX_BYTES
+                ));
+            }
         }
         if self.indices.len() > MAX_MERKLE_INDICES {
             return Err(format!("indices exceeds {} entries", MAX_MERKLE_INDICES));
@@ -152,7 +174,97 @@ fn deserialize_bounded_storage_proof<'de, D>(deserializer: D) -> Result<Vec<Stri
 where
     D: Deserializer<'de>,
 {
-    deserialize_bounded_vec(deserializer, MAX_STORAGE_PROOF_NODES, "storage_proof")
+    struct BoundedStorageNode(String);
+
+    impl<'de> de::Deserialize<'de> for BoundedStorageNode {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            struct NodeVisitor;
+            impl Visitor<'_> for NodeVisitor {
+                type Value = BoundedStorageNode;
+
+                fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                    write!(
+                        f,
+                        "a storage-proof hex string of at most {} bytes",
+                        MAX_STORAGE_PROOF_NODE_HEX_LEN
+                    )
+                }
+
+                fn visit_str<E: Error>(self, value: &str) -> Result<Self::Value, E> {
+                    if value.len() > MAX_STORAGE_PROOF_NODE_HEX_LEN {
+                        return Err(E::custom(format!(
+                            "storage_proof node exceeds {} bytes",
+                            MAX_STORAGE_PROOF_NODE_HEX_LEN
+                        )));
+                    }
+                    Ok(BoundedStorageNode(String::from(value)))
+                }
+
+                fn visit_string<E: Error>(self, value: String) -> Result<Self::Value, E> {
+                    if value.len() > MAX_STORAGE_PROOF_NODE_HEX_LEN {
+                        return Err(E::custom(format!(
+                            "storage_proof node exceeds {} bytes",
+                            MAX_STORAGE_PROOF_NODE_HEX_LEN
+                        )));
+                    }
+                    Ok(BoundedStorageNode(value))
+                }
+            }
+
+            deserializer.deserialize_str(NodeVisitor)
+        }
+    }
+
+    struct StorageProofVisitor;
+    impl<'de> Visitor<'de> for StorageProofVisitor {
+        type Value = Vec<String>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(
+                f,
+                "at most {} storage-proof nodes totaling at most {} bytes",
+                MAX_STORAGE_PROOF_NODES, MAX_STORAGE_PROOF_HEX_BYTES
+            )
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let cap = seq.size_hint().unwrap_or(0).min(MAX_STORAGE_PROOF_NODES);
+            let mut out = Vec::with_capacity(cap);
+            let mut total_bytes = 0usize;
+
+            while out.len() < MAX_STORAGE_PROOF_NODES {
+                let Some(BoundedStorageNode(node)) = seq.next_element()? else {
+                    return Ok(out);
+                };
+                total_bytes = total_bytes
+                    .checked_add(node.len())
+                    .ok_or_else(|| A::Error::custom("storage_proof total byte length overflow"))?;
+                if total_bytes > MAX_STORAGE_PROOF_HEX_BYTES {
+                    return Err(A::Error::custom(format!(
+                        "storage_proof exceeds {} total bytes",
+                        MAX_STORAGE_PROOF_HEX_BYTES
+                    )));
+                }
+                out.push(node);
+            }
+
+            if seq.next_element::<de::IgnoredAny>()?.is_some() {
+                return Err(A::Error::custom(format!(
+                    "storage_proof exceeds {} items",
+                    MAX_STORAGE_PROOF_NODES
+                )));
+            }
+            Ok(out)
+        }
+    }
+
+    deserializer.deserialize_seq(StorageProofVisitor)
 }
 
 fn deserialize_bounded_indices<'de, D>(deserializer: D) -> Result<Vec<usize>, D::Error>
@@ -220,4 +332,35 @@ pub trait CircuitFragment {
         pw: &mut PartialWitness<F>,
         targets: Self::Targets,
     ) -> anyhow::Result<()>;
+}
+
+#[cfg(test)]
+mod transfer_proof_json_tests {
+    use super::*;
+
+    #[test]
+    fn storage_proof_deserialization_rejects_oversized_node() {
+        let oversized = "a".repeat(MAX_STORAGE_PROOF_NODE_HEX_LEN + 1);
+        let json = format!(
+            r#"{{"transfer_count":1,"state_root":"00","storage_proof":["{}"],"indices":[]}}"#,
+            oversized
+        );
+        let err = serde_json::from_str::<TransferProofJson>(&json).unwrap_err();
+        assert!(err.to_string().contains("storage_proof node exceeds"));
+    }
+
+    #[test]
+    fn direct_validation_rejects_oversized_storage_proof_total() {
+        let proof = TransferProofJson {
+            transfer_count: 1,
+            state_root: String::from("00"),
+            storage_proof: vec![
+                "a".repeat(MAX_STORAGE_PROOF_HEX_BYTES / 2 + 1),
+                "b".repeat(MAX_STORAGE_PROOF_HEX_BYTES / 2 + 1),
+            ],
+            indices: vec![],
+        };
+        let err = proof.validate().unwrap_err();
+        assert!(err.contains("total bytes"));
+    }
 }

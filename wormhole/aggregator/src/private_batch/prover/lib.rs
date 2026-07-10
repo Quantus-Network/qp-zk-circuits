@@ -58,30 +58,32 @@ impl PrivateBatchProver {
     /// Build a fresh private-batch aggregation prover from circuit definitions.
     ///
     /// In production, prefer `new_from_binaries_dir(...)` to load prebuilt circuits.
+    /// Returns an error when `num_leaf_proofs` is outside the supported range.
     pub fn new(
         agg_circuit_config: CircuitConfig,
         leaf_common: CommonCircuitData<F, D>,
         leaf_verifier_only: &VerifierOnlyCircuitData<C, D>,
         num_leaf_proofs: usize,
         dummy_proof_template: ProofWithPublicInputs<F, C, D>,
-    ) -> Self {
+    ) -> Result<Self> {
+        validate_proof_count(num_leaf_proofs, "num_leaf_proofs")?;
         let agg_circuit = PrivateBatchCircuit::new(
             agg_circuit_config,
             &leaf_common,
             leaf_verifier_only,
             num_leaf_proofs,
-        );
+        )?;
 
         let targets = Some(agg_circuit.targets());
         let circuit_data = agg_circuit.build_prover();
 
-        Self {
+        Ok(Self {
             circuit_data,
             partial_witness: PartialWitness::new(),
             targets,
             num_leaf_proofs,
             dummy_proof_template,
-        }
+        })
     }
 
     /// Create a private-batch aggregation prover from serialized bytes.
@@ -122,7 +124,7 @@ impl PrivateBatchProver {
             &leaf_verifier_data.common,
             &leaf_verifier_data.verifier_only,
             num_leaf_proofs,
-        );
+        )?;
         let targets = Some(circuit.targets());
         let canonical_agg = circuit.build_verifier();
 

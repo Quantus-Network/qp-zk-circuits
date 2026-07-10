@@ -47,7 +47,7 @@ pub fn generate_public_batch_circuit_binaries<P: AsRef<Path>>(
         &private_batch_verifier_only,
         num_private_batch_proofs,
         private_batch_num_leaves,
-    );
+    )?;
 
     let circuit_data = public_batch_circuit.build_circuit();
     let verifier_data = circuit_data.verifier_data();

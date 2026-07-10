@@ -3,6 +3,7 @@
 //! Verifies N private-batch aggregated proofs and emits a public-batch aggregated proof.
 //! The private-batch verifier key is baked in as constants to prevent verifier key substitution.
 
+use anyhow::{ensure, Result};
 use plonky2::{
     field::types::Field,
     iop::target::{BoolTarget, Target},
@@ -15,6 +16,7 @@ use plonky2::{
         proof::ProofWithPublicInputsTarget,
     },
 };
+use qp_wormhole_inputs::validate_proof_count;
 
 use zk_circuits_common::{
     circuit::{C, D, F},
@@ -45,18 +47,16 @@ impl PublicBatchCircuit {
     /// Build a monolithic public-batch aggregation circuit that verifies `n_inner` private-batch aggregated proofs.
     ///
     /// The `private_batch_verifier_only` is baked in as constants to prevent verifier key substitution.
+    /// Returns an error for unsupported counts or an inconsistent private-batch PI shape.
     pub fn new(
         config: CircuitConfig,
         private_batch_common: CommonCircuitData<F, D>,
         private_batch_verifier_only: &VerifierOnlyCircuitData<C, D>,
         n_inner: usize,
         private_batch_num_leaves: usize,
-    ) -> Self {
-        assert!(n_inner > 0, "n_inner must be > 0");
-        assert!(
-            private_batch_num_leaves > 0,
-            "private_batch_num_leaves must be > 0"
-        );
+    ) -> Result<Self> {
+        validate_proof_count(n_inner, "n_inner")?;
+        validate_proof_count(private_batch_num_leaves, "private_batch_num_leaves")?;
 
         let expected_l0_pi_len = pbc::private_batch_pi_len(private_batch_num_leaves);
 
@@ -64,9 +64,8 @@ impl PublicBatchCircuit {
         // fixed offsets derived from `private_batch_num_leaves` into each inner
         // proof's public inputs, so a mismatch must fail loudly instead of going
         // out of bounds in release builds (#97071).
-        assert_eq!(
-            private_batch_common.num_public_inputs,
-            expected_l0_pi_len,
+        ensure!(
+            private_batch_common.num_public_inputs == expected_l0_pi_len,
             "private_batch_common.num_public_inputs ({}) != expected private_batch PI len ({}) for private_batch_num_leaves={}",
             private_batch_common.num_public_inputs,
             expected_l0_pi_len,
@@ -95,7 +94,7 @@ impl PublicBatchCircuit {
         // Build wrapper constraints and register public inputs.
         build_public_batch_constraints(&mut builder, &targets, n_inner, private_batch_num_leaves);
 
-        Self { builder, targets }
+        Ok(Self { builder, targets })
     }
 
     pub fn targets(&self) -> PublicBatchCircuitTargets {
@@ -515,7 +514,8 @@ mod tests {
             &leaf_common,
             &leaf_verifier_only,
             NUM_LEAVES,
-        );
+        )
+        .unwrap();
         let private_batch_targets = private_batch_circuit.targets();
         let private_batch_data = private_batch_circuit.build_circuit();
 
@@ -546,7 +546,8 @@ mod tests {
             &private_batch_data.verifier_only,
             N_INNER,
             NUM_LEAVES,
-        );
+        )
+        .unwrap();
         let public_batch_targets = public_batch_circuit.targets();
         let public_batch_data = public_batch_circuit.build_circuit();
 
@@ -709,7 +710,8 @@ mod tests {
             &leaf_data.common,
             &leaf_data.verifier_only,
             NUM_LEAVES,
-        );
+        )
+        .unwrap();
         let private_batch_targets = private_batch_circuit.targets();
         let private_batch_data = private_batch_circuit.build_circuit();
 
@@ -750,7 +752,8 @@ mod tests {
             &private_batch_data.verifier_only,
             N_INNER,
             NUM_LEAVES,
-        );
+        )
+        .unwrap();
         let public_batch_targets = public_batch_circuit.targets();
         let public_batch_data = public_batch_circuit.build_circuit();
 
@@ -897,7 +900,8 @@ mod tests {
             &leaf_data.common,
             &leaf_data.verifier_only,
             NUM_LEAVES,
-        );
+        )
+        .unwrap();
         let private_batch_targets = private_batch_circuit.targets();
         let private_batch_data = private_batch_circuit.build_circuit();
 
@@ -914,7 +918,8 @@ mod tests {
             &private_batch_data.verifier_only,
             N_INNER,
             NUM_LEAVES,
-        );
+        )
+        .unwrap();
         let public_batch_targets = public_batch_circuit.targets();
         let public_batch_data = public_batch_circuit.build_circuit();
 
