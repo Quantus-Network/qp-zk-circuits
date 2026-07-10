@@ -21,6 +21,7 @@ mod workload;
 
 use anyhow::Result;
 use clap::Parser;
+use wormhole_aggregator::validate_proof_count;
 
 use crate::config::{default_agg_config, default_leaf_config, print_config_summary, AggConfigArgs};
 use crate::report::PhaseReport;
@@ -113,6 +114,9 @@ fn main() -> Result<()> {
             num_leaf_proofs
         );
     }
+    // Bound the per-layer count before any circuit construction (#97021, #97070).
+    validate_proof_count(num_leaf_proofs, "num_leaf_proofs")?;
+    validate_proof_count(real_proofs, "real_proofs")?;
 
     let mut report = PhaseReport::new(args.sample_period_ms)?;
 

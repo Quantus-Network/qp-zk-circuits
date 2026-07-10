@@ -25,11 +25,11 @@ struct Args {
     #[arg(short, long, default_value = "generated-bins")]
     output: String,
 
-    /// Number of leaf proofs aggregated into a single private-batch proof (must be 1-1024)
+    /// Number of leaf proofs aggregated into a single private-batch proof (must be 1-64)
     #[arg(short, long, value_parser = parse_proof_count)]
     num_leaf_proofs: usize,
 
-    /// Number of inner private-batch proofs aggregated into a single public-batch proof (must be 1-1024 if specified)
+    /// Number of inner private-batch proofs aggregated into a single public-batch proof (must be 1-64 if specified)
     /// Omit this flag to only generate private-batch artifacts.
     #[arg(short, long, value_parser = parse_proof_count)]
     num_private_batch_proofs: Option<usize>,

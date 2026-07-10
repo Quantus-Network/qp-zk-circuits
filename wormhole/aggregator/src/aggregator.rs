@@ -12,12 +12,15 @@ use plonky2::plonk::{
     circuit_data::{CommonCircuitData, VerifierCircuitData},
     proof::ProofWithPublicInputs,
 };
-use qp_wormhole_inputs::BytesDigest;
+use qp_wormhole_inputs::{public_batch_pi::AGGREGATOR_ADDRESS_LEN, BytesDigest};
 use std::path::{Path, PathBuf};
 
 use std::fs;
 
-use zk_circuits_common::circuit::{C, D, F};
+use zk_circuits_common::{
+    circuit::{C, D, F},
+    utils::try_4_felts_to_bytes,
+};
 
 use crate::public_batch::prover::{PublicBatchInputs, PublicBatchProver};
 use crate::{
@@ -148,6 +151,14 @@ impl ProofBuffer {
     fn take_all(&mut self) -> Vec<Proof> {
         std::mem::take(&mut self.buf)
     }
+
+    /// Clone all currently buffered proofs without clearing the buffer.
+    ///
+    /// Used by the aggregation backends to attempt commit/prove over a copy so
+    /// that a failed aggregation leaves the queued proofs intact (#97067).
+    fn clone_all(&self) -> Vec<Proof> {
+        self.buf.clone()
+    }
 }
 
 // ============================================================================
@@ -219,26 +230,52 @@ impl AggregationBackend for PublicBatchAggregator {
             bail!("there are no private-batch proofs to aggregate");
         }
 
-        // Partial batches are fine: PublicBatchProver::commit pads with the dummy
-        // private-batch proof template (no shuffle - forwarding stays order-preserving
-        // so the chain can attribute each segment to its inner proof).
-        let batch = self.buf.take_all();
+        // Aggregate over a clone of the queue so a failed commit/prove leaves the
+        // queued proofs intact for retry instead of dropping them (#97067).
+        let batch = self.buf.clone_all();
 
-        // Load the public-batch prover
+        // Load the public-batch prover (failures here don't touch the queue).
         let prover = PublicBatchProver::new_from_binaries_dir(&self.bins_dir)
             .context("failed to load prebuilt public-batch prover")?;
 
-        let prover = prover
+        // Partial batches are fine: PublicBatchProver::commit pads with the dummy
+        // private-batch proof template (no shuffle - forwarding stays order-preserving
+        // so the chain can attribute each segment to its inner proof).
+        let result = prover
             .commit(PublicBatchInputs {
                 proofs: batch,
                 aggregator_address: self.aggregator_address,
             })
-            .context("failed to commit private-batch proofs to public-batch prover")?;
+            .context("failed to commit private-batch proofs to public-batch prover")
+            .and_then(|committed| committed.prove().context("public-batch proving failed"));
 
-        prover.prove().context("public-batch proving failed")
+        if result.is_ok() {
+            // Only drain the queue once aggregation fully succeeds.
+            let _ = self.buf.take_all();
+        }
+        result
     }
 
     fn verify(&self, proof: Proof) -> Result<()> {
+        // Bind the proof's exposed aggregator address to the configured one before
+        // accepting it: the public-batch circuit exposes the address as a public
+        // input, so without this check a valid proof produced under a different
+        // aggregator identity would be accepted here (#96981).
+        ensure_proof_public_input_len(
+            &proof,
+            self.verifier.common.num_public_inputs,
+            "public-batch proof",
+        )?;
+        let proof_aggregator_address =
+            try_4_felts_to_bytes(&proof.public_inputs[..AGGREGATOR_ADDRESS_LEN])
+                .context("failed to parse public-batch aggregator address from proof")?;
+        if proof_aggregator_address != self.aggregator_address {
+            bail!(
+                "public-batch proof aggregator address {:?} does not match configured aggregator address {:?}",
+                proof_aggregator_address,
+                self.aggregator_address
+            );
+        }
         self.verifier
             .verify(proof)
             .map_err(|e| anyhow!("public-batch aggregated proof verification failed: {}", e))
@@ -309,11 +346,14 @@ impl AggregationBackend for PrivateBatchAggregator {
             bail!("there are no leaf proofs to aggregate");
         }
 
+        // Aggregate over a clone of the queue so a failed preflight/commit/prove
+        // leaves the queued proofs intact for retry instead of dropping them (#97067).
+        let proofs = self.buf.clone_all();
+
         // Private-batch prover commit does padding/shuffling/dummy-nullifier-preimage handling,
         // so we can pass any non-empty batch. The wrapper's same-block / same-asset invariants are
         // intentional protocol rules and remain enforced in-circuit; this preflight only rejects
         // malformed or dummy-padding-incompatible inputs earlier.
-        let proofs = self.buf.take_all();
         if proofs.len() < self.batch_size() {
             for (idx, proof) in proofs.iter().enumerate() {
                 let asset_id = leaf_proof_asset_id(proof)?;
@@ -328,11 +368,16 @@ impl AggregationBackend for PrivateBatchAggregator {
         }
 
         let prover = self.build_prover()?;
-        let prover = prover
+        let result = prover
             .commit(proofs)
-            .context("failed to commit leaf proofs to private-batch aggregation prover")?;
+            .context("failed to commit leaf proofs to private-batch aggregation prover")
+            .and_then(|committed| committed.prove().context("private-batch proving failed"));
 
-        prover.prove().context("private-batch proving failed")
+        if result.is_ok() {
+            // Only drain the queue once aggregation fully succeeds.
+            let _ = self.buf.take_all();
+        }
+        result
     }
 
     fn verify(&self, proof: Proof) -> Result<()> {

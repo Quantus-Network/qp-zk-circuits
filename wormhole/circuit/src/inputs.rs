@@ -17,7 +17,7 @@ use qp_wormhole_inputs::{
     ASSET_ID_INDEX, BLOCK_HASH_END_INDEX, BLOCK_HASH_START_INDEX, BLOCK_NUMBER_INDEX,
     EXIT_ACCOUNT_1_END_INDEX, EXIT_ACCOUNT_1_START_INDEX, EXIT_ACCOUNT_2_END_INDEX,
     EXIT_ACCOUNT_2_START_INDEX, NULLIFIER_END_INDEX, NULLIFIER_START_INDEX, OUTPUT_AMOUNT_1_INDEX,
-    OUTPUT_AMOUNT_2_INDEX, PUBLIC_INPUTS_FELTS_LEN, VOLUME_FEE_BPS_INDEX,
+    OUTPUT_AMOUNT_2_INDEX, PUBLIC_INPUTS_FELTS_LEN, VOLUME_FEE_BPS_INDEX, validate_proof_count,
 };
 
 /// Inputs required to commit to the wormhole circuit.
@@ -204,10 +204,7 @@ impl ParsePrivateBatchPublicInputs for PrivateBatchPublicInputs {
             })?;
 
         let n_leaf = payload_len / PUBLIC_INPUTS_FELTS_LEN;
-        // This invariant is enforced because an aggregator should never legitimately
-        // produce a PI vector with zero leaf proofs. See audit finding M-3: "Public-batch
-        // has no dummy bypass; all-dummy private-batch batches break aggregation".
-        anyhow::ensure!(n_leaf > 0, "AggregatedPI: need at least one leaf proof");
+        validate_proof_count(n_leaf, "AggregatedPI: n_leaf")?;
 
         // Helper to read a u32 from a felt
         let read_u32 = |f: GoldilocksField| -> anyhow::Result<u32> {
@@ -324,8 +321,8 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(
-            err_msg.contains("at least one leaf"),
-            "Expected 'at least one leaf' error, got: {}",
+            err_msg.contains("must be > 0"),
+            "Expected a 'must be > 0' error, got: {}",
             err_msg
         );
     }

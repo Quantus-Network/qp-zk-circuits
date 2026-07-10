@@ -1,4 +1,6 @@
-use alloc::{string::String, vec::Vec};
+use alloc::{format, string::String, vec::Vec};
+use core::fmt;
+use core::marker::PhantomData;
 use plonky2::{
     field::goldilocks_field::GoldilocksField,
     iop::witness::PartialWitness,
@@ -7,6 +9,7 @@ use plonky2::{
         config::PoseidonGoldilocksConfig,
     },
 };
+use serde::de::{self, Deserializer, Error, SeqAccess, Visitor};
 use serde::Deserialize;
 
 // Plonky2 setup parameters.
@@ -14,12 +17,141 @@ pub const D: usize = 2; // D=2 provides 100-bits of security
 pub type C = PoseidonGoldilocksConfig;
 pub type F = GoldilocksField; // Goldilocks field
 
+/// Maximum number of hex-encoded storage-proof nodes accepted in [`TransferProofJson`].
+pub const MAX_STORAGE_PROOF_NODES: usize = 1024;
+/// Maximum number of Merkle indices accepted in [`TransferProofJson`].
+pub const MAX_MERKLE_INDICES: usize = 1024;
+/// Maximum byte length of the hex `state_root` string in [`TransferProofJson`].
+pub const MAX_STATE_ROOT_HEX_LEN: usize = 64;
+
 #[derive(Debug, Deserialize)]
 pub struct TransferProofJson {
     pub transfer_count: u64,
-    pub state_root: String,         // hex (no 0x)
+    #[serde(deserialize_with = "deserialize_bounded_state_root")]
+    pub state_root: String, // hex (no 0x)
+    #[serde(deserialize_with = "deserialize_bounded_storage_proof")]
     pub storage_proof: Vec<String>, // hex-encoded nodes
+    #[serde(deserialize_with = "deserialize_bounded_indices")]
     pub indices: Vec<usize>,
+}
+
+impl TransferProofJson {
+    /// Validate the decoded transfer proof bounds.
+    ///
+    /// `#[serde(deserialize_with)]` already caps each field at deserialization time;
+    /// this is a convenience check for callers that construct the struct directly.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.state_root.len() > MAX_STATE_ROOT_HEX_LEN {
+            return Err(format!(
+                "state_root exceeds {} bytes",
+                MAX_STATE_ROOT_HEX_LEN
+            ));
+        }
+        if self.storage_proof.len() > MAX_STORAGE_PROOF_NODES {
+            return Err(format!(
+                "storage_proof exceeds {} nodes",
+                MAX_STORAGE_PROOF_NODES
+            ));
+        }
+        if self.indices.len() > MAX_MERKLE_INDICES {
+            return Err(format!("indices exceeds {} entries", MAX_MERKLE_INDICES));
+        }
+        Ok(())
+    }
+}
+
+/// Deserialize a hex `state_root` string, rejecting inputs longer than
+/// [`MAX_STATE_ROOT_HEX_LEN`] before allocating the owned `String`.
+fn deserialize_bounded_state_root<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct StateRootVisitor;
+    impl<'de> Visitor<'de> for StateRootVisitor {
+        type Value = String;
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "a hex state_root string of at most {} bytes", MAX_STATE_ROOT_HEX_LEN)
+        }
+        fn visit_str<E: Error>(self, v: &str) -> Result<String, E> {
+            if v.len() > MAX_STATE_ROOT_HEX_LEN {
+                return Err(E::custom(format!(
+                    "state_root exceeds {} bytes",
+                    MAX_STATE_ROOT_HEX_LEN
+                )));
+            }
+            Ok(String::from(v))
+        }
+        fn visit_string<E: Error>(self, v: String) -> Result<String, E> {
+            if v.len() > MAX_STATE_ROOT_HEX_LEN {
+                return Err(E::custom(format!(
+                    "state_root exceeds {} bytes",
+                    MAX_STATE_ROOT_HEX_LEN
+                )));
+            }
+            Ok(v)
+        }
+    }
+    deserializer.deserialize_str(StateRootVisitor)
+}
+
+/// Deserialize a `Vec<T>` from a sequence, stopping and failing once the element
+/// count exceeds `max` so oversized inputs are rejected before the full allocation.
+fn deserialize_bounded_vec<'de, T, D>(
+    deserializer: D,
+    max: usize,
+    label: &'static str,
+) -> Result<Vec<T>, D::Error>
+where
+    T: de::Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    struct BoundedSeqVisitor<T> {
+        max: usize,
+        label: &'static str,
+        _phantom: PhantomData<T>,
+    }
+    impl<'de, T: de::Deserialize<'de>> Visitor<'de> for BoundedSeqVisitor<T> {
+        type Value = Vec<T>;
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "a sequence of at most {} items ({})", self.max, self.label)
+        }
+        fn visit_seq<A>(self, mut seq: A) -> Result<Vec<T>, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let cap = seq.size_hint().unwrap_or(0).min(self.max);
+            let mut out = Vec::with_capacity(cap);
+            while let Some(item) = seq.next_element()? {
+                if out.len() >= self.max {
+                    return Err(A::Error::custom(format!(
+                        "{} exceeds {} items",
+                        self.label, self.max
+                    )));
+                }
+                out.push(item);
+            }
+            Ok(out)
+        }
+    }
+    deserializer.deserialize_seq(BoundedSeqVisitor {
+        max,
+        label,
+        _phantom: PhantomData,
+    })
+}
+
+fn deserialize_bounded_storage_proof<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_bounded_vec(deserializer, MAX_STORAGE_PROOF_NODES, "storage_proof")
+}
+
+fn deserialize_bounded_indices<'de, D>(deserializer: D) -> Result<Vec<usize>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_bounded_vec(deserializer, MAX_MERKLE_INDICES, "indices")
 }
 
 /// Circuit config for leaf wormhole proofs (non-ZK).

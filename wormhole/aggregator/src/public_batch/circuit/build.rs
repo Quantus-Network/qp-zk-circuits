@@ -14,6 +14,7 @@ use plonky2::plonk::circuit_data::{
 use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
 
 use zk_circuits_common::circuit::{wormhole_public_batch_circuit_config, C, D, F};
+use qp_wormhole_inputs::validate_proof_count;
 
 use crate::common::utils::private_batch_num_leaves_from_padded_pi_len;
 use crate::public_batch::circuit::circuit_logic::PublicBatchCircuit;
@@ -25,6 +26,8 @@ pub fn generate_public_batch_circuit_binaries<P: AsRef<Path>>(
     include_prover: bool,
 ) -> Result<()> {
     let output_dir = output_dir.as_ref();
+    // Bound the per-layer count before any circuit construction (#97021, #97070).
+    validate_proof_count(num_private_batch_proofs, "num_private_batch_proofs")?;
     create_dir_all(output_dir)
         .with_context(|| format!("Failed to create output dir {}", output_dir.display()))?;
 

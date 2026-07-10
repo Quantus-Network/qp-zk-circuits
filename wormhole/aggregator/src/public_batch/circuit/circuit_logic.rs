@@ -60,7 +60,11 @@ impl PublicBatchCircuit {
 
         let expected_l0_pi_len = pbc::private_batch_pi_len(private_batch_num_leaves);
 
-        debug_assert_eq!(
+        // Runtime (not debug-only) shape check: the public-batch circuit indexes
+        // fixed offsets derived from `private_batch_num_leaves` into each inner
+        // proof's public inputs, so a mismatch must fail loudly instead of going
+        // out of bounds in release builds (#97071).
+        assert_eq!(
             private_batch_common.num_public_inputs,
             expected_l0_pi_len,
             "private_batch_common.num_public_inputs ({}) != expected private_batch PI len ({}) for private_batch_num_leaves={}",
@@ -170,7 +174,9 @@ fn build_public_batch_constraints(
         .map(|p| p.public_inputs.as_slice())
         .collect();
 
-    debug_assert!(private_batch_pi_targets
+    // Runtime shape check: each inner proof's PI slice must match the private-batch
+    // PI length derived from `private_batch_num_leaves` before fixed-offset indexing.
+    assert!(private_batch_pi_targets
         .iter()
         .all(|pis| pis.len() == private_batch_pi_len));
 

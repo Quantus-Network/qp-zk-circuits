@@ -3,11 +3,12 @@
 use circuit_builder::generate_all_circuit_binaries;
 use plonky2::field::types::Field;
 use plonky2::plonk::proof::ProofWithPublicInputs;
-use qp_wormhole_inputs::PublicCircuitInputs;
+use qp_wormhole_inputs::{BytesDigest, PublicCircuitInputs};
 use std::path::Path;
 use std::sync::Once;
 use test_helpers::TestInputs;
-use wormhole_aggregator::aggregator::{AggregationBackend, PrivateBatchAggregator};
+use wormhole_aggregator::aggregator::{AggregationBackend, PrivateBatchAggregator, PublicBatchAggregator};
+use wormhole_aggregator::private_batch::prover::PrivateBatchProver;
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::circuit::{C, D, F};
@@ -15,8 +16,10 @@ use zk_circuits_common::circuit::{C, D, F};
 use crate::aggregator::circuit_config;
 
 const TEST_OUTPUT_DIR: &str = "tmp-test-bins";
+const PUBLIC_TEST_OUTPUT_DIR: &str = "tmp-test-public-bins";
 
 static TEST_INIT: Once = Once::new();
+static PUBLIC_TEST_INIT: Once = Once::new();
 
 extern "C" fn cleanup_test_output_dir() {
     // Best-effort cleanup (don’t panic during shutdown)
@@ -48,6 +51,21 @@ fn make_leaf_proof(inputs: &CircuitInputs) -> ProofWithPublicInputs<F, C, D> {
 fn make_aggregator() -> PrivateBatchAggregator {
     setup_test_binaries();
     PrivateBatchAggregator::new(TEST_OUTPUT_DIR).unwrap()
+}
+
+fn make_private_batch_prover() -> PrivateBatchProver {
+    setup_test_binaries();
+    PrivateBatchProver::new_from_binaries_dir(Path::new(TEST_OUTPUT_DIR))
+        .expect("Failed to load private-batch prover from generated binaries")
+}
+
+fn setup_public_test_binaries() {
+    PUBLIC_TEST_INIT.call_once(|| {
+        // Smallest public-batch circuit (1 inner private-batch of 1 leaf) to keep
+        // artifact generation fast.
+        generate_all_circuit_binaries(PUBLIC_TEST_OUTPUT_DIR, true, 1, Some(1))
+            .expect("Failed to generate public-batch test circuit binaries");
+    });
 }
 
 #[test]
@@ -258,4 +276,80 @@ fn aggregate_proofs_from_separate_prover_instances_hex_serialized() {
         .expect("Aggregated proof verification failed");
 
     println!("=== Test passed ===");
+}
+
+#[test]
+fn private_batch_commit_rejects_malformed_full_batch_at_api_boundary() {
+    setup_test_binaries();
+    // A full 2-proof batch where one proof has the wrong public-input length must
+    // be rejected at the API boundary instead of panicking in witness assignment.
+    // Previously the length check ran only when dummy padding was needed (#97073).
+    let mut malformed = make_leaf_proof(&CircuitInputs::test_inputs_0());
+    malformed.public_inputs.pop();
+    let valid = make_leaf_proof(&CircuitInputs::test_inputs_0());
+
+    let prover = make_private_batch_prover();
+    let err = prover.commit(vec![malformed, valid]).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("leaf proof public input length mismatch"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn public_batch_verify_rejects_proof_bound_to_a_different_aggregator_address() {
+    setup_public_test_binaries();
+    let dir = Path::new(PUBLIC_TEST_OUTPUT_DIR);
+
+    // Build a real private-batch proof to feed the public-batch aggregator.
+    let leaf = {
+        let prover = WormholeProver::new_from_files(
+            &dir.join("prover.bin"),
+            &dir.join("common.bin"),
+        )
+        .expect("load leaf prover");
+        prover
+            .commit(&CircuitInputs::test_inputs_0())
+            .unwrap()
+            .prove()
+            .unwrap()
+    };
+    let private_batch_proof = {
+        let mut agg = PrivateBatchAggregator::new(dir).expect("private aggregator");
+        agg.push_proof(leaf).unwrap();
+        agg.aggregate().expect("private aggregate")
+    };
+
+    let address_a = BytesDigest::try_from([1u8; 32]).expect("valid address a");
+    let address_b = BytesDigest::try_from([2u8; 32]).expect("valid address b");
+    assert_ne!(address_a, address_b, "sanity: addresses must differ");
+
+    // Produce a public-batch proof bound to address_a (this also exercises the
+    // dummy-template verification + count/shape validation in new_from_bytes).
+    let public_batch_proof = {
+        let mut agg =
+            PublicBatchAggregator::new(dir, address_a).expect("public aggregator a");
+        agg.push_proof(private_batch_proof.clone()).unwrap();
+        agg.aggregate().expect("public aggregate")
+    };
+
+    // The producing backend accepts its own proof.
+    PublicBatchAggregator::new(dir, address_a)
+        .expect("public aggregator a")
+        .verify(public_batch_proof.clone())
+        .expect("same-address proof must verify");
+
+    // A backend configured for a different aggregator address must reject it (#96981).
+    let err = PublicBatchAggregator::new(dir, address_b)
+        .expect("public aggregator b")
+        .verify(public_batch_proof)
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("does not match configured aggregator address"),
+        "got: {err}"
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
 }

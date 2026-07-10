@@ -9,6 +9,7 @@ use plonky2::{
     },
     util::serialization::DefaultGateSerializer,
 };
+use qp_wormhole_inputs::validate_proof_count;
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use zk_circuits_common::circuit::{
     wormhole_leaf_circuit_config, wormhole_private_batch_circuit_config,
@@ -218,12 +219,7 @@ pub fn private_batch_num_leaves_from_padded_pi_len(pi_len: usize) -> Result<usiz
     }
 
     let num_leaves = payload_len / LEAF_PI_LEN;
-    if num_leaves == 0 {
-        return Err(anyhow!(
-            "private-batch aggregated public input length {} encodes zero leaves",
-            pi_len
-        ));
-    }
+    validate_proof_count(num_leaves, "private-batch num_leaves")?;
 
     Ok(num_leaves)
 }

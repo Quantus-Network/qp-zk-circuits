@@ -21,6 +21,13 @@ use crate::circuit::F;
 
 const BIT_32_LIMB_MASK: u64 = 0xFFFF_FFFF;
 
+/// Maximum input length accepted by the public bytes<->felts serialization helpers.
+/// Bounds heap allocation for untrusted caller-supplied data so a single oversized
+/// request cannot exhaust the process (audit #97066).
+pub const MAX_SERIALIZED_BYTES: usize = 1 << 20; // 1 MiB
+/// Maximum felt count accepted by [`felts_to_bytes`].
+pub const MAX_SERIALIZED_FELTS: usize = 1 << 18; // 256k felts (~1 MiB at 4 bytes/felt)
+
 // ============================================================================
 // Internal helpers for Plonky2 GoldilocksField conversion
 // ============================================================================
@@ -110,24 +117,34 @@ pub fn try_felts_to_u64(felts: [F; FELTS_PER_U64]) -> Result<u64, String> {
 ///
 /// Uses 4 bytes per field element with a terminator marker (0x01) appended,
 /// ensuring different-length inputs always produce different field element sequences.
-pub fn bytes_to_felts(input: &[u8]) -> Vec<F> {
-    qp_poseidon_core::serialization::bytes_to_u64s(input)
+///
+/// Returns an error if `input.len()` exceeds [`MAX_SERIALIZED_BYTES`].
+pub fn bytes_to_felts(input: &[u8]) -> Result<Vec<F>, &'static str> {
+    if input.len() > MAX_SERIALIZED_BYTES {
+        return Err("bytes_to_felts: input exceeds maximum serialized length");
+    }
+    Ok(qp_poseidon_core::serialization::bytes_to_u64s(input)
         .into_iter()
         .map(from_u64)
-        .collect()
+        .collect())
 }
 
 /// Convert field elements back to variable-length bytes.
 ///
 /// Inverse of `bytes_to_felts`. Returns an error if the input doesn't have
-/// a valid terminator marker.
+/// a valid terminator marker or exceeds [`MAX_SERIALIZED_FELTS`].
 pub fn felts_to_bytes(input: &[F]) -> Result<Vec<u8>, &'static str> {
+    if input.len() > MAX_SERIALIZED_FELTS {
+        return Err("felts_to_bytes: input exceeds maximum serialized length");
+    }
     let u64s: Vec<u64> = input.iter().map(|f| to_u64(*f)).collect();
     qp_poseidon_core::serialization::u64s_to_bytes(&u64s)
 }
 
 /// Convert a string to field elements.
-pub fn string_to_felts(input: &str) -> Vec<F> {
+///
+/// Returns an error if the UTF-8 byte length exceeds [`MAX_SERIALIZED_BYTES`].
+pub fn string_to_felts(input: &str) -> Result<Vec<F>, &'static str> {
     bytes_to_felts(input.as_bytes())
 }
 
@@ -142,11 +159,16 @@ pub fn string_to_felts(input: &str) -> Vec<F> {
 ///
 /// Use this for trie node hashing where collision resistance is provided by the
 /// trie structure rather than the encoding.
-pub fn bytes_to_felts_compact(input: &[u8]) -> Vec<F> {
-    qp_poseidon_core::serialization::bytes_to_u64s_compact(input)
+///
+/// Returns an error if `input.len()` exceeds [`MAX_SERIALIZED_BYTES`].
+pub fn bytes_to_felts_compact(input: &[u8]) -> Result<Vec<F>, &'static str> {
+    if input.len() > MAX_SERIALIZED_BYTES {
+        return Err("bytes_to_felts_compact: input exceeds maximum serialized length");
+    }
+    Ok(qp_poseidon_core::serialization::bytes_to_u64s_compact(input)
         .into_iter()
         .map(from_u64)
-        .collect()
+        .collect())
 }
 
 // ============================================================================
@@ -222,7 +244,7 @@ mod tests {
         ];
 
         for original in test_cases {
-            let felts = bytes_to_felts(&original);
+            let felts = bytes_to_felts(&original).unwrap();
             let reconstructed = felts_to_bytes(&felts).unwrap();
             assert_eq!(original, reconstructed);
         }

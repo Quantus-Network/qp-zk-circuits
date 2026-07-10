@@ -14,6 +14,7 @@ use std::{
     path::Path,
 };
 use zk_circuits_common::circuit::{wormhole_private_batch_circuit_config, C, D, F};
+use qp_wormhole_inputs::validate_proof_count;
 
 use crate::private_batch::circuit::circuit_logic::PrivateBatchCircuit;
 
@@ -24,6 +25,8 @@ pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
     include_prover: bool,
 ) -> Result<()> {
     let output_path = output_dir.as_ref();
+    // Bound the per-layer count before any circuit construction (#97021, #97070).
+    validate_proof_count(num_leaf_proofs, "num_leaf_proofs")?;
     create_dir_all(output_path)?;
 
     println!(

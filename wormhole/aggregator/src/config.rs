@@ -1,17 +1,18 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
+pub use qp_wormhole_inputs::validate_proof_count;
 use serde::{Deserialize, Serialize};
 use std::fs::write;
 use std::path::Path;
 
-/// Maximum allowed proof count to prevent excessive memory/CPU consumption.
-/// This is a reasonable upper bound - aggregating more than 1024 proofs per layer
-/// would result in impractically large circuits.
+/// Maximum number of proofs aggregated per layer.
 ///
-/// In practice, even ~64 proofs is near the practical limit on commodity hardware
-/// (current benches test up to 49). The 1024 cap is "obviously safe" headroom.
-/// Any future need to raise this limit would require a coordinated artifact
-/// regeneration across all deployments.
-pub const MAX_PROOF_COUNT: usize = 1024;
+/// Re-exported from `qp_wormhole_inputs` (the single source of truth) so every
+/// build/parse entry point applies the same bound. Lowered from the previous
+/// 1024 headroom to the documented practical per-layer limit (benches currently
+/// exercise up to 49 proofs): accepting the old 1024 cap let a single valid
+/// artifact-generation request drive circuit construction whose work scales
+/// quadratically/multiplicatively with the count (audit #97021).
+pub use qp_wormhole_inputs::MAX_PROOF_COUNT;
 
 /// Configuration stored alongside circuit binaries (config.json).
 /// This struct is used by both circuit-builder (to save config) and
@@ -44,29 +45,11 @@ impl CircuitBinsConfig {
     /// Validate the config values.
     ///
     /// # Errors
-    /// Returns an error if proof counts are zero or exceed reasonable bounds.
+    /// Returns an error if proof counts are zero or exceed `MAX_PROOF_COUNT`.
     pub fn validate(&self) -> Result<()> {
-        if self.num_leaf_proofs == 0 {
-            bail!("num_leaf_proofs must be > 0");
-        }
-        if self.num_leaf_proofs > MAX_PROOF_COUNT {
-            bail!(
-                "num_leaf_proofs ({}) exceeds maximum allowed ({})",
-                self.num_leaf_proofs,
-                MAX_PROOF_COUNT
-            );
-        }
+        validate_proof_count(self.num_leaf_proofs, "num_leaf_proofs")?;
         if let Some(n) = self.num_private_batch_proofs {
-            if n == 0 {
-                bail!("num_private_batch_proofs must be > 0 when specified");
-            }
-            if n > MAX_PROOF_COUNT {
-                bail!(
-                    "num_private_batch_proofs ({}) exceeds maximum allowed ({})",
-                    n,
-                    MAX_PROOF_COUNT
-                );
-            }
+            validate_proof_count(n, "num_private_batch_proofs")?;
         }
         Ok(())
     }
