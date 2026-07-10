@@ -70,7 +70,11 @@ where
     impl<'de> Visitor<'de> for StateRootVisitor {
         type Value = String;
         fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(f, "a hex state_root string of at most {} bytes", MAX_STATE_ROOT_HEX_LEN)
+            write!(
+                f,
+                "a hex state_root string of at most {} bytes",
+                MAX_STATE_ROOT_HEX_LEN
+            )
         }
         fn visit_str<E: Error>(self, v: &str) -> Result<String, E> {
             if v.len() > MAX_STATE_ROOT_HEX_LEN {
@@ -113,7 +117,11 @@ where
     impl<'de, T: de::Deserialize<'de>> Visitor<'de> for BoundedSeqVisitor<T> {
         type Value = Vec<T>;
         fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(f, "a sequence of at most {} items ({})", self.max, self.label)
+            write!(
+                f,
+                "a sequence of at most {} items ({})",
+                self.max, self.label
+            )
         }
         fn visit_seq<A>(self, mut seq: A) -> Result<Vec<T>, A::Error>
         where

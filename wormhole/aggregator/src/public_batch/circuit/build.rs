@@ -13,8 +13,8 @@ use plonky2::plonk::circuit_data::{
 };
 use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
 
-use zk_circuits_common::circuit::{wormhole_public_batch_circuit_config, C, D, F};
 use qp_wormhole_inputs::validate_proof_count;
+use zk_circuits_common::circuit::{wormhole_public_batch_circuit_config, C, D, F};
 
 use crate::common::utils::private_batch_num_leaves_from_padded_pi_len;
 use crate::public_batch::circuit::circuit_logic::PublicBatchCircuit;

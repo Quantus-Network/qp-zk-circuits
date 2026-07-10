@@ -9,12 +9,12 @@ use plonky2::{
     plonk::circuit_data::{CommonCircuitData, VerifierOnlyCircuitData},
     util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer},
 };
+use qp_wormhole_inputs::validate_proof_count;
 use std::{
     fs::{create_dir_all, write},
     path::Path,
 };
 use zk_circuits_common::circuit::{wormhole_private_batch_circuit_config, C, D, F};
-use qp_wormhole_inputs::validate_proof_count;
 
 use crate::private_batch::circuit::circuit_logic::PrivateBatchCircuit;
 

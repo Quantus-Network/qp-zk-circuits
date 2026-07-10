@@ -10,14 +10,15 @@ use zk_circuits_common::utils::{try_4_felts_to_bytes, BytesDigest};
 use zk_circuits_common::zk_merkle::SIBLINGS_PER_LEVEL;
 
 // Import public input types and constants from wormhole_inputs (single source of truth)
+use qp_wormhole_inputs::{
+    validate_proof_count, ASSET_ID_INDEX, BLOCK_HASH_END_INDEX, BLOCK_HASH_START_INDEX,
+    BLOCK_NUMBER_INDEX, EXIT_ACCOUNT_1_END_INDEX, EXIT_ACCOUNT_1_START_INDEX,
+    EXIT_ACCOUNT_2_END_INDEX, EXIT_ACCOUNT_2_START_INDEX, NULLIFIER_END_INDEX,
+    NULLIFIER_START_INDEX, OUTPUT_AMOUNT_1_INDEX, OUTPUT_AMOUNT_2_INDEX, PUBLIC_INPUTS_FELTS_LEN,
+    VOLUME_FEE_BPS_INDEX,
+};
 pub use qp_wormhole_inputs::{
     BlockData, PrivateBatchPublicInputs, PublicCircuitInputs, PublicInputsByAccount,
-};
-use qp_wormhole_inputs::{
-    ASSET_ID_INDEX, BLOCK_HASH_END_INDEX, BLOCK_HASH_START_INDEX, BLOCK_NUMBER_INDEX,
-    EXIT_ACCOUNT_1_END_INDEX, EXIT_ACCOUNT_1_START_INDEX, EXIT_ACCOUNT_2_END_INDEX,
-    EXIT_ACCOUNT_2_START_INDEX, NULLIFIER_END_INDEX, NULLIFIER_START_INDEX, OUTPUT_AMOUNT_1_INDEX,
-    OUTPUT_AMOUNT_2_INDEX, PUBLIC_INPUTS_FELTS_LEN, VOLUME_FEE_BPS_INDEX, validate_proof_count,
 };
 
 /// Inputs required to commit to the wormhole circuit.

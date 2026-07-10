@@ -7,7 +7,9 @@ use qp_wormhole_inputs::{BytesDigest, PublicCircuitInputs};
 use std::path::Path;
 use std::sync::Once;
 use test_helpers::TestInputs;
-use wormhole_aggregator::aggregator::{AggregationBackend, PrivateBatchAggregator, PublicBatchAggregator};
+use wormhole_aggregator::aggregator::{
+    AggregationBackend, PrivateBatchAggregator, PublicBatchAggregator,
+};
 use wormhole_aggregator::private_batch::prover::PrivateBatchProver;
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_prover::WormholeProver;
@@ -304,11 +306,9 @@ fn public_batch_verify_rejects_proof_bound_to_a_different_aggregator_address() {
 
     // Build a real private-batch proof to feed the public-batch aggregator.
     let leaf = {
-        let prover = WormholeProver::new_from_files(
-            &dir.join("prover.bin"),
-            &dir.join("common.bin"),
-        )
-        .expect("load leaf prover");
+        let prover =
+            WormholeProver::new_from_files(&dir.join("prover.bin"), &dir.join("common.bin"))
+                .expect("load leaf prover");
         prover
             .commit(&CircuitInputs::test_inputs_0())
             .unwrap()
@@ -328,8 +328,7 @@ fn public_batch_verify_rejects_proof_bound_to_a_different_aggregator_address() {
     // Produce a public-batch proof bound to address_a (this also exercises the
     // dummy-template verification + count/shape validation in new_from_bytes).
     let public_batch_proof = {
-        let mut agg =
-            PublicBatchAggregator::new(dir, address_a).expect("public aggregator a");
+        let mut agg = PublicBatchAggregator::new(dir, address_a).expect("public aggregator a");
         agg.push_proof(private_batch_proof.clone()).unwrap();
         agg.aggregate().expect("public aggregate")
     };

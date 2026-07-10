@@ -165,10 +165,12 @@ pub fn bytes_to_felts_compact(input: &[u8]) -> Result<Vec<F>, &'static str> {
     if input.len() > MAX_SERIALIZED_BYTES {
         return Err("bytes_to_felts_compact: input exceeds maximum serialized length");
     }
-    Ok(qp_poseidon_core::serialization::bytes_to_u64s_compact(input)
-        .into_iter()
-        .map(from_u64)
-        .collect())
+    Ok(
+        qp_poseidon_core::serialization::bytes_to_u64s_compact(input)
+            .into_iter()
+            .map(from_u64)
+            .collect(),
+    )
 }
 
 // ============================================================================

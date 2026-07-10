@@ -24,11 +24,11 @@ use rand::seq::SliceRandom;
 #[cfg(feature = "std")]
 use std::{fs, path::Path};
 
+use qp_wormhole_inputs::validate_proof_count;
 use zk_circuits_common::{
     circuit::{wormhole_private_batch_circuit_config, C, D, F},
     utils::bytes_to_digest,
 };
-use qp_wormhole_inputs::validate_proof_count;
 
 use crate::{
     common::utils::{
@@ -259,8 +259,8 @@ impl PrivateBatchProver {
         for (idx, proof) in proofs.iter().enumerate() {
             ensure_proof_public_input_len(proof, LEAF_PI_LEN, "leaf proof")?;
             if num_dummies_needed > 0 {
-                let real_asset_id = leaf_proof_asset_id(proof)
-                    .map_err(|e| anyhow!("leaf proof {}: {}", idx, e))?;
+                let real_asset_id =
+                    leaf_proof_asset_id(proof).map_err(|e| anyhow!("leaf proof {}: {}", idx, e))?;
                 if real_asset_id != 0 {
                     bail!(
                         "real proof {} has asset_id={}, but dummy proofs use asset_id=0. \

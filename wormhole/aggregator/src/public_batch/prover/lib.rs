@@ -4,6 +4,7 @@
 //! verifier key substitution attacks.
 
 use anyhow::{anyhow, bail, Context, Result};
+use plonky2::field::types::PrimeField64;
 #[cfg(feature = "std")]
 use plonky2::{
     iop::witness::PartialWitness,
@@ -16,7 +17,6 @@ use plonky2::{
     },
     util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer},
 };
-use plonky2::field::types::PrimeField64;
 use qp_wormhole_inputs::{validate_proof_count, BytesDigest, PrivateBatchPublicInputs};
 
 #[cfg(feature = "std")]
@@ -316,7 +316,12 @@ fn verify_dummy_private_batch_template(
 ) -> Result<()> {
     private_batch_verifier
         .verify(template.clone())
-        .map_err(|e| anyhow!("dummy private-batch proof template failed verification: {}", e))?;
+        .map_err(|e| {
+            anyhow!(
+                "dummy private-batch proof template failed verification: {}",
+                e
+            )
+        })?;
 
     let u64s: Vec<u64> = template
         .public_inputs

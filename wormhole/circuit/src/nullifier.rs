@@ -81,7 +81,8 @@ impl Nullifier {
     pub fn from_preimage(secret: BytesDigest, transfer_count: u64) -> Self {
         let mut preimage = Vec::new();
 
-        let salt = string_to_felts(NULLIFIER_SALT).expect("NULLIFIER_SALT within serialization cap");
+        let salt =
+            string_to_felts(NULLIFIER_SALT).expect("NULLIFIER_SALT within serialization cap");
         let secret_felts = bytes_to_digest(secret);
         let transfer_count_felts = u64_to_felts(transfer_count);
 
@@ -314,7 +315,8 @@ mod tests {
         let err = Nullifier::from_field_elements(&felts)
             .expect_err("oversized transfer_count limb must be rejected");
         assert!(
-            err.to_string().contains("invalid nullifier transfer_count felts"),
+            err.to_string()
+                .contains("invalid nullifier transfer_count felts"),
             "got: {err}"
         );
     }

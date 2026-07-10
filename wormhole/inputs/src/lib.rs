@@ -566,15 +566,14 @@ impl PublicBatchPublicInputs {
         validate_proof_count(num_private_batch_proofs, "num_private_batch_proofs")?;
         validate_proof_count(num_leaf_proofs, "num_leaf_proofs")?;
 
-        let expected_len = try_pi_len(num_private_batch_proofs, num_leaf_proofs).ok_or_else(
-            || {
+        let expected_len =
+            try_pi_len(num_private_batch_proofs, num_leaf_proofs).ok_or_else(|| {
                 anyhow!(
                     "PublicBatchPI: layout length overflow (n_inner={}, n_leaves={})",
                     num_private_batch_proofs,
                     num_leaf_proofs
                 )
-            },
-        )?;
+            })?;
         if pis.len() != expected_len {
             bail!(
                 "PublicBatchPI: expected {} felts (n_inner={}, n_leaves={}), got {}",
@@ -680,11 +679,11 @@ impl PublicBatchPublicInputs {
 
 #[cfg(test)]
 mod tests {
+    use super::public_batch_pi;
     use super::{
         validate_proof_count, PrivateBatchPublicInputs, PublicBatchPublicInputs, MAX_PROOF_COUNT,
         PUBLIC_INPUTS_FELTS_LEN,
     };
-    use super::public_batch_pi;
 
     #[test]
     fn aggregated_public_inputs_reject_malformed_padded_length() {
@@ -715,10 +714,7 @@ mod tests {
         let n = MAX_PROOF_COUNT + 1;
         let pis = vec![0u64; 8 + n * PUBLIC_INPUTS_FELTS_LEN];
         let err = PrivateBatchPublicInputs::try_from_u64_slice(&pis).unwrap_err();
-        assert!(
-            err.to_string().contains("exceeds maximum"),
-            "got: {err}"
-        );
+        assert!(err.to_string().contains("exceeds maximum"), "got: {err}");
     }
 
     #[test]
@@ -728,10 +724,7 @@ mod tests {
         let header = vec![0u64; public_batch_pi::HEADER_LEN];
         let err = PublicBatchPublicInputs::try_from_u64_slice(&header, 1usize << 63, 1)
             .expect_err("oversized inner count must be rejected");
-        assert!(
-            err.to_string().contains("exceeds maximum"),
-            "got: {err}"
-        );
+        assert!(err.to_string().contains("exceeds maximum"), "got: {err}");
     }
 
     #[test]
