@@ -108,7 +108,7 @@ pub fn aggregate_fresh(
         &leaf.verifier_only,
         num_leaf_proofs,
         leaf.dummy_proof.clone(),
-    );
+    )?;
     report.phase_end()?;
 
     report.phase_start("agg_commit")?;
@@ -138,7 +138,7 @@ pub fn build_agg_circuit_only(
         &leaf.verifier_only,
         num_leaf_proofs,
         leaf.dummy_proof.clone(),
-    );
+    )?;
     report.phase_end()?;
     Ok(())
 }

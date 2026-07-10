@@ -24,6 +24,7 @@ use rand::seq::SliceRandom;
 #[cfg(feature = "std")]
 use std::{fs, path::Path};
 
+use qp_wormhole_inputs::validate_proof_count;
 use zk_circuits_common::{
     circuit::{wormhole_private_batch_circuit_config, C, D, F},
     utils::bytes_to_digest,
@@ -36,7 +37,10 @@ use crate::{
     },
     dummy_proof::{generate_random_nullifier_preimage, load_dummy_proof},
     private_batch::{
-        circuit::circuit_logic::{PrivateBatchCircuit, PrivateBatchCircuitTargets},
+        circuit::{
+            circuit_logic::{PrivateBatchCircuit, PrivateBatchCircuitTargets},
+            constants::LEAF_PI_LEN,
+        },
         prover::witness::fill_private_batch_witness,
     },
 };
@@ -54,30 +58,32 @@ impl PrivateBatchProver {
     /// Build a fresh private-batch aggregation prover from circuit definitions.
     ///
     /// In production, prefer `new_from_binaries_dir(...)` to load prebuilt circuits.
+    /// Returns an error when `num_leaf_proofs` is outside the supported range.
     pub fn new(
         agg_circuit_config: CircuitConfig,
         leaf_common: CommonCircuitData<F, D>,
         leaf_verifier_only: &VerifierOnlyCircuitData<C, D>,
         num_leaf_proofs: usize,
         dummy_proof_template: ProofWithPublicInputs<F, C, D>,
-    ) -> Self {
+    ) -> Result<Self> {
+        validate_proof_count(num_leaf_proofs, "num_leaf_proofs")?;
         let agg_circuit = PrivateBatchCircuit::new(
             agg_circuit_config,
             &leaf_common,
             leaf_verifier_only,
             num_leaf_proofs,
-        );
+        )?;
 
         let targets = Some(agg_circuit.targets());
         let circuit_data = agg_circuit.build_prover();
 
-        Self {
+        Ok(Self {
             circuit_data,
             partial_witness: PartialWitness::new(),
             targets,
             num_leaf_proofs,
             dummy_proof_template,
-        }
+        })
     }
 
     /// Create a private-batch aggregation prover from serialized bytes.
@@ -102,6 +108,11 @@ impl PrivateBatchProver {
             _phantom: Default::default(),
         };
 
+        // Validate the batch count at the public byte-loading boundary so a zero
+        // or oversized count returns an error instead of panicking inside the
+        // circuit builder (#97027, #97070).
+        validate_proof_count(num_leaf_proofs, "num_leaf_proofs")?;
+
         // 1) Load and pin leaf verifier data to the canonical Wormhole leaf circuit.
         let leaf_verifier_data =
             load_canonical_leaf_verifier_data(leaf_common_bytes, leaf_verifier_only_bytes)?;
@@ -113,7 +124,7 @@ impl PrivateBatchProver {
             &leaf_verifier_data.common,
             &leaf_verifier_data.verifier_only,
             num_leaf_proofs,
-        );
+        )?;
         let targets = Some(circuit.targets());
         let canonical_agg = circuit.build_verifier();
 
@@ -239,10 +250,28 @@ impl PrivateBatchProver {
             );
         }
 
-        // If we're going to pad with dummy proofs (asset_id = 0), ensure real proofs are asset_id=0.
+        // If we're going to pad with dummy proofs (asset_id = 0), real proofs must
+        // also use asset_id = 0 because the private-batch circuit enforces asset_id
+        // equality across all proofs.
         let num_dummies_needed = self.num_leaf_proofs.saturating_sub(proofs.len());
-        if num_dummies_needed > 0 {
-            assert_dummy_padding_asset_id_compatible(&proofs)?;
+
+        // Validate every real proof's public-input length up front, regardless of
+        // whether padding is needed, so a malformed full batch is rejected at the
+        // API boundary instead of panicking inside witness assignment (#97073).
+        for (idx, proof) in proofs.iter().enumerate() {
+            ensure_proof_public_input_len(proof, LEAF_PI_LEN, "leaf proof")?;
+            if num_dummies_needed > 0 {
+                let real_asset_id =
+                    leaf_proof_asset_id(proof).map_err(|e| anyhow!("leaf proof {}: {}", idx, e))?;
+                if real_asset_id != 0 {
+                    bail!(
+                        "real proof {} has asset_id={}, but dummy proofs use asset_id=0. \
+                         All proofs must have the same asset_id for aggregation when padding is required.",
+                        idx,
+                        real_asset_id
+                    );
+                }
+            }
         }
 
         // Pad with dummy proofs
@@ -283,32 +312,6 @@ impl PrivateBatchProver {
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
-
-/// If we're padding with dummy proofs (`asset_id = 0`), real proofs must also use `asset_id = 0`
-/// because the private-batch circuit enforces asset_id equality across all proofs.
-fn assert_dummy_padding_asset_id_compatible(
-    proofs: &[ProofWithPublicInputs<F, C, D>],
-) -> Result<()> {
-    for (idx, proof) in proofs.iter().enumerate() {
-        ensure_proof_public_input_len(
-            proof,
-            crate::private_batch::circuit::constants::LEAF_PI_LEN,
-            "leaf proof",
-        )?;
-        let real_asset_id = leaf_proof_asset_id(proof)?;
-
-        if real_asset_id != 0 {
-            bail!(
-                "real proof {} has asset_id={}, but dummy proofs use asset_id=0. \
-                 All proofs must have the same asset_id for aggregation when padding is required.",
-                idx,
-                real_asset_id
-            );
-        }
-    }
-
-    Ok(())
-}
 
 /// Generate a dummy nullifier preimage for every slot.
 ///

@@ -12,7 +12,7 @@ extern crate alloc;
 use alloc::fmt;
 use alloc::format;
 use alloc::vec::Vec;
-use anyhow::{bail, Context};
+use anyhow::{anyhow, bail, Context};
 use core::ops::Deref;
 
 /// Number of bytes in a digest (32 bytes = 256 bits)
@@ -36,6 +36,33 @@ pub const PUBLIC_INPUTS_FELTS_LEN: usize = 21;
 /// Guards against a qp-plonky2 upgrade silently weakening
 /// `CircuitConfig::standard_recursion_config()` below this floor.
 pub const MIN_LEAF_SECURITY_BITS: usize = 100;
+
+/// Maximum number of proofs aggregated per layer. Bounds circuit-construction,
+/// proving, and public-input parsing work to the documented practical per-layer
+/// limit (benches currently exercise up to 49 proofs). This is the single source
+/// of truth re-exported by the aggregator config; every externally supplied or
+/// length-derived batch dimension must be validated against it before any
+/// allocation, arithmetic, or circuit construction.
+pub const MAX_PROOF_COUNT: usize = 64;
+
+/// Validate that a per-layer proof count is in the canonical `1..=MAX_PROOF_COUNT` range.
+///
+/// Centralizes the batch-size bound so every build/parse entry point applies the
+/// same cap before doing work that scales with the count.
+pub fn validate_proof_count(count: usize, label: &str) -> anyhow::Result<()> {
+    if count == 0 {
+        bail!("{} must be > 0", label);
+    }
+    if count > MAX_PROOF_COUNT {
+        bail!(
+            "{} ({}) exceeds maximum allowed ({})",
+            label,
+            count,
+            MAX_PROOF_COUNT
+        );
+    }
+    Ok(())
+}
 
 // Index constants for parsing public inputs
 pub const ASSET_ID_INDEX: usize = 0;
@@ -266,6 +293,43 @@ pub mod public_batch_pi {
             + num_private_batch_proofs * exit_slots_per_inner(num_leaf_proofs) * EXIT_SLOT_LEN
             + num_private_batch_proofs * nullifiers_per_inner(num_leaf_proofs) * 4
     }
+
+    /// Checked variant of [`pi_len`]: returns `None` on overflow instead of wrapping.
+    ///
+    /// Use this (plus [`super::validate_proof_count`]) when the dimensions come
+    /// from untrusted input; [`pi_len`] is unchecked and may wrap for huge counts.
+    #[inline]
+    pub const fn try_pi_len(
+        num_private_batch_proofs: usize,
+        num_leaf_proofs: usize,
+    ) -> Option<usize> {
+        let slots = match num_leaf_proofs.checked_mul(2) {
+            Some(s) => s,
+            None => return None,
+        };
+        let nulls = num_leaf_proofs;
+        let exit_felts = match num_private_batch_proofs.checked_mul(slots) {
+            Some(v) => match v.checked_mul(EXIT_SLOT_LEN) {
+                Some(e) => e,
+                None => return None,
+            },
+            None => return None,
+        };
+        let null_felts = match num_private_batch_proofs.checked_mul(nulls) {
+            Some(v) => match v.checked_mul(4) {
+                Some(n) => n,
+                None => return None,
+            },
+            None => return None,
+        };
+        match HEADER_LEN.checked_add(exit_felts) {
+            Some(v) => match v.checked_add(null_felts) {
+                Some(total) => Some(total),
+                None => None,
+            },
+            None => None,
+        }
+    }
 }
 
 /// Helper to convert 4 u64 values (hash output) to a BytesDigest.
@@ -380,14 +444,7 @@ impl PrivateBatchPublicInputs {
 
         // Number of leaf proofs (N) is derived from the padded total PI length.
         let n_leaf = payload_len / PUBLIC_INPUTS_FELTS_LEN;
-
-        if n_leaf == 0 {
-            bail!(
-                "AggregatedPI: n_leaf is 0 (pis.len()={}, PUBLIC_INPUTS_FELTS_LEN={})",
-                pis.len(),
-                PUBLIC_INPUTS_FELTS_LEN
-            );
-        }
+        validate_proof_count(n_leaf, "AggregatedPI: n_leaf")?;
 
         let block_hash = hash_u64s_to_bytes_digest(&pis[3..7])
             .context("AggregatedPI: parsing block_hash from indices 3..7")?;
@@ -502,14 +559,21 @@ impl PublicBatchPublicInputs {
         num_leaf_proofs: usize,
     ) -> anyhow::Result<Self> {
         use public_batch_pi::{
-            exit_slots_per_inner, nullifiers_per_inner, pi_len, AGGREGATOR_ADDRESS_LEN, HEADER_LEN,
+            exit_slots_per_inner, nullifiers_per_inner, try_pi_len, AGGREGATOR_ADDRESS_LEN,
+            HEADER_LEN,
         };
 
-        if num_private_batch_proofs == 0 || num_leaf_proofs == 0 {
-            bail!("PublicBatchPI: num_private_batch_proofs and num_leaf_proofs must be > 0");
-        }
+        validate_proof_count(num_private_batch_proofs, "num_private_batch_proofs")?;
+        validate_proof_count(num_leaf_proofs, "num_leaf_proofs")?;
 
-        let expected_len = pi_len(num_private_batch_proofs, num_leaf_proofs);
+        let expected_len =
+            try_pi_len(num_private_batch_proofs, num_leaf_proofs).ok_or_else(|| {
+                anyhow!(
+                    "PublicBatchPI: layout length overflow (n_inner={}, n_leaves={})",
+                    num_private_batch_proofs,
+                    num_leaf_proofs
+                )
+            })?;
         if pis.len() != expected_len {
             bail!(
                 "PublicBatchPI: expected {} felts (n_inner={}, n_leaves={}), got {}",
@@ -522,7 +586,12 @@ impl PublicBatchPublicInputs {
 
         let slots_per_inner = exit_slots_per_inner(num_leaf_proofs);
         let nulls_per_inner = nullifiers_per_inner(num_leaf_proofs);
-        let total_exit_slots_expected = (num_private_batch_proofs * slots_per_inner) as u32;
+        let total_exit_slots_expected = u32::try_from(
+            num_private_batch_proofs
+                .checked_mul(slots_per_inner)
+                .ok_or_else(|| anyhow!("PublicBatchPI: exit slot count overflow"))?,
+        )
+        .context("PublicBatchPI: total_exit_slots exceeds u32")?;
 
         let aggregator_address = hash_u64s_to_bytes_digest(&pis[0..AGGREGATOR_ADDRESS_LEN])
             .context("PublicBatchPI: parsing aggregator_address")?;
@@ -557,7 +626,9 @@ impl PublicBatchPublicInputs {
         };
 
         let mut cursor = HEADER_LEN;
-        let total_slots = num_private_batch_proofs * slots_per_inner;
+        let total_slots = num_private_batch_proofs
+            .checked_mul(slots_per_inner)
+            .ok_or_else(|| anyhow!("PublicBatchPI: exit slot count overflow"))?;
         let mut account_data = Vec::with_capacity(total_slots);
         for i in 0..total_slots {
             let summed_output_amount: u32 = pis[cursor]
@@ -575,7 +646,9 @@ impl PublicBatchPublicInputs {
             });
         }
 
-        let total_nullifiers = num_private_batch_proofs * nulls_per_inner;
+        let total_nullifiers = num_private_batch_proofs
+            .checked_mul(nulls_per_inner)
+            .ok_or_else(|| anyhow!("PublicBatchPI: nullifier count overflow"))?;
         let mut nullifiers = Vec::with_capacity(total_nullifiers);
         for i in 0..total_nullifiers {
             let n = hash_u64s_to_bytes_digest(&pis[cursor..cursor + 4])
@@ -584,7 +657,13 @@ impl PublicBatchPublicInputs {
             nullifiers.push(n);
         }
 
-        debug_assert_eq!(cursor, expected_len);
+        if cursor != expected_len {
+            bail!(
+                "PublicBatchPI: cursor mismatch - consumed {} felts, expected {}",
+                cursor,
+                expected_len
+            );
+        }
 
         Ok(PublicBatchPublicInputs {
             aggregator_address,
@@ -600,7 +679,11 @@ impl PublicBatchPublicInputs {
 
 #[cfg(test)]
 mod tests {
-    use super::{PrivateBatchPublicInputs, PUBLIC_INPUTS_FELTS_LEN};
+    use super::public_batch_pi;
+    use super::{
+        validate_proof_count, PrivateBatchPublicInputs, PublicBatchPublicInputs, MAX_PROOF_COUNT,
+        PUBLIC_INPUTS_FELTS_LEN,
+    };
 
     #[test]
     fn aggregated_public_inputs_reject_malformed_padded_length() {
@@ -622,5 +705,33 @@ mod tests {
         assert_eq!(parsed.block_data.block_number, 42);
         assert_eq!(parsed.account_data.len(), 2);
         assert_eq!(parsed.nullifiers.len(), 1);
+    }
+
+    #[test]
+    fn aggregated_public_inputs_reject_oversized_leaf_count() {
+        // A length-derived n_leaf above MAX_PROOF_COUNT must be rejected rather than
+        // driving unbounded allocation (#97052, #97070).
+        let n = MAX_PROOF_COUNT + 1;
+        let pis = vec![0u64; 8 + n * PUBLIC_INPUTS_FELTS_LEN];
+        let err = PrivateBatchPublicInputs::try_from_u64_slice(&pis).unwrap_err();
+        assert!(err.to_string().contains("exceeds maximum"), "got: {err}");
+    }
+
+    #[test]
+    fn public_batch_parser_rejects_oversized_counts() {
+        // Counts whose product would wrap the layout arithmetic must be rejected by
+        // the MAX_PROOF_COUNT cap instead of panicking or wrapping to an empty batch.
+        let header = vec![0u64; public_batch_pi::HEADER_LEN];
+        let err = PublicBatchPublicInputs::try_from_u64_slice(&header, 1usize << 63, 1)
+            .expect_err("oversized inner count must be rejected");
+        assert!(err.to_string().contains("exceeds maximum"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_proof_count_enforces_canonical_range() {
+        assert!(validate_proof_count(0, "x").is_err());
+        assert!(validate_proof_count(MAX_PROOF_COUNT + 1, "x").is_err());
+        assert!(validate_proof_count(1, "x").is_ok());
+        assert!(validate_proof_count(MAX_PROOF_COUNT, "x").is_ok());
     }
 }
