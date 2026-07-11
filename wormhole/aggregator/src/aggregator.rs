@@ -9,10 +9,9 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use plonky2::plonk::{
-    circuit_data::{CommonCircuitData, VerifierCircuitData, VerifierOnlyCircuitData},
+    circuit_data::{CommonCircuitData, VerifierCircuitData},
     proof::ProofWithPublicInputs,
 };
-use plonky2::util::serialization::DefaultGateSerializer;
 use qp_wormhole_inputs::BytesDigest;
 use std::path::{Path, PathBuf};
 
@@ -22,7 +21,12 @@ use zk_circuits_common::circuit::{C, D, F};
 
 use crate::public_batch::prover::{PublicBatchInputs, PublicBatchProver};
 use crate::{
-    common::utils::{ensure_proof_public_input_len, leaf_proof_asset_id},
+    common::utils::{
+        canonical_leaf_verifier_data, canonical_public_batch_verifier_data,
+        ensure_proof_public_input_len, ensure_verifier_data_matches_canonical, leaf_proof_asset_id,
+        load_canonical_leaf_verifier_data, load_canonical_private_batch_verifier_data,
+        load_verifier_data_from_bytes,
+    },
     private_batch::prover::PrivateBatchProver,
     CircuitBinsConfig,
 };
@@ -60,43 +64,49 @@ pub trait AggregationBackend: Send + Sync {
 // Shared helpers
 // ============================================================================
 
-fn load_common_from_bins<P: AsRef<Path>>(
-    bins_dir: P,
-    common_file: &str,
-) -> Result<CommonCircuitData<F, D>> {
-    let gate_serializer = DefaultGateSerializer;
-
-    let common_bytes = fs::read(bins_dir.as_ref().join(common_file)).with_context(|| {
-        format!(
-            "failed to read {}",
-            bins_dir.as_ref().join(common_file).display()
-        )
-    })?;
-    CommonCircuitData::from_bytes(common_bytes, &gate_serializer)
-        .map_err(|e| anyhow!("failed to deserialize {}: {}", common_file, e))
+fn read_bin(bins_dir: &Path, file: &str) -> Result<Vec<u8>> {
+    fs::read(bins_dir.join(file))
+        .with_context(|| format!("failed to read {}", bins_dir.join(file).display()))
 }
 
-fn load_verifier_from_bins(
+fn load_leaf_verifier_from_bins(bins_dir: &Path) -> Result<VerifierCircuitData<F, C, D>> {
+    load_canonical_leaf_verifier_data(
+        &read_bin(bins_dir, "common.bin")?,
+        &read_bin(bins_dir, "verifier.bin")?,
+    )
+}
+
+fn load_private_batch_verifier_from_bins(
     bins_dir: &Path,
-    common_file: &str,
-    verifier_file: &str,
+    leaf: &VerifierCircuitData<F, C, D>,
+    num_leaf_proofs: usize,
 ) -> Result<VerifierCircuitData<F, C, D>> {
-    let gate_serializer = DefaultGateSerializer;
+    load_canonical_private_batch_verifier_data(
+        &read_bin(bins_dir, "private_batch_common.bin")?,
+        &read_bin(bins_dir, "private_batch_verifier.bin")?,
+        leaf,
+        num_leaf_proofs,
+    )
+}
 
-    let common_bytes = fs::read(bins_dir.join(common_file))
-        .with_context(|| format!("failed to read {}", bins_dir.join(common_file).display()))?;
-    let common = CommonCircuitData::from_bytes(common_bytes, &gate_serializer)
-        .map_err(|e| anyhow!("failed to deserialize {}: {}", common_file, e))?;
-
-    let verifier_bytes = fs::read(bins_dir.join(verifier_file))
-        .with_context(|| format!("failed to read {}", bins_dir.join(verifier_file).display()))?;
-    let verifier_only = VerifierOnlyCircuitData::<C, D>::from_bytes(verifier_bytes)
-        .map_err(|e| anyhow!("failed to deserialize {}: {}", verifier_file, e))?;
-
-    Ok(VerifierCircuitData {
-        verifier_only,
-        common,
-    })
+fn load_public_batch_verifier_from_bins(
+    bins_dir: &Path,
+    private_batch: &VerifierCircuitData<F, C, D>,
+    num_leaf_proofs: usize,
+    num_private_batch_proofs: usize,
+) -> Result<VerifierCircuitData<F, C, D>> {
+    let loaded = load_verifier_data_from_bytes(
+        &read_bin(bins_dir, "public_batch_common.bin")?,
+        &read_bin(bins_dir, "public_batch_verifier.bin")?,
+        "public_batch",
+    )?;
+    let canonical = canonical_public_batch_verifier_data(
+        private_batch,
+        num_private_batch_proofs,
+        num_leaf_proofs,
+    );
+    ensure_verifier_data_matches_canonical(&loaded, &canonical, "public_batch")?;
+    Ok(loaded)
 }
 
 /// A small bounded buffer helper so the backends don't duplicate capacity checks / draining logic.
@@ -148,7 +158,10 @@ pub struct PublicBatchAggregator {
     bins_dir: PathBuf,
     aggregator_address: BytesDigest,
     buf: ProofBuffer,
-    expected_private_batch_pi_len: usize,
+    /// Canonical-pinned private-batch common data (inner proofs), loaded once at construction.
+    private_batch_common: CommonCircuitData<F, D>,
+    /// Canonical-pinned public-batch verifier data, loaded once at construction.
+    verifier: VerifierCircuitData<F, C, D>,
 }
 
 impl PublicBatchAggregator {
@@ -161,23 +174,25 @@ impl PublicBatchAggregator {
         let num_private_batch_proofs = config
             .num_private_batch_proofs
             .ok_or_else(|| anyhow!("config is missing num_private_batch_proofs. Please regenerate the binaries and set \"num_private_batch_proofs\""))?;
-        let expected_private_batch_pi_len =
-            load_common_from_bins(&bins_dir, "private_batch_common.bin")?.num_public_inputs;
+        let num_leaf_proofs = config.num_leaf_proofs;
+
+        let leaf = canonical_leaf_verifier_data();
+        let private_batch =
+            load_private_batch_verifier_from_bins(&bins_dir, &leaf, num_leaf_proofs)?;
+        let verifier = load_public_batch_verifier_from_bins(
+            &bins_dir,
+            &private_batch,
+            num_leaf_proofs,
+            num_private_batch_proofs,
+        )?;
 
         Ok(Self {
             bins_dir,
             aggregator_address,
             buf: ProofBuffer::new(num_private_batch_proofs),
-            expected_private_batch_pi_len,
+            private_batch_common: private_batch.common,
+            verifier,
         })
-    }
-
-    fn load_verifier(&self) -> Result<VerifierCircuitData<F, C, D>> {
-        load_verifier_from_bins(
-            &self.bins_dir,
-            "public_batch_common.bin",
-            "public_batch_verifier.bin",
-        )
     }
 }
 
@@ -185,7 +200,7 @@ impl AggregationBackend for PublicBatchAggregator {
     fn push_proof(&mut self, proof: Proof) -> Result<()> {
         ensure_proof_public_input_len(
             &proof,
-            self.expected_private_batch_pi_len,
+            self.private_batch_common.num_public_inputs,
             "private-batch aggregated proof",
         )?;
         self.buf.push(proof)
@@ -224,19 +239,16 @@ impl AggregationBackend for PublicBatchAggregator {
     }
 
     fn verify(&self, proof: Proof) -> Result<()> {
-        let verifier = self.load_verifier()?;
-        verifier
+        self.verifier
             .verify(proof)
             .map_err(|e| anyhow!("public-batch aggregated proof verification failed: {}", e))
     }
 
     fn load_common_data(&self, circuit_type: CircuitType) -> Result<CommonCircuitData<F, D>> {
-        let common_file = match circuit_type {
-            CircuitType::Root => "public_batch_common.bin",
-            CircuitType::Leaf => "private_batch_common.bin",
-        };
-
-        load_common_from_bins(&self.bins_dir, common_file)
+        match circuit_type {
+            CircuitType::Root => Ok(self.verifier.common.clone()),
+            CircuitType::Leaf => Ok(self.private_batch_common.clone()),
+        }
     }
 }
 
@@ -247,7 +259,10 @@ impl AggregationBackend for PublicBatchAggregator {
 pub struct PrivateBatchAggregator {
     bins_dir: PathBuf,
     buf: ProofBuffer,
-    expected_leaf_pi_len: usize,
+    /// Canonical-pinned leaf common data, loaded once at construction.
+    leaf_common: CommonCircuitData<F, D>,
+    /// Canonical-pinned private-batch verifier data, loaded once at construction.
+    verifier: VerifierCircuitData<F, C, D>,
 }
 
 impl PrivateBatchAggregator {
@@ -256,13 +271,16 @@ impl PrivateBatchAggregator {
 
         // Load config
         let config = CircuitBinsConfig::load(&bins_dir)?;
-        let expected_leaf_pi_len =
-            load_common_from_bins(&bins_dir, "common.bin")?.num_public_inputs;
+        let num_leaf_proofs = config.num_leaf_proofs;
+
+        let leaf = load_leaf_verifier_from_bins(&bins_dir)?;
+        let verifier = load_private_batch_verifier_from_bins(&bins_dir, &leaf, num_leaf_proofs)?;
 
         Ok(Self {
             bins_dir,
-            buf: ProofBuffer::new(config.num_leaf_proofs),
-            expected_leaf_pi_len,
+            buf: ProofBuffer::new(num_leaf_proofs),
+            leaf_common: leaf.common,
+            verifier,
         })
     }
 
@@ -270,19 +288,11 @@ impl PrivateBatchAggregator {
         PrivateBatchProver::new_from_binaries_dir(&self.bins_dir)
             .context("failed to load prebuilt private-batch prover from binaries dir")
     }
-
-    fn load_verifier(&self) -> Result<VerifierCircuitData<F, C, D>> {
-        load_verifier_from_bins(
-            &self.bins_dir,
-            "private_batch_common.bin",
-            "private_batch_verifier.bin",
-        )
-    }
 }
 
 impl AggregationBackend for PrivateBatchAggregator {
     fn push_proof(&mut self, proof: Proof) -> Result<()> {
-        ensure_proof_public_input_len(&proof, self.expected_leaf_pi_len, "leaf proof")?;
+        ensure_proof_public_input_len(&proof, self.leaf_common.num_public_inputs, "leaf proof")?;
         self.buf.push(proof)
     }
 
@@ -326,18 +336,15 @@ impl AggregationBackend for PrivateBatchAggregator {
     }
 
     fn verify(&self, proof: Proof) -> Result<()> {
-        let verifier = self.load_verifier()?;
-        verifier
+        self.verifier
             .verify(proof)
             .map_err(|e| anyhow!("private-batch aggregated proof verification failed: {}", e))
     }
 
     fn load_common_data(&self, circuit_type: CircuitType) -> Result<CommonCircuitData<F, D>> {
-        let common_file = match circuit_type {
-            CircuitType::Root => "private_batch_common.bin",
-            CircuitType::Leaf => "common.bin",
-        };
-
-        load_common_from_bins(&self.bins_dir, common_file)
+        match circuit_type {
+            CircuitType::Root => Ok(self.verifier.common.clone()),
+            CircuitType::Leaf => Ok(self.leaf_common.clone()),
+        }
     }
 }

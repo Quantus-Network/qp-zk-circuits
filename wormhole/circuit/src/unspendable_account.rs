@@ -24,12 +24,21 @@ pub const UNSPENDABLE_SALT: &str = "wormhole";
 /// Type alias for the secret as a fixed-size array (4 felts, 8 bytes/felt)
 pub type Secret = [F; SECRET_NUM_TARGETS];
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(PartialEq, Eq, Clone)]
 pub struct UnspendableAccount {
     /// Account ID as 4 field elements (8 bytes/felt for hash output)
     pub account_id: Digest,
     /// Secret encoded as 4 field elements (8 bytes/felt for 32 bytes)
     pub secret: Secret,
+}
+
+impl core::fmt::Debug for UnspendableAccount {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("UnspendableAccount")
+            .field("account_id", &self.account_id)
+            .field("secret", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl UnspendableAccount {

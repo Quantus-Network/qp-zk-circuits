@@ -38,7 +38,8 @@ use std::path::Path;
 
 // Re-export types from qp-plonky2-verifier
 pub use qp_plonky2_verifier::{
-    CommonCircuitData, ProofWithPublicInputs, VerifierCircuitData, VerifierOnlyCircuitData, C, D, F,
+    CircuitConfig, CommonCircuitData, ProofWithPublicInputs, VerifierCircuitData,
+    VerifierOnlyCircuitData, C, D, F,
 };
 
 use qp_plonky2_verifier::field::types::PrimeField64;
@@ -47,7 +48,7 @@ use qp_plonky2_verifier::util::serialization::DefaultGateSerializer;
 // Re-export input types from qp-wormhole-inputs
 pub use qp_wormhole_inputs::{
     BlockData, BytesDigest, PrivateBatchPublicInputs, PublicBatchPublicInputs, PublicCircuitInputs,
-    PublicInputsByAccount,
+    PublicInputsByAccount, MIN_LEAF_SECURITY_BITS, PUBLIC_INPUTS_FELTS_LEN,
 };
 
 /// Parse public inputs from a proof.
@@ -98,6 +99,9 @@ pub struct WormholeVerifier {
 
 impl WormholeVerifier {
     /// Creates a new [`WormholeVerifier`] from verifier and common data bytes.
+    ///
+    /// Rejects artifacts whose embedded `CircuitConfig` does not match the canonical
+    /// Wormhole leaf security profile (`security_bits`, ZK mode, FRI parameters, etc.).
     pub fn new_from_bytes(verifier_bytes: &[u8], common_bytes: &[u8]) -> anyhow::Result<Self> {
         let verifier_only = VerifierOnlyCircuitData::from_bytes(verifier_bytes.to_vec())
             .map_err(|e| anyhow!("failed to deserialize verifier data: {}", e))?;
@@ -105,12 +109,47 @@ impl WormholeVerifier {
         let common = CommonCircuitData::from_bytes(common_bytes.to_vec(), &DefaultGateSerializer)
             .map_err(|e| anyhow!("failed to deserialize common circuit data: {}", e))?;
 
+        Self::ensure_loaded_matches_canonical_leaf_profile(&common)?;
+
         let circuit_data = VerifierCircuitData {
             verifier_only,
             common,
         };
 
         Ok(Self { circuit_data })
+    }
+
+    fn ensure_loaded_matches_canonical_leaf_profile(
+        common: &CommonCircuitData<F, D>,
+    ) -> anyhow::Result<()> {
+        let expected = CircuitConfig::standard_recursion_config();
+
+        if expected.security_bits < MIN_LEAF_SECURITY_BITS {
+            return Err(anyhow!(
+                "canonical recursion config provides only {} security bits, below the required minimum of {}",
+                expected.security_bits,
+                MIN_LEAF_SECURITY_BITS
+            ));
+        }
+
+        if common.config != expected {
+            return Err(anyhow!(
+                "loaded verifier circuit config does not match the canonical Wormhole leaf config \
+                 (security_bits loaded={}, expected={})",
+                common.config.security_bits,
+                expected.security_bits
+            ));
+        }
+
+        if common.num_public_inputs != PUBLIC_INPUTS_FELTS_LEN {
+            return Err(anyhow!(
+                "loaded verifier common data has {} public inputs, expected {} for the canonical Wormhole leaf circuit",
+                common.num_public_inputs,
+                PUBLIC_INPUTS_FELTS_LEN
+            ));
+        }
+
+        Ok(())
     }
 
     /// Creates a new [`WormholeVerifier`] from a verifier and common data files.

@@ -77,7 +77,7 @@ use plonky2::{
 #[cfg(feature = "std")]
 use std::{fs, path::Path};
 
-use zk_circuits_common::circuit::{CircuitFragment, C, D, F};
+use zk_circuits_common::circuit::{wormhole_leaf_circuit_config, CircuitFragment, C, D, F};
 use zk_circuits_common::zk_merkle::MAX_DEPTH;
 
 use wormhole_circuit::nullifier::Nullifier;
@@ -117,11 +117,21 @@ impl WormholeProver {
     fn ensure_loaded_common_matches_canonical(
         common_data: &CommonCircuitData<F, D>,
     ) -> anyhow::Result<()> {
+        let expected_config = wormhole_leaf_circuit_config();
+        if common_data.config != expected_config {
+            bail!(
+                "loaded common circuit config does not match the canonical Wormhole leaf config \
+                 (security_bits loaded={}, expected={})",
+                common_data.config.security_bits,
+                expected_config.security_bits
+            );
+        }
+
         let gate_serializer = DefaultGateSerializer;
         let loaded_bytes = common_data
             .to_bytes(&gate_serializer)
             .map_err(|e| anyhow!("failed to serialize loaded common circuit data: {}", e))?;
-        let canonical_common = WormholeCircuit::new(common_data.config.clone())
+        let canonical_common = WormholeCircuit::new(expected_config)
             .build_verifier()
             .common;
         let canonical_bytes = canonical_common
@@ -155,7 +165,7 @@ impl WormholeProver {
         )
         .map_err(|e| anyhow!("failed to deserialize prover-only data: {}", e))?;
 
-        let wormhole_circuit = WormholeCircuit::new(common_data.config.clone());
+        let wormhole_circuit = WormholeCircuit::new(wormhole_leaf_circuit_config());
         let targets = Some(wormhole_circuit.targets());
 
         let circuit_data = ProverCircuitData {
@@ -206,7 +216,7 @@ impl WormholeProver {
             )
         })?;
 
-        let wormhole_circuit = WormholeCircuit::new(common_data.config.clone());
+        let wormhole_circuit = WormholeCircuit::new(wormhole_leaf_circuit_config());
         let targets = Some(wormhole_circuit.targets());
 
         let circuit_data = ProverCircuitData {

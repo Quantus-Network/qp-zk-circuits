@@ -1,13 +1,25 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use plonky2::{
     field::types::PrimeField64,
-    plonk::circuit_data::{CommonCircuitData, VerifierCircuitData, VerifierOnlyCircuitData},
-    plonk::proof::ProofWithPublicInputs,
+    plonk::{
+        circuit_data::{
+            CircuitConfig, CommonCircuitData, VerifierCircuitData, VerifierOnlyCircuitData,
+        },
+        proof::ProofWithPublicInputs,
+    },
     util::serialization::DefaultGateSerializer,
 };
-use zk_circuits_common::circuit::{C, D, F};
+use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
+use zk_circuits_common::circuit::{
+    wormhole_leaf_circuit_config, wormhole_private_batch_circuit_config,
+    wormhole_public_batch_circuit_config, C, D, F,
+};
 
-use crate::private_batch::circuit::constants::{aggregated_output, ASSET_ID_START, LEAF_PI_LEN};
+use crate::private_batch::circuit::{
+    circuit_logic::PrivateBatchCircuit,
+    constants::{aggregated_output, ASSET_ID_START, LEAF_PI_LEN},
+};
+use crate::public_batch::circuit::circuit_logic::PublicBatchCircuit;
 
 /// Load verifier circuit data (common + verifier-only) from serialized bytes.
 pub fn load_verifier_data_from_bytes(
@@ -28,6 +40,136 @@ pub fn load_verifier_data_from_bytes(
         verifier_only,
         common,
     })
+}
+
+/// Load leaf verifier data and reject anything that is not the canonical Wormhole leaf circuit.
+pub fn load_canonical_leaf_verifier_data(
+    common_bytes: &[u8],
+    verifier_only_bytes: &[u8],
+) -> Result<VerifierCircuitData<F, C, D>> {
+    let loaded = load_verifier_data_from_bytes(common_bytes, verifier_only_bytes, "leaf")?;
+    ensure_verifier_data_matches_canonical(&loaded, &canonical_leaf_verifier_data(), "leaf")?;
+    Ok(loaded)
+}
+
+/// Load private-batch verifier data pinned to the canonical private-batch circuit for
+/// `num_leaf_proofs`. `leaf` must be canonical leaf verifier data (loaded pinned or rebuilt).
+pub fn load_canonical_private_batch_verifier_data(
+    common_bytes: &[u8],
+    verifier_only_bytes: &[u8],
+    leaf: &VerifierCircuitData<F, C, D>,
+    num_leaf_proofs: usize,
+) -> Result<VerifierCircuitData<F, C, D>> {
+    let loaded = load_verifier_data_from_bytes(common_bytes, verifier_only_bytes, "private_batch")?;
+    let canonical = canonical_private_batch_verifier_data(leaf, num_leaf_proofs);
+    ensure_verifier_data_matches_canonical(&loaded, &canonical, "private_batch")?;
+    Ok(loaded)
+}
+
+pub fn ensure_common_matches_canonical(
+    loaded: &CommonCircuitData<F, D>,
+    canonical: &CommonCircuitData<F, D>,
+    label: &str,
+) -> Result<()> {
+    ensure_config_is_canonical(&loaded.config, &canonical.config, label)?;
+
+    let gate_serializer = DefaultGateSerializer;
+    let loaded_bytes = loaded
+        .to_bytes(&gate_serializer)
+        .map_err(|e| anyhow!("failed to serialize loaded {} common data: {}", label, e))?;
+    let canonical_bytes = canonical
+        .to_bytes(&gate_serializer)
+        .map_err(|e| anyhow!("failed to serialize canonical {} common data: {}", label, e))?;
+
+    if loaded_bytes != canonical_bytes {
+        bail!(
+            "loaded {} common circuit data does not match the canonical circuit",
+            label
+        );
+    }
+
+    Ok(())
+}
+
+pub fn ensure_verifier_data_matches_canonical(
+    loaded: &VerifierCircuitData<F, C, D>,
+    canonical: &VerifierCircuitData<F, C, D>,
+    label: &str,
+) -> Result<()> {
+    ensure_common_matches_canonical(&loaded.common, &canonical.common, label)?;
+
+    let loaded_vo = loaded.verifier_only.to_bytes().map_err(|e| {
+        anyhow!(
+            "failed to serialize loaded {} verifier-only data: {}",
+            label,
+            e
+        )
+    })?;
+    let canonical_vo = canonical.verifier_only.to_bytes().map_err(|e| {
+        anyhow!(
+            "failed to serialize canonical {} verifier-only data: {}",
+            label,
+            e
+        )
+    })?;
+
+    if loaded_vo != canonical_vo {
+        bail!(
+            "loaded {} verifier-only data does not match the canonical circuit",
+            label
+        );
+    }
+
+    Ok(())
+}
+
+pub fn ensure_config_is_canonical(
+    loaded: &CircuitConfig,
+    expected: &CircuitConfig,
+    label: &str,
+) -> Result<()> {
+    if loaded != expected {
+        bail!(
+            "loaded {} circuit config does not match the canonical Wormhole config \
+             (security_bits loaded={}, expected={})",
+            label,
+            loaded.security_bits,
+            expected.security_bits
+        );
+    }
+    Ok(())
+}
+
+pub fn canonical_leaf_verifier_data() -> VerifierCircuitData<F, C, D> {
+    WormholeCircuit::new(wormhole_leaf_circuit_config()).build_verifier()
+}
+
+pub fn canonical_private_batch_verifier_data(
+    leaf: &VerifierCircuitData<F, C, D>,
+    num_leaf_proofs: usize,
+) -> VerifierCircuitData<F, C, D> {
+    PrivateBatchCircuit::new(
+        wormhole_private_batch_circuit_config(),
+        &leaf.common,
+        &leaf.verifier_only,
+        num_leaf_proofs,
+    )
+    .build_verifier()
+}
+
+pub fn canonical_public_batch_verifier_data(
+    private_batch: &VerifierCircuitData<F, C, D>,
+    num_private_batch_proofs: usize,
+    num_leaf_proofs: usize,
+) -> VerifierCircuitData<F, C, D> {
+    PublicBatchCircuit::new(
+        wormhole_public_batch_circuit_config(),
+        private_batch.common.clone(),
+        &private_batch.verifier_only,
+        num_private_batch_proofs,
+        num_leaf_proofs,
+    )
+    .build_verifier()
 }
 
 pub fn ensure_proof_public_input_len(
