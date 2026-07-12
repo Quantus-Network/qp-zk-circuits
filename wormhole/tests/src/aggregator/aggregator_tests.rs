@@ -173,18 +173,50 @@ fn aggregate_half_full_proof_array_into_tree() {
 }
 
 #[test]
-fn aggregate_rejects_nonzero_asset_id_when_dummy_padding_is_needed() {
+fn commit_rejects_nonzero_asset_id_when_dummy_padding_is_needed() {
     setup_test_binaries();
+    // Tampering with asset_id invalidates the proof cryptographically, so the
+    // aggregator now rejects it at push time (see below). The asset-id padding
+    // preflight is still reachable through the prover's commit API, which does
+    // not verify proofs itself.
     let mut proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
     proof.public_inputs[0] = F::from_canonical_u64(1);
 
-    let mut aggregator = make_aggregator();
-    aggregator.push_proof(proof).unwrap();
+    let prover = make_private_batch_prover();
+    let err = prover.commit(vec![proof]).unwrap_err();
+    assert!(err.to_string().contains("dummy proofs use asset_id=0"));
+}
 
-    let err = aggregator.aggregate().unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("dummy padding requires all real proofs to use asset_id=0"));
+#[test]
+fn push_proof_rejects_invalid_proof_and_queue_stays_usable() {
+    setup_test_binaries();
+    // An invalid proof (correct PI length, tampered contents) must be rejected at
+    // push time. Since aggregate() only drains the queue on success (#97067), a
+    // poisoned proof accepted into the queue would make every retry fail on the
+    // same batch, wedging the aggregator permanently.
+    let mut tampered = make_leaf_proof(&CircuitInputs::test_inputs_0());
+    tampered.public_inputs[0] = F::from_canonical_u64(1);
+
+    let mut aggregator = make_aggregator();
+    let err = aggregator.push_proof(tampered).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("refusing to queue invalid leaf proof"),
+        "got: {err}"
+    );
+    assert_eq!(
+        aggregator.buffer_len(),
+        0,
+        "rejected proof must not be queued"
+    );
+
+    // The aggregator remains fully usable: a valid proof pushes and aggregates.
+    let valid = make_leaf_proof(&CircuitInputs::test_inputs_0());
+    aggregator.push_proof(valid).unwrap();
+    let aggregated = aggregator.aggregate().expect("aggregation must succeed");
+    aggregator
+        .verify(aggregated)
+        .expect("aggregated proof should verify");
 }
 
 /// This simulates a CLI-ish flow without prebuilt binaries:

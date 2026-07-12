@@ -169,8 +169,8 @@ pub struct PublicBatchAggregator {
     bins_dir: PathBuf,
     aggregator_address: BytesDigest,
     buf: ProofBuffer,
-    /// Canonical-pinned private-batch common data (inner proofs), loaded once at construction.
-    private_batch_common: CommonCircuitData<F, D>,
+    /// Canonical-pinned private-batch verifier data (inner proofs), loaded once at construction.
+    private_batch_verifier: VerifierCircuitData<F, C, D>,
     /// Canonical-pinned public-batch verifier data, loaded once at construction.
     verifier: VerifierCircuitData<F, C, D>,
 }
@@ -201,7 +201,7 @@ impl PublicBatchAggregator {
             bins_dir,
             aggregator_address,
             buf: ProofBuffer::new(num_private_batch_proofs),
-            private_batch_common: private_batch.common,
+            private_batch_verifier: private_batch,
             verifier,
         })
     }
@@ -211,9 +211,21 @@ impl AggregationBackend for PublicBatchAggregator {
     fn push_proof(&mut self, proof: Proof) -> Result<()> {
         ensure_proof_public_input_len(
             &proof,
-            self.private_batch_common.num_public_inputs,
+            self.private_batch_verifier.common.num_public_inputs,
             "private-batch aggregated proof",
         )?;
+        // Verify the proof before queuing it. Since the queue is only drained on
+        // successful aggregation (#97067), a single invalid proof accepted here
+        // would otherwise make every aggregate() retry fail on the same poisoned
+        // batch, wedging the aggregator permanently.
+        self.private_batch_verifier
+            .verify(proof.clone())
+            .map_err(|e| {
+                anyhow!(
+                    "refusing to queue invalid private-batch proof: verification failed: {}",
+                    e
+                )
+            })?;
         self.buf.push(proof)
     }
 
@@ -284,7 +296,7 @@ impl AggregationBackend for PublicBatchAggregator {
     fn load_common_data(&self, circuit_type: CircuitType) -> Result<CommonCircuitData<F, D>> {
         match circuit_type {
             CircuitType::Root => Ok(self.verifier.common.clone()),
-            CircuitType::Leaf => Ok(self.private_batch_common.clone()),
+            CircuitType::Leaf => Ok(self.private_batch_verifier.common.clone()),
         }
     }
 }
@@ -296,8 +308,8 @@ impl AggregationBackend for PublicBatchAggregator {
 pub struct PrivateBatchAggregator {
     bins_dir: PathBuf,
     buf: ProofBuffer,
-    /// Canonical-pinned leaf common data, loaded once at construction.
-    leaf_common: CommonCircuitData<F, D>,
+    /// Canonical-pinned leaf verifier data, loaded once at construction.
+    leaf_verifier: VerifierCircuitData<F, C, D>,
     /// Canonical-pinned private-batch verifier data, loaded once at construction.
     verifier: VerifierCircuitData<F, C, D>,
 }
@@ -316,7 +328,7 @@ impl PrivateBatchAggregator {
         Ok(Self {
             bins_dir,
             buf: ProofBuffer::new(num_leaf_proofs),
-            leaf_common: leaf.common,
+            leaf_verifier: leaf,
             verifier,
         })
     }
@@ -329,7 +341,21 @@ impl PrivateBatchAggregator {
 
 impl AggregationBackend for PrivateBatchAggregator {
     fn push_proof(&mut self, proof: Proof) -> Result<()> {
-        ensure_proof_public_input_len(&proof, self.leaf_common.num_public_inputs, "leaf proof")?;
+        ensure_proof_public_input_len(
+            &proof,
+            self.leaf_verifier.common.num_public_inputs,
+            "leaf proof",
+        )?;
+        // Verify the proof before queuing it. Since the queue is only drained on
+        // successful aggregation (#97067), a single invalid proof accepted here
+        // would otherwise make every aggregate() retry fail on the same poisoned
+        // batch, wedging the aggregator permanently.
+        self.leaf_verifier.verify(proof.clone()).map_err(|e| {
+            anyhow!(
+                "refusing to queue invalid leaf proof: verification failed: {}",
+                e
+            )
+        })?;
         self.buf.push(proof)
     }
 
@@ -389,7 +415,7 @@ impl AggregationBackend for PrivateBatchAggregator {
     fn load_common_data(&self, circuit_type: CircuitType) -> Result<CommonCircuitData<F, D>> {
         match circuit_type {
             CircuitType::Root => Ok(self.verifier.common.clone()),
-            CircuitType::Leaf => Ok(self.leaf_common.clone()),
+            CircuitType::Leaf => Ok(self.leaf_verifier.common.clone()),
         }
     }
 }
