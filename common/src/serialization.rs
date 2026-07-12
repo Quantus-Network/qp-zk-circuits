@@ -149,6 +149,20 @@ pub fn bytes_to_felts_compact(input: &[u8]) -> Vec<F> {
         .collect()
 }
 
+/// Hash variable-length bytes using compact encoding (8 bytes/felt).
+///
+/// Uses lossy limb decoding via [`bytes_to_u64s_compact`] to match chain-side
+/// trie node hashing, where proof verification may see attacker-supplied siblings.
+pub fn hash_bytes_compact(input: &[u8]) -> [u8; 32] {
+    use qp_poseidon_core::Goldilocks;
+
+    let felts: Vec<Goldilocks> = qp_poseidon_core::serialization::bytes_to_u64s_compact(input)
+        .into_iter()
+        .map(Goldilocks::from_u64)
+        .collect();
+    qp_poseidon_core::hash_to_bytes(&felts)
+}
+
 // ============================================================================
 // Digest serialization (4 felts <-> 32 bytes, 8 bytes/felt)
 // ============================================================================

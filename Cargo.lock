@@ -1007,7 +1007,7 @@ dependencies = [
  "qp-plonky2-core",
  "qp-plonky2-field",
  "qp-plonky2-verifier",
- "qp-poseidon-core",
+ "qp-poseidon-core 2.1.0",
  "rand 0.10.1",
  "serde",
  "static_assertions",
@@ -1071,7 +1071,7 @@ dependencies = [
  "plonky2_util",
  "qp-plonky2-core",
  "qp-plonky2-field",
- "qp-poseidon-core",
+ "qp-poseidon-core 2.1.0",
  "serde",
  "static_assertions",
  "unroll",
@@ -1095,6 +1095,12 @@ name = "qp-poseidon-core"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78172860cd960773c72e97fba07ead9e5a1c13086c5746283744933e2e4a577b"
+
+[[package]]
+name = "qp-poseidon-core"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3fd767cf8aaecf9369fab79255ff9e0ea439cdfef941976edbfb8ba70435b63"
 
 [[package]]
 name = "qp-voting-circuit"
@@ -1185,7 +1191,7 @@ dependencies = [
  "anyhow",
  "qp-plonky2",
  "qp-poseidon-constants",
- "qp-poseidon-core",
+ "qp-poseidon-core 3.0.0",
  "qp-wormhole-inputs",
  "rand 0.8.6",
  "serde",
