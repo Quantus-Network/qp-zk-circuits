@@ -112,6 +112,28 @@ fn load_public_batch_verifier_from_bins(
     Ok(loaded)
 }
 
+/// Length-check and verify a proof against the given canonical verifier data,
+/// then queue it. Since the backends only drain their queue on successful
+/// aggregation (#97067), a single invalid proof accepted here would make every
+/// aggregate() retry fail on the same poisoned batch, wedging the aggregator
+/// permanently.
+fn verify_and_push(
+    verifier: &VerifierCircuitData<F, C, D>,
+    buf: &mut ProofBuffer,
+    proof: Proof,
+    label: &str,
+) -> Result<()> {
+    ensure_proof_public_input_len(&proof, verifier.common.num_public_inputs, label)?;
+    verifier.verify(proof.clone()).map_err(|e| {
+        anyhow!(
+            "refusing to queue invalid {}: verification failed: {}",
+            label,
+            e
+        )
+    })?;
+    buf.push(proof)
+}
+
 /// A small bounded buffer helper so the backends don't duplicate capacity checks / draining logic.
 #[derive(Debug)]
 struct ProofBuffer {
@@ -209,24 +231,12 @@ impl PublicBatchAggregator {
 
 impl AggregationBackend for PublicBatchAggregator {
     fn push_proof(&mut self, proof: Proof) -> Result<()> {
-        ensure_proof_public_input_len(
-            &proof,
-            self.private_batch_verifier.common.num_public_inputs,
+        verify_and_push(
+            &self.private_batch_verifier,
+            &mut self.buf,
+            proof,
             "private-batch aggregated proof",
-        )?;
-        // Verify the proof before queuing it. Since the queue is only drained on
-        // successful aggregation (#97067), a single invalid proof accepted here
-        // would otherwise make every aggregate() retry fail on the same poisoned
-        // batch, wedging the aggregator permanently.
-        self.private_batch_verifier
-            .verify(proof.clone())
-            .map_err(|e| {
-                anyhow!(
-                    "refusing to queue invalid private-batch proof: verification failed: {}",
-                    e
-                )
-            })?;
-        self.buf.push(proof)
+        )
     }
 
     fn buffer_len(&self) -> usize {
@@ -341,22 +351,7 @@ impl PrivateBatchAggregator {
 
 impl AggregationBackend for PrivateBatchAggregator {
     fn push_proof(&mut self, proof: Proof) -> Result<()> {
-        ensure_proof_public_input_len(
-            &proof,
-            self.leaf_verifier.common.num_public_inputs,
-            "leaf proof",
-        )?;
-        // Verify the proof before queuing it. Since the queue is only drained on
-        // successful aggregation (#97067), a single invalid proof accepted here
-        // would otherwise make every aggregate() retry fail on the same poisoned
-        // batch, wedging the aggregator permanently.
-        self.leaf_verifier.verify(proof.clone()).map_err(|e| {
-            anyhow!(
-                "refusing to queue invalid leaf proof: verification failed: {}",
-                e
-            )
-        })?;
-        self.buf.push(proof)
+        verify_and_push(&self.leaf_verifier, &mut self.buf, proof, "leaf proof")
     }
 
     fn buffer_len(&self) -> usize {
