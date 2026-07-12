@@ -9,11 +9,12 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use plonky2::{
+    field::types::PrimeField64,
     iop::witness::PartialWitness,
     plonk::{
         circuit_data::{
             CircuitConfig, CommonCircuitData, ProverCircuitData, ProverOnlyCircuitData,
-            VerifierOnlyCircuitData,
+            VerifierCircuitData, VerifierOnlyCircuitData,
         },
         proof::ProofWithPublicInputs,
     },
@@ -24,7 +25,7 @@ use rand::seq::SliceRandom;
 #[cfg(feature = "std")]
 use std::{fs, path::Path};
 
-use qp_wormhole_inputs::validate_proof_count;
+use qp_wormhole_inputs::{validate_proof_count, BytesDigest, PublicCircuitInputs};
 use zk_circuits_common::{
     circuit::{wormhole_private_batch_circuit_config, C, D, F},
     utils::bytes_to_digest,
@@ -145,6 +146,12 @@ impl PrivateBatchProver {
         let dummy_proof_template =
             load_dummy_proof(dummy_proof_bytes.to_vec(), &leaf_verifier_data.common)
                 .map_err(|e| anyhow!("failed to deserialize dummy proof: {}", e))?;
+
+        // Verify the template is a valid leaf proof carrying the strong dummy
+        // sentinel (zero block hash AND zero outputs), so a poisoned padding
+        // template cannot inject a real payout into every partial batch. This
+        // mirrors the public-batch template check (#97026).
+        verify_dummy_leaf_template(&dummy_proof_template, &leaf_verifier_data)?;
 
         Ok(Self {
             circuit_data: ProverCircuitData {
@@ -313,6 +320,51 @@ impl PrivateBatchProver {
 // Helpers
 // -----------------------------------------------------------------------------
 
+/// Verify that the dummy leaf proof template is a valid leaf proof carrying the
+/// strong dummy sentinel: `block_hash == 0` AND both output amounts zero.
+///
+/// The private-batch circuit only treats `block_hash == 0` slots as dummies, and
+/// its exit-dedup gadget sums output amounts across matching exit accounts. If a
+/// poisoned `dummy_proof.bin` contained a *real* proof (non-zero block hash or
+/// outputs), every empty slot in a partial batch would replay that payout. This
+/// mirrors `verify_dummy_private_batch_template` at the public-batch layer (#97026).
+fn verify_dummy_leaf_template(
+    template: &ProofWithPublicInputs<F, C, D>,
+    leaf_verifier: &VerifierCircuitData<F, C, D>,
+) -> Result<()> {
+    // Check the sentinel first (cheap, and independently testable); a template
+    // is only acceptable if BOTH the sentinel and cryptographic verification pass.
+    let u64s: Vec<u64> = template
+        .public_inputs
+        .iter()
+        .map(|f| f.to_canonical_u64())
+        .collect();
+    let pis = PublicCircuitInputs::try_from_u64_slice(&u64s)
+        .context("failed to parse dummy leaf proof template public inputs")?;
+
+    if pis.block_hash != BytesDigest::default() {
+        bail!(
+            "dummy leaf proof template has non-zero block_hash {:?}; \
+             padding templates must carry the all-zero block-hash sentinel",
+            pis.block_hash
+        );
+    }
+    if pis.output_amount_1 != 0 || pis.output_amount_2 != 0 {
+        bail!(
+            "dummy leaf proof template has non-zero output amounts ({}, {}); \
+             padding templates must contribute zero to every exit slot",
+            pis.output_amount_1,
+            pis.output_amount_2
+        );
+    }
+
+    leaf_verifier
+        .verify(template.clone())
+        .map_err(|e| anyhow!("dummy leaf proof template failed verification: {}", e))?;
+
+    Ok(())
+}
+
 /// Generate a dummy nullifier preimage for every slot.
 ///
 /// The private-batch circuit hashes these for dummy slots (`block_hash == 0`) and ignores them
@@ -321,4 +373,63 @@ fn generate_dummy_nullifier_pre_images_for_slots(n_slots: usize) -> Vec<[F; 4]> 
     (0..n_slots)
         .map(|_| bytes_to_digest(generate_random_nullifier_preimage()))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use plonky2::field::types::Field;
+    use qp_wormhole_inputs::{
+        BLOCK_HASH_START_INDEX, NULLIFIER_START_INDEX, OUTPUT_AMOUNT_1_INDEX,
+        PUBLIC_INPUTS_FELTS_LEN,
+    };
+    use test_helpers::fake_leaf::{build_fake_leaf_circuit, prove_fake_leaf};
+
+    #[test]
+    fn dummy_template_with_zero_sentinel_is_accepted() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+        let template = prove_fake_leaf(&leaf, &targets, [F::ZERO; PUBLIC_INPUTS_FELTS_LEN]);
+        verify_dummy_leaf_template(&template, &leaf.verifier_data())
+            .expect("all-zero sentinel template must be accepted");
+    }
+
+    #[test]
+    fn dummy_template_with_nonzero_block_hash_is_rejected() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+        let mut pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
+        pis[BLOCK_HASH_START_INDEX] = F::ONE;
+        let template = prove_fake_leaf(&leaf, &targets, pis);
+        let err = verify_dummy_leaf_template(&template, &leaf.verifier_data()).unwrap_err();
+        assert!(
+            err.to_string().contains("non-zero block_hash"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn dummy_template_with_nonzero_payout_is_rejected() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+        let mut pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
+        pis[OUTPUT_AMOUNT_1_INDEX] = F::from_canonical_u32(5);
+        let template = prove_fake_leaf(&leaf, &targets, pis);
+        let err = verify_dummy_leaf_template(&template, &leaf.verifier_data()).unwrap_err();
+        assert!(
+            err.to_string().contains("non-zero output amounts"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn dummy_template_failing_cryptographic_verification_is_rejected() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+        let mut template = prove_fake_leaf(&leaf, &targets, [F::ZERO; PUBLIC_INPUTS_FELTS_LEN]);
+        // Sentinel-neutral mutation (nullifier felt): the sentinel checks pass but
+        // the proof no longer verifies against its mutated public inputs.
+        template.public_inputs[NULLIFIER_START_INDEX] = F::ONE;
+        let err = verify_dummy_leaf_template(&template, &leaf.verifier_data()).unwrap_err();
+        assert!(
+            err.to_string().contains("failed verification"),
+            "got: {err}"
+        );
+    }
 }

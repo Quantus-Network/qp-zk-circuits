@@ -300,6 +300,58 @@ fn private_batch_commit_rejects_malformed_full_batch_at_api_boundary() {
 }
 
 #[test]
+fn private_batch_prover_rejects_poisoned_dummy_template() {
+    setup_test_binaries();
+    // A tampered dummy_proof.bin must be rejected when the prover loads its
+    // binaries. Otherwise the poisoned template would be padded into every
+    // partial batch, replaying its payout once per empty slot via the circuit's
+    // exit-dedup sum (leaf-level analogue of #97026).
+    let poisoned_dir = Path::new("tmp-test-bins-poisoned-dummy");
+    let _ = std::fs::remove_dir_all(poisoned_dir);
+    std::fs::create_dir_all(poisoned_dir).unwrap();
+    for entry in std::fs::read_dir(TEST_OUTPUT_DIR).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), poisoned_dir.join(entry.file_name())).unwrap();
+    }
+
+    // Sentinel-neutral tampering: block_hash and outputs stay zero, so only the
+    // cryptographic check can catch it.
+    let mut poisoned = make_leaf_proof(&CircuitInputs::test_inputs_0());
+    poisoned.public_inputs[4] = F::from_canonical_u64(0xdead_beef); // nullifier felt
+    std::fs::write(poisoned_dir.join("dummy_proof.bin"), poisoned.to_bytes()).unwrap();
+
+    let err = PrivateBatchProver::new_from_binaries_dir(poisoned_dir)
+        .expect_err("poisoned dummy template must be rejected at load time");
+    assert!(
+        err.to_string()
+            .contains("dummy leaf proof template failed verification"),
+        "got: {err}"
+    );
+
+    // A template with a non-zero payout must be rejected by the sentinel check.
+    let mut nonzero_payout = make_leaf_proof(&CircuitInputs::test_inputs_0());
+    nonzero_payout.public_inputs[1] = F::from_canonical_u64(7); // output_amount_1
+    std::fs::write(
+        poisoned_dir.join("dummy_proof.bin"),
+        nonzero_payout.to_bytes(),
+    )
+    .unwrap();
+
+    let err = PrivateBatchProver::new_from_binaries_dir(poisoned_dir)
+        .expect_err("non-zero-payout dummy template must be rejected at load time");
+    assert!(
+        err.to_string().contains("non-zero output amounts"),
+        "got: {err}"
+    );
+
+    // The pristine directory still loads fine (sanity check).
+    PrivateBatchProver::new_from_binaries_dir(Path::new(TEST_OUTPUT_DIR))
+        .expect("pristine binaries must still load");
+
+    let _ = std::fs::remove_dir_all(poisoned_dir);
+}
+
+#[test]
 fn public_batch_verify_rejects_proof_bound_to_a_different_aggregator_address() {
     setup_public_test_binaries();
     let dir = Path::new(PUBLIC_TEST_OUTPUT_DIR);
