@@ -67,7 +67,7 @@ impl PrivateBatchProver {
         num_leaf_proofs: usize,
         dummy_proof_template: ProofWithPublicInputs<F, C, D>,
     ) -> Result<Self> {
-        validate_proof_count(num_leaf_proofs, "num_leaf_proofs")?;
+        // Proof-count bounds are enforced by PrivateBatchCircuit::new.
         let agg_circuit = PrivateBatchCircuit::new(
             agg_circuit_config,
             &leaf_common,

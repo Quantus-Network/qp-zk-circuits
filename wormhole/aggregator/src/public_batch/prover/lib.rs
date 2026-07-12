@@ -73,8 +73,7 @@ impl PublicBatchProver {
         private_batch_num_leaves: usize,
         dummy_proof_template: ProofWithPublicInputs<F, C, D>,
     ) -> Result<Self> {
-        validate_proof_count(num_private_batch_proofs, "num_private_batch_proofs")?;
-        validate_proof_count(private_batch_num_leaves, "private_batch_num_leaves")?;
+        // Proof-count bounds are enforced by PublicBatchCircuit::new.
         let public_batch_circuit = PublicBatchCircuit::new(
             public_batch_circuit_config,
             private_batch_common,
