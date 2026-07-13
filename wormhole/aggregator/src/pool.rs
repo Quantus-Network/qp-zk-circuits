@@ -1,0 +1,603 @@
+//! Proof pool for delegated (public-batch) aggregation.
+//!
+//! A miner-facing, in-memory pool of private-batch proofs received from
+//! untrusted clients. Proofs are cryptographically verified on admission and
+//! bucketed by the metadata the public-batch circuit constrains across a batch
+//! (block hash, asset id, volume fee), so every bucket is aggregatable by
+//! construction: the "when to aggregate which bucket" decision is left to the
+//! operator's policy, fed by [`BucketStats`].
+//!
+//! Staleness: a queued proof becomes worthless once any of its nullifiers is
+//! settled on-chain (e.g. another miner included the same private batch, or a
+//! public batch containing it). Operators should call
+//! [`ProofPool::evict_settled`] with newly settled nullifiers on every imported
+//! block — both before proving (don't aggregate dead weight) and before
+//! submitting a finished public batch (don't submit stale segments).
+//!
+//! Note on dummies: an all-dummy private-batch proof (all-zero block hash) is
+//! admissible — it is a valid proof and lands in its own bucket — but it
+//! settles nothing, so a production policy should never select that bucket for
+//! aggregation.
+
+use std::collections::{BTreeMap, HashSet};
+use std::time::{Duration, Instant};
+
+use anyhow::{anyhow, bail, ensure, Result};
+use plonky2::field::types::PrimeField64;
+use plonky2::plonk::{circuit_data::VerifierCircuitData, proof::ProofWithPublicInputs};
+use qp_wormhole_inputs::BytesDigest;
+use zk_circuits_common::{
+    circuit::{C, D, F},
+    utils::try_4_felts_to_bytes,
+};
+
+use crate::private_batch::circuit::constants::aggregated_output;
+
+type Proof = ProofWithPublicInputs<F, C, D>;
+
+/// The metadata the public-batch circuit requires all non-dummy inner proofs in
+/// one batch to share. Proofs with equal keys are aggregatable together by
+/// construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BatchKey {
+    pub block_hash: BytesDigest,
+    pub asset_id: u64,
+    pub volume_fee_bps: u64,
+}
+
+impl BatchKey {
+    /// All-dummy sentinel: the proof references no real block and settles nothing.
+    pub fn is_dummy(&self) -> bool {
+        self.block_hash == BytesDigest::default()
+    }
+}
+
+/// Global size limits protecting a pool that fronts untrusted traffic.
+#[derive(Debug, Clone, Copy)]
+pub struct PoolLimits {
+    /// Maximum number of proofs across all buckets.
+    pub max_proofs: usize,
+    /// Maximum number of distinct buckets (keys).
+    pub max_buckets: usize,
+}
+
+impl Default for PoolLimits {
+    fn default() -> Self {
+        Self {
+            max_proofs: 1024,
+            max_buckets: 256,
+        }
+    }
+}
+
+/// Point-in-time view of one bucket, for the operator's aggregation policy.
+#[derive(Debug, Clone)]
+pub struct BucketStats {
+    pub key: BatchKey,
+    /// Number of proofs currently queued in this bucket.
+    pub num_proofs: usize,
+    /// Bucket capacity (= public-batch size); at `num_proofs == batch_size`
+    /// the bucket aggregates without dummy padding.
+    pub batch_size: usize,
+    /// Time since the oldest queued proof in this bucket was admitted.
+    pub oldest_age: Duration,
+    /// Sum of all exit-slot amounts across queued proofs (settled volume proxy).
+    pub total_volume: u64,
+}
+
+impl BucketStats {
+    pub fn is_full(&self) -> bool {
+        self.num_proofs >= self.batch_size
+    }
+}
+
+#[derive(Debug)]
+struct PooledProof {
+    proof: Proof,
+    nullifiers: Vec<BytesDigest>,
+    volume: u64,
+    admitted_at: Instant,
+}
+
+/// A bounded pool of admission-verified private-batch proofs, bucketed by
+/// [`BatchKey`].
+#[derive(Debug)]
+pub struct ProofPool {
+    /// Canonical-pinned private-batch verifier data used for admission.
+    verifier: VerifierCircuitData<F, C, D>,
+    /// Leaves per inner private-batch proof (fixes the PI layout).
+    inner_num_leaves: usize,
+    /// Proofs per bucket (= public-batch size).
+    batch_size: usize,
+    limits: PoolLimits,
+    buckets: BTreeMap<BatchKey, Vec<PooledProof>>,
+}
+
+impl ProofPool {
+    /// Create a pool admitting proofs valid under `verifier`.
+    ///
+    /// `inner_num_leaves` is the number of leaves aggregated per private-batch
+    /// proof and `batch_size` the number of private-batch proofs per public
+    /// batch; both must match the circuit shapes pinned into `verifier` and the
+    /// public-batch prover this pool feeds.
+    pub fn new(
+        verifier: VerifierCircuitData<F, C, D>,
+        inner_num_leaves: usize,
+        batch_size: usize,
+        limits: PoolLimits,
+    ) -> Result<Self> {
+        ensure!(batch_size > 0, "batch_size must be positive");
+        ensure!(
+            limits.max_proofs >= batch_size,
+            "max_proofs ({}) must allow at least one full batch ({})",
+            limits.max_proofs,
+            batch_size
+        );
+        ensure!(limits.max_buckets > 0, "max_buckets must be positive");
+        let expected_pi_len = aggregated_output::pi_len(inner_num_leaves);
+        ensure!(
+            verifier.common.num_public_inputs == expected_pi_len,
+            "verifier public-input length {} does not match private-batch layout for {} leaves ({})",
+            verifier.common.num_public_inputs,
+            inner_num_leaves,
+            expected_pi_len
+        );
+        Ok(Self {
+            verifier,
+            inner_num_leaves,
+            batch_size,
+            limits,
+            buckets: BTreeMap::new(),
+        })
+    }
+
+    /// Total number of proofs across all buckets.
+    pub fn len(&self) -> usize {
+        self.buckets.values().map(Vec::len).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.buckets.is_empty()
+    }
+
+    pub fn num_buckets(&self) -> usize {
+        self.buckets.len()
+    }
+
+    pub fn batch_size(&self) -> usize {
+        self.batch_size
+    }
+
+    /// Validate and admit a proof, returning the bucket key it landed in.
+    ///
+    /// Checks run cheapest-first: capacity limits, public-input shape,
+    /// duplicate-nullifier rejection, then cryptographic verification. A proof
+    /// admitted here is individually valid and, by bucketing, batch-compatible
+    /// with every other proof in its bucket, so aggregation over a bucket
+    /// cannot fail deterministically on admitted inputs (#97067).
+    pub fn push(&mut self, proof: Proof) -> Result<BatchKey> {
+        if self.len() >= self.limits.max_proofs {
+            bail!(
+                "proof pool is full ({} proofs, limit {})",
+                self.len(),
+                self.limits.max_proofs
+            );
+        }
+
+        let metadata = self.parse_metadata(&proof)?;
+        let key = metadata.0;
+
+        match self.buckets.get(&key) {
+            Some(bucket) => {
+                if bucket.len() >= self.batch_size {
+                    bail!(
+                        "bucket for block {:?} (asset {}, fee {}) is full ({} proofs)",
+                        key.block_hash,
+                        key.asset_id,
+                        key.volume_fee_bps,
+                        self.batch_size
+                    );
+                }
+                // A duplicate nullifier within one bucket means the same leaf
+                // spend would occupy two batch slots; the second copy can never
+                // settle. Reject it (this also deduplicates client re-submissions).
+                for queued in bucket {
+                    if let Some(dup) = metadata.1.iter().find(|n| queued.nullifiers.contains(n)) {
+                        bail!(
+                            "refusing to queue private-batch proof: nullifier {:?} is already \
+                             queued in the same bucket",
+                            dup
+                        );
+                    }
+                }
+            }
+            None => {
+                if self.buckets.len() >= self.limits.max_buckets {
+                    bail!(
+                        "proof pool bucket limit reached ({} buckets); \
+                         proof for block {:?} rejected",
+                        self.limits.max_buckets,
+                        key.block_hash
+                    );
+                }
+            }
+        }
+
+        self.verifier.verify(proof.clone()).map_err(|e| {
+            anyhow!(
+                "refusing to queue invalid private-batch proof: verification failed: {}",
+                e
+            )
+        })?;
+
+        let (key, nullifiers, volume) = metadata;
+        self.buckets.entry(key).or_default().push(PooledProof {
+            proof,
+            nullifiers,
+            volume,
+            admitted_at: Instant::now(),
+        });
+        Ok(key)
+    }
+
+    /// Remove every queued proof that has at least one nullifier in `settled`,
+    /// dropping buckets that become empty. Returns the number of evicted proofs.
+    ///
+    /// Call with the nullifiers settled by each imported block, both before
+    /// aggregating (avoid proving dead weight) and before submitting a finished
+    /// public batch (detect batches that went stale mid-proving).
+    pub fn evict_settled(&mut self, settled: &HashSet<BytesDigest>) -> usize {
+        let mut evicted = 0;
+        self.buckets.retain(|_, bucket| {
+            bucket.retain(|queued| {
+                let stale = queued.nullifiers.iter().any(|n| settled.contains(n));
+                if stale {
+                    evicted += 1;
+                }
+                !stale
+            });
+            !bucket.is_empty()
+        });
+        evicted
+    }
+
+    /// Per-bucket statistics for the operator's aggregation policy.
+    pub fn bucket_stats(&self) -> Vec<BucketStats> {
+        let now = Instant::now();
+        self.buckets
+            .iter()
+            .map(|(key, bucket)| BucketStats {
+                key: *key,
+                num_proofs: bucket.len(),
+                batch_size: self.batch_size,
+                oldest_age: bucket
+                    .iter()
+                    .map(|q| now.saturating_duration_since(q.admitted_at))
+                    .max()
+                    .unwrap_or_default(),
+                total_volume: bucket
+                    .iter()
+                    .fold(0u64, |acc, q| acc.saturating_add(q.volume)),
+            })
+            .collect()
+    }
+
+    /// Clone the proofs of one bucket (for aggregation attempts that must not
+    /// disturb the pool on failure).
+    pub fn bucket_proofs(&self, key: &BatchKey) -> Option<Vec<Proof>> {
+        self.buckets
+            .get(key)
+            .map(|bucket| bucket.iter().map(|q| q.proof.clone()).collect())
+    }
+
+    /// Remove one bucket entirely, returning its proofs (empty if absent).
+    ///
+    /// Used both to drain a bucket after successful aggregation and as an
+    /// operator recovery/expiry path for buckets that will never be aggregated.
+    pub fn remove_bucket(&mut self, key: &BatchKey) -> Vec<Proof> {
+        self.buckets
+            .remove(key)
+            .map(|bucket| bucket.into_iter().map(|q| q.proof).collect())
+            .unwrap_or_default()
+    }
+
+    /// Parse (key, nullifiers, volume) from a private-batch proof's public inputs.
+    fn parse_metadata(&self, proof: &Proof) -> Result<(BatchKey, Vec<BytesDigest>, u64)> {
+        let pis = &proof.public_inputs;
+        let expected = self.verifier.common.num_public_inputs;
+        if pis.len() != expected {
+            bail!(
+                "private-batch proof public input length mismatch: expected {}, got {}",
+                expected,
+                pis.len()
+            );
+        }
+
+        let block_hash = try_4_felts_to_bytes(
+            &pis[aggregated_output::BLOCK_HASH_OFFSET..aggregated_output::BLOCK_HASH_OFFSET + 4],
+        )
+        .map_err(|e| anyhow!("failed to parse private-batch proof block hash: {}", e))?;
+        let key = BatchKey {
+            block_hash,
+            asset_id: pis[aggregated_output::ASSET_ID_OFFSET].to_canonical_u64(),
+            volume_fee_bps: pis[aggregated_output::VOLUME_FEE_BPS_OFFSET].to_canonical_u64(),
+        };
+
+        let nullifiers_start = aggregated_output::nullifiers_start(self.inner_num_leaves);
+        let nullifiers = (0..aggregated_output::nullifiers_count(self.inner_num_leaves))
+            .map(|i| {
+                let start = nullifiers_start + i * 4;
+                try_4_felts_to_bytes(&pis[start..start + 4]).map_err(|e| {
+                    anyhow!("failed to parse private-batch proof nullifier {}: {}", i, e)
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let exit_slots_start = aggregated_output::exit_slots_start();
+        let volume = (0..aggregated_output::exit_slots_count(self.inner_num_leaves))
+            .map(|i| {
+                pis[exit_slots_start + i * aggregated_output::EXIT_SLOT_LEN].to_canonical_u64()
+            })
+            .fold(0u64, |acc, sum| acc.saturating_add(sum));
+
+        Ok((key, nullifiers, volume))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use plonky2::field::types::Field;
+    use plonky2::iop::target::Target;
+    use plonky2::iop::witness::{PartialWitness, WitnessWrite};
+    use plonky2::plonk::{
+        circuit_builder::CircuitBuilder,
+        circuit_data::{CircuitConfig, CircuitData},
+    };
+
+    const NUM_LEAVES: usize = 1;
+
+    fn pi_len() -> usize {
+        aggregated_output::pi_len(NUM_LEAVES)
+    }
+
+    /// A minimal circuit whose public inputs mimic the private-batch layout,
+    /// so pool admission logic can be exercised without real aggregation proofs.
+    fn build_fake_private_batch_circuit() -> (CircuitData<F, C, D>, Vec<Target>) {
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let pis = builder.add_virtual_targets(pi_len());
+        builder.range_check(pis[0], 32);
+        builder.register_public_inputs(&pis);
+        (builder.build::<C>(), pis)
+    }
+
+    struct FakePis {
+        asset_id: u64,
+        volume_fee_bps: u64,
+        block: u64,
+        exit_sums: [u64; 2],
+        nullifier: u64,
+    }
+
+    fn prove_fake(data: &CircuitData<F, C, D>, targets: &[Target], p: &FakePis) -> Proof {
+        let mut values = vec![F::ZERO; pi_len()];
+        values[aggregated_output::NUM_EXIT_SLOTS_OFFSET] = F::from_canonical_u64(2);
+        values[aggregated_output::ASSET_ID_OFFSET] = F::from_canonical_u64(p.asset_id);
+        values[aggregated_output::VOLUME_FEE_BPS_OFFSET] = F::from_canonical_u64(p.volume_fee_bps);
+        values[aggregated_output::BLOCK_HASH_OFFSET] = F::from_canonical_u64(p.block);
+        for i in 0..2 {
+            values[aggregated_output::exit_slots_start() + i * aggregated_output::EXIT_SLOT_LEN] =
+                F::from_canonical_u64(p.exit_sums[i]);
+        }
+        values[aggregated_output::nullifiers_start(NUM_LEAVES)] =
+            F::from_canonical_u64(p.nullifier);
+
+        let mut pw = PartialWitness::new();
+        for (t, v) in targets.iter().zip(values.iter()) {
+            pw.set_target(*t, *v).unwrap();
+        }
+        data.prove(pw).unwrap()
+    }
+
+    fn nullifier_digest(n: u64) -> BytesDigest {
+        let felts = [F::from_canonical_u64(n), F::ZERO, F::ZERO, F::ZERO];
+        try_4_felts_to_bytes(&felts).unwrap()
+    }
+
+    fn make_pool(
+        batch_size: usize,
+        limits: PoolLimits,
+    ) -> (ProofPool, CircuitData<F, C, D>, Vec<Target>) {
+        let (data, targets) = build_fake_private_batch_circuit();
+        let pool = ProofPool::new(data.verifier_data(), NUM_LEAVES, batch_size, limits).unwrap();
+        (pool, data, targets)
+    }
+
+    fn fake(block: u64, nullifier: u64) -> FakePis {
+        FakePis {
+            asset_id: 0,
+            volume_fee_bps: 10,
+            block,
+            exit_sums: [100, 50],
+            nullifier,
+        }
+    }
+
+    #[test]
+    fn proofs_bucket_by_key() {
+        let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
+
+        let key_a = pool
+            .push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        let key_a2 = pool
+            .push(prove_fake(&data, &targets, &fake(1, 12)))
+            .unwrap();
+        let key_b = pool
+            .push(prove_fake(&data, &targets, &fake(2, 13)))
+            .unwrap();
+
+        assert_eq!(key_a, key_a2);
+        assert_ne!(key_a, key_b);
+        assert_eq!(pool.len(), 3);
+        assert_eq!(pool.num_buckets(), 2);
+
+        let stats = pool.bucket_stats();
+        let a = stats.iter().find(|s| s.key == key_a).unwrap();
+        assert_eq!(a.num_proofs, 2);
+        assert!(a.is_full());
+        assert_eq!(a.total_volume, 300);
+        let b = stats.iter().find(|s| s.key == key_b).unwrap();
+        assert_eq!(b.num_proofs, 1);
+        assert!(!b.is_full());
+    }
+
+    #[test]
+    fn full_bucket_rejects_without_touching_other_buckets() {
+        let (mut pool, data, targets) = make_pool(1, PoolLimits::default());
+
+        pool.push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        let err = pool
+            .push(prove_fake(&data, &targets, &fake(1, 12)))
+            .unwrap_err();
+        assert!(err.to_string().contains("is full"), "got: {err}");
+
+        // Other keys still admit.
+        pool.push(prove_fake(&data, &targets, &fake(2, 13)))
+            .unwrap();
+        assert_eq!(pool.len(), 2);
+    }
+
+    #[test]
+    fn duplicate_nullifier_in_bucket_is_rejected() {
+        let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
+
+        pool.push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        let err = pool
+            .push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap_err();
+        assert!(err.to_string().contains("already queued"), "got: {err}");
+        assert_eq!(pool.len(), 1);
+    }
+
+    #[test]
+    fn tampered_proof_is_rejected() {
+        let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
+
+        let mut proof = prove_fake(&data, &targets, &fake(1, 11));
+        proof.public_inputs[aggregated_output::ASSET_ID_OFFSET] = F::from_canonical_u64(9);
+        let err = pool.push(proof).unwrap_err();
+        assert!(
+            err.to_string().contains("verification failed"),
+            "got: {err}"
+        );
+        assert!(pool.is_empty());
+    }
+
+    #[test]
+    fn wrong_pi_length_is_rejected() {
+        let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
+
+        let mut proof = prove_fake(&data, &targets, &fake(1, 11));
+        proof.public_inputs.pop();
+        let err = pool.push(proof).unwrap_err();
+        assert!(
+            err.to_string().contains("public input length mismatch"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn global_proof_cap_is_enforced() {
+        let (mut pool, data, targets) = make_pool(
+            1,
+            PoolLimits {
+                max_proofs: 1,
+                max_buckets: 8,
+            },
+        );
+
+        pool.push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        let err = pool
+            .push(prove_fake(&data, &targets, &fake(2, 12)))
+            .unwrap_err();
+        assert!(err.to_string().contains("pool is full"), "got: {err}");
+    }
+
+    #[test]
+    fn bucket_cap_is_enforced() {
+        let (mut pool, data, targets) = make_pool(
+            1,
+            PoolLimits {
+                max_proofs: 16,
+                max_buckets: 1,
+            },
+        );
+
+        pool.push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        let err = pool
+            .push(prove_fake(&data, &targets, &fake(2, 12)))
+            .unwrap_err();
+        assert!(err.to_string().contains("bucket limit"), "got: {err}");
+    }
+
+    #[test]
+    fn evict_settled_removes_proofs_and_empty_buckets() {
+        let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
+
+        let key_a = pool
+            .push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        pool.push(prove_fake(&data, &targets, &fake(1, 12)))
+            .unwrap();
+        let key_b = pool
+            .push(prove_fake(&data, &targets, &fake(2, 13)))
+            .unwrap();
+
+        let settled: HashSet<BytesDigest> = [nullifier_digest(11), nullifier_digest(13)]
+            .into_iter()
+            .collect();
+        let evicted = pool.evict_settled(&settled);
+
+        assert_eq!(evicted, 2);
+        assert_eq!(pool.len(), 1);
+        assert_eq!(pool.num_buckets(), 1);
+        assert!(pool.bucket_proofs(&key_a).is_some());
+        assert!(pool.bucket_proofs(&key_b).is_none());
+    }
+
+    #[test]
+    fn remove_bucket_returns_proofs() {
+        let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
+
+        let key = pool
+            .push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        pool.push(prove_fake(&data, &targets, &fake(1, 12)))
+            .unwrap();
+
+        let drained = pool.remove_bucket(&key);
+        assert_eq!(drained.len(), 2);
+        assert!(pool.is_empty());
+        assert!(pool.remove_bucket(&key).is_empty());
+    }
+
+    #[test]
+    fn dummy_key_is_detected() {
+        let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
+
+        let key = pool
+            .push(prove_fake(&data, &targets, &fake(0, 11)))
+            .unwrap();
+        assert!(key.is_dummy());
+        let key = pool
+            .push(prove_fake(&data, &targets, &fake(3, 12)))
+            .unwrap();
+        assert!(!key.is_dummy());
+    }
+}

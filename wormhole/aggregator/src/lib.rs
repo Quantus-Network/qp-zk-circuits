@@ -2,6 +2,7 @@ pub mod aggregator;
 pub mod common;
 pub mod config;
 pub mod dummy_proof;
+pub mod pool;
 pub mod private_batch;
 pub mod public_batch;
 
