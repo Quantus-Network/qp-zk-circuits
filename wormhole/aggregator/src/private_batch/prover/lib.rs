@@ -9,11 +9,12 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use plonky2::{
+    field::types::PrimeField64,
     iop::witness::PartialWitness,
     plonk::{
         circuit_data::{
             CircuitConfig, CommonCircuitData, ProverCircuitData, ProverOnlyCircuitData,
-            VerifierOnlyCircuitData,
+            VerifierCircuitData, VerifierOnlyCircuitData,
         },
         proof::ProofWithPublicInputs,
     },
@@ -24,6 +25,7 @@ use rand::seq::SliceRandom;
 #[cfg(feature = "std")]
 use std::{fs, path::Path};
 
+use qp_wormhole_inputs::{validate_proof_count, BytesDigest, PublicCircuitInputs};
 use zk_circuits_common::{
     circuit::{wormhole_private_batch_circuit_config, C, D, F},
     utils::bytes_to_digest,
@@ -36,7 +38,10 @@ use crate::{
     },
     dummy_proof::{generate_random_nullifier_preimage, load_dummy_proof},
     private_batch::{
-        circuit::circuit_logic::{PrivateBatchCircuit, PrivateBatchCircuitTargets},
+        circuit::{
+            circuit_logic::{PrivateBatchCircuit, PrivateBatchCircuitTargets},
+            constants::LEAF_PI_LEN,
+        },
         prover::witness::fill_private_batch_witness,
     },
 };
@@ -54,30 +59,32 @@ impl PrivateBatchProver {
     /// Build a fresh private-batch aggregation prover from circuit definitions.
     ///
     /// In production, prefer `new_from_binaries_dir(...)` to load prebuilt circuits.
+    /// Returns an error when `num_leaf_proofs` is outside the supported range.
     pub fn new(
         agg_circuit_config: CircuitConfig,
         leaf_common: CommonCircuitData<F, D>,
         leaf_verifier_only: &VerifierOnlyCircuitData<C, D>,
         num_leaf_proofs: usize,
         dummy_proof_template: ProofWithPublicInputs<F, C, D>,
-    ) -> Self {
+    ) -> Result<Self> {
+        // Proof-count bounds are enforced by PrivateBatchCircuit::new.
         let agg_circuit = PrivateBatchCircuit::new(
             agg_circuit_config,
             &leaf_common,
             leaf_verifier_only,
             num_leaf_proofs,
-        );
+        )?;
 
         let targets = Some(agg_circuit.targets());
         let circuit_data = agg_circuit.build_prover();
 
-        Self {
+        Ok(Self {
             circuit_data,
             partial_witness: PartialWitness::new(),
             targets,
             num_leaf_proofs,
             dummy_proof_template,
-        }
+        })
     }
 
     /// Create a private-batch aggregation prover from serialized bytes.
@@ -102,6 +109,11 @@ impl PrivateBatchProver {
             _phantom: Default::default(),
         };
 
+        // Validate the batch count at the public byte-loading boundary so a zero
+        // or oversized count returns an error instead of panicking inside the
+        // circuit builder (#97027, #97070).
+        validate_proof_count(num_leaf_proofs, "num_leaf_proofs")?;
+
         // 1) Load and pin leaf verifier data to the canonical Wormhole leaf circuit.
         let leaf_verifier_data =
             load_canonical_leaf_verifier_data(leaf_common_bytes, leaf_verifier_only_bytes)?;
@@ -113,7 +125,7 @@ impl PrivateBatchProver {
             &leaf_verifier_data.common,
             &leaf_verifier_data.verifier_only,
             num_leaf_proofs,
-        );
+        )?;
         let targets = Some(circuit.targets());
         let canonical_agg = circuit.build_verifier();
 
@@ -134,6 +146,12 @@ impl PrivateBatchProver {
         let dummy_proof_template =
             load_dummy_proof(dummy_proof_bytes.to_vec(), &leaf_verifier_data.common)
                 .map_err(|e| anyhow!("failed to deserialize dummy proof: {}", e))?;
+
+        // Verify the template is a valid leaf proof carrying the strong dummy
+        // sentinel (zero block hash AND zero outputs), so a poisoned padding
+        // template cannot inject a real payout into every partial batch. This
+        // mirrors the public-batch template check (#97026).
+        verify_dummy_leaf_template(&dummy_proof_template, &leaf_verifier_data)?;
 
         Ok(Self {
             circuit_data: ProverCircuitData {
@@ -239,10 +257,28 @@ impl PrivateBatchProver {
             );
         }
 
-        // If we're going to pad with dummy proofs (asset_id = 0), ensure real proofs are asset_id=0.
+        // If we're going to pad with dummy proofs (asset_id = 0), real proofs must
+        // also use asset_id = 0 because the private-batch circuit enforces asset_id
+        // equality across all proofs.
         let num_dummies_needed = self.num_leaf_proofs.saturating_sub(proofs.len());
-        if num_dummies_needed > 0 {
-            assert_dummy_padding_asset_id_compatible(&proofs)?;
+
+        // Validate every real proof's public-input length up front, regardless of
+        // whether padding is needed, so a malformed full batch is rejected at the
+        // API boundary instead of panicking inside witness assignment (#97073).
+        for (idx, proof) in proofs.iter().enumerate() {
+            ensure_proof_public_input_len(proof, LEAF_PI_LEN, "leaf proof")?;
+            if num_dummies_needed > 0 {
+                let real_asset_id =
+                    leaf_proof_asset_id(proof).map_err(|e| anyhow!("leaf proof {}: {}", idx, e))?;
+                if real_asset_id != 0 {
+                    bail!(
+                        "real proof {} has asset_id={}, but dummy proofs use asset_id=0. \
+                         All proofs must have the same asset_id for aggregation when padding is required.",
+                        idx,
+                        real_asset_id
+                    );
+                }
+            }
         }
 
         // Pad with dummy proofs
@@ -284,28 +320,47 @@ impl PrivateBatchProver {
 // Helpers
 // -----------------------------------------------------------------------------
 
-/// If we're padding with dummy proofs (`asset_id = 0`), real proofs must also use `asset_id = 0`
-/// because the private-batch circuit enforces asset_id equality across all proofs.
-fn assert_dummy_padding_asset_id_compatible(
-    proofs: &[ProofWithPublicInputs<F, C, D>],
+/// Verify that the dummy leaf proof template is a valid leaf proof carrying the
+/// strong dummy sentinel: `block_hash == 0` AND both output amounts zero.
+///
+/// The private-batch circuit only treats `block_hash == 0` slots as dummies, and
+/// its exit-dedup gadget sums output amounts across matching exit accounts. If a
+/// poisoned `dummy_proof.bin` contained a *real* proof (non-zero block hash or
+/// outputs), every empty slot in a partial batch would replay that payout. This
+/// mirrors `verify_dummy_private_batch_template` at the public-batch layer (#97026).
+fn verify_dummy_leaf_template(
+    template: &ProofWithPublicInputs<F, C, D>,
+    leaf_verifier: &VerifierCircuitData<F, C, D>,
 ) -> Result<()> {
-    for (idx, proof) in proofs.iter().enumerate() {
-        ensure_proof_public_input_len(
-            proof,
-            crate::private_batch::circuit::constants::LEAF_PI_LEN,
-            "leaf proof",
-        )?;
-        let real_asset_id = leaf_proof_asset_id(proof)?;
+    // Check the sentinel first (cheap, and independently testable); a template
+    // is only acceptable if BOTH the sentinel and cryptographic verification pass.
+    let u64s: Vec<u64> = template
+        .public_inputs
+        .iter()
+        .map(|f| f.to_canonical_u64())
+        .collect();
+    let pis = PublicCircuitInputs::try_from_u64_slice(&u64s)
+        .context("failed to parse dummy leaf proof template public inputs")?;
 
-        if real_asset_id != 0 {
-            bail!(
-                "real proof {} has asset_id={}, but dummy proofs use asset_id=0. \
-                 All proofs must have the same asset_id for aggregation when padding is required.",
-                idx,
-                real_asset_id
-            );
-        }
+    if pis.block_hash != BytesDigest::default() {
+        bail!(
+            "dummy leaf proof template has non-zero block_hash {:?}; \
+             padding templates must carry the all-zero block-hash sentinel",
+            pis.block_hash
+        );
     }
+    if pis.output_amount_1 != 0 || pis.output_amount_2 != 0 {
+        bail!(
+            "dummy leaf proof template has non-zero output amounts ({}, {}); \
+             padding templates must contribute zero to every exit slot",
+            pis.output_amount_1,
+            pis.output_amount_2
+        );
+    }
+
+    leaf_verifier
+        .verify(template.clone())
+        .map_err(|e| anyhow!("dummy leaf proof template failed verification: {}", e))?;
 
     Ok(())
 }
@@ -318,4 +373,63 @@ fn generate_dummy_nullifier_pre_images_for_slots(n_slots: usize) -> Vec<[F; 4]> 
     (0..n_slots)
         .map(|_| bytes_to_digest(generate_random_nullifier_preimage()))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use plonky2::field::types::Field;
+    use qp_wormhole_inputs::{
+        BLOCK_HASH_START_INDEX, NULLIFIER_START_INDEX, OUTPUT_AMOUNT_1_INDEX,
+        PUBLIC_INPUTS_FELTS_LEN,
+    };
+    use test_helpers::fake_leaf::{build_fake_leaf_circuit, prove_fake_leaf};
+
+    #[test]
+    fn dummy_template_with_zero_sentinel_is_accepted() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+        let template = prove_fake_leaf(&leaf, &targets, [F::ZERO; PUBLIC_INPUTS_FELTS_LEN]);
+        verify_dummy_leaf_template(&template, &leaf.verifier_data())
+            .expect("all-zero sentinel template must be accepted");
+    }
+
+    #[test]
+    fn dummy_template_with_nonzero_block_hash_is_rejected() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+        let mut pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
+        pis[BLOCK_HASH_START_INDEX] = F::ONE;
+        let template = prove_fake_leaf(&leaf, &targets, pis);
+        let err = verify_dummy_leaf_template(&template, &leaf.verifier_data()).unwrap_err();
+        assert!(
+            err.to_string().contains("non-zero block_hash"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn dummy_template_with_nonzero_payout_is_rejected() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+        let mut pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
+        pis[OUTPUT_AMOUNT_1_INDEX] = F::from_canonical_u32(5);
+        let template = prove_fake_leaf(&leaf, &targets, pis);
+        let err = verify_dummy_leaf_template(&template, &leaf.verifier_data()).unwrap_err();
+        assert!(
+            err.to_string().contains("non-zero output amounts"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn dummy_template_failing_cryptographic_verification_is_rejected() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+        let mut template = prove_fake_leaf(&leaf, &targets, [F::ZERO; PUBLIC_INPUTS_FELTS_LEN]);
+        // Sentinel-neutral mutation (nullifier felt): the sentinel checks pass but
+        // the proof no longer verifies against its mutated public inputs.
+        template.public_inputs[NULLIFIER_START_INDEX] = F::ONE;
+        let err = verify_dummy_leaf_template(&template, &leaf.verifier_data()).unwrap_err();
+        assert!(
+            err.to_string().contains("failed verification"),
+            "got: {err}"
+        );
+    }
 }

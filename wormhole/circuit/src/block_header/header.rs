@@ -105,7 +105,10 @@ impl HeaderInputs {
             state_root: bytes_to_digest(state_root),
             extrinsics_root: bytes_to_digest(extrinsics_root),
             zk_tree_root: bytes_to_digest(zk_tree_root),
-            digest: bytes_to_felts(digest).try_into().unwrap(),
+            digest: bytes_to_felts(digest)
+                .map_err(|e| anyhow::anyhow!("failed to encode digest logs: {}", e))?
+                .try_into()
+                .unwrap(),
         })
     }
     pub fn block_hash(&self) -> BytesDigest {

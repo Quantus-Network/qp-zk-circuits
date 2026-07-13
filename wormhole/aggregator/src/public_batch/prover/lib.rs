@@ -4,19 +4,20 @@
 //! verifier key substitution attacks.
 
 use anyhow::{anyhow, bail, Context, Result};
+use plonky2::field::types::PrimeField64;
 #[cfg(feature = "std")]
 use plonky2::{
     iop::witness::PartialWitness,
     plonk::{
         circuit_data::{
             CircuitConfig, CommonCircuitData, ProverCircuitData, ProverOnlyCircuitData,
-            VerifierOnlyCircuitData,
+            VerifierCircuitData, VerifierOnlyCircuitData,
         },
         proof::ProofWithPublicInputs,
     },
     util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer},
 };
-use qp_wormhole_inputs::BytesDigest;
+use qp_wormhole_inputs::{validate_proof_count, BytesDigest, PrivateBatchPublicInputs};
 
 #[cfg(feature = "std")]
 use std::{fs, path::Path};
@@ -29,10 +30,13 @@ use zk_circuits_common::{
 use crate::{
     common::utils::{
         canonical_leaf_verifier_data, ensure_common_matches_canonical,
-        load_canonical_private_batch_verifier_data,
+        ensure_proof_public_input_len, load_canonical_private_batch_verifier_data,
     },
     public_batch::{
-        circuit::circuit_logic::{PublicBatchCircuit, PublicBatchCircuitTargets},
+        circuit::{
+            circuit_logic::{PublicBatchCircuit, PublicBatchCircuitTargets},
+            constants::private_batch_pi_len,
+        },
         prover::witness::fill_public_batch_witness,
     },
 };
@@ -59,6 +63,7 @@ impl PublicBatchProver {
     /// Build a fresh public-batch aggregation prover from circuit definitions.
     ///
     /// In production, prefer `new_from_binaries_dir(...)` to load prebuilt circuits.
+    /// Returns an error when either proof count is outside the supported range.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         public_batch_circuit_config: CircuitConfig,
@@ -67,25 +72,26 @@ impl PublicBatchProver {
         num_private_batch_proofs: usize,
         private_batch_num_leaves: usize,
         dummy_proof_template: ProofWithPublicInputs<F, C, D>,
-    ) -> Self {
+    ) -> Result<Self> {
+        // Proof-count bounds are enforced by PublicBatchCircuit::new.
         let public_batch_circuit = PublicBatchCircuit::new(
             public_batch_circuit_config,
             private_batch_common,
             private_batch_verifier_only,
             num_private_batch_proofs,
             private_batch_num_leaves,
-        );
+        )?;
 
         let targets = Some(public_batch_circuit.targets());
         let circuit_data = public_batch_circuit.build_prover();
 
-        Self {
+        Ok(Self {
             circuit_data,
             partial_witness: PartialWitness::new(),
             targets,
             num_private_batch_proofs,
             dummy_proof_template,
-        }
+        })
     }
 
     /// Create a public-batch prover from serialized bytes.
@@ -104,6 +110,12 @@ impl PublicBatchProver {
 
         let (num_leaf_proofs, num_private_batch_proofs) = config;
 
+        // Validate batch counts at the public byte-loading boundary so a zero or
+        // oversized config returns an error instead of panicking inside the
+        // circuit builder (#97027, #97070).
+        validate_proof_count(num_leaf_proofs, "num_leaf_proofs")?;
+        validate_proof_count(num_private_batch_proofs, "num_private_batch_proofs")?;
+
         // 1) Load and pin private-batch verifier data to the canonical circuit.
         let private_batch_verifier_data = load_canonical_private_batch_verifier_data(
             private_batch_common_bytes,
@@ -111,6 +123,20 @@ impl PublicBatchProver {
             &canonical_leaf_verifier_data(),
             num_leaf_proofs,
         )?;
+
+        // Ensure the loaded private-batch artifact's public-input shape matches the
+        // caller-supplied leaf count before building the public-batch circuit, which
+        // indexes fixed offsets derived from that count (#97071).
+        let expected_l0_pi_len = private_batch_pi_len(num_leaf_proofs);
+        if private_batch_verifier_data.common.num_public_inputs != expected_l0_pi_len {
+            bail!(
+                "private-batch common data has {} public inputs, expected {} for num_leaf_proofs={}; \
+                 refusing to build a public-batch circuit over an inconsistent private-batch artifact",
+                private_batch_verifier_data.common.num_public_inputs,
+                expected_l0_pi_len,
+                num_leaf_proofs,
+            );
+        }
 
         // 2) Reconstruct the canonical public-batch circuit once: it provides both the
         // witness targets and the canonical common data used to pin the prebuilt artifacts.
@@ -120,7 +146,7 @@ impl PublicBatchProver {
             &private_batch_verifier_data.verifier_only,
             num_private_batch_proofs,
             num_leaf_proofs,
-        );
+        )?;
         let targets = Some(circuit.targets());
         let canonical_public = circuit.build_verifier();
 
@@ -147,6 +173,11 @@ impl PublicBatchProver {
             &private_batch_verifier_data.common,
         )
         .map_err(|e| anyhow!("failed to deserialize dummy private-batch proof: {}", e))?;
+
+        // Verify the template is a valid all-dummy private-batch proof (zero
+        // block-hash sentinel and zero forwarded payouts) so a poisoned padding
+        // template cannot inject real exits into partial public batches (#97026).
+        verify_dummy_private_batch_template(&dummy_proof_template, &private_batch_verifier_data)?;
 
         Ok(Self {
             circuit_data: ProverCircuitData {
@@ -253,6 +284,16 @@ impl PublicBatchProver {
             );
         }
 
+        let expected_pi_len = targets
+            .private_batch_proofs
+            .first()
+            .map(|proof| proof.public_inputs.len())
+            .ok_or_else(|| anyhow!("public-batch circuit has no private-batch proof targets"))?;
+        for (index, proof) in proofs.iter().enumerate() {
+            ensure_proof_public_input_len(proof, expected_pi_len, "private-batch proof")
+                .with_context(|| format!("private-batch proof {} is malformed", index))?;
+        }
+
         // Pad partial batches with the dummy template. No shuffle: forwarding is
         // order-preserving by design (per-segment attribution on-chain).
         let num_dummies_needed = self.num_private_batch_proofs - proofs.len();
@@ -274,5 +315,150 @@ impl PublicBatchProver {
         self.circuit_data
             .prove(self.partial_witness)
             .map_err(|e| anyhow!("Failed to prove public-batch aggregation circuit: {}", e))
+    }
+}
+
+/// Verify that the dummy private-batch proof template is a valid all-dummy
+/// private-batch proof carrying the zero block-hash sentinel and zero forwarded
+/// payouts, so poisoned padding cannot inject real exits into partial public
+/// batches (#97026).
+fn verify_dummy_private_batch_template(
+    template: &ProofWithPublicInputs<F, C, D>,
+    private_batch_verifier: &VerifierCircuitData<F, C, D>,
+) -> Result<()> {
+    private_batch_verifier
+        .verify(template.clone())
+        .map_err(|e| {
+            anyhow!(
+                "dummy private-batch proof template failed verification: {}",
+                e
+            )
+        })?;
+
+    let u64s: Vec<u64> = template
+        .public_inputs
+        .iter()
+        .map(|f| f.to_canonical_u64())
+        .collect();
+    let pis = PrivateBatchPublicInputs::try_from_u64_slice(&u64s)
+        .context("failed to parse dummy private-batch proof public inputs")?;
+
+    if pis.block_data.block_hash != BytesDigest::default() {
+        bail!(
+            "dummy private-batch proof template has non-zero block_hash {:?}; \
+             padding templates must carry the all-zero block-hash sentinel",
+            pis.block_data.block_hash
+        );
+    }
+    for (i, slot) in pis.account_data.iter().enumerate() {
+        if slot.summed_output_amount != 0 {
+            bail!(
+                "dummy private-batch proof template forwards non-zero payout at slot {} ({}); \
+                 padding templates must contribute zero to every exit slot",
+                i,
+                slot.summed_output_amount
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::private_batch::circuit::circuit_logic::PrivateBatchCircuit;
+    use crate::private_batch::prover::PrivateBatchProver;
+    use plonky2::field::types::Field;
+    use qp_wormhole_inputs::MAX_PROOF_COUNT;
+    use test_helpers::fake_leaf::{build_fake_leaf_circuit, prove_fake_leaf};
+    use zk_circuits_common::circuit::{wormhole_private_batch_circuit_config, F};
+
+    #[test]
+    fn direct_constructors_reject_oversized_counts() {
+        let (leaf, leaf_targets) = build_fake_leaf_circuit();
+        let fake_proof = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; 21]);
+
+        let err = PrivateBatchProver::new(
+            wormhole_private_batch_circuit_config(),
+            leaf.common.clone(),
+            &leaf.verifier_only,
+            MAX_PROOF_COUNT + 1,
+            fake_proof.clone(),
+        )
+        .expect_err("oversized direct private-batch prover count must be rejected");
+        assert!(err.to_string().contains("exceeds maximum"));
+
+        let err = PublicBatchProver::new(
+            wormhole_public_batch_circuit_config(),
+            leaf.common.clone(),
+            &leaf.verifier_only,
+            MAX_PROOF_COUNT + 1,
+            1,
+            fake_proof,
+        )
+        .expect_err("oversized direct public-batch prover count must be rejected");
+        assert!(err.to_string().contains("exceeds maximum"));
+
+        let err = PrivateBatchCircuit::new(
+            wormhole_private_batch_circuit_config(),
+            &leaf.common,
+            &leaf.verifier_only,
+            MAX_PROOF_COUNT + 1,
+        )
+        .err()
+        .expect("oversized private-batch count must be rejected");
+        assert!(err.to_string().contains("exceeds maximum"));
+
+        let err = PublicBatchCircuit::new(
+            wormhole_public_batch_circuit_config(),
+            leaf.common.clone(),
+            &leaf.verifier_only,
+            MAX_PROOF_COUNT + 1,
+            1,
+        )
+        .err()
+        .expect("oversized public-batch count must be rejected");
+        assert!(err.to_string().contains("exceeds maximum"));
+    }
+
+    #[test]
+    fn commit_rejects_malformed_private_batch_pi_without_panicking() {
+        let (leaf, leaf_targets) = build_fake_leaf_circuit();
+        let fake_proof = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; 21]);
+        let private_batch = PrivateBatchCircuit::new(
+            wormhole_private_batch_circuit_config(),
+            &leaf.common,
+            &leaf.verifier_only,
+            1,
+        )
+        .unwrap()
+        .build_verifier();
+
+        let prover = PublicBatchProver::new(
+            wormhole_public_batch_circuit_config(),
+            private_batch.common.clone(),
+            &private_batch.verifier_only,
+            1,
+            1,
+            fake_proof.clone(),
+        )
+        .unwrap();
+
+        let mut malformed = fake_proof;
+        malformed.public_inputs.pop();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prover.commit(PublicBatchInputs {
+                proofs: vec![malformed],
+                aggregator_address: BytesDigest::default(),
+            })
+        }));
+        assert!(
+            result.is_ok(),
+            "commit must not panic on malformed PI length"
+        );
+        let err = result.unwrap().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("private-batch proof 0 is malformed"));
     }
 }
