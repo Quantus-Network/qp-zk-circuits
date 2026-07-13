@@ -282,7 +282,8 @@ pub mod circuit_logic {
         // Nullifier validation: nullifier == H(H(salt + secret + transfer_count))
         // Skip this validation for dummy proofs (block_hash == 0 AND outputs == 0).
         // This allows dummy proofs to use random nullifiers for better privacy.
-        let salt_felts = string_to_felts(NULLIFIER_SALT);
+        let salt_felts =
+            string_to_felts(NULLIFIER_SALT).expect("NULLIFIER_SALT within serialization cap");
         let mut nullifier_preimage = Vec::new();
         for &f in salt_felts.iter() {
             nullifier_preimage.push(builder.constant(f));
