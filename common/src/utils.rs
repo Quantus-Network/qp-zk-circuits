@@ -44,18 +44,18 @@ pub fn felts_to_u64(felts: [F; FELTS_PER_U64]) -> Result<u64, String> {
 }
 
 /// Encodes a string into field elements.
-pub fn string_to_felts(input: &str) -> Result<Vec<F>, String> {
-    serialization::string_to_felts(input).map_err(|e| e.to_string())
+pub fn string_to_felts(input: &str) -> Vec<F> {
+    serialization::string_to_felts(input)
 }
 
 /// Converts bytes to field elements (4 bytes/felt + terminator).
-pub fn bytes_to_felts(input: &[u8]) -> Result<Vec<F>, String> {
-    serialization::bytes_to_felts(input).map_err(|e| e.to_string())
+pub fn bytes_to_felts(input: &[u8]) -> Vec<F> {
+    serialization::bytes_to_felts(input)
 }
 
 /// Converts bytes to field elements using compact encoding (8 bytes/felt).
-pub fn bytes_to_felts_compact(input: &[u8]) -> Result<Vec<F>, String> {
-    serialization::bytes_to_felts_compact(input).map_err(|e| e.to_string())
+pub fn bytes_to_felts_compact(input: &[u8]) -> Vec<F> {
+    serialization::bytes_to_felts_compact(input)
 }
 
 /// Converts field elements back to bytes.

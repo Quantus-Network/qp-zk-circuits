@@ -56,9 +56,7 @@ impl UnspendableAccount {
 
         // Build preimage: salt + secret
         let mut preimage = Vec::new();
-        preimage.extend(
-            string_to_felts(UNSPENDABLE_SALT).expect("UNSPENDABLE_SALT within serialization cap"),
-        );
+        preimage.extend(string_to_felts(UNSPENDABLE_SALT));
         preimage.extend(&secret_felts);
 
         if preimage.len() != PREIMAGE_NUM_TARGETS {
@@ -186,8 +184,7 @@ impl CircuitFragment for UnspendableAccount {
         Self::Targets { account_id, secret }: &Self::Targets,
         builder: &mut CircuitBuilder<F, D>,
     ) {
-        let salt =
-            string_to_felts(UNSPENDABLE_SALT).expect("UNSPENDABLE_SALT within serialization cap");
+        let salt = string_to_felts(UNSPENDABLE_SALT);
         let mut preimage = Vec::new();
         for felt in salt {
             preimage.push(builder.constant(felt));

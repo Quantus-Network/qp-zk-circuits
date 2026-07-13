@@ -120,7 +120,7 @@ fn wa_matches_double_hash(
 ) {
     let secret = secret_from_limbs([a, b, c, d]);
 
-    let mut preimage: Vec<F> = string_to_felts(UNSPENDABLE_SALT).unwrap();
+    let mut preimage: Vec<F> = string_to_felts(UNSPENDABLE_SALT).to_vec();
     preimage.extend_from_slice(&bytes_to_digest(secret));
     let expected = hh(&preimage);
 
@@ -139,7 +139,7 @@ fn nullifier_matches_double_hash(
 ) {
     let secret = secret_from_limbs([a, b, c, d]);
 
-    let mut preimage: Vec<F> = string_to_felts(NULLIFIER_SALT).unwrap();
+    let mut preimage: Vec<F> = string_to_felts(NULLIFIER_SALT).to_vec();
     preimage.extend_from_slice(&bytes_to_digest(secret));
     preimage.extend(u64_to_felts(transfer_count));
     let expected = hh(&preimage);
@@ -423,7 +423,7 @@ proptest! {
         preimage.extend_from_slice(&ser_bytes_to_digest(&state_b));
         preimage.extend_from_slice(&ser_bytes_to_digest(&extrinsics_b));
         preimage.extend_from_slice(&ser_bytes_to_digest(&zk_tree_b));
-        preimage.extend(bytes_to_felts(&digest_arr).unwrap());
+        preimage.extend(bytes_to_felts(&digest_arr));
         let expected = h(&preimage);
 
         prop_assert_eq!(actual, expected);

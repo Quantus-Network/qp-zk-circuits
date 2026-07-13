@@ -74,8 +74,7 @@ mod tests {
                 &leaf_common,
                 &leaf_verifier_only,
                 num_leaves,
-            )
-            .unwrap();
+            );
 
             // Print gate counts before building
             println!("Gates before build: {}", private_batch_circuit.num_gates());
@@ -122,8 +121,7 @@ mod tests {
             &leaf_data.common,
             &leaf_data.verifier_only,
             private_batch_num_leaves,
-        )
-        .unwrap();
+        );
         let private_batch_data = private_batch_circuit.build_circuit();
         let private_batch_common = private_batch_data.common.clone();
         let private_batch_verifier_only = private_batch_data.verifier_only.clone();
@@ -149,8 +147,7 @@ mod tests {
                 &private_batch_verifier_only,
                 num_l0_proofs,
                 private_batch_num_leaves,
-            )
-            .unwrap();
+            );
 
             // Print gate counts before building
             println!("Gates before build: {}", public_batch_circuit.num_gates());
@@ -209,8 +206,7 @@ mod tests {
                 &leaf_common,
                 &leaf_verifier_only,
                 num_leaves,
-            )
-            .unwrap();
+            );
             let private_batch_data = private_batch_circuit.build_circuit();
 
             println!(

@@ -74,7 +74,7 @@ proptest! {
     /// Round trip: `felts_to_bytes ∘ bytes_to_felts = id` for arbitrary bytes.
     #[test]
     fn edge_encoding_round_trips(input in prop::collection::vec(any::<u8>(), 0..96)) {
-        let felts = bytes_to_felts(&input).unwrap();
+        let felts = bytes_to_felts(&input);
         let recovered = felts_to_bytes(&felts).expect("valid terminator");
         prop_assert_eq!(recovered, input);
     }
@@ -86,14 +86,14 @@ proptest! {
         y in prop::collection::vec(any::<u8>(), 0..96),
     ) {
         prop_assume!(x != y);
-        prop_assert_ne!(bytes_to_felts(&x).unwrap(), bytes_to_felts(&y).unwrap());
+        prop_assert_ne!(bytes_to_felts(&x), bytes_to_felts(&y));
     }
 
     /// No field reduction at the edges: every limb is a 32-bit value (< 2^32),
     /// hence canonical (`feltOf_id_of_lt_2pow32` in the Lean spec).
     #[test]
     fn edge_encoding_limbs_are_32_bit(input in prop::collection::vec(any::<u8>(), 0..96)) {
-        for f in bytes_to_felts(&input).unwrap() {
+        for f in bytes_to_felts(&input) {
             prop_assert!(f.to_canonical_u64() < (1u64 << 32));
         }
     }

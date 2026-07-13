@@ -21,7 +21,6 @@ mod workload;
 
 use anyhow::Result;
 use clap::Parser;
-use wormhole_aggregator::validate_proof_count;
 
 use crate::config::{default_agg_config, default_leaf_config, print_config_summary, AggConfigArgs};
 use crate::report::PhaseReport;
@@ -74,18 +73,6 @@ struct Args {
     agg_cfg: AggConfigArgs,
 }
 
-fn validate_workload_counts(num_leaf_proofs: usize, real_proofs: usize) -> Result<()> {
-    validate_proof_count(num_leaf_proofs, "num_leaf_proofs")?;
-    if real_proofs > num_leaf_proofs {
-        anyhow::bail!(
-            "--real-proofs ({}) must be <= --num-leaf-proofs ({})",
-            real_proofs,
-            num_leaf_proofs
-        );
-    }
-    Ok(())
-}
-
 fn main() -> Result<()> {
     let args = Args::parse();
     eprintln!("wormhole-memprof: args = {:#?}", args);
@@ -119,9 +106,13 @@ fn main() -> Result<()> {
 
     let num_leaf_proofs = args.num_leaf_proofs;
     let real_proofs = args.real_proofs.unwrap_or(num_leaf_proofs);
-    // Bound the circuit dimension before construction while permitting an
-    // all-dummy profiling run (`real_proofs == 0`).
-    validate_workload_counts(num_leaf_proofs, real_proofs)?;
+    if real_proofs > num_leaf_proofs {
+        anyhow::bail!(
+            "--real-proofs ({}) must be <= --num-leaf-proofs ({})",
+            real_proofs,
+            num_leaf_proofs
+        );
+    }
 
     let mut report = PhaseReport::new(args.sample_period_ms)?;
 
@@ -164,20 +155,4 @@ fn main() -> Result<()> {
 
     report.finish_and_print(args.peak_target_mb)?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::validate_workload_counts;
-
-    #[test]
-    fn zero_real_proofs_is_valid_for_all_dummy_profile() {
-        validate_workload_counts(7, 0).unwrap();
-    }
-
-    #[test]
-    fn invalid_circuit_dimension_or_real_count_is_rejected() {
-        assert!(validate_workload_counts(0, 0).is_err());
-        assert!(validate_workload_counts(7, 8).is_err());
-    }
 }

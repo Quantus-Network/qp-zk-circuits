@@ -9,7 +9,6 @@ use plonky2::{
     },
     util::serialization::DefaultGateSerializer,
 };
-use qp_wormhole_inputs::validate_proof_count;
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use zk_circuits_common::circuit::{
     wormhole_leaf_circuit_config, wormhole_private_batch_circuit_config,
@@ -62,7 +61,7 @@ pub fn load_canonical_private_batch_verifier_data(
     num_leaf_proofs: usize,
 ) -> Result<VerifierCircuitData<F, C, D>> {
     let loaded = load_verifier_data_from_bytes(common_bytes, verifier_only_bytes, "private_batch")?;
-    let canonical = canonical_private_batch_verifier_data(leaf, num_leaf_proofs)?;
+    let canonical = canonical_private_batch_verifier_data(leaf, num_leaf_proofs);
     ensure_verifier_data_matches_canonical(&loaded, &canonical, "private_batch")?;
     Ok(loaded)
 }
@@ -148,29 +147,29 @@ pub fn canonical_leaf_verifier_data() -> VerifierCircuitData<F, C, D> {
 pub fn canonical_private_batch_verifier_data(
     leaf: &VerifierCircuitData<F, C, D>,
     num_leaf_proofs: usize,
-) -> Result<VerifierCircuitData<F, C, D>> {
-    Ok(PrivateBatchCircuit::new(
+) -> VerifierCircuitData<F, C, D> {
+    PrivateBatchCircuit::new(
         wormhole_private_batch_circuit_config(),
         &leaf.common,
         &leaf.verifier_only,
         num_leaf_proofs,
-    )?
-    .build_verifier())
+    )
+    .build_verifier()
 }
 
 pub fn canonical_public_batch_verifier_data(
     private_batch: &VerifierCircuitData<F, C, D>,
     num_private_batch_proofs: usize,
     num_leaf_proofs: usize,
-) -> Result<VerifierCircuitData<F, C, D>> {
-    Ok(PublicBatchCircuit::new(
+) -> VerifierCircuitData<F, C, D> {
+    PublicBatchCircuit::new(
         wormhole_public_batch_circuit_config(),
         private_batch.common.clone(),
         &private_batch.verifier_only,
         num_private_batch_proofs,
         num_leaf_proofs,
-    )?
-    .build_verifier())
+    )
+    .build_verifier()
 }
 
 pub fn ensure_proof_public_input_len(
@@ -219,7 +218,12 @@ pub fn private_batch_num_leaves_from_padded_pi_len(pi_len: usize) -> Result<usiz
     }
 
     let num_leaves = payload_len / LEAF_PI_LEN;
-    validate_proof_count(num_leaves, "private-batch num_leaves")?;
+    if num_leaves == 0 {
+        return Err(anyhow!(
+            "private-batch aggregated public input length {} encodes zero leaves",
+            pi_len
+        ));
+    }
 
     Ok(num_leaves)
 }

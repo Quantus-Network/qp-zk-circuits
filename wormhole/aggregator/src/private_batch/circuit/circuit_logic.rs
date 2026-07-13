@@ -11,7 +11,6 @@
 //! The leaf verifier key is baked in as constants at circuit build time to prevent
 //! verifier key substitution attacks.
 
-use anyhow::Result;
 use plonky2::{
     field::types::Field,
     hash::poseidon2::Poseidon2Hash,
@@ -25,7 +24,6 @@ use plonky2::{
         proof::ProofWithPublicInputsTarget,
     },
 };
-use qp_wormhole_inputs::validate_proof_count;
 
 use zk_circuits_common::{
     circuit::{C, D, F},
@@ -58,14 +56,13 @@ impl PrivateBatchCircuit {
     /// Build a monolithic private-batch aggregation circuit that verifies `n_leaf` wormhole leaf proofs.
     ///
     /// The `leaf_verifier_only` is baked in as constants to prevent verifier key substitution.
-    /// Returns an error when `n_leaf` is outside the supported range.
     pub fn new(
         config: CircuitConfig,
         leaf_common: &CommonCircuitData<F, D>,
         leaf_verifier_only: &VerifierOnlyCircuitData<C, D>,
         n_leaf: usize,
-    ) -> Result<Self> {
-        validate_proof_count(n_leaf, "n_leaf")?;
+    ) -> Self {
+        assert!(n_leaf > 0, "n_leaf must be > 0");
 
         let mut builder = CircuitBuilder::<F, D>::new(config);
 
@@ -95,7 +92,7 @@ impl PrivateBatchCircuit {
         // Build the wormhole-specific wrapper logic directly in this circuit.
         build_private_batch_constraints(&mut builder, &targets, n_leaf);
 
-        Ok(Self { builder, targets })
+        Self { builder, targets }
     }
 
     pub fn targets(&self) -> PrivateBatchCircuitTargets {
@@ -456,7 +453,7 @@ mod tests {
             &leaf_common,
             &leaf_verifier_only,
             n_leaf,
-        )?;
+        );
         let targets = agg_circuit.targets();
         let prover_data = agg_circuit.build_prover();
 
@@ -469,7 +466,7 @@ mod tests {
         // Build verifier data from the same config/leaf common so we can verify the result.
         // NOTE: Must use the same leaf_verifier_only to get matching circuit digest
         let verifier_data =
-            PrivateBatchCircuit::new(agg_config, &leaf_common, &leaf_verifier_only, n_leaf)?
+            PrivateBatchCircuit::new(agg_config, &leaf_common, &leaf_verifier_only, n_leaf)
                 .build_verifier();
 
         Ok((agg_proof, verifier_data))
@@ -1616,8 +1613,7 @@ mod tests {
             &legit_circuit.common,
             &legit_circuit.verifier_only, // SECURITY: Baked as constants
             1,
-        )
-        .unwrap();
+        );
         let private_batch_targets = private_batch_circuit.targets();
         let private_batch_data = private_batch_circuit.build_circuit();
 
@@ -1676,8 +1672,7 @@ mod tests {
             &legit_circuit.common,
             &legit_circuit.verifier_only,
             1,
-        )
-        .unwrap();
+        );
         let private_batch_targets = private_batch_circuit.targets();
         let private_batch_data = private_batch_circuit.build_circuit();
 

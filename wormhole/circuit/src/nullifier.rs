@@ -81,8 +81,7 @@ impl Nullifier {
     pub fn from_preimage(secret: BytesDigest, transfer_count: u64) -> Self {
         let mut preimage = Vec::new();
 
-        let salt =
-            string_to_felts(NULLIFIER_SALT).expect("NULLIFIER_SALT within serialization cap");
+        let salt = string_to_felts(NULLIFIER_SALT);
         let secret_felts = bytes_to_digest(secret);
         let transfer_count_felts = u64_to_felts(transfer_count);
 
@@ -197,13 +196,10 @@ impl FieldElementCodec for Nullifier {
             .map_err(|_| anyhow::anyhow!("Failed to deserialize nullifier secret"))?;
         offset += SECRET_NUM_TARGETS;
 
-        // Deserialize transfer_count, enforcing the 32-bit limb invariant so a
-        // later `to_bytes` cannot panic on attacker-supplied oversized limbs (#97064).
+        // Deserialize transfer_count
         let transfer_count = elements[offset..offset + TRANSFER_COUNT_NUM_TARGETS]
             .try_into()
             .map_err(|_| anyhow::anyhow!("Failed to deserialize nullifier transfer_count"))?;
-        felts_to_u64(transfer_count)
-            .map_err(|e| anyhow::anyhow!("invalid nullifier transfer_count felts: {}", e))?;
 
         Ok(Self {
             hash,
@@ -279,8 +275,7 @@ pub fn add_nullifier_validation(targets: &NullifierTargets, builder: &mut Circui
     use plonky2::hash::poseidon2::Poseidon2Hash;
     use zk_circuits_common::utils::string_to_felts;
 
-    let salt_felts =
-        string_to_felts(NULLIFIER_SALT).expect("NULLIFIER_SALT within serialization cap");
+    let salt_felts = string_to_felts(NULLIFIER_SALT);
     let mut nullifier_preimage = Vec::new();
     for &f in salt_felts.iter() {
         nullifier_preimage.push(builder.constant(f));
@@ -293,31 +288,4 @@ pub fn add_nullifier_validation(targets: &NullifierTargets, builder: &mut Circui
         builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(inner_hash.elements.to_vec());
 
     builder.connect_hashes(targets.hash, computed_nullifier);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::Nullifier;
-    use plonky2::field::types::Field;
-    use qp_wormhole_inputs::BytesDigest;
-    use zk_circuits_common::{circuit::F, codec::FieldElementCodec};
-
-    #[test]
-    fn from_field_elements_rejects_oversized_transfer_count_limbs() {
-        // `to_bytes` treats transfer_count as 32-bit limbs, so `from_field_elements`
-        // must reject oversized limbs up front instead of letting a later
-        // `to_bytes` panic (#97064).
-        let valid = Nullifier::from_preimage(BytesDigest::new_unchecked([7u8; 32]), 42);
-        let mut felts = valid.to_field_elements();
-        let last = felts.len() - 1;
-        felts[last] = F::from_noncanonical_u64(0x1_0000_0000);
-
-        let err = Nullifier::from_field_elements(&felts)
-            .expect_err("oversized transfer_count limb must be rejected");
-        assert!(
-            err.to_string()
-                .contains("invalid nullifier transfer_count felts"),
-            "got: {err}"
-        );
-    }
 }

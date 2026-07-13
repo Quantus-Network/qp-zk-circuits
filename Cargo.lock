@@ -1176,7 +1176,6 @@ dependencies = [
  "criterion",
  "qp-plonky2-verifier",
  "qp-wormhole-inputs",
- "tiny-keccak",
 ]
 
 [[package]]
@@ -1190,7 +1189,6 @@ dependencies = [
  "qp-wormhole-inputs",
  "rand 0.8.6",
  "serde",
- "serde_json",
 ]
 
 [[package]]

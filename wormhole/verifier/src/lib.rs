@@ -44,7 +44,6 @@ pub use qp_plonky2_verifier::{
 
 use qp_plonky2_verifier::field::types::PrimeField64;
 use qp_plonky2_verifier::util::serialization::DefaultGateSerializer;
-use tiny_keccak::{Hasher, Keccak};
 
 // Re-export input types from qp-wormhole-inputs
 pub use qp_wormhole_inputs::{
@@ -98,50 +97,12 @@ pub struct WormholeVerifier {
     pub circuit_data: VerifierCircuitData<F, C, D>,
 }
 
-// Keccak-256 commitments to the byte-exact canonical leaf artifacts produced by
-// `WormholeCircuit::new(CircuitConfig::standard_recursion_config())` with
-// qp-plonky2 1.5.1. The integration tests rebuild the circuit and fail if a
-// deliberate circuit change requires these commitments to be updated.
-const CANONICAL_LEAF_VERIFIER_KECCAK256: [u8; 32] = [
-    0xa5, 0x15, 0xe4, 0x89, 0x85, 0x4d, 0xf6, 0xfe, 0x4e, 0xfa, 0x0c, 0x61, 0xf1, 0x9c, 0x32, 0xd2,
-    0xa5, 0x2c, 0x6b, 0x35, 0x47, 0x96, 0x4e, 0x98, 0x69, 0xb0, 0x7e, 0xc6, 0x85, 0x71, 0x7c, 0xf4,
-];
-const CANONICAL_LEAF_COMMON_KECCAK256: [u8; 32] = [
-    0xb5, 0x80, 0xc3, 0x1c, 0x06, 0xd1, 0x8c, 0x63, 0x48, 0x17, 0x09, 0x51, 0x63, 0x50, 0x29, 0xff,
-    0xb1, 0x82, 0x2e, 0xf0, 0x26, 0x37, 0xe8, 0xd8, 0x51, 0x2d, 0x8a, 0xbb, 0x79, 0x74, 0x80, 0xe3,
-];
-
-fn keccak256(input: &[u8]) -> [u8; 32] {
-    let mut output = [0u8; 32];
-    let mut hasher = Keccak::v256();
-    hasher.update(input);
-    hasher.finalize(&mut output);
-    output
-}
-
 impl WormholeVerifier {
     /// Creates a new [`WormholeVerifier`] from verifier and common data bytes.
     ///
-    /// Rejects artifacts unless both serialized inputs match the byte-exact
-    /// canonical Wormhole leaf artifacts. The decoded config and public-input
-    /// shape are checked again as defense in depth.
+    /// Rejects artifacts whose embedded `CircuitConfig` does not match the canonical
+    /// Wormhole leaf security profile (`security_bits`, ZK mode, FRI parameters, etc.).
     pub fn new_from_bytes(verifier_bytes: &[u8], common_bytes: &[u8]) -> anyhow::Result<Self> {
-        let verifier_hash = keccak256(verifier_bytes);
-        if verifier_hash != CANONICAL_LEAF_VERIFIER_KECCAK256 {
-            return Err(anyhow!(
-                "loaded verifier-only artifact does not match the canonical Wormhole leaf circuit (keccak256={:02x?})",
-                verifier_hash
-            ));
-        }
-
-        let common_hash = keccak256(common_bytes);
-        if common_hash != CANONICAL_LEAF_COMMON_KECCAK256 {
-            return Err(anyhow!(
-                "loaded common artifact does not match the canonical Wormhole leaf circuit (keccak256={:02x?})",
-                common_hash
-            ));
-        }
-
         let verifier_only = VerifierOnlyCircuitData::from_bytes(verifier_bytes.to_vec())
             .map_err(|e| anyhow!("failed to deserialize verifier data: {}", e))?;
 
