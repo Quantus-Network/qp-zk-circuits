@@ -6,7 +6,7 @@ use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_inputs::{BytesDigest, PublicCircuitInputs};
 use std::path::Path;
 use std::sync::Once;
-use test_helpers::TestInputs;
+use test_helpers::{compute_zk_leaf_hash, TestInputs};
 use wormhole_aggregator::aggregator::{
     AggregationBackend, PrivateBatchAggregator, PublicBatchAggregator,
 };
@@ -213,6 +213,66 @@ fn push_proof_rejects_invalid_proof_and_queue_stays_usable() {
     // The aggregator remains fully usable: a valid proof pushes and aggregates.
     let valid = make_leaf_proof(&CircuitInputs::test_inputs_0());
     aggregator.push_proof(valid).unwrap();
+    let aggregated = aggregator.aggregate().expect("aggregation must succeed");
+    aggregator
+        .verify(aggregated)
+        .expect("aggregated proof should verify");
+}
+
+#[test]
+fn push_proof_rejects_batch_incompatible_proof_and_buffer_is_recoverable() {
+    setup_test_binaries();
+    // Two individually valid proofs whose metadata the private-batch circuit's
+    // cross-slot constraints reject (different asset_ids) must not both be
+    // admitted: aggregate() would fail deterministically and, since the queue
+    // only drains on success (#97067), every retry would fail on the same
+    // batch, wedging the aggregator permanently.
+    let proof_asset_0 = make_leaf_proof(&CircuitInputs::test_inputs_0());
+
+    // A cryptographically valid proof for asset_id=5: same fixture, but the
+    // asset is part of the ZK leaf hash, so the tree root must be recomputed.
+    let proof_asset_5 = {
+        let mut inputs = CircuitInputs::test_inputs_0();
+        inputs.public.asset_id = 5;
+        inputs.private.zk_tree_root = compute_zk_leaf_hash(
+            &inputs.private.unspendable_account,
+            inputs.private.transfer_count,
+            5,
+            inputs.private.input_amount,
+        );
+        make_leaf_proof(&inputs)
+    };
+
+    let mut aggregator = make_aggregator();
+    aggregator.push_proof(proof_asset_0).unwrap();
+
+    // Sanity: the incompatible proof is valid on its own; only the combination
+    // with the queued asset-0 proof is rejected.
+    let err = aggregator.push_proof(proof_asset_5.clone()).unwrap_err();
+    assert!(
+        err.to_string().contains("batch-incompatible") && err.to_string().contains("asset_id"),
+        "got: {err}"
+    );
+    assert_eq!(
+        aggregator.buffer_len(),
+        1,
+        "rejected proof must not be queued; queued proof must be retained"
+    );
+
+    // Recovery path: drain the queue and requeue as the operator sees fit.
+    // The incompatible proof is admitted once the conflicting one is gone.
+    let drained = aggregator.drain_buffer();
+    assert_eq!(drained.len(), 1);
+    assert_eq!(aggregator.buffer_len(), 0);
+    aggregator.push_proof(proof_asset_5).unwrap();
+
+    // The backend stays fully usable: requeue the drained proof set and
+    // aggregate it successfully.
+    let recovered = aggregator.drain_buffer();
+    assert_eq!(recovered.len(), 1);
+    for proof in drained {
+        aggregator.push_proof(proof).unwrap();
+    }
     let aggregated = aggregator.aggregate().expect("aggregation must succeed");
     aggregator
         .verify(aggregated)

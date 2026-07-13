@@ -8,6 +8,7 @@
 //! - bounded proof buffers
 
 use anyhow::{anyhow, bail, Context, Result};
+use plonky2::field::types::PrimeField64;
 use plonky2::plonk::{
     circuit_data::{CommonCircuitData, VerifierCircuitData},
     proof::ProofWithPublicInputs,
@@ -29,6 +30,9 @@ use crate::{
         ensure_proof_public_input_len, ensure_verifier_data_matches_canonical, leaf_proof_asset_id,
         load_canonical_leaf_verifier_data, load_canonical_private_batch_verifier_data,
         load_verifier_data_from_bytes,
+    },
+    private_batch::circuit::constants::{
+        aggregated_output, ASSET_ID_START, BLOCK_HASH_START, LEAF_PI_LEN, VOLUME_FEE_BPS_START,
     },
     private_batch::prover::PrivateBatchProver,
     CircuitBinsConfig,
@@ -53,6 +57,15 @@ pub trait AggregationBackend: Send + Sync {
 
     /// Aggregate buffered proofs into a single proof.
     fn aggregate(&mut self) -> Result<Proof>;
+
+    /// Remove and return all buffered proofs, leaving the queue empty.
+    ///
+    /// Recovery escape hatch: admission checks in `push_proof` mirror the
+    /// aggregation circuits' cross-slot constraints, but if the two ever drift
+    /// (or aggregation fails for any other deterministic reason), this lets an
+    /// operator recover the queue without dropping the backend — and requeue
+    /// any still-good proofs via `push_proof`.
+    fn drain_buffer(&mut self) -> Vec<Proof>;
 
     /// Verify an aggregated proof produced by this backend.
     fn verify(&self, _proof: Proof) -> Result<()> {
@@ -112,18 +125,145 @@ fn load_public_batch_verifier_from_bins(
     Ok(loaded)
 }
 
-/// Length-check and verify a proof against the given canonical verifier data,
-/// then queue it. Since the backends only drain their queue on successful
-/// aggregation (#97067), a single invalid proof accepted here would make every
-/// aggregate() retry fail on the same poisoned batch, wedging the aggregator
-/// permanently.
+/// Batch-consistency metadata read from a proof's public inputs.
+///
+/// Mirrors the fields the aggregation circuits constrain across a batch, so
+/// admission can reject combinations that would deterministically fail proving.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SlotMetadata {
+    asset_id: u64,
+    volume_fee_bps: u64,
+    block_hash: [u64; 4],
+}
+
+impl SlotMetadata {
+    /// Wrapper-level dummy sentinel: all-zero block hash.
+    fn is_dummy(&self) -> bool {
+        self.block_hash == [0u64; 4]
+    }
+}
+
+/// Read batch metadata from a leaf proof's public inputs.
+fn leaf_slot_metadata(proof: &Proof) -> Result<SlotMetadata> {
+    let pis = &proof.public_inputs;
+    if pis.len() != LEAF_PI_LEN {
+        bail!(
+            "leaf proof public input length mismatch: expected {}, got {}",
+            LEAF_PI_LEN,
+            pis.len()
+        );
+    }
+    Ok(SlotMetadata {
+        asset_id: pis[ASSET_ID_START].to_canonical_u64(),
+        volume_fee_bps: pis[VOLUME_FEE_BPS_START].to_canonical_u64(),
+        block_hash: core::array::from_fn(|i| pis[BLOCK_HASH_START + i].to_canonical_u64()),
+    })
+}
+
+/// Read batch metadata from a private-batch aggregated proof's public inputs.
+fn private_batch_slot_metadata(proof: &Proof) -> Result<SlotMetadata> {
+    let pis = &proof.public_inputs;
+    if pis.len() < aggregated_output::HEADER_LEN {
+        bail!(
+            "private-batch proof public inputs too short: expected at least {}, got {}",
+            aggregated_output::HEADER_LEN,
+            pis.len()
+        );
+    }
+    Ok(SlotMetadata {
+        asset_id: pis[aggregated_output::ASSET_ID_OFFSET].to_canonical_u64(),
+        volume_fee_bps: pis[aggregated_output::VOLUME_FEE_BPS_OFFSET].to_canonical_u64(),
+        block_hash: core::array::from_fn(|i| {
+            pis[aggregated_output::BLOCK_HASH_OFFSET + i].to_canonical_u64()
+        }),
+    })
+}
+
+/// Check that a new proof's batch metadata is compatible with every queued proof,
+/// mirroring the aggregation circuits' cross-slot constraints:
+///
+/// - block hash and volume_fee_bps must match between non-dummy slots
+///   (dummies are exempt in both circuits),
+/// - asset_id must match unconditionally when `asset_dummy_exempt` is false
+///   (the private-batch circuit enforces asset equality across ALL slots,
+///   dummies included), or only between non-dummies when true (the public-batch
+///   circuit exempts dummy inners).
+///
+/// NOTE: this must be kept in lockstep with the circuits' cross-slot
+/// constraints. If they drift (a new circuit constraint without a matching
+/// admission check), a stuck queue can be recovered via
+/// `AggregationBackend::drain_buffer`.
+fn ensure_batch_metadata_compatible(
+    new: &SlotMetadata,
+    queued: &[SlotMetadata],
+    asset_dummy_exempt: bool,
+    label: &str,
+) -> Result<()> {
+    for existing in queued {
+        let either_dummy = new.is_dummy() || existing.is_dummy();
+
+        if !(asset_dummy_exempt && either_dummy) && new.asset_id != existing.asset_id {
+            bail!(
+                "refusing to queue batch-incompatible {}: asset_id {} does not match \
+                 queued asset_id {} (the batch circuit enforces asset consistency)",
+                label,
+                new.asset_id,
+                existing.asset_id
+            );
+        }
+
+        if !either_dummy {
+            if new.block_hash != existing.block_hash {
+                bail!(
+                    "refusing to queue batch-incompatible {}: block_hash {:?} does not match \
+                     queued block_hash {:?} (the batch circuit enforces block consistency)",
+                    label,
+                    new.block_hash,
+                    existing.block_hash
+                );
+            }
+            if new.volume_fee_bps != existing.volume_fee_bps {
+                bail!(
+                    "refusing to queue batch-incompatible {}: volume_fee_bps {} does not match \
+                     queued volume_fee_bps {} (the batch circuit enforces fee consistency)",
+                    label,
+                    new.volume_fee_bps,
+                    existing.volume_fee_bps
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validate a proof and queue it. Since the backends only drain their queue on
+/// successful aggregation (#97067), anything admitted here that would make the
+/// batch fail proving deterministically (an invalid proof, or a valid proof
+/// whose metadata the circuit's cross-slot constraints reject) would wedge the
+/// aggregator: every aggregate() retry would fail on the same poisoned batch.
+///
+/// Checks run cheapest-first: capacity, PI length, batch-metadata
+/// compatibility, then cryptographic verification.
 fn verify_and_push(
     verifier: &VerifierCircuitData<F, C, D>,
     buf: &mut ProofBuffer,
     proof: Proof,
     label: &str,
+    extract_metadata: fn(&Proof) -> Result<SlotMetadata>,
+    asset_dummy_exempt: bool,
 ) -> Result<()> {
+    if buf.is_full() {
+        bail!("proof buffer is full (capacity = {})", buf.cap());
+    }
     ensure_proof_public_input_len(&proof, verifier.common.num_public_inputs, label)?;
+
+    let new_metadata = extract_metadata(&proof)?;
+    let queued_metadata: Vec<SlotMetadata> = buf
+        .iter()
+        .map(extract_metadata)
+        .collect::<Result<Vec<_>>>()?;
+    ensure_batch_metadata_compatible(&new_metadata, &queued_metadata, asset_dummy_exempt, label)?;
+
     verifier.verify(proof.clone()).map_err(|e| {
         anyhow!(
             "refusing to queue invalid {}: verification failed: {}",
@@ -159,6 +299,14 @@ impl ProofBuffer {
 
     fn cap(&self) -> usize {
         self.cap
+    }
+
+    fn is_full(&self) -> bool {
+        self.buf.len() >= self.cap
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &Proof> {
+        self.buf.iter()
     }
 
     fn push(&mut self, proof: Proof) -> Result<()> {
@@ -236,6 +384,9 @@ impl AggregationBackend for PublicBatchAggregator {
             &mut self.buf,
             proof,
             "private-batch aggregated proof",
+            private_batch_slot_metadata,
+            // The public-batch circuit exempts dummy inners from asset checks.
+            true,
         )
     }
 
@@ -276,6 +427,10 @@ impl AggregationBackend for PublicBatchAggregator {
             let _ = self.buf.take_all();
         }
         result
+    }
+
+    fn drain_buffer(&mut self) -> Vec<Proof> {
+        self.buf.take_all()
     }
 
     fn verify(&self, proof: Proof) -> Result<()> {
@@ -351,7 +506,16 @@ impl PrivateBatchAggregator {
 
 impl AggregationBackend for PrivateBatchAggregator {
     fn push_proof(&mut self, proof: Proof) -> Result<()> {
-        verify_and_push(&self.leaf_verifier, &mut self.buf, proof, "leaf proof")
+        verify_and_push(
+            &self.leaf_verifier,
+            &mut self.buf,
+            proof,
+            "leaf proof",
+            leaf_slot_metadata,
+            // The private-batch circuit enforces asset equality across ALL
+            // slots, dummies included.
+            false,
+        )
     }
 
     fn buffer_len(&self) -> usize {
@@ -401,6 +565,10 @@ impl AggregationBackend for PrivateBatchAggregator {
         result
     }
 
+    fn drain_buffer(&mut self) -> Vec<Proof> {
+        self.buf.take_all()
+    }
+
     fn verify(&self, proof: Proof) -> Result<()> {
         self.verifier
             .verify(proof)
@@ -411,6 +579,113 @@ impl AggregationBackend for PrivateBatchAggregator {
         match circuit_type {
             CircuitType::Root => Ok(self.verifier.common.clone()),
             CircuitType::Leaf => Ok(self.leaf_verifier.common.clone()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn real(asset_id: u64, volume_fee_bps: u64, block: u64) -> SlotMetadata {
+        SlotMetadata {
+            asset_id,
+            volume_fee_bps,
+            block_hash: [block, 0, 0, 0],
+        }
+    }
+
+    fn dummy(asset_id: u64, volume_fee_bps: u64) -> SlotMetadata {
+        SlotMetadata {
+            asset_id,
+            volume_fee_bps,
+            block_hash: [0; 4],
+        }
+    }
+
+    #[test]
+    fn compatible_real_proofs_are_accepted() {
+        let queued = [real(0, 10, 1), real(0, 10, 1)];
+        for asset_dummy_exempt in [false, true] {
+            ensure_batch_metadata_compatible(&real(0, 10, 1), &queued, asset_dummy_exempt, "test")
+                .expect("identical metadata must be compatible");
+        }
+    }
+
+    #[test]
+    fn empty_queue_accepts_anything() {
+        ensure_batch_metadata_compatible(&real(7, 99, 3), &[], false, "test")
+            .expect("first proof in an empty queue is always compatible");
+    }
+
+    #[test]
+    fn mismatched_block_hash_between_real_proofs_is_rejected() {
+        let err =
+            ensure_batch_metadata_compatible(&real(0, 10, 2), &[real(0, 10, 1)], false, "test")
+                .expect_err("real proofs over different blocks must be rejected");
+        assert!(
+            err.to_string().contains("block_hash"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn mismatched_fee_between_real_proofs_is_rejected() {
+        let err =
+            ensure_batch_metadata_compatible(&real(0, 20, 1), &[real(0, 10, 1)], false, "test")
+                .expect_err("real proofs with different fees must be rejected");
+        assert!(
+            err.to_string().contains("volume_fee_bps"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn dummy_is_exempt_from_block_and_fee_checks() {
+        for asset_dummy_exempt in [false, true] {
+            ensure_batch_metadata_compatible(
+                &dummy(0, 999),
+                &[real(0, 10, 1)],
+                asset_dummy_exempt,
+                "test",
+            )
+            .expect("dummies are exempt from block/fee consistency");
+        }
+    }
+
+    #[test]
+    fn leaf_mode_rejects_asset_mismatch_even_for_dummies() {
+        // The private-batch circuit enforces asset equality across ALL slots,
+        // dummies included, so leaf admission must be strict.
+        let err = ensure_batch_metadata_compatible(&dummy(5, 10), &[dummy(0, 10)], false, "test")
+            .expect_err("leaf-mode asset checks must include dummies");
+        assert!(
+            err.to_string().contains("asset_id"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn public_batch_mode_exempts_dummies_from_asset_checks() {
+        // The public-batch circuit exempts dummy inners from asset consistency.
+        ensure_batch_metadata_compatible(&dummy(5, 10), &[real(0, 10, 1)], true, "test")
+            .expect("public-batch mode exempts dummies from asset checks");
+    }
+
+    #[test]
+    fn mismatched_asset_between_real_proofs_is_rejected_in_both_modes() {
+        for asset_dummy_exempt in [false, true] {
+            let err = ensure_batch_metadata_compatible(
+                &real(5, 10, 1),
+                &[real(0, 10, 1)],
+                asset_dummy_exempt,
+                "test",
+            )
+            .expect_err("real proofs with different assets must be rejected");
+            assert!(
+                err.to_string().contains("asset_id"),
+                "unexpected error: {err}"
+            );
         }
     }
 }
