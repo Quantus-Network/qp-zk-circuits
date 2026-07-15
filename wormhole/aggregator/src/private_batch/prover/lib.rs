@@ -252,6 +252,13 @@ impl PrivateBatchProver {
             bail!("private-batch aggregation prover has already committed to inputs");
         };
 
+        // An empty batch would be padded into an all-dummy proof that settles
+        // nothing; a client asking for that is a caller bug. (The intentional
+        // all-dummy padding template is built on the circuit-build path, which
+        // fills the witness with explicit dummy leaves and never calls here.)
+        if proofs.is_empty() {
+            bail!("no leaf proofs to aggregate");
+        }
         if proofs.len() > self.num_leaf_proofs {
             bail!(
                 "too many proofs: got {}, expected at most {}",

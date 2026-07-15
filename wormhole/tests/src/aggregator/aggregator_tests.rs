@@ -182,6 +182,16 @@ fn commit_rejects_nonzero_asset_id_when_dummy_padding_is_needed() {
 }
 
 #[test]
+fn aggregate_rejects_empty_batch() {
+    // Without leaf proofs, commit would pad the entire batch with the dummy
+    // template and prove an all-dummy private batch that settles nothing.
+    // The client entry point must reject that instead (the intentional
+    // all-dummy template is built on the circuit-build path, not here).
+    let err = make_private_batch_prover().aggregate(vec![]).unwrap_err();
+    assert!(err.to_string().contains("no leaf proofs"), "got: {err}");
+}
+
+#[test]
 fn commit_rejects_batch_incompatible_proofs() {
     // Two individually valid proofs whose metadata the private-batch circuit's
     // cross-slot constraints reject (different asset ids) must fail fast at
