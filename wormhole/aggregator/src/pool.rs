@@ -25,7 +25,7 @@
 //! settles nothing, so a production policy should never select that bucket for
 //! aggregation.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, ensure, Result};
@@ -151,6 +151,15 @@ pub struct ProofPool {
     batch_size: usize,
     limits: PoolLimits,
     buckets: BTreeMap<BatchKey, Vec<PooledProof>>,
+    /// Global index of every pooled nullifier to the bucket holding its proof.
+    ///
+    /// Duplicates are rejected pool-wide, not just per bucket: the merkle tree
+    /// is cumulative, so the SAME spend can be validly proven against two
+    /// different recent blocks, landing in different buckets — only one copy
+    /// can ever settle. The index also makes [`Self::evict_settled`] a lookup
+    /// instead of a full pool scan. Invariant: contains exactly the nullifiers
+    /// of proofs currently in `buckets` (taken batches are not indexed).
+    nullifier_index: HashMap<BytesDigest, BatchKey>,
 }
 
 impl ProofPool {
@@ -188,6 +197,7 @@ impl ProofPool {
             batch_size,
             limits,
             buckets: BTreeMap::new(),
+            nullifier_index: HashMap::new(),
         })
     }
 
@@ -231,31 +241,31 @@ impl ProofPool {
         let metadata = self.parse_metadata(&proof)?;
         let key = metadata.0;
 
-        match self.buckets.get(&key) {
-            Some(bucket) => {
-                // A duplicate nullifier within one bucket means the same leaf
-                // spend would occupy two batch slots; the second copy can never
-                // settle. Reject it (this also deduplicates client re-submissions).
-                for queued in bucket {
-                    if let Some(dup) = metadata.1.iter().find(|n| queued.nullifiers.contains(n)) {
-                        bail!(
-                            "refusing to queue private-batch proof: nullifier {:?} is already \
-                             queued in the same bucket",
-                            dup
-                        );
-                    }
-                }
-            }
-            None => {
-                if self.buckets.len() >= self.limits.max_buckets {
-                    bail!(
-                        "proof pool bucket limit reached ({} buckets); \
-                         proof for block {:?} rejected",
-                        self.limits.max_buckets,
-                        key.block_hash
-                    );
-                }
-            }
+        // A duplicate nullifier anywhere in the pool means the same leaf spend
+        // is already staged; only one copy can ever settle. This is checked
+        // pool-wide (not per bucket): the cumulative merkle tree lets the same
+        // spend be proven against different recent blocks, i.e. into different
+        // buckets. It also deduplicates client re-submissions.
+        if let Some(dup) = metadata
+            .1
+            .iter()
+            .find(|n| self.nullifier_index.contains_key(n))
+        {
+            bail!(
+                "refusing to queue private-batch proof: nullifier {:?} is already \
+                 pooled (in bucket for block {:?})",
+                dup,
+                self.nullifier_index[dup].block_hash
+            );
+        }
+
+        if !self.buckets.contains_key(&key) && self.buckets.len() >= self.limits.max_buckets {
+            bail!(
+                "proof pool bucket limit reached ({} buckets); \
+                 proof for block {:?} rejected",
+                self.limits.max_buckets,
+                key.block_hash
+            );
         }
 
         self.verifier.verify(proof.clone()).map_err(|e| {
@@ -266,6 +276,9 @@ impl ProofPool {
         })?;
 
         let (key, nullifiers, volume) = metadata;
+        for nullifier in &nullifiers {
+            self.nullifier_index.insert(*nullifier, key);
+        }
         self.buckets.entry(key).or_default().push(PooledProof {
             proof,
             nullifiers,
@@ -282,17 +295,32 @@ impl ProofPool {
     /// aggregating (avoid proving dead weight) and before submitting a finished
     /// public batch (detect batches that went stale mid-proving).
     pub fn evict_settled(&mut self, settled: &HashSet<BytesDigest>) -> usize {
+        // The nullifier index turns this into a lookup over `settled` instead
+        // of a scan of every pooled proof.
+        let affected_keys: HashSet<BatchKey> = settled
+            .iter()
+            .filter_map(|n| self.nullifier_index.get(n).copied())
+            .collect();
+
         let mut evicted = 0;
-        self.buckets.retain(|_, bucket| {
+        for key in affected_keys {
+            let Some(bucket) = self.buckets.get_mut(&key) else {
+                continue;
+            };
             bucket.retain(|queued| {
                 let stale = queued.nullifiers.iter().any(|n| settled.contains(n));
                 if stale {
                     evicted += 1;
+                    for n in &queued.nullifiers {
+                        self.nullifier_index.remove(n);
+                    }
                 }
                 !stale
             });
-            !bucket.is_empty()
-        });
+            if bucket.is_empty() {
+                self.buckets.remove(&key);
+            }
+        }
         evicted
     }
 
@@ -339,6 +367,13 @@ impl ProofPool {
         if bucket.is_empty() {
             self.buckets.remove(key);
         }
+        // Taken proofs leave the pool, so their nullifiers leave the index;
+        // `reinsert` re-checks for duplicates admitted while the batch was out.
+        for queued in &taken {
+            for nullifier in &queued.nullifiers {
+                self.nullifier_index.remove(nullifier);
+            }
+        }
         Some(TakenBatch { key: *key, proofs: taken })
     }
 
@@ -347,28 +382,33 @@ impl ProofPool {
     /// pool's own admission path).
     ///
     /// Proofs are restored at the front of their bucket, preserving age order.
-    /// A proof whose nullifier was re-admitted by a client while the batch was
-    /// out is dropped as a duplicate (the copies are interchangeable spends).
-    /// Returns the number of proofs actually restored.
+    /// A proof whose nullifier was re-admitted (to any bucket) while the batch
+    /// was out is dropped as a duplicate (the copies are interchangeable
+    /// spends). Returns the number of proofs actually restored.
     ///
     /// NOTE: proofs may have gone stale while out (settled by another miner);
     /// they are subject to the next [`Self::evict_settled`] like any other.
     pub fn reinsert(&mut self, batch: TakenBatch) -> usize {
-        let bucket = self.buckets.entry(batch.key).or_default();
-        let queued_nullifiers: HashSet<BytesDigest> = bucket
-            .iter()
-            .flat_map(|q| q.nullifiers.iter().copied())
-            .collect();
-
-        let mut restored: Vec<PooledProof> = batch
+        let restored: Vec<PooledProof> = batch
             .proofs
             .into_iter()
-            .filter(|q| !q.nullifiers.iter().any(|n| queued_nullifiers.contains(n)))
+            .filter(|q| {
+                !q.nullifiers
+                    .iter()
+                    .any(|n| self.nullifier_index.contains_key(n))
+            })
             .collect();
         let count = restored.len();
+        for queued in &restored {
+            for nullifier in &queued.nullifiers {
+                self.nullifier_index.insert(*nullifier, batch.key);
+            }
+        }
 
-        restored.append(bucket);
-        *bucket = restored;
+        let bucket = self.buckets.entry(batch.key).or_default();
+        let mut merged = restored;
+        merged.append(bucket);
+        *bucket = merged;
         if bucket.is_empty() {
             self.buckets.remove(&batch.key);
         }
@@ -382,7 +422,17 @@ impl ProofPool {
     pub fn remove_bucket(&mut self, key: &BatchKey) -> Vec<Proof> {
         self.buckets
             .remove(key)
-            .map(|bucket| bucket.into_iter().map(|q| q.proof).collect())
+            .map(|bucket| {
+                bucket
+                    .into_iter()
+                    .map(|q| {
+                        for nullifier in &q.nullifiers {
+                            self.nullifier_index.remove(nullifier);
+                        }
+                        q.proof
+                    })
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -622,14 +672,43 @@ mod tests {
             .unwrap();
         let taken = pool.take_batch(&key).unwrap();
 
-        // The client re-submits the same spend while its proof is out; the
-        // bucket is empty so the duplicate is admitted.
+        // The client re-submits the same spend while its proof is out — this
+        // time proven against a DIFFERENT block, so it lands in another
+        // bucket. Admission succeeds because taken proofs are out of the pool.
+        pool.push(prove_fake(&data, &targets, &fake(2, 11)))
+            .unwrap();
+
+        // Reinserting must not duplicate the nullifier anywhere in the pool.
+        assert_eq!(pool.reinsert(taken), 0);
+        assert_eq!(pool.len(), 1);
+        assert_eq!(pool.num_buckets(), 1);
+    }
+
+    #[test]
+    fn nullifier_index_stays_consistent_through_pool_mutations() {
+        let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
+
+        // remove_bucket must unindex its nullifiers so they can be re-pooled.
+        let key = pool
+            .push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        pool.remove_bucket(&key);
         pool.push(prove_fake(&data, &targets, &fake(1, 11)))
             .unwrap();
 
-        // Reinserting must not create an in-bucket duplicate nullifier.
-        assert_eq!(pool.reinsert(taken), 0);
-        assert_eq!(pool.len(), 1);
+        // take + reinsert round-trips the index: re-pushing the nullifier
+        // afterwards is still rejected as a duplicate.
+        let taken = pool.take_batch(&key).unwrap();
+        assert_eq!(pool.reinsert(taken), 1);
+        let err = pool
+            .push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap_err();
+        assert!(err.to_string().contains("already pooled"), "got: {err}");
+
+        // ...and eviction through the index still finds the reinserted proof.
+        let settled: HashSet<BytesDigest> = [nullifier_digest(11)].into_iter().collect();
+        assert_eq!(pool.evict_settled(&settled), 1);
+        assert!(pool.is_empty());
     }
 
     #[test]
@@ -641,7 +720,32 @@ mod tests {
         let err = pool
             .push(prove_fake(&data, &targets, &fake(1, 11)))
             .unwrap_err();
-        assert!(err.to_string().contains("already queued"), "got: {err}");
+        assert!(err.to_string().contains("already pooled"), "got: {err}");
+        assert_eq!(pool.len(), 1);
+    }
+
+    #[test]
+    fn duplicate_nullifier_is_rejected_across_buckets() {
+        let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
+
+        // The cumulative merkle tree lets the SAME spend be proven against two
+        // different recent blocks: individually valid proofs, same nullifier,
+        // different BatchKeys. Only one copy can settle, so the second must be
+        // rejected pool-wide, not just within its own bucket.
+        pool.push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        let err = pool
+            .push(prove_fake(&data, &targets, &fake(2, 11)))
+            .unwrap_err();
+        assert!(err.to_string().contains("already pooled"), "got: {err}");
+        assert_eq!(pool.len(), 1);
+        assert_eq!(pool.num_buckets(), 1);
+
+        // Once the original is evicted (settled), the nullifier frees up.
+        let settled: HashSet<BytesDigest> = [nullifier_digest(11)].into_iter().collect();
+        assert_eq!(pool.evict_settled(&settled), 1);
+        pool.push(prove_fake(&data, &targets, &fake(2, 11)))
+            .unwrap();
         assert_eq!(pool.len(), 1);
     }
 
