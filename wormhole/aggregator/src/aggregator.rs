@@ -10,6 +10,35 @@
 //! knows its own full leaf set up front, so it uses
 //! [`PrivateBatchProver::aggregate`](crate::private_batch::prover::PrivateBatchProver::aggregate)
 //! directly.
+//!
+//! # Concurrency
+//!
+//! Public-batch proving takes minutes. [`PublicBatchAggregator::aggregate`] is
+//! the simple blocking convenience; a service that must keep admitting proofs
+//! while proving should split the phases and only lock around the cheap pool
+//! operations:
+//!
+//! ```text
+//! // admission thread, short lock:
+//! let taken = aggregator.lock().take_batch(&key);
+//!
+//! // proving worker, NO lock held (use its own prover instance):
+//! let prover = PublicBatchProver::new_from_binaries_dir(&bins_dir)?;
+//! let result = prover
+//!     .commit(PublicBatchInputs { proofs: taken.proofs(), aggregator_address })?
+//!     .prove();
+//!
+//! // back under a short lock:
+//! match result {
+//!     Ok(proof) => drop(taken), // proofs consumed; submit `proof`
+//!     Err(_) => { aggregator.lock().reinsert_batch(taken); }
+//! }
+//! ```
+//!
+//! Buckets queue deeper than one batch, so admissions for the same key keep
+//! landing while its previous batch is out being proved. Reinserted proofs are
+//! not re-verified, and proofs that settled on-chain while out are cleaned up
+//! by the regular [`PublicBatchAggregator::evict_settled`] cadence.
 
 use anyhow::{anyhow, bail, Context, Result};
 use plonky2::plonk::{
@@ -26,7 +55,7 @@ use zk_circuits_common::{
     utils::try_4_felts_to_bytes,
 };
 
-use crate::pool::{BatchKey, BucketStats, PoolLimits, ProofPool};
+use crate::pool::{BatchKey, BucketStats, PoolLimits, ProofPool, TakenBatch};
 use crate::public_batch::prover::{PublicBatchInputs, PublicBatchProver};
 use crate::{
     common::utils::{
@@ -145,14 +174,22 @@ impl PublicBatchAggregator {
         self.pool.push(proof)
     }
 
-    /// Aggregate one bucket into a public-batch proof bound to this
-    /// aggregator's address. Partial buckets are padded with the dummy
-    /// private-batch template.
+    /// Aggregate the oldest batch of one bucket into a public-batch proof
+    /// bound to this aggregator's address. Partial batches are padded with the
+    /// dummy private-batch template.
     ///
-    /// The bucket is drained only on success; a failed attempt (e.g. an
-    /// operational error loading the prover) leaves it intact for retry.
+    /// Only the proofs actually proved are drained, and only on success; a
+    /// failed attempt reinserts them for retry without re-verification
+    /// (#97067). Proofs beyond `batch_size` stay queued for the next call.
+    ///
+    /// This convenience method holds `&mut self` for the entire (minutes-long)
+    /// proving run, so a lock-wrapped aggregator admits nothing meanwhile. A
+    /// concurrent service should use the split API instead: [`Self::take_batch`]
+    /// under a short lock, [`Self::prove_taken`] on a proving worker WITHOUT
+    /// holding the lock, then drop the batch on success or
+    /// [`Self::reinsert_batch`] on failure.
     pub fn aggregate(&mut self, key: &BatchKey) -> Result<Proof> {
-        let Some(batch) = self.pool.bucket_proofs(key) else {
+        let Some(taken) = self.pool.take_batch(key) else {
             bail!(
                 "no pooled proofs for block {:?} (asset {}, fee {})",
                 key.block_hash,
@@ -161,26 +198,49 @@ impl PublicBatchAggregator {
             );
         };
 
-        // Load the public-batch prover (failures here don't touch the pool).
+        match self.prove_taken(&taken) {
+            Ok(proof) => Ok(proof),
+            Err(e) => {
+                self.pool.reinsert(taken);
+                Err(e)
+            }
+        }
+    }
+
+    /// Remove up to `batch_size` of the oldest proofs for `key` from the pool,
+    /// for proving via [`Self::prove_taken`]. Cheap; see [`ProofPool::take_batch`].
+    pub fn take_batch(&mut self, key: &BatchKey) -> Option<TakenBatch> {
+        self.pool.take_batch(key)
+    }
+
+    /// Restore a taken batch after a failed proving attempt (no cryptographic
+    /// re-verification). Returns the number of proofs restored; see
+    /// [`ProofPool::reinsert`].
+    pub fn reinsert_batch(&mut self, batch: TakenBatch) -> usize {
+        self.pool.reinsert(batch)
+    }
+
+    /// Prove a taken batch into a public-batch proof bound to this
+    /// aggregator's address. Does not touch the pool.
+    ///
+    /// Takes minutes. In a concurrent service, run this on a dedicated proving
+    /// worker without holding whatever lock guards the aggregator — either via
+    /// a separately constructed [`PublicBatchProver`] fed `batch.proofs()`, or
+    /// by cheaply cloning the `TakenBatch`-relevant state out of the lock.
+    pub fn prove_taken(&self, batch: &TakenBatch) -> Result<Proof> {
         let prover = PublicBatchProver::new_from_binaries_dir(&self.bins_dir)
             .context("failed to load prebuilt public-batch prover")?;
 
         // Partial batches are fine: PublicBatchProver::commit pads with the dummy
         // private-batch proof template (no shuffle - forwarding stays order-preserving
         // so the chain can attribute each segment to its inner proof).
-        let result = prover
+        prover
             .commit(PublicBatchInputs {
-                proofs: batch,
+                proofs: batch.proofs(),
                 aggregator_address: self.aggregator_address,
             })
             .context("failed to commit private-batch proofs to public-batch prover")
-            .and_then(|committed| committed.prove().context("public-batch proving failed"));
-
-        if result.is_ok() {
-            // Only drain the bucket once aggregation fully succeeds (#97067).
-            let _ = self.pool.remove_bucket(key);
-        }
-        result
+            .and_then(|committed| committed.prove().context("public-batch proving failed"))
     }
 
     /// Per-bucket statistics for the operator's "when to aggregate what" policy.
@@ -193,7 +253,7 @@ impl PublicBatchAggregator {
         self.pool.len()
     }
 
-    /// Proofs per public batch (bucket capacity).
+    /// Proofs per public batch (how many one `take_batch`/`aggregate` proves).
     pub fn batch_size(&self) -> usize {
         self.pool.batch_size()
     }

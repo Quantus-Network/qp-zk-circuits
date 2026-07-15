@@ -7,6 +7,12 @@
 //! construction: the "when to aggregate which bucket" decision is left to the
 //! operator's policy, fed by [`BucketStats`].
 //!
+//! Buckets queue arbitrarily deep (bounded only by [`PoolLimits`]), so a hot
+//! (block, asset, fee) stream keeps admitting while earlier batches are being
+//! proved. [`ProofPool::take_batch`] removes the oldest `batch_size` proofs as
+//! an opaque [`TakenBatch`]; prove it without holding any pool lock, then drop
+//! it on success or [`ProofPool::reinsert`] it on failure (no re-verification).
+//!
 //! Staleness: a queued proof becomes worthless once any of its nullifiers is
 //! settled on-chain (e.g. another miner included the same private batch, or a
 //! public batch containing it). Operators should call
@@ -74,10 +80,12 @@ impl Default for PoolLimits {
 #[derive(Debug, Clone)]
 pub struct BucketStats {
     pub key: BatchKey,
-    /// Number of proofs currently queued in this bucket.
+    /// Number of proofs currently queued in this bucket. Buckets queue
+    /// arbitrarily deep (bounded only by [`PoolLimits`]), so this can exceed
+    /// `batch_size`.
     pub num_proofs: usize,
-    /// Bucket capacity (= public-batch size); at `num_proofs == batch_size`
-    /// the bucket aggregates without dummy padding.
+    /// Public-batch size: how many proofs one `take_batch` removes, and the
+    /// count at which a batch aggregates without dummy padding.
     pub batch_size: usize,
     /// Time since the oldest queued proof in this bucket was admitted.
     pub oldest_age: Duration,
@@ -86,6 +94,7 @@ pub struct BucketStats {
 }
 
 impl BucketStats {
+    /// Whether the bucket holds at least one full (padding-free) batch.
     pub fn is_full(&self) -> bool {
         self.num_proofs >= self.batch_size
     }
@@ -97,6 +106,37 @@ struct PooledProof {
     nullifiers: Vec<BytesDigest>,
     volume: u64,
     admitted_at: Instant,
+}
+
+/// A batch of admission-verified proofs removed from the pool for proving.
+///
+/// Opaque by design: it can only be produced by [`ProofPool::take_batch`], so
+/// [`ProofPool::reinsert`] can restore it on proving failure without repeating
+/// cryptographic verification. Callers must either prove-and-drop it (success)
+/// or reinsert it (failure); dropping it silently discards the proofs.
+#[derive(Debug)]
+pub struct TakenBatch {
+    key: BatchKey,
+    proofs: Vec<PooledProof>,
+}
+
+impl TakenBatch {
+    pub fn key(&self) -> &BatchKey {
+        &self.key
+    }
+
+    pub fn len(&self) -> usize {
+        self.proofs.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.proofs.is_empty()
+    }
+
+    /// Clone the contained proofs (e.g. to feed a prover's `commit`).
+    pub fn proofs(&self) -> Vec<Proof> {
+        self.proofs.iter().map(|q| q.proof.clone()).collect()
+    }
 }
 
 /// A bounded pool of admission-verified private-batch proofs, bucketed by
@@ -175,6 +215,10 @@ impl ProofPool {
     /// admitted here is individually valid and, by bucketing, batch-compatible
     /// with every other proof in its bucket, so aggregation over a bucket
     /// cannot fail deterministically on admitted inputs (#97067).
+    ///
+    /// Buckets are NOT capped at one batch: a hot key keeps admitting (up to
+    /// the global limits) while earlier batches for it are out being proved;
+    /// [`Self::take_batch`] takes the oldest `batch_size` proofs at a time.
     pub fn push(&mut self, proof: Proof) -> Result<BatchKey> {
         if self.len() >= self.limits.max_proofs {
             bail!(
@@ -189,15 +233,6 @@ impl ProofPool {
 
         match self.buckets.get(&key) {
             Some(bucket) => {
-                if bucket.len() >= self.batch_size {
-                    bail!(
-                        "bucket for block {:?} (asset {}, fee {}) is full ({} proofs)",
-                        key.block_hash,
-                        key.asset_id,
-                        key.volume_fee_bps,
-                        self.batch_size
-                    );
-                }
                 // A duplicate nullifier within one bucket means the same leaf
                 // spend would occupy two batch slots; the second copy can never
                 // settle. Reject it (this also deduplicates client re-submissions).
@@ -288,6 +323,56 @@ impl ProofPool {
         self.buckets
             .get(key)
             .map(|bucket| bucket.iter().map(|q| q.proof.clone()).collect())
+    }
+
+    /// Remove up to `batch_size` of the oldest proofs for `key`, for proving.
+    ///
+    /// This is the non-blocking aggregation primitive: taking is cheap, so a
+    /// service can take under a short lock, prove for minutes WITHOUT holding
+    /// any pool lock (admissions for the same key keep landing in the bucket
+    /// remainder), then drop the batch on success or [`Self::reinsert`] it on
+    /// failure. Returns `None` if the bucket doesn't exist.
+    pub fn take_batch(&mut self, key: &BatchKey) -> Option<TakenBatch> {
+        let bucket = self.buckets.get_mut(key)?;
+        let n = bucket.len().min(self.batch_size);
+        let taken: Vec<PooledProof> = bucket.drain(..n).collect();
+        if bucket.is_empty() {
+            self.buckets.remove(key);
+        }
+        Some(TakenBatch { key: *key, proofs: taken })
+    }
+
+    /// Restore a taken batch after a failed proving attempt, WITHOUT repeating
+    /// cryptographic verification (the batch is only constructable from this
+    /// pool's own admission path).
+    ///
+    /// Proofs are restored at the front of their bucket, preserving age order.
+    /// A proof whose nullifier was re-admitted by a client while the batch was
+    /// out is dropped as a duplicate (the copies are interchangeable spends).
+    /// Returns the number of proofs actually restored.
+    ///
+    /// NOTE: proofs may have gone stale while out (settled by another miner);
+    /// they are subject to the next [`Self::evict_settled`] like any other.
+    pub fn reinsert(&mut self, batch: TakenBatch) -> usize {
+        let bucket = self.buckets.entry(batch.key).or_default();
+        let queued_nullifiers: HashSet<BytesDigest> = bucket
+            .iter()
+            .flat_map(|q| q.nullifiers.iter().copied())
+            .collect();
+
+        let mut restored: Vec<PooledProof> = batch
+            .proofs
+            .into_iter()
+            .filter(|q| !q.nullifiers.iter().any(|n| queued_nullifiers.contains(n)))
+            .collect();
+        let count = restored.len();
+
+        restored.append(bucket);
+        *bucket = restored;
+        if bucket.is_empty() {
+            self.buckets.remove(&batch.key);
+        }
+        count
     }
 
     /// Remove one bucket entirely, returning its proofs (empty if absent).
@@ -453,21 +538,98 @@ mod tests {
         assert!(!b.is_full());
     }
 
+    /// First public-input felt of a proof's nullifier (test proofs use
+    /// single-felt nullifiers), to assert take/reinsert ordering.
+    fn nullifier_felt(proof: &Proof) -> u64 {
+        proof.public_inputs[aggregated_output::nullifiers_start(NUM_LEAVES)].to_canonical_u64()
+    }
+
     #[test]
-    fn full_bucket_rejects_without_touching_other_buckets() {
+    fn buckets_queue_deeper_than_one_batch() {
         let (mut pool, data, targets) = make_pool(1, PoolLimits::default());
 
+        // batch_size is 1, but a hot key keeps admitting past it.
+        for n in [11, 12, 13] {
+            pool.push(prove_fake(&data, &targets, &fake(1, n)))
+                .unwrap();
+        }
+        assert_eq!(pool.len(), 3);
+
+        let stats = pool.bucket_stats();
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].num_proofs, 3);
+        assert!(stats[0].is_full());
+    }
+
+    #[test]
+    fn take_batch_takes_oldest_and_leaves_remainder() {
+        let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
+
+        let key = pool
+            .push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        pool.push(prove_fake(&data, &targets, &fake(1, 12)))
+            .unwrap();
+        pool.push(prove_fake(&data, &targets, &fake(1, 13)))
+            .unwrap();
+
+        let taken = pool.take_batch(&key).unwrap();
+        assert_eq!(taken.key(), &key);
+        let taken_nullifiers: Vec<u64> = taken.proofs().iter().map(nullifier_felt).collect();
+        assert_eq!(taken_nullifiers, vec![11, 12]);
+        assert_eq!(pool.len(), 1);
+
+        // The remainder is the next batch (partial), and admissions continue.
+        pool.push(prove_fake(&data, &targets, &fake(1, 14)))
+            .unwrap();
+        let next = pool.take_batch(&key).unwrap();
+        let next_nullifiers: Vec<u64> = next.proofs().iter().map(nullifier_felt).collect();
+        assert_eq!(next_nullifiers, vec![13, 14]);
+        assert!(pool.is_empty());
+        assert!(pool.take_batch(&key).is_none());
+    }
+
+    #[test]
+    fn reinsert_restores_age_order_without_reverification() {
+        let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
+
+        let key = pool
+            .push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        pool.push(prove_fake(&data, &targets, &fake(1, 12)))
+            .unwrap();
+
+        let taken = pool.take_batch(&key).unwrap();
+        // A newer proof lands while the batch is out being proved.
+        pool.push(prove_fake(&data, &targets, &fake(1, 13)))
+            .unwrap();
+
+        assert_eq!(pool.reinsert(taken), 2);
+        assert_eq!(pool.len(), 3);
+
+        // The reinserted (older) proofs come out first on the next take.
+        let retaken = pool.take_batch(&key).unwrap();
+        let nullifiers: Vec<u64> = retaken.proofs().iter().map(nullifier_felt).collect();
+        assert_eq!(nullifiers, vec![11, 12]);
+    }
+
+    #[test]
+    fn reinsert_drops_nullifiers_readmitted_while_out() {
+        let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
+
+        let key = pool
+            .push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        let taken = pool.take_batch(&key).unwrap();
+
+        // The client re-submits the same spend while its proof is out; the
+        // bucket is empty so the duplicate is admitted.
         pool.push(prove_fake(&data, &targets, &fake(1, 11)))
             .unwrap();
-        let err = pool
-            .push(prove_fake(&data, &targets, &fake(1, 12)))
-            .unwrap_err();
-        assert!(err.to_string().contains("is full"), "got: {err}");
 
-        // Other keys still admit.
-        pool.push(prove_fake(&data, &targets, &fake(2, 13)))
-            .unwrap();
-        assert_eq!(pool.len(), 2);
+        // Reinserting must not create an in-bucket duplicate nullifier.
+        assert_eq!(pool.reinsert(taken), 0);
+        assert_eq!(pool.len(), 1);
     }
 
     #[test]
