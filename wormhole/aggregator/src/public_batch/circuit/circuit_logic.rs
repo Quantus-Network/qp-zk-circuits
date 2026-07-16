@@ -2,6 +2,14 @@
 //!
 //! Verifies N private-batch aggregated proofs and emits a public-batch aggregated proof.
 //! The private-batch verifier key is baked in as constants to prevent verifier key substitution.
+//!
+//! # Nullifiers: forwarded, not deduplicated
+//!
+//! Inner-proof nullifiers are forwarded verbatim into this circuit's public
+//! inputs; no uniqueness check is performed here (nor anywhere else in the
+//! proof stack), within or across inner proofs. Double-spend prevention is
+//! enforced on-chain by the wormhole pallet's persistent settled-nullifier
+//! set. See "Nullifiers and Double-Spend Prevention" in `wormhole/README.md`.
 
 use anyhow::{ensure, Result};
 use plonky2::{

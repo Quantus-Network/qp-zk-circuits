@@ -1,3 +1,20 @@
+//! Nullifier circuit fragment.
+//!
+//! Proves the public nullifier is *well-formed*:
+//! `hash == H(H(salt || secret || transfer_count))`, binding it to the same
+//! `secret` that derives the unspendable deposit account and the same
+//! `transfer_count` that appears in the deposit's storage-proof leaf. One
+//! funded deposit event therefore yields exactly one valid nullifier.
+//!
+//! # Scope: well-formedness only, no uniqueness
+//!
+//! Neither this fragment nor any other circuit in this repository checks that a
+//! nullifier is *unused* (i.e. detects collisions/double spends). Uniqueness is
+//! a statement about global chain state and is enforced on-chain by the
+//! wormhole pallet, which maintains the persistent set of settled nullifiers
+//! and settles each nullifier at most once. See "Nullifiers and Double-Spend
+//! Prevention" in `wormhole/README.md` for the full layering.
+
 use alloc::vec::Vec;
 use core::array;
 use core::mem::size_of;

@@ -10,6 +10,19 @@
 //!
 //! The leaf verifier key is baked in as constants at circuit build time to prevent
 //! verifier key substitution attacks.
+//!
+//! # Nullifiers: forwarded, not deduplicated
+//!
+//! This circuit forwards one nullifier per leaf slot into the aggregated public
+//! inputs (dummy slots get the hash of a fresh random preimage instead, so
+//! padding never produces on-chain nullifier collisions and stays
+//! indistinguishable from real slots). It deliberately does NOT check
+//! nullifiers for uniqueness — not against chain state, and not even across
+//! slots in the same batch. Two leaves spending the same deposit aggregate into
+//! a cryptographically valid batch; the wormhole pallet's persistent settled-
+//! nullifier set is the sole double-spend boundary and settles each nullifier
+//! at most once. See "Nullifiers and Double-Spend Prevention" in
+//! `wormhole/README.md`.
 
 use anyhow::Result;
 use plonky2::{

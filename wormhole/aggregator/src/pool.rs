@@ -20,6 +20,15 @@
 //! block — both before proving (don't aggregate dead weight) and before
 //! submitting a finished public batch (don't submit stale segments).
 //!
+//! Note on nullifier checks: the pool-wide duplicate-nullifier rejection at
+//! admission and `evict_settled` are OPERATIONAL, not security-critical. They
+//! keep the miner from wasting proving time on batches the chain would refuse
+//! and prevent duplicate-based capacity DoS. The actual double-spend boundary
+//! is the wormhole pallet's persistent settled-nullifier set, which settles
+//! each nullifier at most once regardless of what any aggregator pools or
+//! submits. See "Nullifiers and Double-Spend Prevention" in
+//! `wormhole/README.md`.
+//!
 //! Note on dummies: an all-dummy private-batch proof (all-zero block hash) is
 //! REJECTED at admission even though it can be cryptographically valid. It
 //! settles nothing, and none of the automatic drain paths could ever remove it
