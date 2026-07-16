@@ -9,10 +9,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Once, OnceLock};
 use test_helpers::{compute_zk_leaf_hash, TestInputs};
 use wormhole_aggregator::aggregator::PublicBatchAggregator;
-use wormhole_aggregator::pool::BatchKey;
 use wormhole_aggregator::common::utils::{
     load_canonical_leaf_verifier_data, load_canonical_private_batch_verifier_data,
 };
+use wormhole_aggregator::pool::BatchKey;
 use wormhole_aggregator::private_batch::prover::PrivateBatchProver;
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_prover::WormholeProver;

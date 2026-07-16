@@ -382,7 +382,10 @@ impl ProofPool {
                 self.nullifier_index.remove(nullifier);
             }
         }
-        Some(TakenBatch { key: *key, proofs: taken })
+        Some(TakenBatch {
+            key: *key,
+            proofs: taken,
+        })
     }
 
     /// Restore a taken batch after a failed proving attempt, WITHOUT repeating
@@ -608,8 +611,7 @@ mod tests {
 
         // batch_size is 1, but a hot key keeps admitting past it.
         for n in [11, 12, 13] {
-            pool.push(prove_fake(&data, &targets, &fake(1, n)))
-                .unwrap();
+            pool.push(prove_fake(&data, &targets, &fake(1, n))).unwrap();
         }
         assert_eq!(pool.len(), 3);
 
