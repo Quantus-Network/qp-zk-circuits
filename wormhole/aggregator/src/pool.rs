@@ -21,10 +21,13 @@
 //! submitting a finished public batch (don't submit stale segments).
 //!
 //! Note on dummies: an all-dummy private-batch proof (all-zero block hash) is
-//! admissible — it is a valid proof and lands in its own bucket — but it
-//! settles nothing, so it must never be selected for aggregation
-//! ([`BucketStats::is_dummy`] flags it, and the `PublicBatchAggregator` façade
-//! refuses to take it; the pool itself stays policy-free).
+//! REJECTED at admission even though it can be cryptographically valid. It
+//! settles nothing, and none of the automatic drain paths could ever remove it
+//! (aggregating it is refused, and `evict_settled` never sees its random
+//! nullifiers on-chain), so pooling it would let an attacker fill the global
+//! capacity with permanently undrainable entries. Public-batch padding does
+//! not need pooled dummies either: the prover pads from its own pinned dummy
+//! template.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -101,8 +104,8 @@ impl BucketStats {
     }
 
     /// Whether this is the dummy sentinel bucket (`block_hash == 0`).
-    /// Aggregating it proves a public batch that settles nothing; policy code
-    /// must skip it (`PublicBatchAggregator` refuses it outright).
+    /// Should never be true — [`ProofPool::push`] rejects all-dummy proofs —
+    /// but kept so policy code can defend in depth.
     pub fn is_dummy(&self) -> bool {
         self.key.is_dummy()
     }
@@ -248,6 +251,17 @@ impl ProofPool {
 
         let metadata = self.parse_metadata(&proof)?;
         let key = metadata.0;
+
+        // Reject the all-dummy sentinel outright: it settles nothing and no
+        // automatic drain path could ever remove it (take_batch refuses the
+        // dummy bucket and its random nullifiers never settle on-chain), so
+        // admitting it would hand attackers a permanent global-capacity sink.
+        if key.is_dummy() {
+            bail!(
+                "refusing to pool an all-dummy private-batch proof (block_hash == 0): \
+                 it settles nothing and can never be drained"
+            );
+        }
 
         // A duplicate nullifier anywhere in the pool means the same leaf spend
         // is already staged; only one copy can ever settle. This is checked
@@ -864,16 +878,24 @@ mod tests {
     }
 
     #[test]
-    fn dummy_key_is_detected() {
+    fn all_dummy_proof_is_rejected_at_admission() {
         let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
 
-        let key = pool
+        // A valid all-dummy proof (block_hash == 0) must not be pooled: no
+        // automatic drain path could ever remove it, so it would count against
+        // the global capacity forever (attacker sink).
+        let err = pool
             .push(prove_fake(&data, &targets, &fake(0, 11)))
-            .unwrap();
-        assert!(key.is_dummy());
+            .unwrap_err();
+        assert!(err.to_string().contains("all-dummy"), "got: {err}");
+        assert!(pool.is_empty());
+
+        // ...and its nullifier is NOT indexed: the same spend proven against a
+        // real block afterwards is still admissible.
         let key = pool
-            .push(prove_fake(&data, &targets, &fake(3, 12)))
+            .push(prove_fake(&data, &targets, &fake(3, 11)))
             .unwrap();
         assert!(!key.is_dummy());
+        assert_eq!(pool.len(), 1);
     }
 }

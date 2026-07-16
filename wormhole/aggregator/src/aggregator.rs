@@ -204,8 +204,9 @@ impl PublicBatchAggregator {
     /// for proving via [`Self::prove_taken`]. Cheap; see [`ProofPool::take_batch`].
     ///
     /// Refuses the dummy sentinel bucket: an all-dummy public batch is a valid
-    /// proof that settles nothing, so proving it only wastes minutes.
-    /// ([`ProofPool`] itself stays policy-free and admits that bucket.)
+    /// proof that settles nothing, so proving it only wastes minutes. (Defense
+    /// in depth — [`ProofPool::push`] already rejects all-dummy proofs, so the
+    /// bucket should never exist.)
     pub fn take_batch(&mut self, key: &BatchKey) -> Result<TakenBatch> {
         if key.is_dummy() {
             bail!(
