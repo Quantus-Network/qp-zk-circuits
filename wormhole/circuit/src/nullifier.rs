@@ -241,23 +241,69 @@ impl NullifierTargets {
     }
 }
 
+impl Nullifier {
+    /// Computes `H(H(salt + secret + transfer_count))` in-circuit.
+    fn computed_nullifier(
+        targets: &NullifierTargets,
+        builder: &mut CircuitBuilder<F, D>,
+    ) -> HashOutTarget {
+        let salt_felts =
+            string_to_felts(NULLIFIER_SALT).expect("NULLIFIER_SALT within serialization cap");
+        let mut nullifier_preimage = Vec::new();
+        for &f in salt_felts.iter() {
+            nullifier_preimage.push(builder.constant(f));
+        }
+        nullifier_preimage.extend(targets.secret.elements.iter().copied());
+        nullifier_preimage.extend(targets.transfer_count.iter());
+
+        let inner_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(nullifier_preimage);
+        builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(inner_hash.elements.to_vec())
+    }
+
+    /// Enforces `hash == H(H(salt + secret + transfer_count))` whenever
+    /// `is_not_dummy` is 1, i.e. `(hash[i] - computed[i]) * is_not_dummy == 0`
+    /// for each limb.
+    ///
+    /// This is an escape hatch for the full Wormhole circuit, which skips the
+    /// binding for dummy proofs so they can use random nullifiers for better
+    /// privacy. `is_not_dummy` MUST itself be constrained by the caller (the
+    /// full Wormhole circuit derives it in-circuit from
+    /// `block_hash == 0 AND outputs == 0`); otherwise a malicious prover can
+    /// simply witness it to 0 and skip the check. Every other caller should use
+    /// [`CircuitFragment::circuit`], which enforces the binding unconditionally.
+    pub fn conditional_hash_binding(
+        targets: &NullifierTargets,
+        builder: &mut CircuitBuilder<F, D>,
+        is_not_dummy: Target,
+    ) {
+        let computed_nullifier = Self::computed_nullifier(targets, builder);
+        let zero = builder.zero();
+        for i in 0..4 {
+            let diff = builder.sub(
+                targets.hash.elements[i],
+                computed_nullifier.elements[i],
+            );
+            let result = builder.mul(diff, is_not_dummy);
+            builder.connect(result, zero);
+        }
+    }
+}
+
 impl CircuitFragment for Nullifier {
     type Targets = NullifierTargets;
 
-    /// Builds nullifier targets but does NOT enforce hash validation here.
-    /// The nullifier hash validation is made conditional on block_hash != 0
-    /// in `connect_shared_targets()` to allow dummy proofs to use random nullifiers.
-    fn circuit(
-        &Self::Targets {
-            hash: _,
-            secret: _,
-            transfer_count: _,
-        }: &Self::Targets,
-        _builder: &mut CircuitBuilder<F, D>,
-    ) {
-        // NOTE: Nullifier hash validation (nullifier == H(H(salt + secret + transfer_count)))
-        // is enforced conditionally in connect_shared_targets() based on block_hash != 0.
-        // This allows dummy proofs to use random nullifiers for better privacy.
+    /// Builds the nullifier circuit, unconditionally enforcing
+    /// `hash == H(H(salt + secret + transfer_count))`.
+    ///
+    /// This is the safe-by-default entry point: any circuit composed from this
+    /// fragment inherits the hash binding that gives the public nullifier
+    /// `hash` input its meaning. The full Wormhole circuit is the one
+    /// exception; it does NOT call this and instead uses
+    /// [`Nullifier::conditional_hash_binding`] so dummy proofs can use random
+    /// nullifiers for better privacy.
+    fn circuit(targets: &Self::Targets, builder: &mut CircuitBuilder<F, D>) {
+        let computed_nullifier = Self::computed_nullifier(targets, builder);
+        builder.connect_hashes(targets.hash, computed_nullifier);
     }
 
     fn fill_targets(
@@ -271,30 +317,6 @@ impl CircuitFragment for Nullifier {
         Ok(())
     }
 }
-
-/// Adds unconditional nullifier hash validation: hash == H(H(salt + secret + transfer_count)).
-/// Use this for isolated testing of Nullifier. The full WormholeCircuit uses
-/// a conditional version in connect_shared_targets() to support dummy proofs.
-pub fn add_nullifier_validation(targets: &NullifierTargets, builder: &mut CircuitBuilder<F, D>) {
-    use plonky2::hash::poseidon2::Poseidon2Hash;
-    use zk_circuits_common::utils::string_to_felts;
-
-    let salt_felts =
-        string_to_felts(NULLIFIER_SALT).expect("NULLIFIER_SALT within serialization cap");
-    let mut nullifier_preimage = Vec::new();
-    for &f in salt_felts.iter() {
-        nullifier_preimage.push(builder.constant(f));
-    }
-    nullifier_preimage.extend(targets.secret.elements.iter().copied());
-    nullifier_preimage.extend(targets.transfer_count.iter());
-
-    let inner_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(nullifier_preimage);
-    let computed_nullifier =
-        builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(inner_hash.elements.to_vec());
-
-    builder.connect_hashes(targets.hash, computed_nullifier);
-}
-
 #[cfg(test)]
 mod tests {
     use super::Nullifier;
