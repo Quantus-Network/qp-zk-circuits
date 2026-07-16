@@ -139,36 +139,10 @@ pub fn limb1_at_offset<const LEAF_PI_LEN: usize, const KEY_OFFSET: usize>(
     pis[base]
 }
 
-/// Pack two 32-bit limbs (little-endian) into one felt: `lo + hi * 2^32`.
-#[inline]
-pub fn pack_le_32x2<F: RichField + Extendable<D>, const D: usize>(
-    b: &mut CircuitBuilder<F, D>,
-    lo: Target,
-    hi: Target,
-    two_pow_32_opt: Option<Target>,
-) -> Target {
-    // Reuse a provided 2^32 constant if the caller already has it, otherwise create it here.
-    let two_pow_32 =
-        two_pow_32_opt.unwrap_or_else(|| b.constant(F::from_canonical_u64(1u64 << 32)));
-
-    let hi_shifted = b.mul(hi, two_pow_32);
-    b.add(lo, hi_shifted)
-}
-
-/// Reconstruct 4 felts from 8 little-endian 32-bit limbs:
-/// h0=(l0,l1), h1=(l2,l3), h2=(l4,l5), h3=(l6,l7) with `lo + hi*2^32`.
-#[inline]
-pub fn digest4_from_le32x8<F: RichField + Extendable<D>, const D: usize>(
-    b: &mut CircuitBuilder<F, D>,
-    limbs: [Target; 8],
-    two_pow_32_opt: Option<Target>,
-) -> [Target; 4] {
-    let two_pow_32 =
-        two_pow_32_opt.unwrap_or_else(|| b.constant(F::from_canonical_u64(1u64 << 32)));
-    [
-        pack_le_32x2(b, limbs[0], limbs[1], Some(two_pow_32)),
-        pack_le_32x2(b, limbs[2], limbs[3], Some(two_pow_32)),
-        pack_le_32x2(b, limbs[4], limbs[5], Some(two_pow_32)),
-        pack_le_32x2(b, limbs[6], limbs[7], Some(two_pow_32)),
-    ]
-}
+// NOTE: `pack_le_32x2` and `digest4_from_le32x8` (32-bit-limb packing helpers
+// from an older implementation) were removed: they had no callers and did not
+// range-check their limbs in-circuit, so the documented 32-bit domain — and
+// with it the injectivity of the reconstruction — was unenforced (a prover
+// could reach a chosen packed value via modular wraparound). If limb packing
+// is reintroduced, it must range-check both limbs to 32 bits AND exclude the
+// Goldilocks wraparound region (`hi == 2^32 - 1 && lo >= 1`).
