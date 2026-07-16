@@ -351,6 +351,78 @@ fn private_batch_prover_rejects_poisoned_dummy_template() {
     let _ = std::fs::remove_dir_all(&poisoned_dir);
 }
 
+#[test]
+fn private_batch_build_rejects_substituted_leaf_artifacts() {
+    // Regression (build-time verifier-key substitution): the private-batch build
+    // bakes the leaf verifier key into the recursive circuit as constants, so it
+    // must pin common.bin/verifier.bin to the canonical Wormhole leaf circuit
+    // before embedding them. A same-profile fake leaf circuit (identical config
+    // and public-input shape) must be rejected.
+    use plonky2::util::serialization::DefaultGateSerializer;
+    use test_helpers::fake_leaf::build_fake_leaf_circuit;
+    use wormhole_aggregator::private_batch::circuit::build::generate_private_batch_circuit_binaries;
+
+    let dir = test_bins_root().join("substituted-leaf-build");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let (fake, _) = build_fake_leaf_circuit();
+    std::fs::write(
+        dir.join("common.bin"),
+        fake.common.to_bytes(&DefaultGateSerializer).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("verifier.bin"),
+        fake.verifier_only.to_bytes().unwrap(),
+    )
+    .unwrap();
+
+    let err = generate_private_batch_circuit_binaries(&dir, 1, false)
+        .expect_err("substituted leaf artifacts must be rejected before circuit construction");
+    assert!(
+        err.to_string().contains("does not match the canonical"),
+        "got: {err}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn public_batch_build_rejects_substituted_private_batch_artifacts() {
+    // Regression (build-time verifier-key substitution, public layer): the
+    // public-batch build must pin private_batch_common.bin/verifier.bin to the
+    // canonical private-batch circuit before baking the verifier key in.
+    use wormhole_aggregator::public_batch::circuit::generate_public_batch_circuit_binaries;
+
+    setup_test_binaries();
+    let dir = test_bins_root().join("substituted-private-batch-build");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for entry in std::fs::read_dir(private_bins_dir()).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), dir.join(entry.file_name())).unwrap();
+    }
+
+    // Flip one byte of the verifier key. The artifact still deserializes (the
+    // format is fixed-size hashes), so only the canonical comparison catches it.
+    let mut vk_bytes = std::fs::read(dir.join("private_batch_verifier.bin")).unwrap();
+    let last = vk_bytes.len() - 1;
+    vk_bytes[last] ^= 0x01;
+    std::fs::write(dir.join("private_batch_verifier.bin"), vk_bytes).unwrap();
+
+    let err = generate_public_batch_circuit_binaries(&dir, 1, false)
+        .expect_err("substituted private-batch artifacts must be rejected before baking");
+    // `{err:#}` prints the whole context chain; the canonical mismatch is the cause.
+    let chain = format!("{err:#}");
+    assert!(
+        chain.contains("does not match the canonical"),
+        "got: {chain}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // ============================================================================
 // Miner-side (public batch): pooled aggregation
 // ============================================================================

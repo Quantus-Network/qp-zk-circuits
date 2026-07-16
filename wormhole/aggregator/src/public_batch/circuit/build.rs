@@ -8,15 +8,16 @@ use anyhow::{anyhow, Context, Result};
 use std::fs::{create_dir_all, write};
 use std::path::Path;
 
-use plonky2::plonk::circuit_data::{
-    CommonCircuitData, ProverCircuitData, VerifierCircuitData, VerifierOnlyCircuitData,
-};
+use plonky2::plonk::circuit_data::{ProverCircuitData, VerifierCircuitData};
 use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
 
 use qp_wormhole_inputs::validate_proof_count;
 use zk_circuits_common::circuit::{wormhole_public_batch_circuit_config, C, D, F};
 
-use crate::common::utils::private_batch_num_leaves_from_padded_pi_len;
+use crate::common::utils::{
+    canonical_leaf_verifier_data, load_canonical_private_batch_verifier_data,
+    private_batch_num_leaves_from_padded_pi_len,
+};
 use crate::public_batch::circuit::circuit_logic::PublicBatchCircuit;
 
 /// Build and write all public-batch artifacts into `output_dir`.
@@ -31,20 +32,43 @@ pub fn generate_public_batch_circuit_binaries<P: AsRef<Path>>(
     create_dir_all(output_dir)
         .with_context(|| format!("Failed to create output dir {}", output_dir.display()))?;
 
-    let private_batch_common = load_private_batch_common_from_bins(output_dir)
-        .context("Failed to load private-batch common circuit data")?;
-    let private_batch_verifier_only = load_private_batch_verifier_only_from_bins(output_dir)
-        .context("Failed to load private-batch verifier data")?;
+    // Pin the private-batch artifacts to the canonical private-batch circuit BEFORE
+    // baking their verifier key into the public-batch circuit as constants. The leaf
+    // count is derived from the (untrusted) common data first, but the subsequent
+    // byte-exact comparison against a canonically rebuilt circuit for that count
+    // rejects any substituted or stale artifact.
+    let private_batch_common_bytes = std::fs::read(output_dir.join("private_batch_common.bin"))
+        .with_context(|| {
+            format!(
+                "Failed to read {}",
+                output_dir.join("private_batch_common.bin").display()
+            )
+        })?;
+    let private_batch_verifier_bytes =
+        std::fs::read(output_dir.join("private_batch_verifier.bin")).with_context(|| {
+            format!(
+                "Failed to read {}",
+                output_dir.join("private_batch_verifier.bin").display()
+            )
+        })?;
 
-    let private_batch_num_leaves =
-        private_batch_num_leaves_from_padded_pi_len(private_batch_common.num_public_inputs)?;
+    let claimed_pi_len = peek_common_num_public_inputs(&private_batch_common_bytes)?;
+    let private_batch_num_leaves = private_batch_num_leaves_from_padded_pi_len(claimed_pi_len)?;
+
+    let private_batch = load_canonical_private_batch_verifier_data(
+        &private_batch_common_bytes,
+        &private_batch_verifier_bytes,
+        &canonical_leaf_verifier_data(),
+        private_batch_num_leaves,
+    )
+    .context("Failed to load private-batch verifier data")?;
 
     // Non-ZK config: public-batch witnesses (private-batch proofs) are already public data and their
     // public inputs are forwarded verbatim, so blinding buys nothing and slows proving.
     let public_batch_circuit = PublicBatchCircuit::new(
         wormhole_public_batch_circuit_config(),
-        private_batch_common,
-        &private_batch_verifier_only,
+        private_batch.common,
+        &private_batch.verifier_only,
         num_private_batch_proofs,
         private_batch_num_leaves,
     )?;
@@ -68,32 +92,19 @@ pub fn generate_public_batch_circuit_binaries<P: AsRef<Path>>(
     Ok(())
 }
 
-fn load_private_batch_common_from_bins(bins_dir: &Path) -> Result<CommonCircuitData<F, D>> {
+/// Decode the claimed public-input count from serialized common circuit data.
+///
+/// Used only to derive the leaf count needed to rebuild the canonical
+/// private-batch circuit; the artifact is then pinned byte-exactly against that
+/// canonical rebuild, so a lie here cannot survive the comparison.
+fn peek_common_num_public_inputs(common_bytes: &[u8]) -> Result<usize> {
     let gate_serializer = DefaultGateSerializer;
-
-    let bytes = std::fs::read(bins_dir.join("private_batch_common.bin")).with_context(|| {
-        format!(
-            "Failed to read {}",
-            bins_dir.join("private_batch_common.bin").display()
-        )
-    })?;
-
-    CommonCircuitData::from_bytes(bytes, &gate_serializer)
-        .map_err(|e| anyhow!("Failed to deserialize private_batch_common.bin: {}", e))
-}
-
-fn load_private_batch_verifier_only_from_bins(
-    bins_dir: &Path,
-) -> Result<VerifierOnlyCircuitData<C, D>> {
-    let bytes = std::fs::read(bins_dir.join("private_batch_verifier.bin")).with_context(|| {
-        format!(
-            "Failed to read {}",
-            bins_dir.join("private_batch_verifier.bin").display()
-        )
-    })?;
-
-    VerifierOnlyCircuitData::from_bytes(bytes)
-        .map_err(|e| anyhow!("Failed to deserialize private_batch_verifier.bin: {}", e))
+    let common = plonky2::plonk::circuit_data::CommonCircuitData::<F, D>::from_bytes(
+        common_bytes.to_vec(),
+        &gate_serializer,
+    )
+    .map_err(|e| anyhow!("Failed to deserialize private_batch_common.bin: {}", e))?;
+    Ok(common.num_public_inputs)
 }
 
 fn write_verifier_artifacts(
