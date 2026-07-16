@@ -942,4 +942,131 @@ mod tests {
             "expected public-batch proving to fail for mismatched blocks"
         );
     }
+
+    /// Public-batch equivalent of the private-batch verifier-key-substitution
+    /// test: the private-batch verifier key is baked into the public-batch
+    /// circuit as constants, so a structurally identical private-batch proof
+    /// produced by a DIFFERENT circuit — here, a private batch aggregating a
+    /// constraint-free leaf circuit — must be rejected at prove time. Without
+    /// the constant VK, an attacker could launder arbitrary leaf claims (no
+    /// fee check, fabricated amounts) through a legit-shaped private batch.
+    #[test]
+    fn public_batch_rejects_proofs_from_substituted_private_batch_circuit() {
+        let block_hash: [u64; 4] = [0xAA01, 0xAA02, 0xAA03, 0xAA04];
+        let block_number = 42u32;
+
+        // ---- Legit pipeline: leaf VK -> private batch VK -> public batch ----
+        let (leaf_data, _leaf_targets) = build_fake_leaf_circuit();
+        let legit_private_batch = PrivateBatchCircuit::new(
+            CircuitConfig::standard_recursion_config(),
+            &leaf_data.common,
+            &leaf_data.verifier_only,
+            NUM_LEAVES,
+        )
+        .unwrap();
+        let legit_private_batch_data = legit_private_batch.build_circuit();
+
+        // SECURITY: the LEGIT private-batch verifier key is baked in here.
+        let public_batch_circuit = PublicBatchCircuit::new(
+            CircuitConfig::standard_recursion_config(),
+            legit_private_batch_data.common.clone(),
+            &legit_private_batch_data.verifier_only,
+            N_INNER,
+            NUM_LEAVES,
+        )
+        .unwrap();
+        let public_batch_targets = public_batch_circuit.targets();
+        let public_batch_data = public_batch_circuit.build_circuit();
+
+        // ---- Attacker pipeline: constraint-free leaf, same PI shape ----
+        let (malicious_leaf_data, malicious_leaf_targets) = {
+            let mut builder =
+                CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+            let pis: Vec<Target> = (0..LEAF_PI_LEN)
+                .map(|_| builder.add_virtual_target())
+                .collect();
+            // NO constraints: any values prove.
+            builder.register_public_inputs(&pis);
+            (builder.build::<C>(), pis)
+        };
+        let malicious_private_batch = PrivateBatchCircuit::new(
+            CircuitConfig::standard_recursion_config(),
+            &malicious_leaf_data.common,
+            &malicious_leaf_data.verifier_only,
+            NUM_LEAVES,
+        )
+        .unwrap();
+        let malicious_pb_targets = malicious_private_batch.targets();
+        let malicious_pb_data = malicious_private_batch.build_circuit();
+
+        // "Valid-looking" leaves the legit leaf circuit would never have proved
+        // (no fee/range constraints applied to these values).
+        let malicious_leaves: Vec<ProofWithPublicInputs<F, C, D>> = (0..NUM_LEAVES)
+            .map(|i| {
+                let n = i as u64 + 1;
+                let pi = make_leaf_pi(
+                    1_000_000,
+                    0,
+                    [90 + n, 91, 92, 93],
+                    [0, 0, 0, 0],
+                    [70 + n, 71, 72, 73],
+                    block_hash,
+                    block_number,
+                );
+                let mut pw = PartialWitness::new();
+                for (t, v) in malicious_leaf_targets.iter().zip(pi.iter()) {
+                    pw.set_target(*t, *v).unwrap();
+                }
+                malicious_leaf_data.prove(pw).unwrap()
+            })
+            .collect();
+
+        let malicious_pb_proof = prove_private_batch_batch(
+            &malicious_pb_data,
+            &malicious_pb_targets,
+            malicious_leaves,
+        );
+        // Sanity: the forged proof verifies under the ATTACKER's circuit...
+        malicious_pb_data
+            .verify(malicious_pb_proof.clone())
+            .expect("forged proof must verify under the attacker's own circuit");
+
+        // ...but the public batch, with the legit VK baked in, must reject it
+        // (either at witness assignment on shape mismatch or at prove time on
+        // the constant verifier-key constraints).
+        // Precondition: the two private-batch circuits differ ONLY in the baked
+        // leaf verifier-key constants, so their proof shapes are identical. The
+        // forged proof therefore reaches the circuit, and the rejection below
+        // is enforced by the constant verifier-key constraints — not by some
+        // incidental shape mismatch.
+        let gate_serializer = plonky2::util::serialization::DefaultGateSerializer;
+        assert_eq!(
+            malicious_pb_data.common.to_bytes(&gate_serializer).unwrap(),
+            legit_private_batch_data
+                .common
+                .to_bytes(&gate_serializer)
+                .unwrap(),
+            "test precondition: forged proof must be shape-identical to legit proofs"
+        );
+
+        // plonky2 surfaces the constraint violation as an Err or a panic
+        // depending on where witness generation contradicts; both are rejections.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove_public_batch(
+                &public_batch_data,
+                &public_batch_targets,
+                vec![malicious_pb_proof.clone(), malicious_pb_proof],
+                [
+                    F::from_canonical_u64(1),
+                    F::from_canonical_u64(2),
+                    F::from_canonical_u64(3),
+                    F::from_canonical_u64(4),
+                ],
+            )
+        }));
+        assert!(
+            result.is_err() || result.unwrap().is_err(),
+            "public batch must reject private-batch proofs from a substituted circuit"
+        );
+    }
 }
