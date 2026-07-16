@@ -20,7 +20,7 @@
 //!
 //! ```text
 //! // admission thread, short lock:
-//! let taken = aggregator.lock().take_batch(&key);
+//! let taken = aggregator.lock().take_batch(&key)?;
 //!
 //! // proving worker, NO lock held (use its own prover instance):
 //! let prover = PublicBatchProver::new_from_binaries_dir(&bins_dir)?;
@@ -189,14 +189,7 @@ impl PublicBatchAggregator {
     /// holding the lock, then drop the batch on success or
     /// [`Self::reinsert_batch`] on failure.
     pub fn aggregate(&mut self, key: &BatchKey) -> Result<Proof> {
-        let Some(taken) = self.pool.take_batch(key) else {
-            bail!(
-                "no pooled proofs for block {:?} (asset {}, fee {})",
-                key.block_hash,
-                key.asset_id,
-                key.volume_fee_bps
-            );
-        };
+        let taken = self.take_batch(key)?;
 
         match self.prove_taken(&taken) {
             Ok(proof) => Ok(proof),
@@ -209,8 +202,25 @@ impl PublicBatchAggregator {
 
     /// Remove up to `batch_size` of the oldest proofs for `key` from the pool,
     /// for proving via [`Self::prove_taken`]. Cheap; see [`ProofPool::take_batch`].
-    pub fn take_batch(&mut self, key: &BatchKey) -> Option<TakenBatch> {
-        self.pool.take_batch(key)
+    ///
+    /// Refuses the dummy sentinel bucket: an all-dummy public batch is a valid
+    /// proof that settles nothing, so proving it only wastes minutes.
+    /// ([`ProofPool`] itself stays policy-free and admits that bucket.)
+    pub fn take_batch(&mut self, key: &BatchKey) -> Result<TakenBatch> {
+        if key.is_dummy() {
+            bail!(
+                "refusing to aggregate the dummy sentinel bucket (block_hash == 0): \
+                 an all-dummy public batch settles nothing"
+            );
+        }
+        self.pool.take_batch(key).ok_or_else(|| {
+            anyhow!(
+                "no pooled proofs for block {:?} (asset {}, fee {})",
+                key.block_hash,
+                key.asset_id,
+                key.volume_fee_bps
+            )
+        })
     }
 
     /// Restore a taken batch after a failed proving attempt (no cryptographic

@@ -22,8 +22,9 @@
 //!
 //! Note on dummies: an all-dummy private-batch proof (all-zero block hash) is
 //! admissible — it is a valid proof and lands in its own bucket — but it
-//! settles nothing, so a production policy should never select that bucket for
-//! aggregation.
+//! settles nothing, so it must never be selected for aggregation
+//! ([`BucketStats::is_dummy`] flags it, and the `PublicBatchAggregator` façade
+//! refuses to take it; the pool itself stays policy-free).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -97,6 +98,13 @@ impl BucketStats {
     /// Whether the bucket holds at least one full (padding-free) batch.
     pub fn is_full(&self) -> bool {
         self.num_proofs >= self.batch_size
+    }
+
+    /// Whether this is the dummy sentinel bucket (`block_hash == 0`).
+    /// Aggregating it proves a public batch that settles nothing; policy code
+    /// must skip it (`PublicBatchAggregator` refuses it outright).
+    pub fn is_dummy(&self) -> bool {
+        self.key.is_dummy()
     }
 }
 

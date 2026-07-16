@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Once, OnceLock};
 use test_helpers::{compute_zk_leaf_hash, TestInputs};
 use wormhole_aggregator::aggregator::PublicBatchAggregator;
+use wormhole_aggregator::pool::BatchKey;
 use wormhole_aggregator::common::utils::{
     load_canonical_leaf_verifier_data, load_canonical_private_batch_verifier_data,
 };
@@ -113,6 +114,20 @@ fn private_batch_verifier() -> VerifierCircuitData<F, C, D> {
         PRIVATE_NUM_LEAVES,
     )
     .expect("Failed to load private-batch verifier data")
+}
+
+/// Valid leaf inputs like `test_inputs_0` but with a REAL block hash computed
+/// from the header fields, so the proof is non-dummy (`test_inputs_0` uses the
+/// dummy sentinel `block_hash == 0`, which pools into the dummy bucket that
+/// `PublicBatchAggregator` refuses to aggregate).
+fn test_inputs_with_real_block() -> CircuitInputs {
+    use wormhole_circuit::block_header::header::HeaderInputs;
+
+    let mut inputs = CircuitInputs::test_inputs_0();
+    inputs.public.block_hash = HeaderInputs::try_from(&inputs)
+        .expect("header inputs from test inputs")
+        .block_hash();
+    inputs
 }
 
 /// Valid leaf inputs like `test_inputs_0` but for a non-native asset. The asset
@@ -349,7 +364,8 @@ fn make_private_batch_proof_in_public_dir() -> ProofWithPublicInputs<F, C, D> {
         .get_or_init(|| {
             setup_public_test_binaries();
             let dir = public_bins_dir();
-            let leaf = make_leaf_proof_in(&dir, &CircuitInputs::test_inputs_0());
+            // Non-dummy inputs: the aggregator refuses the dummy bucket.
+            let leaf = make_leaf_proof_in(&dir, &test_inputs_with_real_block());
             PrivateBatchProver::new_from_binaries_dir(&dir)
                 .expect("load private-batch prover from public test binaries")
                 .aggregate(vec![leaf])
@@ -407,6 +423,15 @@ fn pool_rejects_invalid_proofs_and_aggregates_by_bucket() {
     // Aggregating a missing bucket is an error, and the pool stays usable.
     let err = aggregator.aggregate(&key).unwrap_err();
     assert!(err.to_string().contains("no pooled proofs"), "got: {err}");
+
+    // The dummy sentinel bucket (block_hash == 0) is refused outright: an
+    // all-dummy public batch settles nothing, so proving it wastes minutes.
+    let dummy_key = BatchKey {
+        block_hash: BytesDigest::default(),
+        ..key
+    };
+    let err = aggregator.aggregate(&dummy_key).unwrap_err();
+    assert!(err.to_string().contains("dummy"), "got: {err}");
 }
 
 #[test]
