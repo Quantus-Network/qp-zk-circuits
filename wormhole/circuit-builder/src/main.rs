@@ -34,7 +34,9 @@ struct Args {
     #[arg(short, long, value_parser = parse_proof_count)]
     num_private_batch_proofs: Option<usize>,
 
-    /// Skip prover binary generation (only generate verifier binaries)
+    /// Skip prover binary generation for the batch aggregation circuits (only generate
+    /// verifier binaries). The leaf circuit never emits a prover binary: WormholeProver
+    /// always builds the leaf circuit from source.
     #[arg(long)]
     skip_prover: bool,
 }

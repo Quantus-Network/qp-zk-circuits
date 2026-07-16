@@ -126,5 +126,10 @@ To build the circuit binary, run the following command from the root of the work
 cargo run --release -p qp-wormhole-circuit-builder -- --num-leaf-proofs <N> [--num-private-batch-proofs <N>] --output generated-bins
 ```
 
-This creates `common.bin`, `verifier.bin`, `prover.bin` (unless `--skip-prover`), `private_batch_common.bin`, `private_batch_verifier.bin`, `dummy_proof.bin`,
-and `config.json` inside `generated-bins/`.
+This creates `common.bin`, `verifier.bin`, `private_batch_common.bin`, `private_batch_verifier.bin`, `dummy_proof.bin`,
+and `config.json` inside `generated-bins/` (plus batch prover binaries unless `--skip-prover`).
+
+Note: no `prover.bin` is emitted for the leaf circuit. The leaf `WormholeProver` always builds
+its circuit from source (it is small and builds in milliseconds); loading serialized prover
+artifacts was removed because a poisoned artifact could exfiltrate private witness data
+through the proof's public-input list.

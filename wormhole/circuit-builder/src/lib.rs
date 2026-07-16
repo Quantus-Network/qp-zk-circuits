@@ -3,10 +3,10 @@ use std::fs::{create_dir_all, write};
 use std::path::Path;
 use wormhole_aggregator::public_batch::circuit::generate_public_batch_circuit_binaries;
 
-use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
+use plonky2::util::serialization::DefaultGateSerializer;
 use wormhole_aggregator::private_batch::circuit::build::generate_private_batch_circuit_binaries;
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
-use zk_circuits_common::circuit::{wormhole_leaf_circuit_config, C, D};
+use zk_circuits_common::circuit::wormhole_leaf_circuit_config;
 
 // Re-export CircuitBinsConfig from aggregator so users of circuit-builder can access it
 pub use wormhole_aggregator::CircuitBinsConfig;
@@ -15,10 +15,12 @@ pub use wormhole_aggregator::CircuitBinsConfig;
 ///
 /// This is a low-level helper for partial artifact generation. For the full flow that also
 /// emits `config.json`, use [`generate_all_circuit_binaries`].
-pub fn generate_circuit_binaries<P: AsRef<Path>>(
-    output_dir: P,
-    include_prover: bool,
-) -> Result<()> {
+///
+/// Note: no `prover.bin` is emitted for the leaf circuit. `WormholeProver` always builds
+/// the (small, fast-to-build) leaf circuit from source; loading prover-only artifacts was
+/// removed because a poisoned artifact could exfiltrate private witness data through the
+/// proof's public-input list.
+pub fn generate_circuit_binaries<P: AsRef<Path>>(output_dir: P) -> Result<()> {
     println!("Building wormhole leaf circuit (non-ZK for faster proving)...");
     let config = wormhole_leaf_circuit_config();
     let circuit = WormholeCircuit::new(config);
@@ -27,9 +29,6 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
     println!("Circuit built.");
 
     let gate_serializer = DefaultGateSerializer;
-    let generator_serializer = DefaultGeneratorSerializer::<C, D> {
-        _phantom: Default::default(),
-    };
 
     let output_path = output_dir.as_ref();
     create_dir_all(output_path)?;
@@ -48,7 +47,6 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
     println!("Serializing circuit data...");
 
     let verifier_data = circuit_data.verifier_data();
-    let prover_data = circuit_data.prover_data();
     let common_data = &verifier_data.common;
 
     // Serialize common data
@@ -69,18 +67,6 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
         output_path.display()
     );
 
-    // Serialize prover only data (optional)
-    if include_prover {
-        let prover_only_bytes = prover_data
-            .prover_only
-            .to_bytes(&generator_serializer, common_data)
-            .map_err(|e| anyhow!("failed to serialize prover data: {}", e))?;
-        write(output_path.join("prover.bin"), prover_only_bytes)?;
-        println!("Prover data saved to {}/prover.bin", output_path.display());
-    } else {
-        println!("Skipping prover binary generation");
-    }
-
     Ok(())
 }
 
@@ -88,7 +74,8 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(
 ///
 /// # Arguments
 /// * `output_dir` - Directory to write the binaries to
-/// * `include_prover` - Whether to include the prover binary
+/// * `include_prover` - Whether to include the prover binaries for the batch aggregation
+///   circuits (the leaf circuit never emits a prover binary; see [`generate_circuit_binaries`])
 /// * `num_leaf_proofs` - Number of leaf proofs aggregated into a single proof (must be > 0)
 /// * `num_private_batch_proofs` - Optional param for number of inner proofs (for public-batch circuit). Set to none if you only want private-batch aggregation.
 ///
@@ -107,7 +94,7 @@ pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
     let output_path = output_dir.as_ref();
 
     // Generate regular circuit binaries
-    generate_circuit_binaries(output_path, include_prover)?;
+    generate_circuit_binaries(output_path)?;
 
     // Generate aggregated circuit binaries
     generate_private_batch_circuit_binaries(output_path, config.num_leaf_proofs, include_prover)?;

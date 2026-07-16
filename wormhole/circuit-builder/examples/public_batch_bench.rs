@@ -50,7 +50,7 @@ fn main() -> anyhow::Result<()> {
     // Leaf + private-batch circuits don't depend on M; build them once.
     println!("== One-time setup: leaf + private-batch circuits (N={NUM_LEAF_PROOFS}) ==");
     let setup_start = Instant::now();
-    qp_wormhole_circuit_builder::generate_circuit_binaries(&dir, true)?;
+    qp_wormhole_circuit_builder::generate_circuit_binaries(&dir)?;
     wormhole_aggregator::private_batch::circuit::build::generate_private_batch_circuit_binaries(
         &dir,
         NUM_LEAF_PROOFS,

@@ -5,7 +5,7 @@ use plonky2::field::types::Field;
 use plonky2::plonk::circuit_data::VerifierCircuitData;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_inputs::{BytesDigest, PublicCircuitInputs};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Once, OnceLock};
 use test_helpers::{compute_zk_leaf_hash, TestInputs};
 use wormhole_aggregator::aggregator::PublicBatchAggregator;
@@ -81,15 +81,14 @@ fn setup_public_test_binaries() {
     });
 }
 
-fn make_leaf_proof_in(dir: &Path, inputs: &CircuitInputs) -> ProofWithPublicInputs<F, C, D> {
-    let prover = WormholeProver::new_from_files(&dir.join("prover.bin"), &dir.join("common.bin"))
-        .expect("Failed to create prover from binaries");
-    prover.commit(inputs).unwrap().prove().unwrap()
-}
-
 fn make_leaf_proof(inputs: &CircuitInputs) -> ProofWithPublicInputs<F, C, D> {
-    setup_test_binaries();
-    make_leaf_proof_in(&private_bins_dir(), inputs)
+    // The leaf prover is always built from source; it no longer loads a prover.bin,
+    // so leaf proofs are independent of any generated artifact directory.
+    wormhole_prover::build_fresh()
+        .commit(inputs)
+        .unwrap()
+        .prove()
+        .unwrap()
 }
 
 fn make_private_batch_prover() -> PrivateBatchProver {
@@ -365,7 +364,7 @@ fn make_private_batch_proof_in_public_dir() -> ProofWithPublicInputs<F, C, D> {
             setup_public_test_binaries();
             let dir = public_bins_dir();
             // Non-dummy inputs: the aggregator refuses the dummy bucket.
-            let leaf = make_leaf_proof_in(&dir, &test_inputs_with_real_block());
+            let leaf = make_leaf_proof(&test_inputs_with_real_block());
             PrivateBatchProver::new_from_binaries_dir(&dir)
                 .expect("load private-batch prover from public test binaries")
                 .aggregate(vec![leaf])
@@ -384,7 +383,7 @@ fn pool_rejects_invalid_proofs_and_aggregates_by_bucket() {
     let mut aggregator = PublicBatchAggregator::new(&dir, address).expect("public aggregator");
 
     // Shape rejection: a leaf proof is not a private-batch proof.
-    let leaf = make_leaf_proof_in(&dir, &CircuitInputs::test_inputs_0());
+    let leaf = make_leaf_proof(&CircuitInputs::test_inputs_0());
     let err = aggregator.push_proof(leaf).unwrap_err();
     assert!(
         err.to_string().contains("public input length mismatch"),
