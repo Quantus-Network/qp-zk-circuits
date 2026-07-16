@@ -78,6 +78,24 @@ pub struct PoolLimits {
     pub max_proofs: usize,
     /// Maximum number of distinct buckets (keys).
     pub max_buckets: usize,
+    /// Maximum cryptographic verification ATTEMPTS per [`Self::verify_window`].
+    ///
+    /// Size caps alone don't bound admission CPU: invalid proofs are rejected
+    /// by verification and never consume a slot, so an attacker streaming
+    /// well-formed-but-invalid proofs (fresh random nullifiers, correct PI
+    /// shape) would reach the expensive recursive verify on every submission.
+    /// This budget counts every verification attempt — successful or not — and
+    /// [`ProofPool::push`] rejects cheaply once it is exhausted, bounding
+    /// worst-case verification CPU regardless of traffic.
+    ///
+    /// This is a global, identity-blind backstop: a flooding attacker can
+    /// exhaust the budget and delay honest admissions (they cannot touch
+    /// already-pooled proofs or proving). Per-client fairness needs rate
+    /// limiting or authentication at the transport layer, where client
+    /// identity exists.
+    pub max_verifies_per_window: usize,
+    /// Length of the verification budget window.
+    pub verify_window: Duration,
 }
 
 impl Default for PoolLimits {
@@ -85,6 +103,11 @@ impl Default for PoolLimits {
         Self {
             max_proofs: 1024,
             max_buckets: 256,
+            // ~2.5-5s of verification CPU per minute at worst (recursive
+            // verification is ~10-20ms) while far exceeding honest submission
+            // rates (256 private batches/minute).
+            max_verifies_per_window: 256,
+            verify_window: Duration::from_secs(60),
         }
     }
 }
@@ -180,6 +203,10 @@ pub struct ProofPool {
     /// instead of a full pool scan. Invariant: contains exactly the nullifiers
     /// of proofs currently in `buckets` (taken batches are not indexed).
     nullifier_index: HashMap<BytesDigest, BatchKey>,
+    /// Start of the current verification budget window (fixed-window counter).
+    verify_window_started: Instant,
+    /// Verification attempts (successful or not) in the current window.
+    verifies_in_window: usize,
 }
 
 impl ProofPool {
@@ -203,6 +230,14 @@ impl ProofPool {
             batch_size
         );
         ensure!(limits.max_buckets > 0, "max_buckets must be positive");
+        ensure!(
+            limits.max_verifies_per_window > 0,
+            "max_verifies_per_window must be positive"
+        );
+        ensure!(
+            !limits.verify_window.is_zero(),
+            "verify_window must be positive"
+        );
         let expected_pi_len = aggregated_output::pi_len(inner_num_leaves);
         ensure!(
             verifier.common.num_public_inputs == expected_pi_len,
@@ -218,6 +253,8 @@ impl ProofPool {
             limits,
             buckets: BTreeMap::new(),
             nullifier_index: HashMap::new(),
+            verify_window_started: Instant::now(),
+            verifies_in_window: 0,
         })
     }
 
@@ -241,10 +278,12 @@ impl ProofPool {
     /// Validate and admit a proof, returning the bucket key it landed in.
     ///
     /// Checks run cheapest-first: capacity limits, public-input shape,
-    /// duplicate-nullifier rejection, then cryptographic verification. A proof
-    /// admitted here is individually valid and, by bucketing, batch-compatible
-    /// with every other proof in its bucket, so aggregation over a bucket
-    /// cannot fail deterministically on admitted inputs (#97067).
+    /// duplicate-nullifier rejection, the verification budget
+    /// ([`PoolLimits::max_verifies_per_window`]), then cryptographic
+    /// verification. A proof admitted here is individually valid and, by
+    /// bucketing, batch-compatible with every other proof in its bucket, so
+    /// aggregation over a bucket cannot fail deterministically on admitted
+    /// inputs (#97067).
     ///
     /// Buckets are NOT capped at one batch: a hot key keeps admitting (up to
     /// the global limits) while earlier batches for it are out being proved;
@@ -298,6 +337,26 @@ impl ProofPool {
                 key.block_hash
             );
         }
+
+        // Verification budget: size caps only count ADMITTED proofs, and
+        // invalid submissions never consume a slot, so without this an
+        // attacker streaming well-formed-but-invalid proofs would buy a full
+        // recursive verification per submission indefinitely. Charge the
+        // budget before verifying (attempts, not successes, cost CPU).
+        let now = Instant::now();
+        if now.duration_since(self.verify_window_started) >= self.limits.verify_window {
+            self.verify_window_started = now;
+            self.verifies_in_window = 0;
+        }
+        if self.verifies_in_window >= self.limits.max_verifies_per_window {
+            bail!(
+                "proof admission verification budget exhausted ({} attempts in the current {:?} \
+                 window); retry after the window resets",
+                self.limits.max_verifies_per_window,
+                self.limits.verify_window
+            );
+        }
+        self.verifies_in_window += 1;
 
         self.verifier.verify(proof.clone()).map_err(|e| {
             anyhow!(
@@ -816,6 +875,7 @@ mod tests {
             PoolLimits {
                 max_proofs: 1,
                 max_buckets: 8,
+                ..PoolLimits::default()
             },
         );
 
@@ -834,6 +894,7 @@ mod tests {
             PoolLimits {
                 max_proofs: 16,
                 max_buckets: 1,
+                ..PoolLimits::default()
             },
         );
 
@@ -843,6 +904,70 @@ mod tests {
             .push(prove_fake(&data, &targets, &fake(2, 12)))
             .unwrap_err();
         assert!(err.to_string().contains("bucket limit"), "got: {err}");
+    }
+
+    /// Verification CPU must be bounded even though invalid proofs never
+    /// consume a pool slot: once the per-window budget is exhausted, push
+    /// rejects cheaply before the expensive recursive verification.
+    #[test]
+    fn verification_budget_bounds_admission_attempts() {
+        let (mut pool, data, targets) = make_pool(
+            4,
+            PoolLimits {
+                max_verifies_per_window: 2,
+                verify_window: Duration::from_secs(3600),
+                ..PoolLimits::default()
+            },
+        );
+
+        pool.push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        pool.push(prove_fake(&data, &targets, &fake(1, 12)))
+            .unwrap();
+
+        // Budget exhausted: even a valid proof is rejected without verifying.
+        let err = pool
+            .push(prove_fake(&data, &targets, &fake(1, 13)))
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("verification budget exhausted"),
+            "got: {err}"
+        );
+    }
+
+    /// Failed verification attempts charge the budget too — that's the whole
+    /// point (attempts cost CPU, not admissions) — and the budget resets once
+    /// the window rolls over.
+    #[test]
+    fn verification_budget_counts_failures_and_resets() {
+        let (mut pool, data, targets) = make_pool(
+            4,
+            PoolLimits {
+                max_verifies_per_window: 1,
+                verify_window: Duration::from_secs(2),
+                ..PoolLimits::default()
+            },
+        );
+
+        // Build both proofs BEFORE the first push: proving takes long enough
+        // that doing it between pushes could roll the window over and flake.
+        let mut bad = prove_fake(&data, &targets, &fake(1, 11));
+        bad.public_inputs[aggregated_output::ASSET_ID_OFFSET] = F::from_canonical_u64(9);
+        let good = prove_fake(&data, &targets, &fake(1, 12));
+
+        // The tampered proof burns the single budgeted attempt.
+        let err = pool.push(bad).unwrap_err();
+        assert!(err.to_string().contains("verification failed"), "got: {err}");
+
+        let err = pool.push(good.clone()).unwrap_err();
+        assert!(
+            err.to_string().contains("verification budget exhausted"),
+            "got: {err}"
+        );
+
+        // After the window rolls over, admission resumes.
+        std::thread::sleep(Duration::from_millis(2100));
+        pool.push(good).unwrap();
     }
 
     #[test]
