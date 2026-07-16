@@ -244,11 +244,21 @@ impl PrivateBatchProver {
     /// Commit leaf proofs to the aggregation circuit witness.
     ///
     /// Performs padding with dummy proofs, shuffling, and witness filling.
+    /// Rejects batches the private-batch circuit's cross-slot constraints would
+    /// fail (mixed block hashes, asset ids, or fee rates) up front, so callers
+    /// get a precise error in milliseconds instead of a proving failure.
     pub fn commit(mut self, mut proofs: Vec<ProofWithPublicInputs<F, C, D>>) -> Result<Self> {
         let Some(targets) = self.targets.take() else {
             bail!("private-batch aggregation prover has already committed to inputs");
         };
 
+        // An empty batch would be padded into an all-dummy proof that settles
+        // nothing; a client asking for that is a caller bug. (The intentional
+        // all-dummy padding template is built on the circuit-build path, which
+        // fills the witness with explicit dummy leaves and never calls here.)
+        if proofs.is_empty() {
+            bail!("no leaf proofs to aggregate");
+        }
         if proofs.len() > self.num_leaf_proofs {
             bail!(
                 "too many proofs: got {}, expected at most {}",
@@ -280,6 +290,8 @@ impl PrivateBatchProver {
                 }
             }
         }
+
+        ensure_leaf_batch_compatible(&proofs)?;
 
         // Pad with dummy proofs
         for _ in 0..num_dummies_needed {
@@ -314,11 +326,102 @@ impl PrivateBatchProver {
             .prove(self.partial_witness)
             .map_err(|e| anyhow!("Failed to prove private-batch aggregation circuit: {}", e))
     }
+
+    /// One-shot client aggregation: commit the full leaf-proof set and prove.
+    ///
+    /// This is the intended client (CLI / mobile) entry point: a client knows
+    /// its complete leaf set up front, so there is no queue — pass everything
+    /// at once. Cross-proof compatibility is checked fail-fast in `commit`.
+    pub fn aggregate(
+        self,
+        proofs: Vec<ProofWithPublicInputs<F, C, D>>,
+    ) -> Result<ProofWithPublicInputs<F, C, D>> {
+        self.commit(proofs)?.prove()
+    }
 }
 
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
+
+/// Check that a set of leaf proofs is mutually compatible under the
+/// private-batch circuit's cross-slot constraints, so an incompatible batch is
+/// rejected at commit time instead of failing after minutes of proving:
+///
+/// - `asset_id` must match across ALL proofs (dummies included),
+/// - `block_hash` and `volume_fee_bps` must match between non-dummy proofs
+///   (`block_hash == 0` slots are exempt).
+///
+/// NOTE: keep in lockstep with the circuit's cross-slot constraints
+/// (`private_batch::circuit::circuit_logic`). The circuit remains the enforcer;
+/// this only improves failure latency and error quality.
+fn ensure_leaf_batch_compatible(proofs: &[ProofWithPublicInputs<F, C, D>]) -> Result<()> {
+    use crate::private_batch::circuit::constants::{
+        ASSET_ID_START, BLOCK_HASH_START, VOLUME_FEE_BPS_START,
+    };
+
+    struct LeafMeta {
+        asset_id: u64,
+        volume_fee_bps: u64,
+        block_hash: [u64; 4],
+    }
+    // PI lengths were validated by the caller.
+    let metas: Vec<LeafMeta> = proofs
+        .iter()
+        .map(|proof| LeafMeta {
+            asset_id: proof.public_inputs[ASSET_ID_START].to_canonical_u64(),
+            volume_fee_bps: proof.public_inputs[VOLUME_FEE_BPS_START].to_canonical_u64(),
+            block_hash: core::array::from_fn(|i| {
+                proof.public_inputs[BLOCK_HASH_START + i].to_canonical_u64()
+            }),
+        })
+        .collect();
+
+    if let Some(first) = metas.first() {
+        for (idx, meta) in metas.iter().enumerate().skip(1) {
+            if meta.asset_id != first.asset_id {
+                bail!(
+                    "leaf proof {} has asset_id={}, but proof 0 has asset_id={}; \
+                     the private-batch circuit enforces asset consistency across all slots",
+                    idx,
+                    meta.asset_id,
+                    first.asset_id
+                );
+            }
+        }
+    }
+
+    let mut reference: Option<(usize, &LeafMeta)> = None;
+    for (idx, meta) in metas.iter().enumerate() {
+        if meta.block_hash == [0u64; 4] {
+            continue; // dummy sentinel: exempt from block/fee consistency
+        }
+        match reference {
+            None => reference = Some((idx, meta)),
+            Some((ref_idx, reference)) => {
+                if meta.block_hash != reference.block_hash {
+                    bail!(
+                        "leaf proof {} is for a different block than proof {}; \
+                         all non-dummy proofs in a private batch must share one block hash",
+                        idx,
+                        ref_idx
+                    );
+                }
+                if meta.volume_fee_bps != reference.volume_fee_bps {
+                    bail!(
+                        "leaf proof {} has volume_fee_bps={}, but proof {} has volume_fee_bps={}; \
+                         all non-dummy proofs in a private batch must share one fee rate",
+                        idx,
+                        meta.volume_fee_bps,
+                        ref_idx,
+                        reference.volume_fee_bps
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
 
 /// Verify that the dummy leaf proof template is a valid leaf proof carrying the
 /// strong dummy sentinel: `block_hash == 0` AND both output amounts zero.
@@ -378,6 +481,9 @@ fn generate_dummy_nullifier_pre_images_for_slots(n_slots: usize) -> Vec<[F; 4]> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::private_batch::circuit::constants::{
+        ASSET_ID_START, BLOCK_HASH_START, VOLUME_FEE_BPS_START,
+    };
     use plonky2::field::types::Field;
     use qp_wormhole_inputs::{
         BLOCK_HASH_START_INDEX, NULLIFIER_START_INDEX, OUTPUT_AMOUNT_1_INDEX,
@@ -431,5 +537,64 @@ mod tests {
             err.to_string().contains("failed verification"),
             "got: {err}"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Cross-proof batch-compatibility preflight
+    // -------------------------------------------------------------------------
+
+    fn leaf_pis(asset_id: u64, volume_fee_bps: u64, block: u64) -> [F; PUBLIC_INPUTS_FELTS_LEN] {
+        let mut pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
+        pis[ASSET_ID_START] = F::from_canonical_u64(asset_id);
+        pis[VOLUME_FEE_BPS_START] = F::from_canonical_u64(volume_fee_bps);
+        pis[BLOCK_HASH_START] = F::from_canonical_u64(block);
+        pis
+    }
+
+    #[test]
+    fn compatible_leaf_batch_is_accepted() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+        let proofs = vec![
+            prove_fake_leaf(&leaf, &targets, leaf_pis(0, 10, 1)),
+            prove_fake_leaf(&leaf, &targets, leaf_pis(0, 10, 1)),
+            // Dummy slot: exempt from block/fee consistency.
+            prove_fake_leaf(&leaf, &targets, leaf_pis(0, 99, 0)),
+        ];
+        ensure_leaf_batch_compatible(&proofs).expect("compatible batch must be accepted");
+    }
+
+    #[test]
+    fn mixed_block_leaf_batch_is_rejected() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+        let proofs = vec![
+            prove_fake_leaf(&leaf, &targets, leaf_pis(0, 10, 1)),
+            prove_fake_leaf(&leaf, &targets, leaf_pis(0, 10, 2)),
+        ];
+        let err = ensure_leaf_batch_compatible(&proofs).unwrap_err();
+        assert!(err.to_string().contains("different block"), "got: {err}");
+    }
+
+    #[test]
+    fn mixed_fee_leaf_batch_is_rejected() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+        let proofs = vec![
+            prove_fake_leaf(&leaf, &targets, leaf_pis(0, 10, 1)),
+            prove_fake_leaf(&leaf, &targets, leaf_pis(0, 20, 1)),
+        ];
+        let err = ensure_leaf_batch_compatible(&proofs).unwrap_err();
+        assert!(err.to_string().contains("volume_fee_bps"), "got: {err}");
+    }
+
+    #[test]
+    fn mixed_asset_leaf_batch_is_rejected_even_for_dummies() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+        // Second proof is a dummy (block 0) with a different asset: the circuit
+        // enforces asset equality across ALL slots, dummies included.
+        let proofs = vec![
+            prove_fake_leaf(&leaf, &targets, leaf_pis(0, 10, 1)),
+            prove_fake_leaf(&leaf, &targets, leaf_pis(5, 10, 0)),
+        ];
+        let err = ensure_leaf_batch_compatible(&proofs).unwrap_err();
+        assert!(err.to_string().contains("asset"), "got: {err}");
     }
 }

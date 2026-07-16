@@ -2,14 +2,18 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use plonky2::plonk::circuit_data::CommonCircuitData;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use plonky2::util::serialization::DefaultGateSerializer;
-use qp_wormhole_aggregator::aggregator::{
-    AggregationBackend, PrivateBatchAggregator, PublicBatchAggregator,
+use qp_wormhole_aggregator::aggregator::PublicBatchAggregator;
+use qp_wormhole_aggregator::common::utils::{
+    canonical_leaf_verifier_data, load_canonical_private_batch_verifier_data,
 };
 use qp_wormhole_aggregator::config::CircuitBinsConfig;
 use qp_wormhole_aggregator::dummy_proof::load_dummy_proof;
 use qp_wormhole_aggregator::private_batch::circuit::build::generate_private_batch_circuit_binaries;
+use qp_wormhole_aggregator::private_batch::prover::PrivateBatchProver;
 use qp_wormhole_aggregator::public_batch::circuit::build::generate_public_batch_circuit_binaries;
+use qp_wormhole_aggregator::public_batch::prover::{PublicBatchInputs, PublicBatchProver};
 use qp_wormhole_inputs::BytesDigest;
+use std::path::Path;
 use zk_circuits_common::circuit::{C, D, F};
 
 /// Generate dummy proofs from the circuit config (no external files needed).
@@ -30,14 +34,18 @@ fn load_dummy_leaf_proof() -> Proof {
         .expect("Failed to deserialize common circuit data");
     load_dummy_proof(proof_bytes, &common).expect("Failed to load dummy proof from bytes")
 }
-// Implement a helper to generate a dummy private-batch proof with "PUBLIC_BATCH_INNER_NUM_LEAVES"
+
+fn make_private_prover() -> PrivateBatchProver {
+    PrivateBatchProver::new_from_binaries_dir(Path::new(BINS_DIR))
+        .expect("Failed to load private-batch prover from binaries dir")
+}
+
+/// Generate a dummy private-batch proof over "PUBLIC_BATCH_INNER_NUM_LEAVES" dummy leaves.
 fn generate_dummy_private_batch_proof() -> Proof {
     let dummy_leaf_proof = load_dummy_leaf_proof();
-    let mut aggregator = PrivateBatchAggregator::new(BINS_DIR).unwrap();
-    for _ in 0..PUBLIC_BATCH_INNER_NUM_LEAVES {
-        aggregator.push_proof(dummy_leaf_proof.clone()).unwrap();
-    }
-    aggregator.aggregate().unwrap()
+    make_private_prover()
+        .aggregate(vec![dummy_leaf_proof; PUBLIC_BATCH_INNER_NUM_LEAVES])
+        .unwrap()
 }
 
 // A macro for creating an aggregation benchmark with a specified number of leaf proofs.
@@ -46,7 +54,7 @@ macro_rules! aggregate_proofs_benchmark {
         pub fn $fn_name(c: &mut Criterion) {
             let proof = load_dummy_leaf_proof();
 
-            // Call "generate_private_batch_circuit_binaries" before we instantiate a new wormhole aggregator,
+            // Call "generate_private_batch_circuit_binaries" before we instantiate a new prover,
             // to ensure the binaries represent the circuit with the correct number of leaf proofs.
             generate_private_batch_circuit_binaries(BINS_DIR, $num_leaf_proofs, true).expect(
                 "Failed to generate private_batch circuit binaries for aggregation benchmark",
@@ -60,14 +68,12 @@ macro_rules! aggregate_proofs_benchmark {
             c.bench_function(&format!("aggregate_proofs_{}", $num_leaf_proofs), |b| {
                 b.iter_batched(
                     || {
-                        let mut aggregator = PrivateBatchAggregator::new(BINS_DIR).unwrap();
-                        for proof in std::iter::repeat(proof.clone()).take($num_leaf_proofs) {
-                            aggregator.push_proof(proof).unwrap();
-                        }
-                        aggregator
+                        let prover = make_private_prover();
+                        let proofs = vec![proof.clone(); $num_leaf_proofs];
+                        (prover, proofs)
                     },
-                    |mut aggregator| {
-                        aggregator.aggregate().unwrap();
+                    |(prover, proofs)| {
+                        prover.aggregate(proofs).unwrap();
                     },
                     criterion::BatchSize::SmallInput,
                 );
@@ -81,8 +87,6 @@ macro_rules! verify_aggregate_proof_benchmark {
         pub fn $fn_name(c: &mut Criterion) {
             let proof = load_dummy_leaf_proof();
 
-            // Call "generate_private_batch_circuit_binaries" before we instantiate a new wormhole aggregator,
-            // to ensure the binaries represent the circuit with the correct number of leaf proofs.
             generate_private_batch_circuit_binaries(BINS_DIR, $num_leaf_proofs, true).expect(
                 "Failed to generate private_batch circuit binaries for aggregation benchmark",
             );
@@ -92,20 +96,28 @@ macro_rules! verify_aggregate_proof_benchmark {
                 .save(BINS_DIR)
                 .expect("Failed to save circuit bins config for aggregation benchmark");
 
+            let leaf = canonical_leaf_verifier_data();
+            let verifier = load_canonical_private_batch_verifier_data(
+                &std::fs::read(format!("{}/private_batch_common.bin", BINS_DIR))
+                    .expect("Failed to read private_batch common bytes"),
+                &std::fs::read(format!("{}/private_batch_verifier.bin", BINS_DIR))
+                    .expect("Failed to read private_batch verifier bytes"),
+                &leaf,
+                $num_leaf_proofs,
+            )
+            .expect("Failed to load private-batch verifier data");
+
             c.bench_function(
                 &format!("verify_aggregate_proof_{}", $num_leaf_proofs),
                 |b| {
                     b.iter_batched(
                         || {
-                            let mut aggregator = PrivateBatchAggregator::new(BINS_DIR).unwrap();
-                            for proof in std::iter::repeat(proof.clone()).take($num_leaf_proofs) {
-                                aggregator.push_proof(proof).unwrap();
-                            }
-
-                            (aggregator.aggregate().unwrap(), aggregator)
+                            make_private_prover()
+                                .aggregate(vec![proof.clone(); $num_leaf_proofs])
+                                .unwrap()
                         },
-                        |(aggregated_proof, aggregator)| {
-                            aggregator.verify(aggregated_proof).unwrap();
+                        |aggregated_proof| {
+                            verifier.verify(aggregated_proof).unwrap();
                         },
                         criterion::BatchSize::SmallInput,
                     );
@@ -141,6 +153,10 @@ macro_rules! prove_public_batch_benchmark {
             let aggregator_address = BytesDigest::try_from(LAYER1_AGGREGATOR_ADDRESS)
                 .expect("Failed to create aggregator address bytes digest");
 
+            // The prover is driven directly: the benchmark batch reuses one dummy
+            // private-batch proof N times, which the ProofPool would reject as
+            // duplicate nullifiers (and generating N distinct private batches
+            // would dwarf the benchmark setup).
             c.bench_function(
                 &format!(
                     "prove_public_batch_{}_l0leaves_{}",
@@ -149,17 +165,21 @@ macro_rules! prove_public_batch_benchmark {
                 |b| {
                     b.iter_batched(
                         || {
-                            let mut aggregator =
-                                PublicBatchAggregator::new(BINS_DIR, aggregator_address).unwrap();
-                            for proof in
-                                std::iter::repeat(proof.clone()).take($num_private_batch_proofs)
-                            {
-                                aggregator.push_proof(proof).unwrap();
-                            }
-                            aggregator
+                            let prover =
+                                PublicBatchProver::new_from_binaries_dir(Path::new(BINS_DIR))
+                                    .expect("Failed to load public-batch prover");
+                            let proofs = vec![proof.clone(); $num_private_batch_proofs];
+                            (prover, proofs)
                         },
-                        |mut aggregator| {
-                            aggregator.aggregate().unwrap();
+                        |(prover, proofs)| {
+                            prover
+                                .commit(PublicBatchInputs {
+                                    proofs,
+                                    aggregator_address,
+                                })
+                                .unwrap()
+                                .prove()
+                                .unwrap();
                         },
                         criterion::BatchSize::SmallInput,
                     );
@@ -195,6 +215,8 @@ macro_rules! verify_public_batch_benchmark {
 
             let aggregator_address = BytesDigest::try_from(LAYER1_AGGREGATOR_ADDRESS)
                 .expect("Failed to create aggregator address bytes digest");
+            let aggregator = PublicBatchAggregator::new(BINS_DIR, aggregator_address)
+                .expect("Failed to create public-batch aggregator");
 
             c.bench_function(
                 &format!(
@@ -204,16 +226,17 @@ macro_rules! verify_public_batch_benchmark {
                 |b| {
                     b.iter_batched(
                         || {
-                            let mut aggregator =
-                                PublicBatchAggregator::new(BINS_DIR, aggregator_address).unwrap();
-                            for proof in
-                                std::iter::repeat(proof.clone()).take($num_private_batch_proofs)
-                            {
-                                aggregator.push_proof(proof).unwrap();
-                            }
-                            (aggregator.aggregate().unwrap(), aggregator)
+                            PublicBatchProver::new_from_binaries_dir(Path::new(BINS_DIR))
+                                .expect("Failed to load public-batch prover")
+                                .commit(PublicBatchInputs {
+                                    proofs: vec![proof.clone(); $num_private_batch_proofs],
+                                    aggregator_address,
+                                })
+                                .unwrap()
+                                .prove()
+                                .unwrap()
                         },
-                        |(aggregated_proof, aggregator)| {
+                        |aggregated_proof| {
                             aggregator.verify(aggregated_proof).unwrap();
                         },
                         criterion::BatchSize::SmallInput,
