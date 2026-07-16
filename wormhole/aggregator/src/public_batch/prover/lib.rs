@@ -63,7 +63,9 @@ impl PublicBatchProver {
     /// Build a fresh public-batch aggregation prover from circuit definitions.
     ///
     /// In production, prefer `new_from_binaries_dir(...)` to load prebuilt circuits.
-    /// Returns an error when either proof count is outside the supported range.
+    /// Returns an error when either proof count is outside the supported range,
+    /// or when `dummy_proof_template` is not a valid all-dummy private-batch
+    /// proof (zero block-hash sentinel and zero payouts).
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         public_batch_circuit_config: CircuitConfig,
@@ -73,6 +75,11 @@ impl PublicBatchProver {
         private_batch_num_leaves: usize,
         dummy_proof_template: ProofWithPublicInputs<F, C, D>,
     ) -> Result<Self> {
+        let private_batch_verifier_data = VerifierCircuitData {
+            verifier_only: private_batch_verifier_only.clone(),
+            common: private_batch_common.clone(),
+        };
+
         // Proof-count bounds are enforced by PublicBatchCircuit::new.
         let public_batch_circuit = PublicBatchCircuit::new(
             public_batch_circuit_config,
@@ -84,6 +91,13 @@ impl PublicBatchProver {
 
         let targets = Some(public_batch_circuit.targets());
         let circuit_data = public_batch_circuit.build_prover();
+
+        // Enforce the same template invariant as the byte-loading constructors:
+        // `commit` clones this template into every padded slot, and the circuit
+        // only zeroes a slot's exits/nullifiers when its block_hash is the zero
+        // sentinel — a caller-supplied REAL proof here would be forwarded as a
+        // legitimate batch member (#97026).
+        verify_dummy_private_batch_template(&dummy_proof_template, &private_batch_verifier_data)?;
 
         Ok(Self {
             circuit_data,
@@ -421,6 +435,26 @@ mod tests {
         assert!(err.to_string().contains("exceeds maximum"));
     }
 
+    /// A genuine all-dummy private-batch proof over the fake leaf circuit:
+    /// the only template the (now-validating) direct constructor accepts.
+    fn make_all_dummy_private_batch_template(
+        leaf: &plonky2::plonk::circuit_data::CircuitData<F, C, D>,
+        fake_leaf_proof: &ProofWithPublicInputs<F, C, D>,
+    ) -> ProofWithPublicInputs<F, C, D> {
+        PrivateBatchProver::new(
+            wormhole_private_batch_circuit_config(),
+            leaf.common.clone(),
+            &leaf.verifier_only,
+            1,
+            fake_leaf_proof.clone(),
+        )
+        .unwrap()
+        .commit(vec![fake_leaf_proof.clone()])
+        .unwrap()
+        .prove()
+        .unwrap()
+    }
+
     #[test]
     fn commit_rejects_malformed_private_batch_pi_without_panicking() {
         let (leaf, leaf_targets) = build_fake_leaf_circuit();
@@ -434,13 +468,14 @@ mod tests {
         .unwrap()
         .build_verifier();
 
+        let template = make_all_dummy_private_batch_template(&leaf, &fake_proof);
         let prover = PublicBatchProver::new(
             wormhole_public_batch_circuit_config(),
             private_batch.common.clone(),
             &private_batch.verifier_only,
             1,
             1,
-            fake_proof.clone(),
+            template,
         )
         .unwrap();
 
@@ -460,5 +495,52 @@ mod tests {
         assert!(err
             .to_string()
             .contains("private-batch proof 0 is malformed"));
+    }
+
+    #[test]
+    fn direct_constructors_reject_non_dummy_padding_templates() {
+        let (leaf, leaf_targets) = build_fake_leaf_circuit();
+        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; 21]);
+
+        // A valid leaf proof with a non-zero block hash: real work, not padding.
+        let mut real_pis = [F::ZERO; 21];
+        real_pis[crate::private_batch::circuit::constants::BLOCK_HASH_START] = F::ONE;
+        let real_leaf = prove_fake_leaf(&leaf, &leaf_targets, real_pis);
+
+        // Private-batch direct constructor: template must carry the sentinel.
+        let err = PrivateBatchProver::new(
+            wormhole_private_batch_circuit_config(),
+            leaf.common.clone(),
+            &leaf.verifier_only,
+            1,
+            real_leaf,
+        )
+        .expect_err("non-dummy leaf template must be rejected by the direct constructor");
+        assert!(err.to_string().contains("non-zero block_hash"), "got: {err}");
+
+        // Public-batch direct constructor: a leaf proof is not even a valid
+        // private-batch proof, let alone an all-dummy one.
+        let private_batch = PrivateBatchCircuit::new(
+            wormhole_private_batch_circuit_config(),
+            &leaf.common,
+            &leaf.verifier_only,
+            1,
+        )
+        .unwrap()
+        .build_verifier();
+        let err = PublicBatchProver::new(
+            wormhole_public_batch_circuit_config(),
+            private_batch.common.clone(),
+            &private_batch.verifier_only,
+            1,
+            1,
+            dummy_leaf,
+        )
+        .expect_err("leaf proof as public-batch padding template must be rejected");
+        assert!(
+            err.to_string().contains("failed verification")
+                || err.to_string().contains("failed to parse"),
+            "got: {err}"
+        );
     }
 }
