@@ -110,41 +110,23 @@ impl ZkMerkleProof {
         self.siblings.len()
     }
 
-    /// Verify the proof against the expected root.
+    /// Verify the proof against the expected root, including position hints.
     ///
     /// Returns `true` if the proof is valid.
+    ///
+    /// This validates the FULL object invariant, identically to
+    /// [`Self::verify_with_positions`]: the current hash is inserted at each
+    /// level's position hint and the tuple is hashed without re-sorting, so a
+    /// proof that passes here is guaranteed usable by the circuit path. (An
+    /// earlier version hashed through the order-independent [`hash_node`],
+    /// which sorts children internally — that checked membership but silently
+    /// ignored the position hints, letting proofs with bogus positions pass
+    /// this verifier and only fail later inside witness proving.)
     ///
     /// Note: Proofs with depth exceeding `MAX_DEPTH` are rejected early to prevent
     /// resource exhaustion from oversized proofs.
     pub fn verify(&self) -> bool {
-        // Reject proofs exceeding max supported depth to prevent DoS
-        if self.siblings.len() > MAX_DEPTH {
-            return false;
-        }
-        if self.siblings.len() != self.positions.len() {
-            return false;
-        }
-
-        let mut current_hash = self.leaf_hash;
-
-        for (level_siblings, &position) in self.siblings.iter().zip(self.positions.iter()) {
-            if position > 3 {
-                return false;
-            }
-
-            // Combine current hash with 3 siblings to get all 4 children
-            let children: [Hash256; ARITY] = [
-                current_hash,
-                level_siblings[0],
-                level_siblings[1],
-                level_siblings[2],
-            ];
-
-            // Compute parent hash (hash_node sorts internally)
-            current_hash = hash_node(&children);
-        }
-
-        current_hash == self.root
+        self.verify_with_positions()
     }
 
     /// Verify the proof using pre-sorted siblings and position hints.
@@ -492,6 +474,31 @@ mod tests {
         );
 
         assert!(!bad_proof.verify());
+    }
+
+    /// Regression (audit): `verify()` used to hash through the
+    /// order-independent `hash_node`, so a proof with valid membership but a
+    /// bogus position hint passed `verify()` while being unusable by the
+    /// position-sensitive circuit path. Both verifiers must reject it.
+    #[test]
+    fn test_wrong_position_hint_fails_default_verify() {
+        let leaf0 = [0x00; 32];
+        let leaf1 = [0x11; 32];
+        let leaf2 = [0x22; 32];
+        let leaf3 = [0x33; 32];
+        let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]);
+
+        let mut proof = ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root);
+        assert!(proof.verify(), "sanity: correct positions must verify");
+
+        // Corrupt the position hint; membership data is untouched.
+        proof.positions[0] = 2;
+        assert!(!proof.verify());
+        assert!(!proof.verify_with_positions());
+
+        // Out-of-range hint is likewise an invalid proof, not a panic.
+        proof.positions[0] = 7;
+        assert!(!proof.verify());
     }
 
     #[test]
