@@ -40,10 +40,10 @@ fn commit_rejects_zk_merkle_proof_exceeding_max_depth() {
 
 #[test]
 fn new_from_bytes_rejects_invalid_common_bytes() {
-    let err = WormholeProver::new_from_bytes(b"bad-common", b"bad").unwrap_err();
+    let err = WormholeProver::new_from_bytes(b"bad-prover", b"bad-common").unwrap_err();
     assert!(err
         .to_string()
-        .contains("failed to deserialize common circuit data"));
+        .contains("loaded common circuit data does not match the canonical"));
 }
 
 #[test]
@@ -59,7 +59,74 @@ fn new_from_bytes_rejects_invalid_prover_bytes() {
     let err = WormholeProver::new_from_bytes(b"bad-prover", &common_bytes).unwrap_err();
     assert!(err
         .to_string()
-        .contains("failed to deserialize prover-only data"));
+        .contains("loaded prover-only circuit data does not match the canonical"));
+}
+
+#[test]
+fn new_from_bytes_rejects_poisoned_public_input_metadata() {
+    // Regression (secret exfiltration): ProverOnlyCircuitData.public_inputs is the
+    // target list plonky2 uses to populate ProofWithPublicInputs.public_inputs.
+    // A poisoned prover.bin that redirects an entry at a private target (e.g. the
+    // Wormhole secret) would cause the victim's proof object to carry the secret.
+    // The loader must reject any prover-only artifact that is not byte-identical
+    // to the canonical one, even when it deserializes fine against canonical
+    // common data.
+    let generator_serializer = plonky2::util::serialization::DefaultGeneratorSerializer::<C, D> {
+        _phantom: Default::default(),
+    };
+    let gate_serializer = DefaultGateSerializer;
+
+    let prover = WormholeProver::new(CIRCUIT_CONFIG);
+    let common_bytes = prover
+        .circuit_data
+        .common
+        .to_bytes(&gate_serializer)
+        .unwrap();
+
+    // Craft the poisoned artifact from the canonical prover data: rewire the
+    // public-input target list. Swapping two entries keeps the artifact
+    // deserializable against canonical common data while changing which wire
+    // values end up in the proof's public-input list; pointing an entry at the
+    // secret target is the same class of tampering.
+    let mut poisoned = prover.circuit_data.prover_only;
+    let num_public = poisoned.public_inputs.len();
+    poisoned.public_inputs.swap(0, num_public - 1);
+    let poisoned_bytes = poisoned
+        .to_bytes(&generator_serializer, &prover.circuit_data.common)
+        .unwrap();
+
+    let err = WormholeProver::new_from_bytes(&poisoned_bytes, &common_bytes).unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("loaded prover-only circuit data does not match the canonical"));
+}
+
+#[test]
+fn new_from_bytes_accepts_canonical_artifacts() {
+    // The canonical artifacts (as produced by circuit-builder) must round-trip
+    // through the pinned loader. This also guards the determinism assumption the
+    // byte-exact pinning relies on: two independent builds must serialize
+    // identically.
+    let generator_serializer = plonky2::util::serialization::DefaultGeneratorSerializer::<C, D> {
+        _phantom: Default::default(),
+    };
+    let gate_serializer = DefaultGateSerializer;
+
+    let prover = WormholeProver::new(CIRCUIT_CONFIG);
+    let common_bytes = prover
+        .circuit_data
+        .common
+        .to_bytes(&gate_serializer)
+        .unwrap();
+    let prover_only_bytes = prover
+        .circuit_data
+        .prover_only
+        .to_bytes(&generator_serializer, &prover.circuit_data.common)
+        .unwrap();
+
+    let loaded = WormholeProver::new_from_bytes(&prover_only_bytes, &common_bytes).unwrap();
+    let inputs = CircuitInputs::test_inputs_0();
+    loaded.commit(&inputs).unwrap().prove().unwrap();
 }
 
 #[test]
