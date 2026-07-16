@@ -87,7 +87,7 @@ impl PublicBatchCircuit {
             &private_batch_common,
             private_batch_verifier_only,
             n_inner,
-        );
+        )?;
 
         let aggregator_address: [Target; AGGREGATOR_ADDRESS_LEN] = builder
             .add_virtual_targets(AGGREGATOR_ADDRESS_LEN)

@@ -33,9 +33,10 @@
 //!
 //! ```ignore
 //! // Multiple proofs from the same circuit
-//! let proof_targets = add_recursive_verifiers(&mut builder, &inner_common, &inner_vk, n);
+//! let proof_targets = add_recursive_verifiers(&mut builder, &inner_common, &inner_vk, n)?;
 //! ```
 
+use anyhow::Result;
 use plonky2::{
     field::extension::Extendable,
     hash::hash_types::RichField,
@@ -46,6 +47,7 @@ use plonky2::{
         proof::ProofWithPublicInputsTarget,
     },
 };
+use qp_wormhole_inputs::validate_proof_count;
 
 /// Safely add multiple recursive proof verifications for the same inner circuit.
 ///
@@ -61,6 +63,14 @@ use plonky2::{
 /// # Returns
 ///
 /// A vector of proof targets (the only witnesses needed).
+///
+/// # Errors
+///
+/// Returns an error when `num_proofs` is outside `1..=MAX_PROOF_COUNT`. The
+/// bound is enforced here — not only in the higher-level batch constructors —
+/// because this is a public API boundary: `num_proofs` drives allocation and
+/// per-proof recursive-verifier construction, and `0` would silently produce
+/// an outer circuit with no inner-proof constraints at all.
 pub fn add_recursive_verifiers<
     F: RichField + Extendable<D>,
     C: GenericConfig<D, F = F>,
@@ -70,11 +80,13 @@ pub fn add_recursive_verifiers<
     inner_common: &CommonCircuitData<F, D>,
     inner_verifier_only: &VerifierOnlyCircuitData<C, D>,
     num_proofs: usize,
-) -> Vec<ProofWithPublicInputsTarget<D>>
+) -> Result<Vec<ProofWithPublicInputsTarget<D>>>
 where
     C::Hasher: AlgebraicHasher<F>,
     C::InnerHasher: AlgebraicHasher<F>,
 {
+    validate_proof_count(num_proofs, "num_proofs")?;
+
     // SECURITY: Bake the verifier key as constants (shared across all proofs).
     let verifier_data = builder.constant_verifier_data::<C>(inner_verifier_only);
 
@@ -86,7 +98,7 @@ where
         proofs.push(proof);
     }
 
-    proofs
+    Ok(proofs)
 }
 
 #[cfg(test)]
@@ -98,6 +110,35 @@ mod tests {
         plonk::circuit_data::CircuitConfig,
     };
     use zk_circuits_common::circuit::{C, D, F};
+
+    /// The proof-count invariant must hold at this public boundary: zero would
+    /// build an outer circuit with no inner-proof constraints, and an
+    /// unbounded count drives allocation and circuit-construction work.
+    #[test]
+    fn rejects_out_of_range_proof_counts() {
+        use qp_wormhole_inputs::MAX_PROOF_COUNT;
+
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config.clone());
+        let t = builder.add_virtual_target();
+        builder.register_public_input(t);
+        let inner = builder.build::<C>();
+
+        for bad_count in [0, MAX_PROOF_COUNT + 1] {
+            let mut builder = CircuitBuilder::<F, D>::new(config.clone());
+            let err = add_recursive_verifiers::<F, C, D>(
+                &mut builder,
+                &inner.common,
+                &inner.verifier_only,
+                bad_count,
+            )
+            .expect_err("out-of-range num_proofs must be rejected");
+            assert!(
+                err.to_string().contains("num_proofs"),
+                "got: {err} for count {bad_count}"
+            );
+        }
+    }
 
     #[test]
     fn test_safe_recursive_verifier_rejects_wrong_circuit() {
@@ -123,7 +164,8 @@ mod tests {
             &legit_circuit.common,
             &legit_circuit.verifier_only, // Baked as constants
             1,
-        );
+        )
+        .unwrap();
         let proof_target = &proof_targets[0];
         builder.register_public_inputs(&proof_target.public_inputs);
         let outer_circuit = builder.build::<C>();
@@ -170,7 +212,8 @@ mod tests {
             &inner_circuit.common,
             &inner_circuit.verifier_only,
             1,
-        );
+        )
+        .unwrap();
         let proof_target = &proof_targets[0];
         builder.register_public_inputs(&proof_target.public_inputs);
         let outer_circuit = builder.build::<C>();

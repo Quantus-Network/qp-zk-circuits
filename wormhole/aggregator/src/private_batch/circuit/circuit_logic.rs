@@ -87,7 +87,7 @@ impl PrivateBatchCircuit {
             leaf_common,
             leaf_verifier_only,
             n_leaf,
-        );
+        )?;
 
         // Allocate one dummy-nullifier preimage target (4 felts) per slot.
         let mut dummy_nullifier_pre_images = Vec::with_capacity(n_leaf);
