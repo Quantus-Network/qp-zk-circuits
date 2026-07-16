@@ -225,7 +225,8 @@ fn verify_proof_native(
     let mut current_hash = leaf_hash;
 
     for (level_siblings, &position) in siblings.iter().zip(positions.iter()) {
-        let sorted_children = insert_at_position(current_hash, level_siblings, position);
+        let sorted_children = insert_at_position(current_hash, level_siblings, position)
+            .expect("test positions are always 0-3");
         current_hash = hash_node_presorted(&sorted_children);
     }
 

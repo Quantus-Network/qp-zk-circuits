@@ -68,14 +68,25 @@ pub fn u128_to_felts(num: u128) -> [F; FELTS_PER_U128] {
     result
 }
 
-pub fn u128_to_quantized_felt(num: u128) -> F {
+/// Quantize a u128 amount into a single 32-bit-limb field element.
+///
+/// Inverse of [`try_felt_to_quantized_u128`] (up to quantization loss).
+///
+/// # Errors
+///
+/// Returns an error when the quantized value does not fit in a 32-bit limb.
+/// Amounts can be attacker-controlled (parsed from transactions or RPC
+/// input), so oversized values must produce a normal invalid-input error,
+/// not a panic.
+pub fn try_u128_to_quantized_felt(num: u128) -> Result<F, String> {
     let quantized = num / AMOUNT_QUANTIZATION_FACTOR;
-    assert!(
-        quantized <= BIT_32_LIMB_MASK as u128,
-        "Quantized value {} exceeds 32-bit limb size",
-        quantized
-    );
-    from_u64(quantized as u64)
+    if quantized > BIT_32_LIMB_MASK as u128 {
+        return Err(alloc::format!(
+            "Quantized value {} exceeds 32-bit limb size",
+            quantized
+        ));
+    }
+    Ok(from_u64(quantized as u64))
 }
 
 pub fn u64_to_felts(num: u64) -> [F; FELTS_PER_U64] {
@@ -233,6 +244,22 @@ mod tests {
             let reconstructed = try_felts_to_u128(felts).unwrap();
             assert_eq!(original, reconstructed);
         }
+    }
+
+    #[test]
+    fn test_quantized_round_trip_and_rejection() {
+        let original = 1_234u128 * AMOUNT_QUANTIZATION_FACTOR;
+        let felt = try_u128_to_quantized_felt(original).unwrap();
+        assert_eq!(try_felt_to_quantized_u128(felt).unwrap(), original);
+
+        // Largest value whose quantization fits a 32-bit limb.
+        let max_ok = (BIT_32_LIMB_MASK as u128) * AMOUNT_QUANTIZATION_FACTOR;
+        try_u128_to_quantized_felt(max_ok).unwrap();
+
+        // Oversized amounts (possibly attacker-controlled) must error, not panic.
+        let err = try_u128_to_quantized_felt(max_ok + AMOUNT_QUANTIZATION_FACTOR).unwrap_err();
+        assert!(err.contains("exceeds 32-bit limb size"), "got: {err}");
+        assert!(try_u128_to_quantized_felt(u128::MAX).is_err());
     }
 
     #[test]

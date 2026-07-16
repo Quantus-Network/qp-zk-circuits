@@ -167,12 +167,12 @@ impl ZkMerkleProof {
         let mut current_hash = self.leaf_hash;
 
         for (level_siblings, &position) in self.siblings.iter().zip(self.positions.iter()) {
-            if position > 3 {
+            // Insert current_hash at the given position among sorted siblings;
+            // an out-of-range position byte makes the proof invalid.
+            let Ok(sorted_children) = insert_at_position(current_hash, level_siblings, position)
+            else {
                 return false;
-            }
-
-            // Insert current_hash at the given position among sorted siblings
-            let sorted_children = insert_at_position(current_hash, level_siblings, position);
+            };
 
             // Hash the sorted children directly (no sorting needed)
             current_hash = hash_node_presorted(&sorted_children);
@@ -242,37 +242,43 @@ impl ZkMerkleProof {
 /// Insert a hash at a given position (0-3) among 3 sorted siblings.
 ///
 /// Returns the 4 hashes in order: siblings before position, then current, then siblings after.
+///
+/// # Errors
+///
+/// Returns an error when `position > 3`. This is a public API that may receive
+/// attacker-controlled position bytes (e.g. from deserialized proofs), so an
+/// out-of-range value must produce a normal invalid-input error, not a panic.
 pub fn insert_at_position(
     current: Hash256,
     sorted_siblings: &[Hash256; SIBLINGS_PER_LEVEL],
     position: u8,
-) -> [Hash256; ARITY] {
+) -> Result<[Hash256; ARITY], &'static str> {
     match position {
-        0 => [
+        0 => Ok([
             current,
             sorted_siblings[0],
             sorted_siblings[1],
             sorted_siblings[2],
-        ],
-        1 => [
+        ]),
+        1 => Ok([
             sorted_siblings[0],
             current,
             sorted_siblings[1],
             sorted_siblings[2],
-        ],
-        2 => [
+        ]),
+        2 => Ok([
             sorted_siblings[0],
             sorted_siblings[1],
             current,
             sorted_siblings[2],
-        ],
-        3 => [
+        ]),
+        3 => Ok([
             sorted_siblings[0],
             sorted_siblings[1],
             sorted_siblings[2],
             current,
-        ],
-        _ => panic!("position must be 0-3"),
+        ]),
+        _ => Err("insert_at_position: position must be 0-3"),
     }
 }
 
@@ -383,21 +389,32 @@ mod tests {
         let siblings = [[0x11; 32], [0x22; 32], [0x33; 32]];
 
         assert_eq!(
-            insert_at_position(current, &siblings, 0),
+            insert_at_position(current, &siblings, 0).unwrap(),
             [current, siblings[0], siblings[1], siblings[2]]
         );
         assert_eq!(
-            insert_at_position(current, &siblings, 1),
+            insert_at_position(current, &siblings, 1).unwrap(),
             [siblings[0], current, siblings[1], siblings[2]]
         );
         assert_eq!(
-            insert_at_position(current, &siblings, 2),
+            insert_at_position(current, &siblings, 2).unwrap(),
             [siblings[0], siblings[1], current, siblings[2]]
         );
         assert_eq!(
-            insert_at_position(current, &siblings, 3),
+            insert_at_position(current, &siblings, 3).unwrap(),
             [siblings[0], siblings[1], siblings[2], current]
         );
+    }
+
+    /// Out-of-range position bytes (possible in attacker-supplied proofs) must
+    /// yield an error, not a panic.
+    #[test]
+    fn test_insert_at_position_rejects_out_of_range() {
+        let current = [0xcc; 32];
+        let siblings = [[0x11; 32], [0x22; 32], [0x33; 32]];
+        for bad in [4u8, 5, u8::MAX] {
+            assert!(insert_at_position(current, &siblings, bad).is_err());
+        }
     }
 
     #[test]
