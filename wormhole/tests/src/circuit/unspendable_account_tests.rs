@@ -38,7 +38,11 @@ fn run_test(
 
 #[test]
 fn build_and_verify_unspendable_account_proof() {
-    let unspendable_account = UnspendableAccount::default();
+    // Explicit test secret: `UnspendableAccount` deliberately has no `Default`
+    // (a default-constructed account would embed its secret in source, making
+    // it publicly drainable).
+    let secret: [u8; 32] = hex::decode(SECRETS[0]).unwrap().try_into().unwrap();
+    let unspendable_account = UnspendableAccount::from_secret(secret.try_into().unwrap());
     run_test(&unspendable_account).unwrap();
 }
 
