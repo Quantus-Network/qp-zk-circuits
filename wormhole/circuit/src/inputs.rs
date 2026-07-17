@@ -74,17 +74,30 @@ pub struct PrivateCircuitInputs {
     pub zk_merkle_positions: Vec<u8>,
 }
 
+/// Redacting `Debug`: these are the *private* witness inputs, so anything that
+/// could break deposit/withdrawal unlinkability (or worse, spend authority)
+/// must not reach logs, error contexts, or telemetry via `{:?}`.
+///
+/// Redacted: `secret` (spend authority), `unspendable_account` (the deposit
+/// account this proof spends — the direct deposit/withdrawal link),
+/// `transfer_count` and `input_amount` (deposit-identifying metadata), and the
+/// merkle path material (`digest`, siblings, positions — identifies the leaf).
+///
+/// Kept visible: the block-header fields (`parent_hash`, `state_root`,
+/// `extrinsics_root`, `zk_tree_root`) are public chain data fully determined
+/// by the proof's public `block_hash`, and are useful when debugging header
+/// hash mismatches.
 impl core::fmt::Debug for PrivateCircuitInputs {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PrivateCircuitInputs")
             .field("secret", &"[REDACTED]")
-            .field("transfer_count", &self.transfer_count)
-            .field("unspendable_account", &self.unspendable_account)
+            .field("transfer_count", &"[REDACTED]")
+            .field("unspendable_account", &"[REDACTED]")
             .field("parent_hash", &self.parent_hash)
             .field("state_root", &self.state_root)
             .field("extrinsics_root", &self.extrinsics_root)
             .field("digest", &"[REDACTED]")
-            .field("input_amount", &self.input_amount)
+            .field("input_amount", &"[REDACTED]")
             .field("zk_tree_root", &self.zk_tree_root)
             .field("zk_merkle_siblings", &"[REDACTED]")
             .field("zk_merkle_positions", &"[REDACTED]")
@@ -343,24 +356,31 @@ mod tests {
     }
 
     #[test]
-    fn private_circuit_inputs_debug_redacts_secret() {
+    fn private_circuit_inputs_debug_redacts_private_fields() {
         let secret = BytesDigest::try_from([0xab; 32].as_slice()).unwrap();
+        let unspendable_account = BytesDigest::try_from([0xcd; 32].as_slice()).unwrap();
         let inputs = PrivateCircuitInputs {
             secret,
-            transfer_count: 1,
-            unspendable_account: BytesDigest::default(),
+            transfer_count: 424_242,
+            unspendable_account,
             parent_hash: BytesDigest::default(),
             state_root: BytesDigest::default(),
             extrinsics_root: BytesDigest::default(),
             digest: [0u8; DIGEST_LOGS_SIZE],
-            input_amount: 100,
+            input_amount: 313_131,
             zk_tree_root: [0u8; 32],
             zk_merkle_siblings: vec![],
             zk_merkle_positions: vec![],
         };
         let dump = format!("{:?}", inputs);
         assert!(dump.contains("[REDACTED]"));
+        // Spend authority.
         assert!(!dump.contains("abababab"));
         assert!(!dump.contains("secret: BytesDigest"));
+        // Deposit/withdrawal linkability: the deposit account, its transfer
+        // count, and the exact pre-fee amount are private witness data.
+        assert!(!dump.contains("cdcdcdcd"));
+        assert!(!dump.contains("424242"));
+        assert!(!dump.contains("313131"));
     }
 }
