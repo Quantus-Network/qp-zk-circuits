@@ -30,15 +30,20 @@
 //!
 //! // back under a short lock:
 //! match result {
-//!     Ok(proof) => drop(taken), // proofs consumed; submit `proof`
+//!     Ok(proof) => { aggregator.lock().complete_batch(taken); /* submit `proof` */ }
 //!     Err(_) => { aggregator.lock().reinsert_batch(taken); }
 //! }
 //! ```
 //!
 //! Buckets queue deeper than one batch, so admissions for the same key keep
 //! landing while its previous batch is out being proved. Reinserted proofs are
-//! not re-verified, and proofs that settled on-chain while out are cleaned up
-//! by the regular [`PublicBatchAggregator::evict_settled`] cadence.
+//! not re-verified. A taken batch's nullifiers stay tracked while it is out:
+//! settlements observed by the regular
+//! [`PublicBatchAggregator::evict_settled`] cadence during the proving window
+//! are remembered, and [`PublicBatchAggregator::reinsert_batch`] drops the
+//! affected (now-stale) proofs instead of restoring them. Every taken batch
+//! MUST be handed back via [`PublicBatchAggregator::complete_batch`] (success)
+//! or [`PublicBatchAggregator::reinsert_batch`] (failure).
 
 use anyhow::{anyhow, bail, Context, Result};
 use plonky2::plonk::{
@@ -186,13 +191,16 @@ impl PublicBatchAggregator {
     /// proving run, so a lock-wrapped aggregator admits nothing meanwhile. A
     /// concurrent service should use the split API instead: [`Self::take_batch`]
     /// under a short lock, [`Self::prove_taken`] on a proving worker WITHOUT
-    /// holding the lock, then drop the batch on success or
+    /// holding the lock, then [`Self::complete_batch`] on success or
     /// [`Self::reinsert_batch`] on failure.
     pub fn aggregate(&mut self, key: &BatchKey) -> Result<Proof> {
         let taken = self.take_batch(key)?;
 
         match self.prove_taken(&taken) {
-            Ok(proof) => Ok(proof),
+            Ok(proof) => {
+                self.pool.complete(taken);
+                Ok(proof)
+            }
             Err(e) => {
                 self.pool.reinsert(taken);
                 Err(e)
@@ -224,8 +232,15 @@ impl PublicBatchAggregator {
         })
     }
 
+    /// Retire a taken batch after successful proving, releasing its nullifier
+    /// reservations; see [`ProofPool::complete`].
+    pub fn complete_batch(&mut self, batch: TakenBatch) {
+        self.pool.complete(batch)
+    }
+
     /// Restore a taken batch after a failed proving attempt (no cryptographic
-    /// re-verification). Returns the number of proofs restored; see
+    /// re-verification). Proofs observed settled while the batch was out are
+    /// dropped instead of restored. Returns the number of proofs restored; see
     /// [`ProofPool::reinsert`].
     pub fn reinsert_batch(&mut self, batch: TakenBatch) -> usize {
         self.pool.reinsert(batch)
