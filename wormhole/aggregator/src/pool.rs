@@ -49,7 +49,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, ensure, Result};
 use plonky2::field::types::PrimeField64;
 use plonky2::plonk::{circuit_data::VerifierCircuitData, proof::ProofWithPublicInputs};
-use qp_wormhole_inputs::BytesDigest;
+use qp_wormhole_inputs::{validate_proof_count, BytesDigest};
 use zk_circuits_common::{
     circuit::{C, D, F},
     utils::try_4_felts_to_bytes,
@@ -236,14 +236,21 @@ impl ProofPool {
     /// `inner_num_leaves` is the number of leaves aggregated per private-batch
     /// proof and `batch_size` the number of private-batch proofs per public
     /// batch; both must match the circuit shapes pinned into `verifier` and the
-    /// public-batch prover this pool feeds.
+    /// public-batch prover this pool feeds. Both are per-layer proof counts and
+    /// are validated against `MAX_PROOF_COUNT` before any layout arithmetic,
+    /// so callers can pass untrusted dimensions here.
     pub fn new(
         verifier: VerifierCircuitData<F, C, D>,
         inner_num_leaves: usize,
         batch_size: usize,
         limits: PoolLimits,
     ) -> Result<Self> {
-        ensure!(batch_size > 0, "batch_size must be positive");
+        // Bound both counts before the layout helpers below: pi_len does
+        // unchecked arithmetic that would wrap on astronomical counts, and the
+        // repo invariant is that every externally supplied batch dimension is
+        // checked with validate_proof_count before allocation or arithmetic.
+        validate_proof_count(inner_num_leaves, "inner_num_leaves")?;
+        validate_proof_count(batch_size, "batch_size")?;
         ensure!(
             limits.max_proofs >= batch_size,
             "max_proofs ({}) must allow at least one full batch ({})",
@@ -711,6 +718,35 @@ mod tests {
             block,
             exit_sums: [100, 50],
             nullifier,
+        }
+    }
+
+    /// ProofPool::new is a public API and must bound caller-supplied batch
+    /// dimensions BEFORE the layout arithmetic (pi_len is unchecked and would
+    /// wrap on astronomical counts in release builds).
+    #[test]
+    fn new_rejects_out_of_range_dimensions() {
+        use crate::private_batch::circuit::constants::LEAF_PI_LEN;
+        use qp_wormhole_inputs::MAX_PROOF_COUNT;
+
+        let (data, _) = build_fake_private_batch_circuit();
+
+        for bad_leaves in [0, MAX_PROOF_COUNT + 1, usize::MAX / LEAF_PI_LEN + 1] {
+            let err = ProofPool::new(data.verifier_data(), bad_leaves, 2, PoolLimits::default())
+                .err()
+                .expect("out-of-range inner_num_leaves must be rejected");
+            assert!(err.to_string().contains("inner_num_leaves"), "got: {err}");
+        }
+        for bad_batch in [0, MAX_PROOF_COUNT + 1] {
+            let err = ProofPool::new(
+                data.verifier_data(),
+                NUM_LEAVES,
+                bad_batch,
+                PoolLimits::default(),
+            )
+            .err()
+            .expect("out-of-range batch_size must be rejected");
+            assert!(err.to_string().contains("batch_size"), "got: {err}");
         }
     }
 
