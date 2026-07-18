@@ -12,23 +12,23 @@ bench = []
 
 [dependencies]
 anyhow = { workspace = true }
-circuit-builder = { package = "qp-wormhole-circuit-builder", version = "3.0.0", path = "../circuit-builder" }
+circuit-builder = { package = "qp-wormhole-circuit-builder", version = "=3.0.0", path = "../circuit-builder" }
 hex = { workspace = true }
-libc = "0.2"
+libc = "=0.2.186"
 qp-plonky2 = { workspace = true, default-features = true }
-qp-wormhole-inputs = { version = "3.0.0", path = "../inputs" }
-rand = { version = "0.9.1", default-features = false, features = [
+qp-wormhole-inputs = { version = "=3.0.0", path = "../inputs" }
+rand = { version = "=0.9.4", default-features = false, features = [
 	"thread_rng",
 ] }
 test-helpers = { path = "./test-helpers" }
-wormhole-aggregator = { package = "qp-wormhole-aggregator", version = "3.0.0", path = "../aggregator", features = ["no_zk"] }
-wormhole-circuit = { package = "qp-wormhole-circuit", version = "3.0.0", path = "../circuit", default-features = true }
-wormhole-prover = { package = "qp-wormhole-prover", version = "3.0.0", path = "../prover", default-features = true }
-wormhole-verifier = { package = "qp-wormhole-verifier", version = "3.0.0", path = "../verifier", default-features = true }
-zk-circuits-common = { package = "qp-zk-circuits-common", version = "3.0.0", path = "../../common" }
+wormhole-aggregator = { package = "qp-wormhole-aggregator", version = "=3.0.0", path = "../aggregator", features = ["no_zk"] }
+wormhole-circuit = { package = "qp-wormhole-circuit", version = "=3.0.0", path = "../circuit", default-features = true }
+wormhole-prover = { package = "qp-wormhole-prover", version = "=3.0.0", path = "../prover", default-features = true }
+wormhole-verifier = { package = "qp-wormhole-verifier", version = "=3.0.0", path = "../verifier", default-features = true }
+zk-circuits-common = { package = "qp-zk-circuits-common", version = "=3.0.0", path = "../../common" }
 
 [dev-dependencies]
-proptest = "1"
+proptest = "=1.11.0"
 
 [lints]
 workspace = true
