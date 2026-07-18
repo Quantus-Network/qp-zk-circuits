@@ -1029,11 +1029,8 @@ mod tests {
             })
             .collect();
 
-        let malicious_pb_proof = prove_private_batch_batch(
-            &malicious_pb_data,
-            &malicious_pb_targets,
-            malicious_leaves,
-        );
+        let malicious_pb_proof =
+            prove_private_batch_batch(&malicious_pb_data, &malicious_pb_targets, malicious_leaves);
         // Sanity: the forged proof verifies under the ATTACKER's circuit...
         malicious_pb_data
             .verify(malicious_pb_proof.clone())

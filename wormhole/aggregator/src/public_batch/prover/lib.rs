@@ -732,7 +732,10 @@ mod tests {
             real_leaf,
         )
         .expect_err("non-dummy leaf template must be rejected by the direct constructor");
-        assert!(err.to_string().contains("non-zero block_hash"), "got: {err}");
+        assert!(
+            err.to_string().contains("non-zero block_hash"),
+            "got: {err}"
+        );
 
         // Public-batch direct constructor: a leaf proof is not even a valid
         // private-batch proof, let alone an all-dummy one.

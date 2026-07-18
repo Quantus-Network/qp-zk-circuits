@@ -1104,7 +1104,10 @@ mod tests {
 
         // The tampered proof burns the single budgeted attempt.
         let err = pool.push(bad).unwrap_err();
-        assert!(err.to_string().contains("verification failed"), "got: {err}");
+        assert!(
+            err.to_string().contains("verification failed"),
+            "got: {err}"
+        );
 
         let err = pool.push(good.clone()).unwrap_err();
         assert!(

@@ -177,7 +177,10 @@ pub mod circuit_logic {
             profiler.checkpoint("DualExitAccount::circuit", builder.num_gates());
 
             BlockHeader::circuit_without_hash_binding(&targets.block_header, &mut builder);
-            profiler.checkpoint("BlockHeader::circuit_without_hash_binding", builder.num_gates());
+            profiler.checkpoint(
+                "BlockHeader::circuit_without_hash_binding",
+                builder.num_gates(),
+            );
 
             // Ensure that shared inputs to each fragment are the same.
             connect_shared_targets(&targets, &mut builder);
@@ -286,11 +289,7 @@ pub mod circuit_logic {
         // This allows dummy proofs to use random nullifiers for better privacy.
         // `is_not_dummy` is derived in-circuit above, so a prover cannot skip the
         // binding by witnessing the flag.
-        Nullifier::conditional_hash_binding(
-            &targets.nullifier,
-            builder,
-            is_not_dummy,
-        );
+        Nullifier::conditional_hash_binding(&targets.nullifier, builder, is_not_dummy);
 
         // Block hash validation: block_hash == hash(header contents)
         // Skip this validation for dummy proofs (block_hash == 0 AND outputs == 0).

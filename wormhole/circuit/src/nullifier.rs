@@ -296,10 +296,7 @@ impl Nullifier {
         let computed_nullifier = Self::computed_nullifier(targets, builder);
         let zero = builder.zero();
         for i in 0..4 {
-            let diff = builder.sub(
-                targets.hash.elements[i],
-                computed_nullifier.elements[i],
-            );
+            let diff = builder.sub(targets.hash.elements[i], computed_nullifier.elements[i]);
             let result = builder.mul(diff, is_not_dummy);
             builder.connect(result, zero);
         }

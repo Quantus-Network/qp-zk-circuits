@@ -44,8 +44,8 @@ pub fn generate_public_batch_circuit_binaries<P: AsRef<Path>>(
                 output_dir.join("private_batch_common.bin").display()
             )
         })?;
-    let private_batch_verifier_bytes =
-        std::fs::read(output_dir.join("private_batch_verifier.bin")).with_context(|| {
+    let private_batch_verifier_bytes = std::fs::read(output_dir.join("private_batch_verifier.bin"))
+        .with_context(|| {
             format!(
                 "Failed to read {}",
                 output_dir.join("private_batch_verifier.bin").display()

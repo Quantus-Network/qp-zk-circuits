@@ -1797,9 +1797,6 @@ mod tests {
             &deterministic_dummy_nullifier_pre_images(1),
         )
         .expect_err("truncated proof public inputs must be rejected");
-        assert!(
-            err.to_string().contains("public inputs"),
-            "got: {err}"
-        );
+        assert!(err.to_string().contains("public inputs"), "got: {err}");
     }
 }
