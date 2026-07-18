@@ -109,7 +109,7 @@ pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
     let output_path = output_dir.as_ref();
     let staging_path = staging_dir_for(output_path)?;
 
-    let result = (|| -> Result<()> {
+    let generated = (|| -> Result<()> {
         // Generate regular circuit binaries
         generate_circuit_binaries(&staging_path)?;
 
@@ -131,16 +131,19 @@ pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
 
         // Save config file alongside binaries. Written last: its presence marks
         // the staged set as complete.
-        config.save(&staging_path)?;
-
-        commit_staging_dir(&staging_path, output_path)
+        config.save(&staging_path)
     })();
 
-    if result.is_err() {
-        // Best effort: never leave a stray staging directory behind.
+    if let Err(e) = generated {
+        // A partial stage is worthless; never leave a stray staging directory
+        // behind. (The commit phase below manages its own cleanup: once the
+        // previous output set has been moved aside, the staged artifacts may
+        // be the only surviving copy and must NOT be blindly deleted.)
         let _ = fs::remove_dir_all(&staging_path);
+        return Err(e);
     }
-    result
+
+    commit_staging_dir(&staging_path, output_path)
 }
 
 /// A unique staging directory on the same filesystem as `output_dir` (a
@@ -160,28 +163,91 @@ fn staging_dir_for(output_dir: &Path) -> Result<PathBuf> {
 /// output dir is first moved aside, then removed after the swap. A crash
 /// between the renames leaves the old set aside and the new set staged — never
 /// a directory mixing files from both generations.
+///
+/// Failure cleanup never deletes the only surviving artifact copy: if the
+/// swap-in fails after the previous set was moved aside, the previous set is
+/// rolled back into place (and only then is the redundant staged copy
+/// removed); if even the rollback fails, both copies are left on disk and the
+/// error reports their locations.
 fn commit_staging_dir(staging_dir: &Path, output_dir: &Path) -> Result<()> {
+    commit_staging_dir_impl(staging_dir, output_dir, |src, dst| fs::rename(src, dst))
+}
+
+/// [`commit_staging_dir`] with an injectable rename, so tests can force a
+/// failure at each step of the swap and assert the cleanup guarantees.
+fn commit_staging_dir_impl(
+    staging_dir: &Path,
+    output_dir: &Path,
+    rename: impl Fn(&Path, &Path) -> std::io::Result<()>,
+) -> Result<()> {
     let mut old_name = staging_dir.file_name().unwrap_or_default().to_os_string();
     old_name.push(".old");
     let old_path = staging_dir.with_file_name(old_name);
     let previous_exists = output_dir.exists();
     if previous_exists {
-        fs::rename(output_dir, &old_path).with_context(|| {
-            format!(
-                "Failed to move previous artifact dir {} aside to {}",
-                output_dir.display(),
-                old_path.display()
-            )
-        })?;
+        if let Err(e) = rename(output_dir, &old_path) {
+            // Nothing has moved: the previous set still serves from
+            // output_dir, so the staged copy is safe to discard.
+            let _ = fs::remove_dir_all(staging_dir);
+            return Err(e).with_context(|| {
+                format!(
+                    "Failed to move previous artifact dir {} aside to {}",
+                    output_dir.display(),
+                    old_path.display()
+                )
+            });
+        }
     }
-    fs::rename(staging_dir, output_dir).with_context(|| {
-        format!(
-            "Failed to move staged artifacts {} into place at {}",
-            staging_dir.display(),
-            output_dir.display()
-        )
-    })?;
+    if let Err(e) = rename(staging_dir, output_dir) {
+        // The previous set (if any) has been moved aside and output_dir is
+        // empty, so the staged directory may hold the ONLY copy of the new
+        // artifacts — never delete it before restoring something to
+        // output_dir.
+        if previous_exists {
+            match rename(&old_path, output_dir) {
+                Ok(()) => {
+                    // Previous set restored; the staged copy is redundant.
+                    let _ = fs::remove_dir_all(staging_dir);
+                    return Err(e).with_context(|| {
+                        format!(
+                            "Failed to move staged artifacts {} into place at {} \
+                             (previous artifacts were restored)",
+                            staging_dir.display(),
+                            output_dir.display()
+                        )
+                    });
+                }
+                Err(rollback_err) => {
+                    return Err(e).with_context(|| {
+                        format!(
+                            "Failed to move staged artifacts {} into place at {}, and \
+                             restoring the previous artifacts also failed ({}); previous \
+                             artifacts remain at {}, new artifacts remain at {}",
+                            staging_dir.display(),
+                            output_dir.display(),
+                            rollback_err,
+                            old_path.display(),
+                            staging_dir.display()
+                        )
+                    });
+                }
+            }
+        }
+        // No previous set existed: the staged directory is the only copy of
+        // the artifacts at all; leave it for the operator.
+        return Err(e).with_context(|| {
+            format!(
+                "Failed to move staged artifacts {} into place at {}; \
+                 the built artifacts remain at {}",
+                staging_dir.display(),
+                output_dir.display(),
+                staging_dir.display()
+            )
+        });
+    }
     if previous_exists {
+        // The new set is already committed at output_dir; failing to clean up
+        // the old copy is an error but loses nothing.
         fs::remove_dir_all(&old_path).with_context(|| {
             format!(
                 "Failed to remove previous artifact dir {}",
@@ -262,6 +328,141 @@ mod tests {
     /// A failed generation must not disturb pre-existing output contents.
     /// Uses an invalid proof count to trip the earliest failure path, and a
     /// crafted failure later via a file blocking the staging path.
+    fn io_fail() -> std::io::Error {
+        std::io::Error::other("injected rename failure")
+    }
+
+    /// Bugbot: a failed swap-in must never delete the staged artifacts while
+    /// output_dir is empty. With a previous set present, roll it back and only
+    /// then discard the (redundant) staged copy.
+    #[test]
+    fn failed_swap_in_restores_previous_artifacts() {
+        let root = unique_tmp_dir("swap-rollback");
+        let _ = fs::remove_dir_all(&root);
+        let output = root.join("bins");
+        let staging = staging_dir_for(&output).unwrap();
+        create_dir_all(&output).unwrap();
+        write(output.join("previous.bin"), b"previous").unwrap();
+        create_dir_all(&staging).unwrap();
+        write(staging.join("fresh.bin"), b"fresh").unwrap();
+
+        // Fail only the staging -> output rename; move-aside and rollback work.
+        let staging_src = staging.clone();
+        let err = commit_staging_dir_impl(&staging, &output, |src, dst| {
+            if src == staging_src {
+                Err(io_fail())
+            } else {
+                fs::rename(src, dst)
+            }
+        })
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("previous artifacts were restored"));
+        assert!(
+            output.join("previous.bin").exists(),
+            "previous artifact set must be rolled back into place"
+        );
+        assert!(!staging.exists(), "redundant staged copy is discarded");
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// If the rollback fails too, BOTH copies must survive on disk and the
+    /// error must say where they are.
+    #[test]
+    fn failed_swap_in_with_failed_rollback_preserves_both_copies() {
+        let root = unique_tmp_dir("swap-rollback-fail");
+        let _ = fs::remove_dir_all(&root);
+        let output = root.join("bins");
+        let staging = staging_dir_for(&output).unwrap();
+        create_dir_all(&output).unwrap();
+        write(output.join("previous.bin"), b"previous").unwrap();
+        create_dir_all(&staging).unwrap();
+        write(staging.join("fresh.bin"), b"fresh").unwrap();
+
+        // Fail every rename INTO output_dir: the swap-in and the rollback.
+        let output_dst = output.clone();
+        let err = commit_staging_dir_impl(&staging, &output, |src, dst| {
+            if dst == output_dst {
+                Err(io_fail())
+            } else {
+                fs::rename(src, dst)
+            }
+        })
+        .unwrap_err();
+
+        let msg = format!("{err:#}");
+        assert!(msg.contains("also failed"), "got: {msg}");
+        assert!(
+            staging.join("fresh.bin").exists(),
+            "new artifacts must survive"
+        );
+        let old_path = staging.with_file_name({
+            let mut n = staging.file_name().unwrap().to_os_string();
+            n.push(".old");
+            n
+        });
+        assert!(
+            old_path.join("previous.bin").exists(),
+            "previous artifacts must survive (moved aside)"
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// With no previous output set, a failed swap-in must leave the staged
+    /// directory (the only copy) on disk.
+    #[test]
+    fn failed_swap_in_without_previous_output_keeps_staging() {
+        let root = unique_tmp_dir("swap-fresh-fail");
+        let _ = fs::remove_dir_all(&root);
+        create_dir_all(&root).unwrap();
+        let output = root.join("bins");
+        let staging = staging_dir_for(&output).unwrap();
+        create_dir_all(&staging).unwrap();
+        write(staging.join("fresh.bin"), b"fresh").unwrap();
+
+        let err = commit_staging_dir_impl(&staging, &output, |_, _| Err(io_fail())).unwrap_err();
+
+        assert!(format!("{err:#}").contains("remain at"), "got: {err:#}");
+        assert!(
+            staging.join("fresh.bin").exists(),
+            "only copy of the artifacts must not be deleted"
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A failed move-aside happens before anything moves: the previous set
+    /// still serves from output_dir, so the staged copy is discarded.
+    #[test]
+    fn failed_move_aside_keeps_output_and_discards_staging() {
+        let root = unique_tmp_dir("swap-aside-fail");
+        let _ = fs::remove_dir_all(&root);
+        let output = root.join("bins");
+        let staging = staging_dir_for(&output).unwrap();
+        create_dir_all(&output).unwrap();
+        write(output.join("previous.bin"), b"previous").unwrap();
+        create_dir_all(&staging).unwrap();
+        write(staging.join("fresh.bin"), b"fresh").unwrap();
+
+        let output_src = output.clone();
+        let err = commit_staging_dir_impl(&staging, &output, |src, dst| {
+            if src == output_src {
+                Err(io_fail())
+            } else {
+                fs::rename(src, dst)
+            }
+        })
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("move previous"), "got: {err:#}");
+        assert!(output.join("previous.bin").exists());
+        assert!(!staging.exists());
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
     #[test]
     fn failed_generation_leaves_existing_output_untouched() {
         let root = unique_tmp_dir("gen-fail");
