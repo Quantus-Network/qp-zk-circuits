@@ -275,11 +275,8 @@ pub fn hash_node_presorted(sorted_children: &[Hash256; ARITY]) -> Hash256 {
         data.extend_from_slice(child);
     }
 
-    // Convert to felts using compact encoding (8 bytes/felt)
-    let felts = qp_poseidon_core::serialization::bytes_to_felts_compact(&data);
-
-    // Hash the felts
-    qp_poseidon_core::hash_to_bytes(&felts)
+    // Compact encoding (8 bytes/felt); lossy path for fixed-size hash payloads.
+    serialization::hash_bytes_compact(&data)
 }
 
 /// Hash 4 child hashes into a parent node hash.
@@ -298,12 +295,8 @@ pub fn hash_node(children: &[Hash256; ARITY]) -> Hash256 {
         data.extend_from_slice(child);
     }
 
-    // Convert to felts using compact encoding (8 bytes/felt)
-    // 128 bytes -> 16 felts
-    let felts = qp_poseidon_core::serialization::bytes_to_felts_compact(&data);
-
-    // Hash the felts
-    qp_poseidon_core::hash_to_bytes(&felts)
+    // Compact encoding (8 bytes/felt); 128 bytes -> 16 felts.
+    serialization::hash_bytes_compact(&data)
 }
 
 /// Empty hash value (all zeros).

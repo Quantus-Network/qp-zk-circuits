@@ -184,6 +184,22 @@ pub fn bytes_to_felts_compact(input: &[u8]) -> Result<Vec<F>, &'static str> {
     )
 }
 
+/// Hash bytes with Poseidon2 using compact (8 bytes/felt) encoding.
+///
+/// Uses the lossy `bytes_to_u64s_compact` path so fixed-size merkle-node payloads
+/// always hash (matching pallet-zk-tree). Prefer this over calling
+/// `qp_poseidon_core::serialization::bytes_to_felts_compact`, which is fallible
+/// in poseidon-core ≥ 3.0.
+pub fn hash_bytes_compact(input: &[u8]) -> [u8; 32] {
+    use qp_poseidon_core::Goldilocks;
+
+    let felts: Vec<Goldilocks> = qp_poseidon_core::serialization::bytes_to_u64s_compact(input)
+        .into_iter()
+        .map(Goldilocks::from_u64)
+        .collect();
+    qp_poseidon_core::hash_to_bytes(&felts)
+}
+
 // ============================================================================
 // Digest serialization (4 felts <-> 32 bytes, 8 bytes/felt)
 // ============================================================================
