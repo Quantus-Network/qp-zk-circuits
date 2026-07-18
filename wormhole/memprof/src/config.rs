@@ -273,6 +273,31 @@ pub fn default_leaf_config() -> CircuitConfig {
     wormhole_leaf_circuit_config()
 }
 
+pub fn print_config_summary(label: &str, cfg: &CircuitConfig) {
+    let zk = if cfg.zero_knowledge {
+        "Enabled"
+    } else {
+        "Disabled"
+    };
+    eprintln!(
+        "[config] {}: zk={} num_wires={} num_routed_wires={} \
+         max_quotient_degree_factor={} security_bits={} num_challenges={} \
+         fri.rate_bits={} fri.cap_height={} fri.num_query_rounds={} \
+         fri.product={}",
+        label,
+        zk,
+        cfg.num_wires,
+        cfg.num_routed_wires,
+        cfg.max_quotient_degree_factor,
+        cfg.security_bits,
+        cfg.num_challenges,
+        cfg.fri_config.rate_bits,
+        cfg.fri_config.cap_height,
+        cfg.fri_config.num_query_rounds,
+        cfg.fri_config.rate_bits * cfg.fri_config.num_query_rounds,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,29 +375,4 @@ mod tests {
         let err = args_with(|a| a.rate_bits = Some(0)).validate().unwrap_err();
         assert!(err.contains("greater than 0"), "got: {err}");
     }
-}
-
-pub fn print_config_summary(label: &str, cfg: &CircuitConfig) {
-    let zk = if cfg.zero_knowledge {
-        "Enabled"
-    } else {
-        "Disabled"
-    };
-    eprintln!(
-        "[config] {}: zk={} num_wires={} num_routed_wires={} \
-         max_quotient_degree_factor={} security_bits={} num_challenges={} \
-         fri.rate_bits={} fri.cap_height={} fri.num_query_rounds={} \
-         fri.product={}",
-        label,
-        zk,
-        cfg.num_wires,
-        cfg.num_routed_wires,
-        cfg.max_quotient_degree_factor,
-        cfg.security_bits,
-        cfg.num_challenges,
-        cfg.fri_config.rate_bits,
-        cfg.fri_config.cap_height,
-        cfg.fri_config.num_query_rounds,
-        cfg.fri_config.rate_bits * cfg.fri_config.num_query_rounds,
-    );
 }

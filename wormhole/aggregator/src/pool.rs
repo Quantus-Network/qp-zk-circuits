@@ -733,8 +733,7 @@ mod tests {
 
         for bad_leaves in [0, MAX_PROOF_COUNT + 1, usize::MAX / LEAF_PI_LEN + 1] {
             let err = ProofPool::new(data.verifier_data(), bad_leaves, 2, PoolLimits::default())
-                .err()
-                .expect("out-of-range inner_num_leaves must be rejected");
+                .expect_err("out-of-range inner_num_leaves must be rejected");
             assert!(err.to_string().contains("inner_num_leaves"), "got: {err}");
         }
         for bad_batch in [0, MAX_PROOF_COUNT + 1] {
@@ -744,8 +743,7 @@ mod tests {
                 bad_batch,
                 PoolLimits::default(),
             )
-            .err()
-            .expect("out-of-range batch_size must be rejected");
+            .expect_err("out-of-range batch_size must be rejected");
             assert!(err.to_string().contains("batch_size"), "got: {err}");
         }
     }
