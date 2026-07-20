@@ -142,8 +142,12 @@ jobs:
           git checkout "$SOURCE_BRANCH"
           git checkout -b "$branch_name"
 
+          # Rewrite path-dep version pins before cargo set-version. Match both
+          # "X.Y.Z" and "=X.Y.Z" (exact pins); the audit tooling pinned internals
+          # as "=…", which the previous regex missed and left as =3.0.0 while
+          # packages moved to 3.1.0, breaking cargo metadata resolution.
           echo "Updating version fields in internal path dependencies"
-          find . -name "Cargo.toml" -exec sed -i -E "s/(version = \")[0-9]+\\.[0-9]+\\.[0-9]+(\", path = )/\\1$new_cargo_version\\2/g" {} \;
+          find . -name "Cargo.toml" -exec sed -i -E "s/(version = \"=?)[0-9]+\\.[0-9]+\\.[0-9]+(\", path = )/\\1$new_cargo_version\\2/g" {} \;
 
           echo "Updating [workspace.package] version in Cargo.toml to: $new_cargo_version"
           sed -i -E 's/^version[[:space:]]*=[[:space:]]*"[^"]*"/version = "'$new_cargo_version'"/' Cargo.toml
