@@ -1,6 +1,6 @@
 use plonky2::{field::types::Field, plonk::proof::ProofWithPublicInputs};
 use test_helpers::{DEFAULT_SECRETS, DEFAULT_TRANSFER_COUNTS};
-use wormhole_circuit::nullifier::{add_nullifier_validation, Nullifier, NullifierTargets};
+use wormhole_circuit::nullifier::{Nullifier, NullifierTargets};
 use zk_circuits_common::{
     circuit::{CircuitFragment, C, D, F},
     codec::FieldElementCodec,
@@ -11,9 +11,9 @@ use zk_circuits_common::{
 fn run_test(nullifier: &Nullifier) -> anyhow::Result<ProofWithPublicInputs<F, C, D>> {
     let (mut builder, mut pw) = crate::circuit_helpers::setup_test_builder_and_witness(false);
     let targets = NullifierTargets::new(&mut builder);
+    // `CircuitFragment::circuit` enforces hash == H(H(salt + secret + transfer_count))
+    // unconditionally, so composing the fragment alone is safe by default.
     Nullifier::circuit(&targets, &mut builder);
-    // Add nullifier hash validation for isolated testing
-    add_nullifier_validation(&targets, &mut builder);
 
     nullifier.fill_targets(&mut pw, targets)?;
     crate::circuit_helpers::build_and_prove_test(builder, pw)
@@ -36,6 +36,26 @@ impl TestInputs for Nullifier {
 fn build_and_verify_nullifier_proof() {
     let nullifier = Nullifier::test_inputs();
     run_test(&nullifier).unwrap();
+}
+
+#[test]
+fn forged_nullifier_hash_fails_with_fragment_alone() {
+    // Regression (fragment safety): `Nullifier::circuit` alone must bind the
+    // public nullifier hash to the private preimage. Before the fix, the
+    // binding lived in a separate `add_nullifier_validation` helper and the
+    // bare fragment accepted any attacker-chosen hash.
+    let mut nullifier = Nullifier::test_inputs();
+    let mut forged = nullifier.hash;
+    forged[0] += F::from_canonical_u64(1);
+    nullifier.hash = forged;
+
+    // Depending on where plonky2 detects the violation, this either panics
+    // during witness generation or returns a proving error.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_test(&nullifier)));
+    assert!(
+        result.is_err() || result.unwrap().is_err(),
+        "forged nullifier hash must be rejected by the bare fragment"
+    );
 }
 
 #[test]

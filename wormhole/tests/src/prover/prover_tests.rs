@@ -1,14 +1,12 @@
 use std::fs;
 
 use hex;
-use plonky2::plonk::circuit_builder::CircuitBuilder;
 use plonky2::plonk::circuit_data::CircuitConfig;
-use plonky2::util::serialization::DefaultGateSerializer;
 use qp_wormhole_inputs::PublicCircuitInputs;
 use test_helpers::TestInputs;
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
 use wormhole_prover::WormholeProver;
-use zk_circuits_common::circuit::{wormhole_private_batch_circuit_config, C, D, F};
+use zk_circuits_common::circuit::wormhole_private_batch_circuit_config;
 use zk_circuits_common::zk_merkle::{Hash256, ARITY, MAX_DEPTH, SIBLINGS_PER_LEVEL};
 
 #[cfg(test)]
@@ -36,53 +34,6 @@ fn commit_rejects_zk_merkle_proof_exceeding_max_depth() {
 
     let err = prover.commit(&inputs).unwrap_err();
     assert!(err.to_string().contains("ZK Merkle proof depth"));
-}
-
-#[test]
-fn new_from_bytes_rejects_invalid_common_bytes() {
-    let err = WormholeProver::new_from_bytes(b"bad-common", b"bad").unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("failed to deserialize common circuit data"));
-}
-
-#[test]
-fn new_from_bytes_rejects_invalid_prover_bytes() {
-    let prover = WormholeProver::new(CIRCUIT_CONFIG);
-    let gate_serializer = DefaultGateSerializer;
-    let common_bytes = prover
-        .circuit_data
-        .common
-        .to_bytes(&gate_serializer)
-        .unwrap();
-
-    let err = WormholeProver::new_from_bytes(b"bad-prover", &common_bytes).unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("failed to deserialize prover-only data"));
-}
-
-#[test]
-fn new_from_bytes_rejects_non_wormhole_circuit_data() {
-    let gate_serializer = DefaultGateSerializer;
-    let generator_serializer = plonky2::util::serialization::DefaultGeneratorSerializer::<C, D> {
-        _phantom: Default::default(),
-    };
-
-    let mut builder = CircuitBuilder::<F, D>::new(CIRCUIT_CONFIG);
-    let _pi = builder.add_virtual_public_input();
-    let data = builder.build::<C>();
-
-    let common_bytes = data.common.to_bytes(&gate_serializer).unwrap();
-    let prover_bytes = data
-        .prover_only
-        .to_bytes(&generator_serializer, &data.common)
-        .unwrap();
-
-    let err = WormholeProver::new_from_bytes(&prover_bytes, &common_bytes).unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("does not match the canonical Wormhole circuit"));
 }
 
 #[test]
@@ -156,12 +107,10 @@ fn export_hex_proof_for_pallet() {
 fn export_hex_proof_from_bins_for_pallet() {
     const FILE_PATH: &str = "proof_from_bins.hex";
 
-    // Use the pre-generated bin files to ensure compatibility with the verifier
-    let prover = WormholeProver::new_from_files(
-        std::path::Path::new("../../generated-bins/prover.bin"),
-        std::path::Path::new("../../generated-bins/common.bin"),
-    )
-    .expect("Failed to load prover from bin files");
+    // The prover always builds the canonical leaf circuit from source (there is no
+    // prover.bin anymore), so a freshly built prover is by construction compatible
+    // with the canonical verifier artifacts.
+    let prover = wormhole_prover::build_fresh();
 
     let inputs = CircuitInputs::test_inputs_0();
     let proof = prover.commit(&inputs).unwrap().prove().unwrap();
@@ -276,7 +225,8 @@ fn verify_proof_native(
     let mut current_hash = leaf_hash;
 
     for (level_siblings, &position) in siblings.iter().zip(positions.iter()) {
-        let sorted_children = insert_at_position(current_hash, level_siblings, position);
+        let sorted_children = insert_at_position(current_hash, level_siblings, position)
+            .expect("test positions are always 0-3");
         current_hash = hash_node_presorted(&sorted_children);
     }
 

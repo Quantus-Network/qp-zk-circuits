@@ -218,14 +218,9 @@ impl CircuitFragment for UnspendableAccount {
     }
 }
 
-impl Default for UnspendableAccount {
-    fn default() -> Self {
-        let preimage =
-            hex::decode("cd94df2e3c38a87f3e429b62af022dbe4363143811219d80037e8798b2ec9229")
-                .unwrap();
-        let preimage = preimage[..32]
-            .try_into()
-            .expect("Expected 32 bytes for preimage");
-        Self::from_secret(preimage)
-    }
-}
+// NOTE: deliberately NO `Default` impl. The secret is the private credential
+// that authorizes claiming funds sent to the derived account; an earlier
+// `Default` embedded a fixed secret in source, so any production caller that
+// reached for `UnspendableAccount::default()` created an account anyone could
+// drain. Constructing an account must always require an explicit secret
+// (`from_secret`) or an explicit (account_id, secret) pair (`new`).

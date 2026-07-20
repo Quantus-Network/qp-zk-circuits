@@ -255,7 +255,7 @@ proptest! {
         let cur_b = bytes32_from_limbs(cur);
         let sibs_b: [Hash256; 3] =
             [bytes32_from_limbs(s0), bytes32_from_limbs(s1), bytes32_from_limbs(s2)];
-        let ordered = insert_at_position(cur_b, &sibs_b, pos);
+        let ordered = insert_at_position(cur_b, &sibs_b, pos).unwrap();
         let actual = hash_to_felts(&hash_node_presorted(&ordered));
 
         // Spec stepUp: the four children with `cur` at `pos`.

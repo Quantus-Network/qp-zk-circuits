@@ -57,13 +57,18 @@ pub struct PublicBatchProver {
     /// pad partial public batches. The circuit zeroes dummy inners' exit slots and
     /// nullifiers, so one template can fill several slots without collisions.
     dummy_proof_template: ProofWithPublicInputs<F, C, D>,
+    /// Private-batch verifier data, kept so `commit` can cheaply verify each
+    /// supplied inner proof before starting the minutes-long proving run.
+    private_batch_verifier: VerifierCircuitData<F, C, D>,
 }
 
 impl PublicBatchProver {
     /// Build a fresh public-batch aggregation prover from circuit definitions.
     ///
     /// In production, prefer `new_from_binaries_dir(...)` to load prebuilt circuits.
-    /// Returns an error when either proof count is outside the supported range.
+    /// Returns an error when either proof count is outside the supported range,
+    /// or when `dummy_proof_template` is not a valid all-dummy private-batch
+    /// proof (zero block-hash sentinel and zero payouts).
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         public_batch_circuit_config: CircuitConfig,
@@ -73,6 +78,11 @@ impl PublicBatchProver {
         private_batch_num_leaves: usize,
         dummy_proof_template: ProofWithPublicInputs<F, C, D>,
     ) -> Result<Self> {
+        let private_batch_verifier_data = VerifierCircuitData {
+            verifier_only: private_batch_verifier_only.clone(),
+            common: private_batch_common.clone(),
+        };
+
         // Proof-count bounds are enforced by PublicBatchCircuit::new.
         let public_batch_circuit = PublicBatchCircuit::new(
             public_batch_circuit_config,
@@ -85,12 +95,20 @@ impl PublicBatchProver {
         let targets = Some(public_batch_circuit.targets());
         let circuit_data = public_batch_circuit.build_prover();
 
+        // Enforce the same template invariant as the byte-loading constructors:
+        // `commit` clones this template into every padded slot, and the circuit
+        // only zeroes a slot's exits/nullifiers when its block_hash is the zero
+        // sentinel — a caller-supplied REAL proof here would be forwarded as a
+        // legitimate batch member (#97026).
+        verify_dummy_private_batch_template(&dummy_proof_template, &private_batch_verifier_data)?;
+
         Ok(Self {
             circuit_data,
             partial_witness: PartialWitness::new(),
             targets,
             num_private_batch_proofs,
             dummy_proof_template,
+            private_batch_verifier: private_batch_verifier_data,
         })
     }
 
@@ -188,6 +206,7 @@ impl PublicBatchProver {
             targets,
             num_private_batch_proofs,
             dummy_proof_template,
+            private_batch_verifier: private_batch_verifier_data,
         })
     }
 
@@ -263,6 +282,15 @@ impl PublicBatchProver {
     /// Partial batches are padded with the dummy private-batch proof template.
     /// The circuit exempts dummies (`block_hash == 0`) from metadata consistency
     /// and zeroes their forwarded exit slots and nullifiers.
+    ///
+    /// Fails fast (milliseconds, before the minutes-long proving run) on inputs
+    /// the public-batch circuit could never prove: each supplied proof is
+    /// cryptographically verified against the pinned private-batch verifier,
+    /// and non-dummy proofs must share one (block hash, asset id, fee) triple —
+    /// the cross-proof consistency the circuit enforces. Proofs arriving via
+    /// [`crate::pool::ProofPool`] already satisfy both by construction; this
+    /// protects services that feed untrusted proof vectors to the prover
+    /// directly.
     pub fn commit(mut self, inputs: PublicBatchInputs) -> Result<Self> {
         let Some(targets) = self.targets.take() else {
             bail!("public-batch aggregation prover has already committed to inputs");
@@ -292,7 +320,19 @@ impl PublicBatchProver {
         for (index, proof) in proofs.iter().enumerate() {
             ensure_proof_public_input_len(proof, expected_pi_len, "private-batch proof")
                 .with_context(|| format!("private-batch proof {} is malformed", index))?;
+            self.private_batch_verifier
+                .verify(proof.clone())
+                .map_err(|e| {
+                    anyhow!(
+                        "private-batch proof {} failed verification against the pinned \
+                         private-batch verifier: {}",
+                        index,
+                        e
+                    )
+                })?;
         }
+
+        ensure_private_batch_compatible(&proofs)?;
 
         // Pad partial batches with the dummy template. No shuffle: forwarding is
         // order-preserving by design (per-segment attribution on-chain).
@@ -316,6 +356,82 @@ impl PublicBatchProver {
             .prove(self.partial_witness)
             .map_err(|e| anyhow!("Failed to prove public-batch aggregation circuit: {}", e))
     }
+}
+
+/// Check that a set of private-batch proofs is mutually compatible under the
+/// public-batch circuit's cross-proof constraints, so an incompatible batch is
+/// rejected at commit time instead of failing after minutes of proving:
+/// non-dummy proofs (`block_hash != 0`) must share one block hash, asset id,
+/// and volume fee; dummy proofs are exempt.
+///
+/// NOTE: keep in lockstep with the circuit's cross-proof constraints
+/// (`public_batch::circuit::circuit_logic`). The circuit remains the enforcer;
+/// this only improves failure latency and error quality. Mirrors
+/// `ensure_leaf_batch_compatible` one layer down.
+fn ensure_private_batch_compatible(proofs: &[ProofWithPublicInputs<F, C, D>]) -> Result<()> {
+    use crate::public_batch::circuit::constants::{
+        PRIVATE_BATCH_ASSET_ID_OFFSET, PRIVATE_BATCH_BLOCK_HASH_OFFSET,
+        PRIVATE_BATCH_VOLUME_FEE_BPS_OFFSET,
+    };
+
+    struct InnerMeta {
+        asset_id: u64,
+        volume_fee_bps: u64,
+        block_hash: [u64; 4],
+    }
+    // PI lengths were validated by the caller.
+    let metas: Vec<InnerMeta> = proofs
+        .iter()
+        .map(|proof| InnerMeta {
+            asset_id: proof.public_inputs[PRIVATE_BATCH_ASSET_ID_OFFSET].to_canonical_u64(),
+            volume_fee_bps: proof.public_inputs[PRIVATE_BATCH_VOLUME_FEE_BPS_OFFSET]
+                .to_canonical_u64(),
+            block_hash: core::array::from_fn(|i| {
+                proof.public_inputs[PRIVATE_BATCH_BLOCK_HASH_OFFSET + i].to_canonical_u64()
+            }),
+        })
+        .collect();
+
+    let mut reference: Option<(usize, &InnerMeta)> = None;
+    for (idx, meta) in metas.iter().enumerate() {
+        if meta.block_hash == [0u64; 4] {
+            continue; // all-dummy sentinel: exempt from consistency checks
+        }
+        match reference {
+            None => reference = Some((idx, meta)),
+            Some((ref_idx, reference)) => {
+                if meta.block_hash != reference.block_hash {
+                    bail!(
+                        "private-batch proof {} is for a different block than proof {}; \
+                         all non-dummy proofs in a public batch must share one block hash",
+                        idx,
+                        ref_idx
+                    );
+                }
+                if meta.asset_id != reference.asset_id {
+                    bail!(
+                        "private-batch proof {} has asset_id={}, but proof {} has asset_id={}; \
+                         all non-dummy proofs in a public batch must share one asset",
+                        idx,
+                        meta.asset_id,
+                        ref_idx,
+                        reference.asset_id
+                    );
+                }
+                if meta.volume_fee_bps != reference.volume_fee_bps {
+                    bail!(
+                        "private-batch proof {} has volume_fee_bps={}, but proof {} has volume_fee_bps={}; \
+                         all non-dummy proofs in a public batch must share one fee rate",
+                        idx,
+                        meta.volume_fee_bps,
+                        ref_idx,
+                        reference.volume_fee_bps
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Verify that the dummy private-batch proof template is a valid all-dummy
@@ -421,6 +537,26 @@ mod tests {
         assert!(err.to_string().contains("exceeds maximum"));
     }
 
+    /// A genuine all-dummy private-batch proof over the fake leaf circuit:
+    /// the only template the (now-validating) direct constructor accepts.
+    fn make_all_dummy_private_batch_template(
+        leaf: &plonky2::plonk::circuit_data::CircuitData<F, C, D>,
+        fake_leaf_proof: &ProofWithPublicInputs<F, C, D>,
+    ) -> ProofWithPublicInputs<F, C, D> {
+        PrivateBatchProver::new(
+            wormhole_private_batch_circuit_config(),
+            leaf.common.clone(),
+            &leaf.verifier_only,
+            1,
+            fake_leaf_proof.clone(),
+        )
+        .unwrap()
+        .commit(vec![fake_leaf_proof.clone()])
+        .unwrap()
+        .prove()
+        .unwrap()
+    }
+
     #[test]
     fn commit_rejects_malformed_private_batch_pi_without_panicking() {
         let (leaf, leaf_targets) = build_fake_leaf_circuit();
@@ -434,13 +570,14 @@ mod tests {
         .unwrap()
         .build_verifier();
 
+        let template = make_all_dummy_private_batch_template(&leaf, &fake_proof);
         let prover = PublicBatchProver::new(
             wormhole_public_batch_circuit_config(),
             private_batch.common.clone(),
             &private_batch.verifier_only,
             1,
             1,
-            fake_proof.clone(),
+            template,
         )
         .unwrap();
 
@@ -460,5 +597,169 @@ mod tests {
         assert!(err
             .to_string()
             .contains("private-batch proof 0 is malformed"));
+    }
+
+    /// A genuine private-batch proof (over the fake leaf circuit) aggregating a
+    /// single leaf with the given public inputs.
+    fn make_private_batch_proof(
+        leaf: &plonky2::plonk::circuit_data::CircuitData<F, C, D>,
+        dummy_leaf: &ProofWithPublicInputs<F, C, D>,
+        leaf_pis: [F; 21],
+        leaf_targets: &[plonky2::iop::target::Target; 21],
+    ) -> ProofWithPublicInputs<F, C, D> {
+        let real_leaf = prove_fake_leaf(leaf, leaf_targets, leaf_pis);
+        PrivateBatchProver::new(
+            wormhole_private_batch_circuit_config(),
+            leaf.common.clone(),
+            &leaf.verifier_only,
+            1,
+            dummy_leaf.clone(),
+        )
+        .unwrap()
+        .commit(vec![real_leaf])
+        .unwrap()
+        .prove()
+        .unwrap()
+    }
+
+    /// Cryptographically invalid (tampered) inner proofs must be rejected at
+    /// commit time, before the expensive proving run starts.
+    #[test]
+    fn commit_rejects_tampered_private_batch_proof_before_proving() {
+        let (leaf, leaf_targets) = build_fake_leaf_circuit();
+        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; 21]);
+        let private_batch = PrivateBatchCircuit::new(
+            wormhole_private_batch_circuit_config(),
+            &leaf.common,
+            &leaf.verifier_only,
+            1,
+        )
+        .unwrap()
+        .build_verifier();
+
+        let template = make_all_dummy_private_batch_template(&leaf, &dummy_leaf);
+        let prover = PublicBatchProver::new(
+            wormhole_public_batch_circuit_config(),
+            private_batch.common.clone(),
+            &private_batch.verifier_only,
+            1,
+            1,
+            template.clone(),
+        )
+        .unwrap();
+
+        // Right shape, wrong cryptography: mutate one public input so the proof
+        // no longer verifies.
+        let mut tampered = template;
+        tampered.public_inputs
+            [crate::private_batch::circuit::constants::aggregated_output::ASSET_ID_OFFSET] =
+            F::from_canonical_u64(9);
+
+        let err = prover
+            .commit(PublicBatchInputs {
+                proofs: vec![tampered],
+                aggregator_address: BytesDigest::default(),
+            })
+            .expect_err("tampered private-batch proof must be rejected at commit");
+        assert!(
+            err.to_string().contains("failed verification"),
+            "got: {err}"
+        );
+    }
+
+    /// Individually valid inner proofs with incompatible batch metadata (here:
+    /// different block hashes) can never satisfy the circuit's cross-proof
+    /// constraints; commit must reject them fail-fast instead of letting prove
+    /// burn minutes of CPU.
+    #[test]
+    fn commit_rejects_batch_incompatible_private_batch_proofs() {
+        let (leaf, leaf_targets) = build_fake_leaf_circuit();
+        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; 21]);
+        let private_batch = PrivateBatchCircuit::new(
+            wormhole_private_batch_circuit_config(),
+            &leaf.common,
+            &leaf.verifier_only,
+            1,
+        )
+        .unwrap()
+        .build_verifier();
+
+        let block_pis = |block: u64| {
+            let mut pis = [F::ZERO; 21];
+            pis[crate::private_batch::circuit::constants::BLOCK_HASH_START] =
+                F::from_canonical_u64(block);
+            pis
+        };
+        let inner_a = make_private_batch_proof(&leaf, &dummy_leaf, block_pis(1), &leaf_targets);
+        let inner_b = make_private_batch_proof(&leaf, &dummy_leaf, block_pis(2), &leaf_targets);
+
+        let template = make_all_dummy_private_batch_template(&leaf, &dummy_leaf);
+        let prover = PublicBatchProver::new(
+            wormhole_public_batch_circuit_config(),
+            private_batch.common.clone(),
+            &private_batch.verifier_only,
+            2,
+            1,
+            template,
+        )
+        .unwrap();
+
+        let err = prover
+            .commit(PublicBatchInputs {
+                proofs: vec![inner_a, inner_b],
+                aggregator_address: BytesDigest::default(),
+            })
+            .expect_err("cross-block private-batch proofs must be rejected at commit");
+        assert!(err.to_string().contains("different block"), "got: {err}");
+    }
+
+    #[test]
+    fn direct_constructors_reject_non_dummy_padding_templates() {
+        let (leaf, leaf_targets) = build_fake_leaf_circuit();
+        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; 21]);
+
+        // A valid leaf proof with a non-zero block hash: real work, not padding.
+        let mut real_pis = [F::ZERO; 21];
+        real_pis[crate::private_batch::circuit::constants::BLOCK_HASH_START] = F::ONE;
+        let real_leaf = prove_fake_leaf(&leaf, &leaf_targets, real_pis);
+
+        // Private-batch direct constructor: template must carry the sentinel.
+        let err = PrivateBatchProver::new(
+            wormhole_private_batch_circuit_config(),
+            leaf.common.clone(),
+            &leaf.verifier_only,
+            1,
+            real_leaf,
+        )
+        .expect_err("non-dummy leaf template must be rejected by the direct constructor");
+        assert!(
+            err.to_string().contains("non-zero block_hash"),
+            "got: {err}"
+        );
+
+        // Public-batch direct constructor: a leaf proof is not even a valid
+        // private-batch proof, let alone an all-dummy one.
+        let private_batch = PrivateBatchCircuit::new(
+            wormhole_private_batch_circuit_config(),
+            &leaf.common,
+            &leaf.verifier_only,
+            1,
+        )
+        .unwrap()
+        .build_verifier();
+        let err = PublicBatchProver::new(
+            wormhole_public_batch_circuit_config(),
+            private_batch.common.clone(),
+            &private_batch.verifier_only,
+            1,
+            1,
+            dummy_leaf,
+        )
+        .expect_err("leaf proof as public-batch padding template must be rejected");
+        assert!(
+            err.to_string().contains("failed verification")
+                || err.to_string().contains("failed to parse"),
+            "got: {err}"
+        );
     }
 }

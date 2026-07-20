@@ -152,7 +152,7 @@ step is the Phase-4 preimage game, as for the other security theorems.
 1. ~~Range-check set.~~ **Done.** Confirmed against `ZkLeaf::collect_32_bit_targets`:
    `transfer_count` (both limbs), `asset_id`, `input_amount`, `output_amount_1`,
    `output_amount_2`, `volume_fee_bps` (all unconditional 32-bit), plus
-   `block_number` in `BlockHeader::circuit`. `Rleaf` now asserts the full set.
+   `block_number` in `BlockHeader::circuit_without_hash_binding`. `Rleaf` now asserts the full set.
 2. ~~Exit grouping/dedup.~~ **Done (conservation).** `RPrivateBatch` now pins the exact
    in-circuit grouping (`groupExits`), and value conservation is the *derived*
    theorem `RPrivateBatch_value_conservation` (with `rawOutputTotal_eq_inputExitTotal`

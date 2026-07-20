@@ -129,12 +129,20 @@ pub mod circuit_logic {
             let targets = CircuitTargets::new(&mut builder);
 
             // Setup circuits.
+            //
+            // Nullifier and BlockHeader deliberately do NOT use their
+            // `CircuitFragment::circuit` implementations here: those enforce the
+            // hash bindings unconditionally, but the full Wormhole circuit must
+            // make them conditional to support dummy proofs. The conditional
+            // bindings are added in `connect_shared_targets` via
+            // `Nullifier::conditional_hash_binding` and
+            // `BlockHeader::conditional_block_hash_binding`, gated on an
+            // in-circuit `is_not_dummy` flag.
             use crate::block_header::BlockHeader;
-            Nullifier::circuit(&targets.nullifier, &mut builder);
             UnspendableAccount::circuit(&targets.unspendable_account, &mut builder);
             ZkMerkleProofData::circuit(&targets.zk_merkle_proof, &mut builder);
             DualExitAccount::circuit(&targets.exit_accounts, &mut builder);
-            BlockHeader::circuit(&targets.block_header, &mut builder);
+            BlockHeader::circuit_without_hash_binding(&targets.block_header, &mut builder);
 
             // Ensure that shared inputs to each fragment are the same.
             connect_shared_targets(&targets, &mut builder);
@@ -155,11 +163,9 @@ pub mod circuit_logic {
             println!("\n=== Circuit Fragment Gates ===");
             let gates_after_targets = builder.num_gates();
 
-            // Setup circuits with profiling
+            // Setup circuits with profiling. See `new_internal` for why Nullifier and
+            // BlockHeader do not use their `CircuitFragment::circuit` implementations.
             use crate::block_header::BlockHeader;
-
-            Nullifier::circuit(&targets.nullifier, &mut builder);
-            profiler.checkpoint("Nullifier::circuit", builder.num_gates());
 
             UnspendableAccount::circuit(&targets.unspendable_account, &mut builder);
             profiler.checkpoint("UnspendableAccount::circuit", builder.num_gates());
@@ -170,8 +176,11 @@ pub mod circuit_logic {
             DualExitAccount::circuit(&targets.exit_accounts, &mut builder);
             profiler.checkpoint("DualExitAccount::circuit", builder.num_gates());
 
-            BlockHeader::circuit(&targets.block_header, &mut builder);
-            profiler.checkpoint("BlockHeader::circuit", builder.num_gates());
+            BlockHeader::circuit_without_hash_binding(&targets.block_header, &mut builder);
+            profiler.checkpoint(
+                "BlockHeader::circuit_without_hash_binding",
+                builder.num_gates(),
+            );
 
             // Ensure that shared inputs to each fragment are the same.
             connect_shared_targets(&targets, &mut builder);
@@ -221,10 +230,6 @@ pub mod circuit_logic {
     }
 
     fn connect_shared_targets(targets: &CircuitTargets, builder: &mut CircuitBuilder<F, D>) {
-        use crate::nullifier::NULLIFIER_SALT;
-        use plonky2::hash::poseidon2::Poseidon2Hash;
-        use zk_circuits_common::utils::string_to_felts;
-
         builder.connect_hashes(targets.nullifier.secret, targets.unspendable_account.secret);
 
         // Transfer count: connect nullifier's transfer_count to zk_merkle_proof's
@@ -282,40 +287,17 @@ pub mod circuit_logic {
         // Nullifier validation: nullifier == H(H(salt + secret + transfer_count))
         // Skip this validation for dummy proofs (block_hash == 0 AND outputs == 0).
         // This allows dummy proofs to use random nullifiers for better privacy.
-        let salt_felts =
-            string_to_felts(NULLIFIER_SALT).expect("NULLIFIER_SALT within serialization cap");
-        let mut nullifier_preimage = Vec::new();
-        for &f in salt_felts.iter() {
-            nullifier_preimage.push(builder.constant(f));
-        }
-        nullifier_preimage.extend(targets.nullifier.secret.elements.iter().copied());
-        nullifier_preimage.extend(targets.nullifier.transfer_count.iter());
-
-        let inner_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(nullifier_preimage);
-        let computed_nullifier =
-            builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(inner_hash.elements.to_vec());
-
-        for i in 0..4 {
-            let diff = builder.sub(
-                targets.nullifier.hash.elements[i],
-                computed_nullifier.elements[i],
-            );
-            let result = builder.mul(diff, is_not_dummy);
-            builder.connect(result, zero);
-        }
+        // `is_not_dummy` is derived in-circuit above, so a prover cannot skip the
+        // binding by witnessing the flag.
+        Nullifier::conditional_hash_binding(&targets.nullifier, builder, is_not_dummy);
 
         // Block hash validation: block_hash == hash(header contents)
         // Skip this validation for dummy proofs (block_hash == 0 AND outputs == 0).
-        let pre_image = targets.block_header.header.collect_to_vec();
-        let computed_block_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(pre_image);
-        for i in 0..4 {
-            let diff = builder.sub(
-                targets.block_header.block_hash.elements[i],
-                computed_block_hash.elements[i],
-            );
-            let result = builder.mul(diff, is_not_dummy);
-            builder.connect(result, zero);
-        }
+        crate::block_header::BlockHeader::conditional_block_hash_binding(
+            &targets.block_header,
+            builder,
+            is_not_dummy,
+        );
 
         // ZK tree root validation: header.zk_tree_root == zk_merkle_proof.root_hash
         // This is the CRITICAL constraint that binds the Merkle proof to the block header.

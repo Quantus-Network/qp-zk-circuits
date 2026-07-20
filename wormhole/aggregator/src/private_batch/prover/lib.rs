@@ -59,7 +59,9 @@ impl PrivateBatchProver {
     /// Build a fresh private-batch aggregation prover from circuit definitions.
     ///
     /// In production, prefer `new_from_binaries_dir(...)` to load prebuilt circuits.
-    /// Returns an error when `num_leaf_proofs` is outside the supported range.
+    /// Returns an error when `num_leaf_proofs` is outside the supported range,
+    /// or when `dummy_proof_template` is not a valid leaf proof carrying the
+    /// strong dummy sentinel (zero block hash and zero outputs).
     pub fn new(
         agg_circuit_config: CircuitConfig,
         leaf_common: CommonCircuitData<F, D>,
@@ -77,6 +79,16 @@ impl PrivateBatchProver {
 
         let targets = Some(agg_circuit.targets());
         let circuit_data = agg_circuit.build_prover();
+
+        // Enforce the same template invariant as the byte-loading constructors:
+        // `commit` clones this template into every padded slot, and the circuit
+        // only exempts slots carrying the dummy sentinel — a caller-supplied
+        // REAL proof here would replay its payout in every empty slot (#97026).
+        let leaf_verifier_data = VerifierCircuitData {
+            verifier_only: leaf_verifier_only.clone(),
+            common: leaf_common,
+        };
+        verify_dummy_leaf_template(&dummy_proof_template, &leaf_verifier_data)?;
 
         Ok(Self {
             circuit_data,

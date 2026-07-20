@@ -6,7 +6,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use plonky2::{
-    plonk::circuit_data::{CommonCircuitData, VerifierOnlyCircuitData},
+    plonk::circuit_data::CommonCircuitData,
     util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer},
 };
 use qp_wormhole_inputs::validate_proof_count;
@@ -16,6 +16,7 @@ use std::{
 };
 use zk_circuits_common::circuit::{wormhole_private_batch_circuit_config, C, D, F};
 
+use crate::common::utils::load_canonical_leaf_verifier_data;
 use crate::private_batch::circuit::circuit_logic::PrivateBatchCircuit;
 
 /// Generate prebuilt Private-batch aggregation circuit binaries.
@@ -34,13 +35,20 @@ pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
         num_leaf_proofs
     );
 
-    let leaf_common = load_leaf_common_data(&output_path.join("common.bin"))?;
-    let leaf_verifier_only = load_leaf_verifier_only_data(&output_path.join("verifier.bin"))?;
+    // Pin the leaf artifacts to the canonical Wormhole leaf circuit BEFORE baking
+    // their verifier key into the recursive circuit as constants. Without this, a
+    // substituted or stale common.bin/verifier.bin would silently produce
+    // private-batch artifacts with the wrong embedded inner verifier key.
+    let leaf_common_bytes = std::fs::read(output_path.join("common.bin"))
+        .with_context(|| format!("Failed to read {}/common.bin", output_path.display()))?;
+    let leaf_verifier_bytes = std::fs::read(output_path.join("verifier.bin"))
+        .with_context(|| format!("Failed to read {}/verifier.bin", output_path.display()))?;
+    let leaf = load_canonical_leaf_verifier_data(&leaf_common_bytes, &leaf_verifier_bytes)?;
 
     let agg_circuit = PrivateBatchCircuit::new(
         wormhole_private_batch_circuit_config(),
-        &leaf_common,
-        &leaf_verifier_only,
+        &leaf.common,
+        &leaf.verifier_only,
         num_leaf_proofs,
     )?;
 
@@ -60,7 +68,7 @@ pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
         let dummy_batch_proof_bytes = generate_dummy_private_batch_proof(
             &circuit_data,
             &agg_targets,
-            &leaf_common,
+            &leaf.common,
             output_path,
             num_leaf_proofs,
         )?;
@@ -154,36 +162,4 @@ fn generate_dummy_private_batch_proof(
         .prove(pw)
         .map_err(|e| anyhow!("Failed to prove dummy private batch: {}", e))?;
     Ok(proof.to_bytes())
-}
-
-fn load_leaf_common_data(common_path: &Path) -> Result<CommonCircuitData<F, D>> {
-    let gate_serializer = DefaultGateSerializer;
-
-    let common_bytes = std::fs::read(common_path)
-        .with_context(|| format!("Failed to read leaf common circuit file {:?}", common_path))?;
-
-    CommonCircuitData::from_bytes(common_bytes, &gate_serializer).map_err(|e| {
-        anyhow!(
-            "Failed to deserialize leaf common circuit data from {:?}: {}",
-            common_path,
-            e
-        )
-    })
-}
-
-fn load_leaf_verifier_only_data(verifier_path: &Path) -> Result<VerifierOnlyCircuitData<C, D>> {
-    let verifier_bytes = std::fs::read(verifier_path).with_context(|| {
-        format!(
-            "Failed to read leaf verifier circuit file {:?}",
-            verifier_path
-        )
-    })?;
-
-    VerifierOnlyCircuitData::from_bytes(verifier_bytes).map_err(|e| {
-        anyhow!(
-            "Failed to deserialize leaf verifier circuit data from {:?}: {}",
-            verifier_path,
-            e
-        )
-    })
 }

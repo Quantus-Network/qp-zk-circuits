@@ -5,10 +5,16 @@
 //!
 //! The typical usage flow involves:
 //! 1. Initializing the prover via one of:
-//!    - [`WormholeProver::new_from_files`] - Load pre-built circuit data (recommended for production)
-//!    - [`WormholeProver::new_from_bytes`] - Load from in-memory bytes
+//!    - [`build_fresh`] - Build fresh with the default leaf config (recommended)
 //!    - [`WormholeProver::new`] - Build fresh with custom config
-//!    - [`build_fresh`] - Build fresh with default config
+//!
+//!    The leaf circuit is small and builds in tens of milliseconds (release), so the
+//!    prover is always built from source rather than loaded from serialized artifacts.
+//!    Loading a `prover.bin` from disk was removed deliberately: `ProverOnlyCircuitData`
+//!    contains the witness generators and the target list that decides which witness
+//!    values are exposed as `public_inputs` in the returned proof, so a poisoned
+//!    artifact could exfiltrate private witness data (e.g. the Wormhole secret)
+//!    through the victim's serialized proof.
 //! 2. Creating user inputs with [`CircuitInputs`].
 //! 3. Committing user inputs using [`WormholeProver::commit`].
 //! 4. Generating a proof using [`WormholeProver::prove`].
@@ -67,17 +73,12 @@ use anyhow::{anyhow, bail};
 use plonky2::{
     iop::witness::PartialWitness,
     plonk::{
-        circuit_data::{
-            CircuitConfig, CommonCircuitData, ProverCircuitData, ProverOnlyCircuitData,
-        },
+        circuit_data::{CircuitConfig, ProverCircuitData},
         proof::ProofWithPublicInputs,
     },
-    util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer},
 };
-#[cfg(feature = "std")]
-use std::{fs, path::Path};
 
-use zk_circuits_common::circuit::{wormhole_leaf_circuit_config, CircuitFragment, C, D, F};
+use zk_circuits_common::circuit::{CircuitFragment, C, D, F};
 use zk_circuits_common::zk_merkle::MAX_DEPTH;
 
 use wormhole_circuit::nullifier::Nullifier;
@@ -103,10 +104,6 @@ pub struct WormholeProver {
 
 /// Builds a fresh [`WormholeProver`] with the default leaf circuit configuration (non-ZK).
 ///
-/// This is an expensive operation that builds the circuit from scratch.
-/// For production use, prefer [`WormholeProver::new_from_files`] or
-/// [`WormholeProver::new_from_bytes`] to load pre-built circuit data.
-///
 /// Note: Leaf proofs use non-ZK config because they're only verified by the aggregator
 /// (not on-chain). This improves proving performance without compromising security.
 pub fn build_fresh() -> WormholeProver {
@@ -114,123 +111,6 @@ pub fn build_fresh() -> WormholeProver {
 }
 
 impl WormholeProver {
-    fn ensure_loaded_common_matches_canonical(
-        common_data: &CommonCircuitData<F, D>,
-    ) -> anyhow::Result<()> {
-        let expected_config = wormhole_leaf_circuit_config();
-        if common_data.config != expected_config {
-            bail!(
-                "loaded common circuit config does not match the canonical Wormhole leaf config \
-                 (security_bits loaded={}, expected={})",
-                common_data.config.security_bits,
-                expected_config.security_bits
-            );
-        }
-
-        let gate_serializer = DefaultGateSerializer;
-        let loaded_bytes = common_data
-            .to_bytes(&gate_serializer)
-            .map_err(|e| anyhow!("failed to serialize loaded common circuit data: {}", e))?;
-        let canonical_common = WormholeCircuit::new(expected_config)
-            .build_verifier()
-            .common;
-        let canonical_bytes = canonical_common
-            .to_bytes(&gate_serializer)
-            .map_err(|e| anyhow!("failed to serialize canonical Wormhole common data: {}", e))?;
-
-        if loaded_bytes != canonical_bytes {
-            bail!(
-                "loaded common circuit data does not match the canonical Wormhole circuit for this config"
-            );
-        }
-
-        Ok(())
-    }
-
-    /// Creates a new [`WormholeProver`] from prover and common data bytes.
-    pub fn new_from_bytes(prover_only_bytes: &[u8], common_bytes: &[u8]) -> anyhow::Result<Self> {
-        let gate_serializer = DefaultGateSerializer;
-        let generator_serializer = DefaultGeneratorSerializer::<C, D> {
-            _phantom: Default::default(),
-        };
-
-        let common_data = CommonCircuitData::from_bytes(common_bytes.to_vec(), &gate_serializer)
-            .map_err(|e| anyhow!("failed to deserialize common circuit data: {}", e))?;
-        Self::ensure_loaded_common_matches_canonical(&common_data)?;
-
-        let prover_only_data = ProverOnlyCircuitData::from_bytes(
-            prover_only_bytes,
-            &generator_serializer,
-            &common_data,
-        )
-        .map_err(|e| anyhow!("failed to deserialize prover-only data: {}", e))?;
-
-        let wormhole_circuit = WormholeCircuit::new(wormhole_leaf_circuit_config());
-        let targets = Some(wormhole_circuit.targets());
-
-        let circuit_data = ProverCircuitData {
-            prover_only: prover_only_data,
-            common: common_data,
-        };
-
-        Ok(Self {
-            circuit_data,
-            partial_witness: PartialWitness::new(),
-            targets,
-        })
-    }
-
-    /// Creates a new [`WormholeProver`] from a prover and common data files.
-    #[cfg(feature = "std")]
-    pub fn new_from_files(
-        prover_data_path: &Path,
-        common_data_path: &Path,
-    ) -> anyhow::Result<Self> {
-        let gate_serializer = DefaultGateSerializer;
-        let generator_serializer = DefaultGeneratorSerializer::<C, D> {
-            _phantom: Default::default(),
-        };
-
-        let common_bytes = fs::read(common_data_path)?;
-        let common_data =
-            CommonCircuitData::from_bytes(common_bytes, &gate_serializer).map_err(|e| {
-                anyhow!(
-                    "failed to deserialize common circuit data from {:?}: {}",
-                    common_data_path,
-                    e
-                )
-            })?;
-        Self::ensure_loaded_common_matches_canonical(&common_data)?;
-
-        let prover_only_bytes = fs::read(prover_data_path)?;
-        let prover_only_data = ProverOnlyCircuitData::from_bytes(
-            &prover_only_bytes,
-            &generator_serializer,
-            &common_data,
-        )
-        .map_err(|e| {
-            anyhow!(
-                "failed to deserialize prover-only data from {:?}: {}",
-                prover_data_path,
-                e
-            )
-        })?;
-
-        let wormhole_circuit = WormholeCircuit::new(wormhole_leaf_circuit_config());
-        let targets = Some(wormhole_circuit.targets());
-
-        let circuit_data = ProverCircuitData {
-            prover_only: prover_only_data,
-            common: common_data,
-        };
-
-        Ok(Self {
-            circuit_data,
-            partial_witness: PartialWitness::new(),
-            targets,
-        })
-    }
-
     /// Creates a new [`WormholeProver`].
     pub fn new(config: CircuitConfig) -> Self {
         let wormhole_circuit = WormholeCircuit::new(config);

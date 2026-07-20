@@ -10,8 +10,13 @@
 //! Buckets queue arbitrarily deep (bounded only by [`PoolLimits`]), so a hot
 //! (block, asset, fee) stream keeps admitting while earlier batches are being
 //! proved. [`ProofPool::take_batch`] removes the oldest `batch_size` proofs as
-//! an opaque [`TakenBatch`]; prove it without holding any pool lock, then drop
-//! it on success or [`ProofPool::reinsert`] it on failure (no re-verification).
+//! an opaque [`TakenBatch`]; prove it without holding any pool lock, then
+//! [`ProofPool::complete`] it on success or [`ProofPool::reinsert`] it on
+//! failure (no re-verification). While a batch is out its nullifiers stay
+//! indexed, so duplicate spends are still rejected at admission and
+//! settlements observed by [`ProofPool::evict_settled`] during the proving
+//! window are remembered: `reinsert` drops the affected proofs instead of
+//! restoring dead weight.
 //!
 //! Staleness: a queued proof becomes worthless once any of its nullifiers is
 //! settled on-chain (e.g. another miner included the same private batch, or a
@@ -20,11 +25,23 @@
 //! block — both before proving (don't aggregate dead weight) and before
 //! submitting a finished public batch (don't submit stale segments).
 //!
+//! Note on nullifier checks: the pool-wide duplicate-nullifier rejection at
+//! admission and `evict_settled` are OPERATIONAL, not security-critical. They
+//! keep the miner from wasting proving time on batches the chain would refuse
+//! and prevent duplicate-based capacity DoS. The actual double-spend boundary
+//! is the wormhole pallet's persistent settled-nullifier set, which settles
+//! each nullifier at most once regardless of what any aggregator pools or
+//! submits. See "Nullifiers and Double-Spend Prevention" in
+//! `wormhole/README.md`.
+//!
 //! Note on dummies: an all-dummy private-batch proof (all-zero block hash) is
-//! admissible — it is a valid proof and lands in its own bucket — but it
-//! settles nothing, so it must never be selected for aggregation
-//! ([`BucketStats::is_dummy`] flags it, and the `PublicBatchAggregator` façade
-//! refuses to take it; the pool itself stays policy-free).
+//! REJECTED at admission even though it can be cryptographically valid. It
+//! settles nothing, and none of the automatic drain paths could ever remove it
+//! (aggregating it is refused, and `evict_settled` never sees its random
+//! nullifiers on-chain), so pooling it would let an attacker fill the global
+//! capacity with permanently undrainable entries. Public-batch padding does
+//! not need pooled dummies either: the prover pads from its own pinned dummy
+//! template.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -32,7 +49,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, ensure, Result};
 use plonky2::field::types::PrimeField64;
 use plonky2::plonk::{circuit_data::VerifierCircuitData, proof::ProofWithPublicInputs};
-use qp_wormhole_inputs::BytesDigest;
+use qp_wormhole_inputs::{validate_proof_count, BytesDigest};
 use zk_circuits_common::{
     circuit::{C, D, F},
     utils::try_4_felts_to_bytes,
@@ -66,6 +83,24 @@ pub struct PoolLimits {
     pub max_proofs: usize,
     /// Maximum number of distinct buckets (keys).
     pub max_buckets: usize,
+    /// Maximum cryptographic verification ATTEMPTS per [`Self::verify_window`].
+    ///
+    /// Size caps alone don't bound admission CPU: invalid proofs are rejected
+    /// by verification and never consume a slot, so an attacker streaming
+    /// well-formed-but-invalid proofs (fresh random nullifiers, correct PI
+    /// shape) would reach the expensive recursive verify on every submission.
+    /// This budget counts every verification attempt — successful or not — and
+    /// [`ProofPool::push`] rejects cheaply once it is exhausted, bounding
+    /// worst-case verification CPU regardless of traffic.
+    ///
+    /// This is a global, identity-blind backstop: a flooding attacker can
+    /// exhaust the budget and delay honest admissions (they cannot touch
+    /// already-pooled proofs or proving). Per-client fairness needs rate
+    /// limiting or authentication at the transport layer, where client
+    /// identity exists.
+    pub max_verifies_per_window: usize,
+    /// Length of the verification budget window.
+    pub verify_window: Duration,
 }
 
 impl Default for PoolLimits {
@@ -73,6 +108,11 @@ impl Default for PoolLimits {
         Self {
             max_proofs: 1024,
             max_buckets: 256,
+            // ~2.5-5s of verification CPU per minute at worst (recursive
+            // verification is ~10-20ms) while far exceeding honest submission
+            // rates (256 private batches/minute).
+            max_verifies_per_window: 256,
+            verify_window: Duration::from_secs(60),
         }
     }
 }
@@ -101,8 +141,8 @@ impl BucketStats {
     }
 
     /// Whether this is the dummy sentinel bucket (`block_hash == 0`).
-    /// Aggregating it proves a public batch that settles nothing; policy code
-    /// must skip it (`PublicBatchAggregator` refuses it outright).
+    /// Should never be true — [`ProofPool::push`] rejects all-dummy proofs —
+    /// but kept so policy code can defend in depth.
     pub fn is_dummy(&self) -> bool {
         self.key.is_dummy()
     }
@@ -120,8 +160,13 @@ struct PooledProof {
 ///
 /// Opaque by design: it can only be produced by [`ProofPool::take_batch`], so
 /// [`ProofPool::reinsert`] can restore it on proving failure without repeating
-/// cryptographic verification. Callers must either prove-and-drop it (success)
-/// or reinsert it (failure); dropping it silently discards the proofs.
+/// cryptographic verification.
+///
+/// Callers MUST hand it back: [`ProofPool::complete`] on proving success or
+/// [`ProofPool::reinsert`] on failure. The pool keeps the batch's nullifiers
+/// indexed while it is out (so duplicates stay rejected and settlements
+/// observed meanwhile are tracked); dropping the batch without either call
+/// leaks those reservations, permanently blocking re-admission of the spends.
 #[derive(Debug)]
 pub struct TakenBatch {
     key: BatchKey,
@@ -166,8 +211,23 @@ pub struct ProofPool {
     /// different recent blocks, landing in different buckets — only one copy
     /// can ever settle. The index also makes [`Self::evict_settled`] a lookup
     /// instead of a full pool scan. Invariant: contains exactly the nullifiers
-    /// of proofs currently in `buckets` (taken batches are not indexed).
+    /// of proofs currently in `buckets` plus those out with a [`TakenBatch`]
+    /// (the latter are also in `taken_nullifiers`).
     nullifier_index: HashMap<BytesDigest, BatchKey>,
+    /// Nullifiers of proofs currently out with a [`TakenBatch`]. Kept so
+    /// [`Self::evict_settled`] can tell settlements of out-for-proving proofs
+    /// apart (they go into `settled_while_taken`) and so admission still
+    /// rejects duplicates of taken spends.
+    taken_nullifiers: HashSet<BytesDigest>,
+    /// Taken-batch nullifiers observed settled on-chain while their batch was
+    /// out being proved. Consumed by [`Self::reinsert`] (drop the stale proof
+    /// instead of restoring it) and [`Self::complete`]. Bounded by the size of
+    /// outstanding taken batches.
+    settled_while_taken: HashSet<BytesDigest>,
+    /// Start of the current verification budget window (fixed-window counter).
+    verify_window_started: Instant,
+    /// Verification attempts (successful or not) in the current window.
+    verifies_in_window: usize,
 }
 
 impl ProofPool {
@@ -176,14 +236,21 @@ impl ProofPool {
     /// `inner_num_leaves` is the number of leaves aggregated per private-batch
     /// proof and `batch_size` the number of private-batch proofs per public
     /// batch; both must match the circuit shapes pinned into `verifier` and the
-    /// public-batch prover this pool feeds.
+    /// public-batch prover this pool feeds. Both are per-layer proof counts and
+    /// are validated against `MAX_PROOF_COUNT` before any layout arithmetic,
+    /// so callers can pass untrusted dimensions here.
     pub fn new(
         verifier: VerifierCircuitData<F, C, D>,
         inner_num_leaves: usize,
         batch_size: usize,
         limits: PoolLimits,
     ) -> Result<Self> {
-        ensure!(batch_size > 0, "batch_size must be positive");
+        // Bound both counts before the layout helpers below: pi_len does
+        // unchecked arithmetic that would wrap on astronomical counts, and the
+        // repo invariant is that every externally supplied batch dimension is
+        // checked with validate_proof_count before allocation or arithmetic.
+        validate_proof_count(inner_num_leaves, "inner_num_leaves")?;
+        validate_proof_count(batch_size, "batch_size")?;
         ensure!(
             limits.max_proofs >= batch_size,
             "max_proofs ({}) must allow at least one full batch ({})",
@@ -191,6 +258,14 @@ impl ProofPool {
             batch_size
         );
         ensure!(limits.max_buckets > 0, "max_buckets must be positive");
+        ensure!(
+            limits.max_verifies_per_window > 0,
+            "max_verifies_per_window must be positive"
+        );
+        ensure!(
+            !limits.verify_window.is_zero(),
+            "verify_window must be positive"
+        );
         let expected_pi_len = aggregated_output::pi_len(inner_num_leaves);
         ensure!(
             verifier.common.num_public_inputs == expected_pi_len,
@@ -206,6 +281,10 @@ impl ProofPool {
             limits,
             buckets: BTreeMap::new(),
             nullifier_index: HashMap::new(),
+            taken_nullifiers: HashSet::new(),
+            settled_while_taken: HashSet::new(),
+            verify_window_started: Instant::now(),
+            verifies_in_window: 0,
         })
     }
 
@@ -229,10 +308,12 @@ impl ProofPool {
     /// Validate and admit a proof, returning the bucket key it landed in.
     ///
     /// Checks run cheapest-first: capacity limits, public-input shape,
-    /// duplicate-nullifier rejection, then cryptographic verification. A proof
-    /// admitted here is individually valid and, by bucketing, batch-compatible
-    /// with every other proof in its bucket, so aggregation over a bucket
-    /// cannot fail deterministically on admitted inputs (#97067).
+    /// duplicate-nullifier rejection, the verification budget
+    /// ([`PoolLimits::max_verifies_per_window`]), then cryptographic
+    /// verification. A proof admitted here is individually valid and, by
+    /// bucketing, batch-compatible with every other proof in its bucket, so
+    /// aggregation over a bucket cannot fail deterministically on admitted
+    /// inputs (#97067).
     ///
     /// Buckets are NOT capped at one batch: a hot key keeps admitting (up to
     /// the global limits) while earlier batches for it are out being proved;
@@ -249,11 +330,23 @@ impl ProofPool {
         let metadata = self.parse_metadata(&proof)?;
         let key = metadata.0;
 
-        // A duplicate nullifier anywhere in the pool means the same leaf spend
-        // is already staged; only one copy can ever settle. This is checked
-        // pool-wide (not per bucket): the cumulative merkle tree lets the same
-        // spend be proven against different recent blocks, i.e. into different
-        // buckets. It also deduplicates client re-submissions.
+        // Reject the all-dummy sentinel outright: it settles nothing and no
+        // automatic drain path could ever remove it (take_batch refuses the
+        // dummy bucket and its random nullifiers never settle on-chain), so
+        // admitting it would hand attackers a permanent global-capacity sink.
+        if key.is_dummy() {
+            bail!(
+                "refusing to pool an all-dummy private-batch proof (block_hash == 0): \
+                 it settles nothing and can never be drained"
+            );
+        }
+
+        // A duplicate nullifier anywhere in the pool (including proofs out
+        // with a TakenBatch) means the same leaf spend is already staged; only
+        // one copy can ever settle. This is checked pool-wide (not per
+        // bucket): the cumulative merkle tree lets the same spend be proven
+        // against different recent blocks, i.e. into different buckets. It
+        // also deduplicates client re-submissions.
         if let Some(dup) = metadata
             .1
             .iter()
@@ -261,9 +354,14 @@ impl ProofPool {
         {
             bail!(
                 "refusing to queue private-batch proof: nullifier {:?} is already \
-                 pooled (in bucket for block {:?})",
+                 staged (bucket for block {:?}{})",
                 dup,
-                self.nullifier_index[dup].block_hash
+                self.nullifier_index[dup].block_hash,
+                if self.taken_nullifiers.contains(dup) {
+                    ", currently out for proving"
+                } else {
+                    ""
+                }
             );
         }
 
@@ -275,6 +373,26 @@ impl ProofPool {
                 key.block_hash
             );
         }
+
+        // Verification budget: size caps only count ADMITTED proofs, and
+        // invalid submissions never consume a slot, so without this an
+        // attacker streaming well-formed-but-invalid proofs would buy a full
+        // recursive verification per submission indefinitely. Charge the
+        // budget before verifying (attempts, not successes, cost CPU).
+        let now = Instant::now();
+        if now.duration_since(self.verify_window_started) >= self.limits.verify_window {
+            self.verify_window_started = now;
+            self.verifies_in_window = 0;
+        }
+        if self.verifies_in_window >= self.limits.max_verifies_per_window {
+            bail!(
+                "proof admission verification budget exhausted ({} attempts in the current {:?} \
+                 window); retry after the window resets",
+                self.limits.max_verifies_per_window,
+                self.limits.verify_window
+            );
+        }
+        self.verifies_in_window += 1;
 
         self.verifier.verify(proof.clone()).map_err(|e| {
             anyhow!(
@@ -302,7 +420,20 @@ impl ProofPool {
     /// Call with the nullifiers settled by each imported block, both before
     /// aggregating (avoid proving dead weight) and before submitting a finished
     /// public batch (detect batches that went stale mid-proving).
+    ///
+    /// Proofs out with a [`TakenBatch`] cannot be evicted here (the pool no
+    /// longer holds them), but their settlements are remembered: a later
+    /// [`Self::reinsert`] drops the affected proofs instead of restoring them.
     pub fn evict_settled(&mut self, settled: &HashSet<BytesDigest>) -> usize {
+        // Settlements hitting out-for-proving proofs can't be evicted now;
+        // record them so reinsert doesn't restore dead weight after the
+        // settled set of this block has already been consumed.
+        for n in settled {
+            if self.taken_nullifiers.contains(n) {
+                self.settled_while_taken.insert(*n);
+            }
+        }
+
         // The nullifier index turns this into a lookup over `settled` instead
         // of a scan of every pooled proof.
         let affected_keys: HashSet<BatchKey> = settled
@@ -366,8 +497,14 @@ impl ProofPool {
     /// This is the non-blocking aggregation primitive: taking is cheap, so a
     /// service can take under a short lock, prove for minutes WITHOUT holding
     /// any pool lock (admissions for the same key keep landing in the bucket
-    /// remainder), then drop the batch on success or [`Self::reinsert`] it on
-    /// failure. Returns `None` if the bucket doesn't exist.
+    /// remainder), then [`Self::complete`] the batch on success or
+    /// [`Self::reinsert`] it on failure. Returns `None` if the bucket doesn't
+    /// exist.
+    ///
+    /// The taken proofs' nullifiers stay indexed while the batch is out:
+    /// duplicate spends are still rejected at admission, and settlements
+    /// observed by [`Self::evict_settled`] meanwhile are remembered so
+    /// `reinsert` drops the affected proofs instead of restoring dead weight.
     pub fn take_batch(&mut self, key: &BatchKey) -> Option<TakenBatch> {
         let bucket = self.buckets.get_mut(key)?;
         let n = bucket.len().min(self.batch_size);
@@ -375,11 +512,9 @@ impl ProofPool {
         if bucket.is_empty() {
             self.buckets.remove(key);
         }
-        // Taken proofs leave the pool, so their nullifiers leave the index;
-        // `reinsert` re-checks for duplicates admitted while the batch was out.
         for queued in &taken {
             for nullifier in &queued.nullifiers {
-                self.nullifier_index.remove(nullifier);
+                self.taken_nullifiers.insert(*nullifier);
             }
         }
         Some(TakenBatch {
@@ -388,33 +523,49 @@ impl ProofPool {
         })
     }
 
+    /// Retire a taken batch after SUCCESSFUL proving, releasing its nullifier
+    /// reservations (they are about to settle on-chain via the public batch;
+    /// the post-submission [`Self::evict_settled`] cadence no longer needs to
+    /// track them here).
+    pub fn complete(&mut self, batch: TakenBatch) {
+        for queued in &batch.proofs {
+            for nullifier in &queued.nullifiers {
+                self.nullifier_index.remove(nullifier);
+                self.taken_nullifiers.remove(nullifier);
+                self.settled_while_taken.remove(nullifier);
+            }
+        }
+    }
+
     /// Restore a taken batch after a failed proving attempt, WITHOUT repeating
     /// cryptographic verification (the batch is only constructable from this
     /// pool's own admission path).
     ///
     /// Proofs are restored at the front of their bucket, preserving age order.
-    /// A proof whose nullifier was re-admitted (to any bucket) while the batch
-    /// was out is dropped as a duplicate (the copies are interchangeable
-    /// spends). Returns the number of proofs actually restored.
-    ///
-    /// NOTE: proofs may have gone stale while out (settled by another miner);
-    /// they are subject to the next [`Self::evict_settled`] like any other.
+    /// A proof that went stale while out — any of its nullifiers was observed
+    /// settled on-chain by [`Self::evict_settled`] during the proving window —
+    /// is dropped instead of restored (re-proving it would waste minutes on a
+    /// batch the chain refuses). Returns the number of proofs actually
+    /// restored.
     pub fn reinsert(&mut self, batch: TakenBatch) -> usize {
-        let restored: Vec<PooledProof> = batch
-            .proofs
-            .into_iter()
-            .filter(|q| {
-                !q.nullifiers
-                    .iter()
-                    .any(|n| self.nullifier_index.contains_key(n))
-            })
-            .collect();
-        let count = restored.len();
-        for queued in &restored {
+        let mut restored: Vec<PooledProof> = Vec::with_capacity(batch.proofs.len());
+        for queued in batch.proofs {
+            let stale = queued
+                .nullifiers
+                .iter()
+                .any(|n| self.settled_while_taken.contains(n));
             for nullifier in &queued.nullifiers {
-                self.nullifier_index.insert(*nullifier, batch.key);
+                self.taken_nullifiers.remove(nullifier);
+                if stale {
+                    self.nullifier_index.remove(nullifier);
+                    self.settled_while_taken.remove(nullifier);
+                }
+            }
+            if !stale {
+                restored.push(queued);
             }
         }
+        let count = restored.len();
 
         let bucket = self.buckets.entry(batch.key).or_default();
         let mut merged = restored;
@@ -570,6 +721,33 @@ mod tests {
         }
     }
 
+    /// ProofPool::new is a public API and must bound caller-supplied batch
+    /// dimensions BEFORE the layout arithmetic (pi_len is unchecked and would
+    /// wrap on astronomical counts in release builds).
+    #[test]
+    fn new_rejects_out_of_range_dimensions() {
+        use crate::private_batch::circuit::constants::LEAF_PI_LEN;
+        use qp_wormhole_inputs::MAX_PROOF_COUNT;
+
+        let (data, _) = build_fake_private_batch_circuit();
+
+        for bad_leaves in [0, MAX_PROOF_COUNT + 1, usize::MAX / LEAF_PI_LEN + 1] {
+            let err = ProofPool::new(data.verifier_data(), bad_leaves, 2, PoolLimits::default())
+                .expect_err("out-of-range inner_num_leaves must be rejected");
+            assert!(err.to_string().contains("inner_num_leaves"), "got: {err}");
+        }
+        for bad_batch in [0, MAX_PROOF_COUNT + 1] {
+            let err = ProofPool::new(
+                data.verifier_data(),
+                NUM_LEAVES,
+                bad_batch,
+                PoolLimits::default(),
+            )
+            .expect_err("out-of-range batch_size must be rejected");
+            assert!(err.to_string().contains("batch_size"), "got: {err}");
+        }
+    }
+
     #[test]
     fn proofs_bucket_by_key() {
         let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
@@ -674,7 +852,7 @@ mod tests {
     }
 
     #[test]
-    fn reinsert_drops_nullifiers_readmitted_while_out() {
+    fn duplicate_of_taken_spend_is_rejected_at_admission() {
         let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
 
         let key = pool
@@ -683,15 +861,64 @@ mod tests {
         let taken = pool.take_batch(&key).unwrap();
 
         // The client re-submits the same spend while its proof is out — this
-        // time proven against a DIFFERENT block, so it lands in another
-        // bucket. Admission succeeds because taken proofs are out of the pool.
-        pool.push(prove_fake(&data, &targets, &fake(2, 11)))
-            .unwrap();
+        // time proven against a DIFFERENT block. Taken proofs stay indexed,
+        // so the duplicate is rejected instead of pooling a second copy that
+        // could never settle alongside the first.
+        let err = pool
+            .push(prove_fake(&data, &targets, &fake(2, 11)))
+            .unwrap_err();
+        assert!(err.to_string().contains("out for proving"), "got: {err}");
 
-        // Reinserting must not duplicate the nullifier anywhere in the pool.
-        assert_eq!(pool.reinsert(taken), 0);
+        // The original comes back on proving failure, still deduplicated.
+        assert_eq!(pool.reinsert(taken), 1);
         assert_eq!(pool.len(), 1);
         assert_eq!(pool.num_buckets(), 1);
+    }
+
+    /// The gap this closes: a proof settled on-chain while its batch was out
+    /// being proved must not be restored by reinsert — the per-block
+    /// evict_settled cadence has already consumed that block's settled set and
+    /// will never revisit it.
+    #[test]
+    fn reinsert_drops_proofs_settled_while_out() {
+        let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
+
+        let key = pool
+            .push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        pool.push(prove_fake(&data, &targets, &fake(1, 12)))
+            .unwrap();
+        let taken = pool.take_batch(&key).unwrap();
+
+        // A competing miner settles one of the taken spends mid-proving. The
+        // proof is out of the pool, so nothing is evicted now...
+        let settled: HashSet<BytesDigest> = [nullifier_digest(11)].into_iter().collect();
+        assert_eq!(pool.evict_settled(&settled), 0);
+
+        // ...but reinsert after the proving failure drops the stale proof and
+        // restores only the live one.
+        assert_eq!(pool.reinsert(taken), 1);
+        assert_eq!(pool.len(), 1);
+        let retaken = pool.take_batch(&key).unwrap();
+        let nullifiers: Vec<u64> = retaken.proofs().iter().map(nullifier_felt).collect();
+        assert_eq!(nullifiers, vec![12]);
+    }
+
+    #[test]
+    fn complete_releases_taken_nullifier_reservations() {
+        let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
+
+        let key = pool
+            .push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        let taken = pool.take_batch(&key).unwrap();
+        pool.complete(taken);
+
+        // Reservations are gone: the spend can be staged again (and would be
+        // evicted by the post-settlement evict_settled cadence like any other).
+        pool.push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        assert_eq!(pool.len(), 1);
     }
 
     #[test]
@@ -713,7 +940,7 @@ mod tests {
         let err = pool
             .push(prove_fake(&data, &targets, &fake(1, 11)))
             .unwrap_err();
-        assert!(err.to_string().contains("already pooled"), "got: {err}");
+        assert!(err.to_string().contains("already staged"), "got: {err}");
 
         // ...and eviction through the index still finds the reinserted proof.
         let settled: HashSet<BytesDigest> = [nullifier_digest(11)].into_iter().collect();
@@ -730,7 +957,7 @@ mod tests {
         let err = pool
             .push(prove_fake(&data, &targets, &fake(1, 11)))
             .unwrap_err();
-        assert!(err.to_string().contains("already pooled"), "got: {err}");
+        assert!(err.to_string().contains("already staged"), "got: {err}");
         assert_eq!(pool.len(), 1);
     }
 
@@ -747,7 +974,7 @@ mod tests {
         let err = pool
             .push(prove_fake(&data, &targets, &fake(2, 11)))
             .unwrap_err();
-        assert!(err.to_string().contains("already pooled"), "got: {err}");
+        assert!(err.to_string().contains("already staged"), "got: {err}");
         assert_eq!(pool.len(), 1);
         assert_eq!(pool.num_buckets(), 1);
 
@@ -793,6 +1020,7 @@ mod tests {
             PoolLimits {
                 max_proofs: 1,
                 max_buckets: 8,
+                ..PoolLimits::default()
             },
         );
 
@@ -811,6 +1039,7 @@ mod tests {
             PoolLimits {
                 max_proofs: 16,
                 max_buckets: 1,
+                ..PoolLimits::default()
             },
         );
 
@@ -820,6 +1049,73 @@ mod tests {
             .push(prove_fake(&data, &targets, &fake(2, 12)))
             .unwrap_err();
         assert!(err.to_string().contains("bucket limit"), "got: {err}");
+    }
+
+    /// Verification CPU must be bounded even though invalid proofs never
+    /// consume a pool slot: once the per-window budget is exhausted, push
+    /// rejects cheaply before the expensive recursive verification.
+    #[test]
+    fn verification_budget_bounds_admission_attempts() {
+        let (mut pool, data, targets) = make_pool(
+            4,
+            PoolLimits {
+                max_verifies_per_window: 2,
+                verify_window: Duration::from_secs(3600),
+                ..PoolLimits::default()
+            },
+        );
+
+        pool.push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        pool.push(prove_fake(&data, &targets, &fake(1, 12)))
+            .unwrap();
+
+        // Budget exhausted: even a valid proof is rejected without verifying.
+        let err = pool
+            .push(prove_fake(&data, &targets, &fake(1, 13)))
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("verification budget exhausted"),
+            "got: {err}"
+        );
+    }
+
+    /// Failed verification attempts charge the budget too — that's the whole
+    /// point (attempts cost CPU, not admissions) — and the budget resets once
+    /// the window rolls over.
+    #[test]
+    fn verification_budget_counts_failures_and_resets() {
+        let (mut pool, data, targets) = make_pool(
+            4,
+            PoolLimits {
+                max_verifies_per_window: 1,
+                verify_window: Duration::from_secs(2),
+                ..PoolLimits::default()
+            },
+        );
+
+        // Build both proofs BEFORE the first push: proving takes long enough
+        // that doing it between pushes could roll the window over and flake.
+        let mut bad = prove_fake(&data, &targets, &fake(1, 11));
+        bad.public_inputs[aggregated_output::ASSET_ID_OFFSET] = F::from_canonical_u64(9);
+        let good = prove_fake(&data, &targets, &fake(1, 12));
+
+        // The tampered proof burns the single budgeted attempt.
+        let err = pool.push(bad).unwrap_err();
+        assert!(
+            err.to_string().contains("verification failed"),
+            "got: {err}"
+        );
+
+        let err = pool.push(good.clone()).unwrap_err();
+        assert!(
+            err.to_string().contains("verification budget exhausted"),
+            "got: {err}"
+        );
+
+        // After the window rolls over, admission resumes.
+        std::thread::sleep(Duration::from_millis(2100));
+        pool.push(good).unwrap();
     }
 
     #[test]
@@ -864,16 +1160,24 @@ mod tests {
     }
 
     #[test]
-    fn dummy_key_is_detected() {
+    fn all_dummy_proof_is_rejected_at_admission() {
         let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
 
-        let key = pool
+        // A valid all-dummy proof (block_hash == 0) must not be pooled: no
+        // automatic drain path could ever remove it, so it would count against
+        // the global capacity forever (attacker sink).
+        let err = pool
             .push(prove_fake(&data, &targets, &fake(0, 11)))
-            .unwrap();
-        assert!(key.is_dummy());
+            .unwrap_err();
+        assert!(err.to_string().contains("all-dummy"), "got: {err}");
+        assert!(pool.is_empty());
+
+        // ...and its nullifier is NOT indexed: the same spend proven against a
+        // real block afterwards is still admissible.
         let key = pool
-            .push(prove_fake(&data, &targets, &fake(3, 12)))
+            .push(prove_fake(&data, &targets, &fake(3, 11)))
             .unwrap();
         assert!(!key.is_dummy());
+        assert_eq!(pool.len(), 1);
     }
 }

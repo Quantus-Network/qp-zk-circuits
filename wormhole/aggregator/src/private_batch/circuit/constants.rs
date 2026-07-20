@@ -36,6 +36,14 @@ pub const BLOCK_NUMBER_START: usize = 20; // 1 felt
 ///  nullifier(4) * N,
 ///  padding...]
 /// ```
+///
+/// The `num_leaves`-parameterized helpers use UNCHECKED arithmetic and assume
+/// the count was already bounded with
+/// [`validate_proof_count`](qp_wormhole_inputs::validate_proof_count)
+/// (`1..=MAX_PROOF_COUNT`), per the repo-wide invariant that every externally
+/// supplied batch dimension is validated at its API boundary before any
+/// allocation or arithmetic. Do not feed them raw untrusted counts: an
+/// astronomical value would wrap in release builds.
 pub mod aggregated_output {
     use super::LEAF_PI_LEN;
 

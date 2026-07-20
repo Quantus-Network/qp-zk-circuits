@@ -1,15 +1,13 @@
 use anyhow::Result;
 use plonky2::plonk::circuit_data::CircuitConfig;
-use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
+use plonky2::util::serialization::DefaultGateSerializer;
 use std::fs;
 use std::path::Path;
 use test_helpers::TestInputs;
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use wormhole_circuit::circuit::{circuit_data_from_bytes, circuit_data_to_bytes};
 use wormhole_circuit::inputs::CircuitInputs;
-use wormhole_prover::WormholeProver;
 use wormhole_verifier::WormholeVerifier;
-use zk_circuits_common::circuit::{C, D};
 
 #[test]
 fn test_circuit_data_serialization() {
@@ -45,12 +43,8 @@ fn test_prover_and_verifier_from_file_e2e() -> Result<()> {
     let circuit_data = WormholeCircuit::new(config).build_circuit();
 
     let gate_serializer = DefaultGateSerializer;
-    let generator_serializer = DefaultGeneratorSerializer::<C, D> {
-        _phantom: Default::default(),
-    };
 
     let verifier_data = circuit_data.verifier_data();
-    let prover_data = circuit_data.prover_data();
     let common_data = &verifier_data.common;
 
     // Serialize and write common data
@@ -68,16 +62,9 @@ fn test_prover_and_verifier_from_file_e2e() -> Result<()> {
     let verifier_path = Path::new(temp_dir).join("verifier.bin");
     fs::write(&verifier_path, &verifier_only_bytes)?;
 
-    // Serialize and write prover only data
-    let prover_only_bytes = prover_data
-        .prover_only
-        .to_bytes(&generator_serializer, common_data)
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    let prover_path = Path::new(temp_dir).join("prover.bin");
-    fs::write(&prover_path, &prover_only_bytes)?;
-
-    // Create a prover and verifier from the temporary files.
-    let prover = WormholeProver::new_from_files(&prover_path, &common_path)?;
+    // The prover is always built from source (no prover.bin artifact exists anymore);
+    // a fresh build must be compatible with verifier artifacts loaded from files.
+    let prover = wormhole_prover::build_fresh();
     let verifier = WormholeVerifier::new_from_files(&verifier_path, &common_path)?;
 
     // Create inputs

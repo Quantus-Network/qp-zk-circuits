@@ -199,7 +199,14 @@ pub struct PublicCircuitInputs {
     /// Volume fee rate in basis points (1 basis point = 0.01%).
     /// This is verified on-chain to match the runtime configuration.
     pub volume_fee_bps: u32,
-    /// The nullifier (prevents double-spending).
+    /// The nullifier: `H(H(salt || secret || transfer_count))`.
+    ///
+    /// The circuit only proves this value is *well-formed* (bound to the deposit
+    /// being spent). Double-spend prevention — rejecting an already-settled
+    /// nullifier — is enforced on-chain by the wormhole pallet, which maintains
+    /// the persistent set of settled nullifiers. No circuit or aggregator layer
+    /// checks uniqueness; see "Nullifiers and Double-Spend Prevention" in
+    /// `wormhole/README.md`.
     pub nullifier: BytesDigest,
     /// The address of the first exit account (spend destination).
     pub exit_account_1: BytesDigest,

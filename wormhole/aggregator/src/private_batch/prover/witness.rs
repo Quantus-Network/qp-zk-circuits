@@ -44,6 +44,17 @@ pub fn fill_private_batch_witness(
     }
 
     for (i, (proof_t, proof)) in targets.leaf_proofs.iter().zip(proofs.iter()).enumerate() {
+        // Reject shape mismatches at this Result boundary: with fewer public
+        // inputs than targets, set_proof_with_pis_target's internal zip would
+        // silently leave trailing PI targets unset instead of erroring.
+        if proof.public_inputs.len() != proof_t.public_inputs.len() {
+            bail!(
+                "leaf proof at slot {} has {} public inputs, but the circuit expects {}",
+                i,
+                proof.public_inputs.len(),
+                proof_t.public_inputs.len()
+            );
+        }
         pw.set_proof_with_pis_target(proof_t, proof)
             .map_err(|e| anyhow!("failed to set leaf proof target at slot {}: {}", i, e))?;
     }

@@ -74,12 +74,14 @@ pub struct AggConfigArgs {
     #[arg(long)]
     pub num_wires: Option<usize>,
 
-    /// Number of routed wires. Production: 60.
+    /// Number of routed wires. Must be <= num_wires (routed wires are a
+    /// prefix of the wire columns). Production: 60.
     #[arg(long)]
     pub num_routed_wires: Option<usize>,
 
     /// Max quotient polynomial degree factor. Reducing constrains the kinds
-    /// of constraints the circuit can express. Production: 8.
+    /// of constraints the circuit can express. Must be >= 7 (Poseidon
+    /// constraint degree). Production: 8.
     #[arg(long)]
     pub max_quotient_degree_factor: Option<usize>,
 
@@ -107,11 +109,25 @@ pub struct AggConfigArgs {
     pub allow_weakening_security: bool,
 }
 
+/// The Poseidon gate needs 135 wire columns; a smaller `num_wires` panics
+/// deep inside plonky2's `check_gate_compatibility` mid-build instead of
+/// failing at the CLI boundary.
+const MIN_NUM_WIRES: usize = 135;
+
+/// Poseidon constraints have degree 7; a smaller quotient degree factor
+/// cannot express them and fails during circuit construction.
+const MIN_MAX_QUOTIENT_DEGREE_FACTOR: usize = 7;
+
 impl AggConfigArgs {
     /// Validate the override knobs:
     ///   1. Numeric knobs must be > 0 (zero would silently break the
     ///      FRI soundness product or trip a panic deep inside plonky2).
-    ///   2. Security-affecting knobs must be gated by
+    ///   2. Structural circuit floors documented on the flags
+    ///      (`num_wires >= 135`, `max_quotient_degree_factor >= 7`,
+    ///      `num_routed_wires <= num_wires`) are enforced here so bad
+    ///      sweeps fail at the CLI boundary instead of panicking after the
+    ///      leaf context is already built.
+    ///   3. Security-affecting knobs must be gated by
     ///      `--allow-weakening-security`.
     pub fn validate(&self) -> Result<(), String> {
         for (name, v) in [
@@ -129,6 +145,33 @@ impl AggConfigArgs {
         ] {
             if v == Some(0) {
                 return Err(format!("{name} must be greater than 0"));
+            }
+        }
+
+        if let Some(v) = self.num_wires {
+            if v < MIN_NUM_WIRES {
+                return Err(format!(
+                    "--num-wires must be >= {MIN_NUM_WIRES} (Poseidon gate floor), got {v}"
+                ));
+            }
+        }
+        if let Some(v) = self.max_quotient_degree_factor {
+            if v < MIN_MAX_QUOTIENT_DEGREE_FACTOR {
+                return Err(format!(
+                    "--max-quotient-degree-factor must be >= {MIN_MAX_QUOTIENT_DEGREE_FACTOR} \
+                     (Poseidon constraint degree), got {v}"
+                ));
+            }
+        }
+        if let Some(routed) = self.num_routed_wires {
+            let effective_num_wires = self
+                .num_wires
+                .unwrap_or_else(|| wormhole_private_batch_circuit_config().num_wires);
+            if routed > effective_num_wires {
+                return Err(format!(
+                    "--num-routed-wires ({routed}) must be <= num_wires ({effective_num_wires}); \
+                     routed wires are a subset of the wire columns"
+                ));
             }
         }
 
@@ -253,4 +296,83 @@ pub fn print_config_summary(label: &str, cfg: &CircuitConfig) {
         cfg.fri_config.num_query_rounds,
         cfg.fri_config.rate_bits * cfg.fri_config.num_query_rounds,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args_with(f: impl FnOnce(&mut AggConfigArgs)) -> AggConfigArgs {
+        let mut args = AggConfigArgs {
+            zk_mode: None,
+            rate_bits: None,
+            cap_height: None,
+            num_wires: None,
+            num_routed_wires: None,
+            max_quotient_degree_factor: None,
+            num_query_rounds: None,
+            security_bits: None,
+            num_challenges: None,
+            allow_weakening_security: false,
+        };
+        f(&mut args);
+        args
+    }
+
+    #[test]
+    fn num_wires_below_poseidon_floor_is_rejected() {
+        let err = args_with(|a| a.num_wires = Some(1)).validate().unwrap_err();
+        assert!(err.contains("Poseidon gate floor"), "got: {err}");
+        let err = args_with(|a| a.num_wires = Some(134))
+            .validate()
+            .unwrap_err();
+        assert!(err.contains(">= 135"), "got: {err}");
+    }
+
+    #[test]
+    fn quotient_degree_below_poseidon_constraint_degree_is_rejected() {
+        let err = args_with(|a| a.max_quotient_degree_factor = Some(6))
+            .validate()
+            .unwrap_err();
+        assert!(err.contains(">= 7"), "got: {err}");
+    }
+
+    #[test]
+    fn routed_wires_exceeding_num_wires_is_rejected() {
+        // Against the explicit --num-wires override.
+        let err = args_with(|a| {
+            a.num_wires = Some(135);
+            a.num_routed_wires = Some(136);
+        })
+        .validate()
+        .unwrap_err();
+        assert!(err.contains("must be <= num_wires"), "got: {err}");
+
+        // Against the production baseline when --num-wires is unset.
+        let baseline = wormhole_private_batch_circuit_config().num_wires;
+        let err = args_with(|a| a.num_routed_wires = Some(baseline + 1))
+            .validate()
+            .unwrap_err();
+        assert!(err.contains("must be <= num_wires"), "got: {err}");
+    }
+
+    #[test]
+    fn production_and_swept_values_are_accepted() {
+        // Production config, no overrides.
+        args_with(|_| {}).validate().unwrap();
+        // Values the sweep scripts actually use.
+        args_with(|a| {
+            a.num_wires = Some(135);
+            a.num_routed_wires = Some(54);
+            a.max_quotient_degree_factor = Some(7);
+        })
+        .validate()
+        .unwrap();
+    }
+
+    #[test]
+    fn zero_knobs_are_still_rejected() {
+        let err = args_with(|a| a.rate_bits = Some(0)).validate().unwrap_err();
+        assert!(err.contains("greater than 0"), "got: {err}");
+    }
 }

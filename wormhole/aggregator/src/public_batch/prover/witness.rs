@@ -32,11 +32,23 @@ pub fn fill_public_batch_witness(
         pw.set_target(*target, *value)?;
     }
 
-    for (proof_t, proof) in targets
+    for (i, (proof_t, proof)) in targets
         .private_batch_proofs
         .iter()
         .zip(private_batch_proofs.iter())
+        .enumerate()
     {
+        // Reject shape mismatches at this Result boundary: with fewer public
+        // inputs than targets, set_proof_with_pis_target's internal zip would
+        // silently leave trailing PI targets unset instead of erroring.
+        if proof.public_inputs.len() != proof_t.public_inputs.len() {
+            bail!(
+                "private-batch proof at slot {} has {} public inputs, but the circuit expects {}",
+                i,
+                proof.public_inputs.len(),
+                proof_t.public_inputs.len()
+            );
+        }
         pw.set_proof_with_pis_target(proof_t, proof)?;
     }
 

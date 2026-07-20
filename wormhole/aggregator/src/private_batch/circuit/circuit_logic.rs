@@ -10,8 +10,21 @@
 //!
 //! The leaf verifier key is baked in as constants at circuit build time to prevent
 //! verifier key substitution attacks.
+//!
+//! # Nullifiers: forwarded, not deduplicated
+//!
+//! This circuit forwards one nullifier per leaf slot into the aggregated public
+//! inputs (dummy slots get the hash of a fresh random preimage instead, so
+//! padding never produces on-chain nullifier collisions and stays
+//! indistinguishable from real slots). It deliberately does NOT check
+//! nullifiers for uniqueness — not against chain state, and not even across
+//! slots in the same batch. Two leaves spending the same deposit aggregate into
+//! a cryptographically valid batch; the wormhole pallet's persistent settled-
+//! nullifier set is the sole double-spend boundary and settles each nullifier
+//! at most once. See "Nullifiers and Double-Spend Prevention" in
+//! `wormhole/README.md`.
 
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use plonky2::{
     field::types::Field,
     hash::poseidon2::Poseidon2Hash,
@@ -67,6 +80,19 @@ impl PrivateBatchCircuit {
     ) -> Result<Self> {
         validate_proof_count(n_leaf, "n_leaf")?;
 
+        // Runtime (not debug-only) shape check: the wrapper constraints index
+        // fixed offsets (asset id, block hash, nullifier, ...) into each leaf
+        // proof's public inputs, so a leaf_common with a different PI length
+        // must fail loudly here instead of panicking mid-construction
+        // (mirrors the public-batch check, #97071).
+        ensure!(
+            leaf_common.num_public_inputs == LEAF_PI_LEN,
+            "leaf_common.num_public_inputs ({}) != expected wormhole leaf PI len ({}); \
+             refusing to build a private-batch circuit over a non-leaf-shaped inner circuit",
+            leaf_common.num_public_inputs,
+            LEAF_PI_LEN,
+        );
+
         let mut builder = CircuitBuilder::<F, D>::new(config);
 
         let leaf_proofs = add_recursive_verifiers::<F, C, D>(
@@ -74,7 +100,7 @@ impl PrivateBatchCircuit {
             leaf_common,
             leaf_verifier_only,
             n_leaf,
-        );
+        )?;
 
         // Allocate one dummy-nullifier preimage target (4 felts) per slot.
         let mut dummy_nullifier_pre_images = Vec::with_capacity(n_leaf);
@@ -145,7 +171,8 @@ fn build_private_batch_constraints(
         .map(|p| p.public_inputs.as_slice())
         .collect();
 
-    // Sanity check (debug assertion): all proof target PI lengths should match expected leaf PI len.
+    // Guaranteed by the runtime num_public_inputs check in PrivateBatchCircuit::new;
+    // this assertion only guards against future callers bypassing that constructor.
     debug_assert!(leaf_pi_targets.iter().all(|pis| pis.len() == LEAF_PI_LEN));
 
     // =========================================================================
@@ -1719,5 +1746,57 @@ mod tests {
         private_batch_data
             .verify(private_batch_proof)
             .expect("private-batch verify should succeed");
+    }
+
+    /// The constructor must reject inner circuits whose public-input length
+    /// doesn't match the fixed 21-felt leaf layout with a normal error, not a
+    /// panic mid-construction (the wrapper indexes fixed PI offsets).
+    #[test]
+    fn new_rejects_non_leaf_shaped_inner_circuit() {
+        // A valid circuit with the wrong number of public inputs (5, not 21).
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config.clone());
+        let ts = builder.add_virtual_targets(5);
+        builder.register_public_inputs(&ts);
+        let wrong_shape = builder.build::<C>();
+
+        let err =
+            PrivateBatchCircuit::new(config, &wrong_shape.common, &wrong_shape.verifier_only, 1)
+                .err()
+                .expect("non-leaf-shaped inner circuit must be rejected");
+        assert!(err.to_string().contains("num_public_inputs"), "got: {err}");
+    }
+
+    /// The witness filler must reject proofs whose public-input length doesn't
+    /// match the proof targets at its Result boundary: plonky2's internal zip
+    /// would otherwise silently leave trailing PI targets unset.
+    #[test]
+    fn witness_fill_rejects_wrong_pi_length_proof() {
+        let (leaf, leaf_targets) = build_fake_leaf_circuit();
+        let mut pw = PartialWitness::new();
+        for t in leaf_targets.iter() {
+            pw.set_target(*t, F::ZERO).unwrap();
+        }
+        let mut proof = leaf.prove(pw).unwrap();
+        proof.public_inputs.pop();
+
+        let targets = PrivateBatchCircuit::new(
+            CircuitConfig::standard_recursion_config(),
+            &leaf.common,
+            &leaf.verifier_only,
+            1,
+        )
+        .unwrap()
+        .targets();
+
+        let mut pw = PartialWitness::new();
+        let err = fill_private_batch_witness(
+            &mut pw,
+            &targets,
+            &[proof],
+            &deterministic_dummy_nullifier_pre_images(1),
+        )
+        .expect_err("truncated proof public inputs must be rejected");
+        assert!(err.to_string().contains("public inputs"), "got: {err}");
     }
 }

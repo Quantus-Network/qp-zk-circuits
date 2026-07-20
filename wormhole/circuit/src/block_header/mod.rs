@@ -1,6 +1,9 @@
 use plonky2::{
-    hash::hash_types::HashOutTarget,
-    iop::witness::{PartialWitness, WitnessWrite},
+    hash::{hash_types::HashOutTarget, poseidon2::Poseidon2Hash},
+    iop::{
+        target::Target,
+        witness::{PartialWitness, WitnessWrite},
+    },
     plonk::circuit_builder::CircuitBuilder,
 };
 use zk_circuits_common::{
@@ -53,23 +56,75 @@ impl BlockHeaderTargets {
     }
 }
 
-impl CircuitFragment for BlockHeader {
-    type Targets = BlockHeaderTargets;
+impl BlockHeader {
+    /// Computes `hash(header contents)` in-circuit.
+    fn computed_block_hash(
+        targets: &BlockHeaderTargets,
+        builder: &mut CircuitBuilder<F, D>,
+    ) -> plonky2::hash::hash_types::HashOutTarget {
+        let pre_image = targets.header.collect_to_vec();
+        builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(pre_image)
+    }
 
-    /// Builds the block header validation circuit.
+    /// Builds the block header circuit WITHOUT binding `block_hash` to the header
+    /// contents (only the `block_number` range check is added).
     ///
-    /// NOTE: This function only does range checking on block_number.
-    /// The block_hash == computed_hash constraint is added by `add_block_hash_validation()`
-    /// or conditionally in `connect_shared_targets` (for dummy proof support).
-    fn circuit(
-        Self::Targets {
-            block_hash: _,
-            header,
-        }: &Self::Targets,
+    /// This is an escape hatch for the full Wormhole circuit, which must make the
+    /// hash binding *conditional* to support dummy proofs and therefore pairs this
+    /// with [`Self::conditional_block_hash_binding`]. Every other caller should use
+    /// [`CircuitFragment::circuit`], which enforces the binding unconditionally.
+    /// Using this function without also adding a hash binding produces an
+    /// under-constrained circuit where the public `block_hash` is unrelated to the
+    /// private header preimage.
+    pub fn circuit_without_hash_binding(
+        targets: &BlockHeaderTargets,
         builder: &mut CircuitBuilder<F, D>,
     ) {
         // Range constrain the block_number target to be 32 bits to verify injective encoding
-        builder.range_check(header.block_number, 32);
+        builder.range_check(targets.header.block_number, 32);
+    }
+
+    /// Enforces `block_hash == hash(header contents)` whenever `is_not_dummy` is 1,
+    /// i.e. `(block_hash[i] - computed[i]) * is_not_dummy == 0` for each limb.
+    ///
+    /// `is_not_dummy` MUST itself be constrained by the caller (the full Wormhole
+    /// circuit derives it in-circuit from `block_hash == 0 AND outputs == 0`);
+    /// otherwise a malicious prover can simply witness it to 0 and skip the check.
+    pub fn conditional_block_hash_binding(
+        targets: &BlockHeaderTargets,
+        builder: &mut CircuitBuilder<F, D>,
+        is_not_dummy: Target,
+    ) {
+        let computed_block_hash = Self::computed_block_hash(targets, builder);
+        let zero = builder.zero();
+        for i in 0..4 {
+            let diff = builder.sub(
+                targets.block_hash.elements[i],
+                computed_block_hash.elements[i],
+            );
+            let result = builder.mul(diff, is_not_dummy);
+            builder.connect(result, zero);
+        }
+    }
+}
+
+impl CircuitFragment for BlockHeader {
+    type Targets = BlockHeaderTargets;
+
+    /// Builds the block header validation circuit, unconditionally enforcing
+    /// `block_hash == hash(header contents)` in addition to range-checking
+    /// `block_number`.
+    ///
+    /// This is the safe-by-default entry point: any circuit composed from this
+    /// fragment inherits the hash binding that gives the public `block_hash`
+    /// input its meaning. The full Wormhole circuit is the one exception; it
+    /// uses [`BlockHeader::circuit_without_hash_binding`] together with
+    /// [`BlockHeader::conditional_block_hash_binding`] so dummy proofs
+    /// (block_hash == 0) can skip the binding.
+    fn circuit(targets: &Self::Targets, builder: &mut CircuitBuilder<F, D>) {
+        Self::circuit_without_hash_binding(targets, builder);
+        let computed_block_hash = Self::computed_block_hash(targets, builder);
+        builder.connect_hashes(targets.block_hash, computed_block_hash);
     }
 
     fn fill_targets(
@@ -90,15 +145,4 @@ impl CircuitFragment for BlockHeader {
         pw.set_target_arr(&targets.header.digest, &self.header.digest)?;
         Ok(())
     }
-}
-
-/// Adds unconditional block hash validation: block_hash == hash(header contents).
-/// Use this for isolated testing of BlockHeader. The full WormholeCircuit uses
-/// a conditional version in connect_shared_targets() to support dummy proofs.
-pub fn add_block_hash_validation(targets: &BlockHeaderTargets, builder: &mut CircuitBuilder<F, D>) {
-    use plonky2::hash::poseidon2::Poseidon2Hash;
-
-    let pre_image = targets.header.collect_to_vec();
-    let computed_block_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(pre_image);
-    builder.connect_hashes(targets.block_hash, computed_block_hash);
 }

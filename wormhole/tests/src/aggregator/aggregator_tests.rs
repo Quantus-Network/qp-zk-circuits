@@ -5,7 +5,7 @@ use plonky2::field::types::Field;
 use plonky2::plonk::circuit_data::VerifierCircuitData;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_inputs::{BytesDigest, PublicCircuitInputs};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Once, OnceLock};
 use test_helpers::{compute_zk_leaf_hash, TestInputs};
 use wormhole_aggregator::aggregator::PublicBatchAggregator;
@@ -81,15 +81,14 @@ fn setup_public_test_binaries() {
     });
 }
 
-fn make_leaf_proof_in(dir: &Path, inputs: &CircuitInputs) -> ProofWithPublicInputs<F, C, D> {
-    let prover = WormholeProver::new_from_files(&dir.join("prover.bin"), &dir.join("common.bin"))
-        .expect("Failed to create prover from binaries");
-    prover.commit(inputs).unwrap().prove().unwrap()
-}
-
 fn make_leaf_proof(inputs: &CircuitInputs) -> ProofWithPublicInputs<F, C, D> {
-    setup_test_binaries();
-    make_leaf_proof_in(&private_bins_dir(), inputs)
+    // The leaf prover is always built from source; it no longer loads a prover.bin,
+    // so leaf proofs are independent of any generated artifact directory.
+    wormhole_prover::build_fresh()
+        .commit(inputs)
+        .unwrap()
+        .prove()
+        .unwrap()
 }
 
 fn make_private_batch_prover() -> PrivateBatchProver {
@@ -352,6 +351,78 @@ fn private_batch_prover_rejects_poisoned_dummy_template() {
     let _ = std::fs::remove_dir_all(&poisoned_dir);
 }
 
+#[test]
+fn private_batch_build_rejects_substituted_leaf_artifacts() {
+    // Regression (build-time verifier-key substitution): the private-batch build
+    // bakes the leaf verifier key into the recursive circuit as constants, so it
+    // must pin common.bin/verifier.bin to the canonical Wormhole leaf circuit
+    // before embedding them. A same-profile fake leaf circuit (identical config
+    // and public-input shape) must be rejected.
+    use plonky2::util::serialization::DefaultGateSerializer;
+    use test_helpers::fake_leaf::build_fake_leaf_circuit;
+    use wormhole_aggregator::private_batch::circuit::build::generate_private_batch_circuit_binaries;
+
+    let dir = test_bins_root().join("substituted-leaf-build");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let (fake, _) = build_fake_leaf_circuit();
+    std::fs::write(
+        dir.join("common.bin"),
+        fake.common.to_bytes(&DefaultGateSerializer).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("verifier.bin"),
+        fake.verifier_only.to_bytes().unwrap(),
+    )
+    .unwrap();
+
+    let err = generate_private_batch_circuit_binaries(&dir, 1, false)
+        .expect_err("substituted leaf artifacts must be rejected before circuit construction");
+    assert!(
+        err.to_string().contains("does not match the canonical"),
+        "got: {err}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn public_batch_build_rejects_substituted_private_batch_artifacts() {
+    // Regression (build-time verifier-key substitution, public layer): the
+    // public-batch build must pin private_batch_common.bin/verifier.bin to the
+    // canonical private-batch circuit before baking the verifier key in.
+    use wormhole_aggregator::public_batch::circuit::generate_public_batch_circuit_binaries;
+
+    setup_test_binaries();
+    let dir = test_bins_root().join("substituted-private-batch-build");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for entry in std::fs::read_dir(private_bins_dir()).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), dir.join(entry.file_name())).unwrap();
+    }
+
+    // Flip one byte of the verifier key. The artifact still deserializes (the
+    // format is fixed-size hashes), so only the canonical comparison catches it.
+    let mut vk_bytes = std::fs::read(dir.join("private_batch_verifier.bin")).unwrap();
+    let last = vk_bytes.len() - 1;
+    vk_bytes[last] ^= 0x01;
+    std::fs::write(dir.join("private_batch_verifier.bin"), vk_bytes).unwrap();
+
+    let err = generate_public_batch_circuit_binaries(&dir, 1, false)
+        .expect_err("substituted private-batch artifacts must be rejected before baking");
+    // `{err:#}` prints the whole context chain; the canonical mismatch is the cause.
+    let chain = format!("{err:#}");
+    assert!(
+        chain.contains("does not match the canonical"),
+        "got: {chain}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // ============================================================================
 // Miner-side (public batch): pooled aggregation
 // ============================================================================
@@ -365,7 +436,7 @@ fn make_private_batch_proof_in_public_dir() -> ProofWithPublicInputs<F, C, D> {
             setup_public_test_binaries();
             let dir = public_bins_dir();
             // Non-dummy inputs: the aggregator refuses the dummy bucket.
-            let leaf = make_leaf_proof_in(&dir, &test_inputs_with_real_block());
+            let leaf = make_leaf_proof(&test_inputs_with_real_block());
             PrivateBatchProver::new_from_binaries_dir(&dir)
                 .expect("load private-batch prover from public test binaries")
                 .aggregate(vec![leaf])
@@ -384,7 +455,7 @@ fn pool_rejects_invalid_proofs_and_aggregates_by_bucket() {
     let mut aggregator = PublicBatchAggregator::new(&dir, address).expect("public aggregator");
 
     // Shape rejection: a leaf proof is not a private-batch proof.
-    let leaf = make_leaf_proof_in(&dir, &CircuitInputs::test_inputs_0());
+    let leaf = make_leaf_proof(&CircuitInputs::test_inputs_0());
     let err = aggregator.push_proof(leaf).unwrap_err();
     assert!(
         err.to_string().contains("public input length mismatch"),

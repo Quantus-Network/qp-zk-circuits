@@ -116,7 +116,8 @@ inputs `p`.
 RANGE-CHECK SET (confirmed against `ZkLeaf::collect_32_bit_targets`): the
 unconditional 32-bit checks cover `transfer_count` (both limbs), `asset_id`,
 `input_amount`, `output_amount_1`, `output_amount_2`, and `volume_fee_bps`.
-`block_number`'s 32-bit check lives separately in `BlockHeader::circuit` (also
+`block_number`'s 32-bit check lives separately in
+`BlockHeader::circuit_without_hash_binding` (also
 unconditional). `volume_fee_bps` additionally satisfies `≤ 10000` via the 14-bit
 `fee_complement` check in the fee constraint, which is the binding bound and
 subsumes its 32-bit check.
