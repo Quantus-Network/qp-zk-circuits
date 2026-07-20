@@ -1077,7 +1077,7 @@ checksum = "55e32db7b3a5d70086f82f198ecfc021f17cb7ec70a416512dba3488f4a116c1"
 
 [[package]]
 name = "qp-voting-circuit"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "anyhow",
  "qp-plonky2",
@@ -1086,7 +1086,7 @@ dependencies = [
 
 [[package]]
 name = "qp-wormhole-aggregator"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1106,7 +1106,7 @@ dependencies = [
 
 [[package]]
 name = "qp-wormhole-circuit"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "anyhow",
  "env_logger",
@@ -1118,7 +1118,7 @@ dependencies = [
 
 [[package]]
 name = "qp-wormhole-circuit-builder"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1130,14 +1130,14 @@ dependencies = [
 
 [[package]]
 name = "qp-wormhole-inputs"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "anyhow",
 ]
 
 [[package]]
 name = "qp-wormhole-prover"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1149,7 +1149,7 @@ dependencies = [
 
 [[package]]
 name = "qp-wormhole-verifier"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1160,7 +1160,7 @@ dependencies = [
 
 [[package]]
 name = "qp-zk-circuits-common"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "anyhow",
  "qp-plonky2",
@@ -1492,7 +1492,7 @@ dependencies = [
 
 [[package]]
 name = "test-helpers"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "hex",
  "qp-plonky2",
@@ -1503,7 +1503,7 @@ dependencies = [
 
 [[package]]
 name = "tests"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "anyhow",
  "hex",
@@ -1882,7 +1882,7 @@ dependencies = [
 
 [[package]]
 name = "wormhole-memprof"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "anyhow",
  "clap",
