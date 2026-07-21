@@ -33,6 +33,30 @@ use crate::serialization;
 /// Type alias for 32-byte hash.
 pub type Hash256 = [u8; 32];
 
+/// Goldilocks field modulus `p = 2^64 - 2^32 + 1`.
+///
+/// A 32-byte hash is decoded into four little-endian `u64` limbs before
+/// hashing; each limb must be `< p` for the 8-bytes-per-felt decode to be
+/// injective (see [`is_canonical_hash`]).
+const GOLDILOCKS_MODULUS: u64 = 0xFFFF_FFFF_0000_0001;
+
+/// Returns `true` if every 8-byte little-endian limb of `hash` is a canonical
+/// Goldilocks field element (strictly `< p`).
+///
+/// Internal-node hashing packs each limb into a field element via a mod-`p`
+/// reduction, so two distinct byte strings whose limbs differ by a multiple of
+/// `p` hash identically. Byte-level Merkle verification must therefore reject
+/// noncanonical hashes up front; otherwise a proof for a noncanonical byte
+/// alias of a genuine child would verify against the same root, and the API
+/// would validate membership of a field-equivalence class rather than of the
+/// exact 32-byte hash it presents.
+pub fn is_canonical_hash(hash: &Hash256) -> bool {
+    hash.chunks_exact(8).all(|chunk| {
+        let limb = u64::from_le_bytes(chunk.try_into().expect("chunk is 8 bytes"));
+        limb < GOLDILOCKS_MODULUS
+    })
+}
+
 /// Arity of the Merkle tree (4-ary).
 pub const ARITY: usize = 4;
 
@@ -143,6 +167,18 @@ impl ZkMerkleProof {
             return false;
         }
         if self.siblings.len() != self.positions.len() {
+            return false;
+        }
+
+        // Reject noncanonical hash bytes before hashing. The compact node hash
+        // reduces each 8-byte limb mod p, so a noncanonical byte alias of a
+        // genuine child would derive the same parent; requiring canonical limbs
+        // makes this verifier prove membership of the exact 32-byte hashes it
+        // presents (see `is_canonical_hash`).
+        if !is_canonical_hash(&self.leaf_hash) {
+            return false;
+        }
+        if !self.siblings.iter().flatten().all(is_canonical_hash) {
             return false;
         }
 
@@ -492,6 +528,91 @@ mod tests {
         // Out-of-range hint is likewise an invalid proof, not a panic.
         proof.positions[0] = 7;
         assert!(!proof.verify());
+    }
+
+    /// Goldilocks field modulus `p = 2^64 - 2^32 + 1`.
+    const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
+
+    /// Build a 32-byte hash from four little-endian `u64` limbs.
+    fn hash_from_limbs(limbs: [u64; 4]) -> Hash256 {
+        let mut bytes = [0u8; 32];
+        for (i, limb) in limbs.iter().enumerate() {
+            bytes[i * 8..i * 8 + 8].copy_from_slice(&limb.to_le_bytes());
+        }
+        bytes
+    }
+
+    /// Read the four little-endian `u64` limbs of a 32-byte hash.
+    fn limbs_from_hash(hash: &Hash256) -> [u64; 4] {
+        let mut limbs = [0u64; 4];
+        for (i, limb) in limbs.iter_mut().enumerate() {
+            *limb = u64::from_le_bytes(hash[i * 8..i * 8 + 8].try_into().unwrap());
+        }
+        limbs
+    }
+
+    /// Return a distinct byte string that decodes to the same field digest as
+    /// `hash` by adding `p` to its first limb, or `None` if that limb is too
+    /// large for the `+p` alias to fit in a `u64`.
+    fn noncanonical_alias(hash: &Hash256) -> Option<Hash256> {
+        let mut limbs = limbs_from_hash(hash);
+        limbs[0] = limbs[0].checked_add(GOLDILOCKS)?;
+        let alias = hash_from_limbs(limbs);
+        (alias != *hash).then_some(alias)
+    }
+
+    /// Audit: the internal-node hash packs each 8-byte limb into a Goldilocks
+    /// felt via a mod-`p` reduction, so a caller can replace a canonical child
+    /// digest with a distinct noncanonical byte alias (limb `+ p`) and derive
+    /// the same parent/root. The byte-level verifier must reject noncanonical
+    /// leaf bytes so it proves membership of the exact 32-byte hash, not of a
+    /// field-equivalence class.
+    #[test]
+    fn verify_rejects_noncanonical_leaf_alias() {
+        let leaf0 = hash_from_limbs([0, 0, 0, 0]);
+        let leaf1 = hash_from_limbs([1, 0, 0, 0]);
+        let leaf2 = hash_from_limbs([2, 0, 0, 0]);
+        let leaf3 = hash_from_limbs([3, 0, 0, 0]);
+        let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]);
+
+        let mut proof = ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root);
+        assert!(proof.verify(), "sanity: canonical proof must verify");
+
+        // Alias of leaf0: limb 0 replaced by `p`, which reduces to 0 mod p.
+        let alias = noncanonical_alias(&leaf0).expect("leaf0 limb 0 admits a +p alias");
+        assert_ne!(alias, leaf0, "alias must be a distinct byte string");
+        proof.leaf_hash = alias;
+
+        assert!(
+            !proof.verify(),
+            "noncanonical leaf alias must be rejected, not accepted via field aliasing"
+        );
+        assert!(!proof.verify_with_positions());
+    }
+
+    /// Same aliasing attack, but on a sibling hash rather than the leaf.
+    #[test]
+    fn verify_rejects_noncanonical_sibling_alias() {
+        let leaf0 = hash_from_limbs([0, 0, 0, 0]);
+        let leaf1 = hash_from_limbs([1, 0, 0, 0]);
+        let leaf2 = hash_from_limbs([2, 0, 0, 0]);
+        let leaf3 = hash_from_limbs([3, 0, 0, 0]);
+        let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]);
+
+        let mut proof = ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root);
+        assert!(proof.verify(), "sanity: canonical proof must verify");
+
+        // Replace the first sibling with its noncanonical alias.
+        let original = proof.siblings[0][0];
+        let alias = noncanonical_alias(&original).expect("sibling limb 0 admits a +p alias");
+        assert_ne!(alias, original);
+        proof.siblings[0][0] = alias;
+
+        assert!(
+            !proof.verify(),
+            "noncanonical sibling alias must be rejected"
+        );
+        assert!(!proof.verify_with_positions());
     }
 
     #[test]
