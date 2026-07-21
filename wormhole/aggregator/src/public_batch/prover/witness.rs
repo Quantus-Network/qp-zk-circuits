@@ -7,6 +7,7 @@ use plonky2::plonk::proof::ProofWithPublicInputs;
 use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::utils::Digest;
 
+use crate::common::utils::ensure_proof_shape_matches_targets;
 use crate::public_batch::circuit::circuit_logic::PublicBatchCircuitTargets;
 
 /// Fill a partial witness for the public-batch aggregation circuit.
@@ -38,17 +39,11 @@ pub fn fill_public_batch_witness(
         .zip(private_batch_proofs.iter())
         .enumerate()
     {
-        // Reject shape mismatches at this Result boundary: with fewer public
-        // inputs than targets, set_proof_with_pis_target's internal zip would
-        // silently leave trailing PI targets unset instead of erroring.
-        if proof.public_inputs.len() != proof_t.public_inputs.len() {
-            bail!(
-                "private-batch proof at slot {} has {} public inputs, but the circuit expects {}",
-                i,
-                proof.public_inputs.len(),
-                proof_t.public_inputs.len()
-            );
-        }
+        // Full proof-shape preflight at this Result boundary: a malformed
+        // proof (wrong PI count, truncated FRI query rounds, inconsistent
+        // opening vectors, ...) would otherwise panic inside plonky2's
+        // witness writer or silently leave targets unset.
+        ensure_proof_shape_matches_targets(proof_t, proof, i, "private-batch proof")?;
         pw.set_proof_with_pis_target(proof_t, proof)?;
     }
 

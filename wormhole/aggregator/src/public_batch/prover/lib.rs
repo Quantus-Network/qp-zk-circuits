@@ -762,4 +762,106 @@ mod tests {
             "got: {err}"
         );
     }
+
+    // -------------------------------------------------------------------------
+    // Witness-fill proof-shape preflight
+    //
+    // A proof with the expected public-input length can still carry internally
+    // inconsistent proof vectors. The pinned qp-plonky2 witness writer assigns
+    // those through zip_eq / debug-only length checks, so without a full shape
+    // preflight a malformed proof panics inside fill_public_batch_witness
+    // (or silently leaves targets unset) instead of returning Err. Mirrors the
+    // private-batch witness-fill preflight one layer down.
+    // -------------------------------------------------------------------------
+
+    /// Prove one valid all-dummy private-batch proof and build matching
+    /// 1-slot public-batch targets.
+    fn valid_private_batch_proof_and_targets() -> (
+        ProofWithPublicInputs<F, C, D>,
+        PublicBatchCircuitTargets,
+    ) {
+        let (leaf, leaf_targets) = build_fake_leaf_circuit();
+        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; 21]);
+        let proof = make_all_dummy_private_batch_template(&leaf, &dummy_leaf);
+
+        let private_batch = PrivateBatchCircuit::new(
+            wormhole_private_batch_circuit_config(),
+            &leaf.common,
+            &leaf.verifier_only,
+            1,
+        )
+        .unwrap()
+        .build_verifier();
+
+        let targets = PublicBatchCircuit::new(
+            wormhole_public_batch_circuit_config(),
+            private_batch.common,
+            &private_batch.verifier_only,
+            1,
+            1,
+        )
+        .unwrap()
+        .targets();
+
+        (proof, targets)
+    }
+
+    fn fill_witness_with_proof(
+        targets: &PublicBatchCircuitTargets,
+        proof: ProofWithPublicInputs<F, C, D>,
+    ) -> Result<()> {
+        let mut pw = PartialWitness::new();
+        fill_public_batch_witness(
+            &mut pw,
+            targets,
+            &[proof],
+            bytes_to_digest(BytesDigest::default()),
+        )
+    }
+
+    /// Control: an untampered proof must still pass the shape preflight.
+    #[test]
+    fn witness_fill_accepts_well_shaped_proof() {
+        let (proof, targets) = valid_private_batch_proof_and_targets();
+        fill_witness_with_proof(&targets, proof)
+            .expect("a valid, well-shaped proof must fill the witness");
+    }
+
+    /// A shortened FRI query-round list panics in plonky2's zip_eq without a
+    /// shape preflight; it must instead be rejected with an error.
+    #[test]
+    fn witness_fill_rejects_truncated_fri_query_rounds() {
+        let (mut proof, targets) = valid_private_batch_proof_and_targets();
+        proof.proof.opening_proof.query_round_proofs.pop();
+
+        let err = fill_witness_with_proof(&targets, proof)
+            .expect_err("proof with truncated FRI query rounds must be rejected");
+        assert!(err.to_string().contains("query_round_proofs"), "got: {err}");
+    }
+
+    /// A truncated opening set trips a debug-only length check in plonky2's
+    /// witness writer (silent partial assignment in release); it must instead
+    /// be rejected with an error.
+    #[test]
+    fn witness_fill_rejects_truncated_openings() {
+        let (mut proof, targets) = valid_private_batch_proof_and_targets();
+        proof.proof.openings.wires.pop();
+
+        let err = fill_witness_with_proof(&targets, proof)
+            .expect_err("proof with truncated openings must be rejected");
+        assert!(err.to_string().contains("openings.wires"), "got: {err}");
+    }
+
+    /// A shortened wires Merkle cap is assigned through a plain zip, silently
+    /// leaving trailing cap targets unset and deferring failure to prove time;
+    /// it must instead be rejected with an error.
+    #[test]
+    fn witness_fill_rejects_truncated_wires_cap() {
+        let (mut proof, targets) = valid_private_batch_proof_and_targets();
+        proof.proof.wires_cap.0.pop();
+
+        let err = fill_witness_with_proof(&targets, proof)
+            .expect_err("proof with truncated wires_cap must be rejected");
+        assert!(err.to_string().contains("wires_cap"), "got: {err}");
+    }
 }

@@ -5,7 +5,7 @@ use plonky2::{
         circuit_data::{
             CircuitConfig, CommonCircuitData, VerifierCircuitData, VerifierOnlyCircuitData,
         },
-        proof::ProofWithPublicInputs,
+        proof::{ProofWithPublicInputs, ProofWithPublicInputsTarget},
     },
     util::serialization::DefaultGateSerializer,
 };
@@ -171,6 +171,249 @@ pub fn canonical_public_batch_verifier_data(
         num_leaf_proofs,
     )?
     .build_verifier())
+}
+
+fn ensure_len_matches(
+    actual: usize,
+    expected: usize,
+    label: &str,
+    slot: usize,
+    what: &str,
+) -> Result<()> {
+    if actual != expected {
+        bail!(
+            "{} at slot {} is malformed: {} has length {}, but the circuit expects {}",
+            label,
+            slot,
+            what,
+            actual,
+            expected
+        );
+    }
+    Ok(())
+}
+
+/// Preflight a caller-supplied proof's full internal shape against the
+/// circuit's proof targets, so a malformed proof is rejected at a Result
+/// boundary instead of reaching plonky2's witness writer.
+///
+/// `set_proof_with_pis_target` assigns the proof's internals through
+/// length-sensitive iterator paths: `zip_eq` (panics on mismatch, e.g. for the
+/// FRI query-round list), debug-only length asserts (silent partial assignment
+/// in release), and plain `zip` (silently leaves trailing targets unset, e.g.
+/// for Merkle caps). A proof with the expected public-input length but
+/// internally inconsistent vectors would otherwise crash the process or defer
+/// the failure to prove time. Plonky2's own shape validation is private to the
+/// crate and only runs inside `verify`, after witness filling.
+///
+/// `label` names the proof kind in error messages (e.g. "leaf proof").
+pub fn ensure_proof_shape_matches_targets(
+    proof_t: &ProofWithPublicInputsTarget<D>,
+    proof: &ProofWithPublicInputs<F, C, D>,
+    slot: usize,
+    label: &str,
+) -> Result<()> {
+    // With fewer public inputs than targets, set_proof_with_pis_target's
+    // internal zip_eq would panic instead of erroring.
+    ensure_len_matches(
+        proof.public_inputs.len(),
+        proof_t.public_inputs.len(),
+        label,
+        slot,
+        "public inputs",
+    )?;
+
+    let p = &proof.proof;
+    let t = &proof_t.proof;
+
+    ensure_len_matches(
+        p.wires_cap.0.len(),
+        t.wires_cap.0.len(),
+        label,
+        slot,
+        "wires_cap",
+    )?;
+    ensure_len_matches(
+        p.plonk_zs_partial_products_cap.0.len(),
+        t.plonk_zs_partial_products_cap.0.len(),
+        label,
+        slot,
+        "plonk_zs_partial_products_cap",
+    )?;
+    ensure_len_matches(
+        p.quotient_polys_cap.0.len(),
+        t.quotient_polys_cap.0.len(),
+        label,
+        slot,
+        "quotient_polys_cap",
+    )?;
+
+    let o = &p.openings;
+    let ot = &t.openings;
+    ensure_len_matches(
+        o.constants.len(),
+        ot.constants.len(),
+        label,
+        slot,
+        "openings.constants",
+    )?;
+    ensure_len_matches(
+        o.plonk_sigmas.len(),
+        ot.plonk_sigmas.len(),
+        label,
+        slot,
+        "openings.plonk_sigmas",
+    )?;
+    ensure_len_matches(o.wires.len(), ot.wires.len(), label, slot, "openings.wires")?;
+    ensure_len_matches(
+        o.plonk_zs.len(),
+        ot.plonk_zs.len(),
+        label,
+        slot,
+        "openings.plonk_zs",
+    )?;
+    ensure_len_matches(
+        o.plonk_zs_next.len(),
+        ot.plonk_zs_next.len(),
+        label,
+        slot,
+        "openings.plonk_zs_next",
+    )?;
+    ensure_len_matches(
+        o.partial_products.len(),
+        ot.partial_products.len(),
+        label,
+        slot,
+        "openings.partial_products",
+    )?;
+    ensure_len_matches(
+        o.quotient_polys.len(),
+        ot.quotient_polys.len(),
+        label,
+        slot,
+        "openings.quotient_polys",
+    )?;
+    ensure_len_matches(
+        o.lookup_zs.len(),
+        ot.lookup_zs.len(),
+        label,
+        slot,
+        "openings.lookup_zs",
+    )?;
+    ensure_len_matches(
+        o.lookup_zs_next.len(),
+        ot.next_lookup_zs.len(),
+        label,
+        slot,
+        "openings.lookup_zs_next",
+    )?;
+
+    let f = &p.opening_proof;
+    let ft = &t.opening_proof;
+
+    ensure_len_matches(
+        f.commit_phase_merkle_caps.len(),
+        ft.commit_phase_merkle_caps.len(),
+        label,
+        slot,
+        "opening_proof.commit_phase_merkle_caps",
+    )?;
+    for (i, (cap, cap_t)) in f
+        .commit_phase_merkle_caps
+        .iter()
+        .zip(ft.commit_phase_merkle_caps.iter())
+        .enumerate()
+    {
+        ensure_len_matches(
+            cap.0.len(),
+            cap_t.0.len(),
+            label,
+            slot,
+            &format!("opening_proof.commit_phase_merkle_caps[{i}]"),
+        )?;
+    }
+
+    ensure_len_matches(
+        f.query_round_proofs.len(),
+        ft.query_round_proofs.len(),
+        label,
+        slot,
+        "opening_proof.query_round_proofs",
+    )?;
+    for (i, (round, round_t)) in f
+        .query_round_proofs
+        .iter()
+        .zip(ft.query_round_proofs.iter())
+        .enumerate()
+    {
+        ensure_len_matches(
+            round.initial_trees_proof.evals_proofs.len(),
+            round_t.initial_trees_proof.evals_proofs.len(),
+            label,
+            slot,
+            &format!("opening_proof.query_round_proofs[{i}].initial_trees_proof.evals_proofs"),
+        )?;
+        for (j, ((evals, merkle), (evals_t, merkle_t))) in round
+            .initial_trees_proof
+            .evals_proofs
+            .iter()
+            .zip(round_t.initial_trees_proof.evals_proofs.iter())
+            .enumerate()
+        {
+            ensure_len_matches(
+                evals.len(),
+                evals_t.len(),
+                label,
+                slot,
+                &format!(
+                    "opening_proof.query_round_proofs[{i}].initial_trees_proof.evals_proofs[{j}].evals"
+                ),
+            )?;
+            ensure_len_matches(
+                merkle.siblings.len(),
+                merkle_t.siblings.len(),
+                label,
+                slot,
+                &format!(
+                    "opening_proof.query_round_proofs[{i}].initial_trees_proof.evals_proofs[{j}].siblings"
+                ),
+            )?;
+        }
+
+        ensure_len_matches(
+            round.steps.len(),
+            round_t.steps.len(),
+            label,
+            slot,
+            &format!("opening_proof.query_round_proofs[{i}].steps"),
+        )?;
+        for (j, (step, step_t)) in round.steps.iter().zip(round_t.steps.iter()).enumerate() {
+            ensure_len_matches(
+                step.evals.len(),
+                step_t.evals.len(),
+                label,
+                slot,
+                &format!("opening_proof.query_round_proofs[{i}].steps[{j}].evals"),
+            )?;
+            ensure_len_matches(
+                step.merkle_proof.siblings.len(),
+                step_t.merkle_proof.siblings.len(),
+                label,
+                slot,
+                &format!("opening_proof.query_round_proofs[{i}].steps[{j}].merkle_proof.siblings"),
+            )?;
+        }
+    }
+
+    ensure_len_matches(
+        f.final_poly.coeffs.len(),
+        ft.final_poly.0.len(),
+        label,
+        slot,
+        "opening_proof.final_poly",
+    )?;
+
+    Ok(())
 }
 
 pub fn ensure_proof_public_input_len(
