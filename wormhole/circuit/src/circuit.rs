@@ -1,32 +1,19 @@
 //! Wormhole Circuit.
 //!
 //! This module defines the zero-knowledge circuit for the Wormhole protocol.
-use alloc::vec::Vec;
-use plonky2::{
-    plonk::circuit_data::CircuitData,
-    util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer},
-};
-use zk_circuits_common::circuit::{C, D, F};
-
-pub fn circuit_data_to_bytes(
-    data: &CircuitData<F, C, D>,
-) -> Result<Vec<u8>, plonky2::util::serialization::IoError> {
-    let gate_serializer = DefaultGateSerializer;
-    let generator_serializer = DefaultGeneratorSerializer::<C, D> {
-        _phantom: Default::default(),
-    };
-    data.to_bytes(&gate_serializer, &generator_serializer)
-}
-
-pub fn circuit_data_from_bytes(
-    bytes: &[u8],
-) -> Result<CircuitData<F, C, D>, plonky2::util::serialization::IoError> {
-    let gate_serializer = DefaultGateSerializer;
-    let generator_serializer = DefaultGeneratorSerializer::<C, D> {
-        _phantom: Default::default(),
-    };
-    CircuitData::from_bytes(bytes, &gate_serializer, &generator_serializer)
-}
+//!
+//! Note: this crate deliberately provides no (de)serializer for the full leaf
+//! [`CircuitData`](plonky2::plonk::circuit_data::CircuitData). A full
+//! `CircuitData` carries the prover-only data — the witness generators and the
+//! target list that decides which witness values become `public_inputs` — so a
+//! poisoned serialized artifact could exfiltrate private witness material (e.g.
+//! the Wormhole `secret`) through a proof's `public_inputs`, or silently
+//! substitute a circuit with weaker constraints. The leaf circuit builds from
+//! source in ~40 ms (release), which is about the same cost as validating and
+//! deserializing an artifact, so serialized full-circuit artifacts are never
+//! needed: always construct [`circuit_logic::WormholeCircuit`] directly.
+//! Verifier-side artifacts are loaded through the pinned, fail-closed loader in
+//! `qp-wormhole-verifier` instead.
 
 #[cfg(feature = "std")]
 pub mod circuit_logic {
