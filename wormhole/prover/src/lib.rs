@@ -95,11 +95,25 @@ use wormhole_circuit::{
     unspendable_account::UnspendableAccount, zk_merkle_proof::ZkMerkleProofData,
 };
 
-#[derive(Debug)]
 pub struct WormholeProver {
     pub circuit_data: ProverCircuitData<F, C, D>,
     partial_witness: PartialWitness<F>,
     targets: Option<CircuitTargets>,
+}
+
+/// Redacting `Debug`: after [`WormholeProver::commit`], `partial_witness`
+/// holds every private witness value — including the raw spend secret written
+/// by `Nullifier::fill_targets` — so it must never reach logs, error
+/// contexts, or telemetry via `{:?}`. `circuit_data` is public circuit
+/// structure but far too large to print usefully.
+impl core::fmt::Debug for WormholeProver {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("WormholeProver")
+            .field("circuit_data", &"[ProverCircuitData]")
+            .field("partial_witness", &"[REDACTED]")
+            .field("committed", &self.targets.is_none())
+            .finish()
+    }
 }
 
 /// Builds a fresh [`WormholeProver`] with the default leaf circuit configuration (non-ZK).
@@ -196,4 +210,56 @@ pub fn fill_witness(
     block_header.fill_targets(pw, targets.block_header.clone())?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wormhole_circuit::inputs::{PrivateCircuitInputs, PublicCircuitInputs};
+
+    /// After `commit`, the `PartialWitness` holds every private witness value,
+    /// including the raw spend secret written by `Nullifier::fill_targets`.
+    /// Formatting a committed prover with `{:?}` must not expose any of it.
+    #[test]
+    fn committed_prover_debug_does_not_leak_private_witness() {
+        let inputs = CircuitInputs {
+            private: PrivateCircuitInputs {
+                secret: [0xAB; 32].try_into().unwrap(),
+                transfer_count: 0,
+                unspendable_account: [0xCD; 32].try_into().unwrap(),
+                parent_hash: [5u8; 32].try_into().unwrap(),
+                state_root: [3u8; 32].try_into().unwrap(),
+                extrinsics_root: [4u8; 32].try_into().unwrap(),
+                digest: [0xEE; 110],
+                input_amount: 1000,
+                zk_tree_root: [0u8; 32],
+                zk_merkle_siblings: vec![],
+                zk_merkle_positions: vec![],
+            },
+            public: PublicCircuitInputs {
+                asset_id: 0,
+                output_amount_1: 900,
+                output_amount_2: 99,
+                volume_fee_bps: 10,
+                nullifier: [1u8; 32].try_into().unwrap(),
+                block_hash: [0u8; 32].try_into().unwrap(),
+                exit_account_1: [2u8; 32].try_into().unwrap(),
+                exit_account_2: [3u8; 32].try_into().unwrap(),
+                block_number: 1,
+            },
+        };
+
+        let prover = build_fresh().commit(&inputs).unwrap();
+        let dump = format!("{:?}", prover);
+        // Spend secret felts: each 8-byte chunk of [0xAB; 32].
+        assert!(
+            !dump.contains("12370169555311111083"),
+            "raw secret leaked from committed prover Debug output"
+        );
+        // Unspendable (deposit) account felts: each 8-byte chunk of [0xCD; 32].
+        assert!(
+            !dump.contains("14829735431805717965"),
+            "deposit account leaked from committed prover Debug output"
+        );
+    }
 }

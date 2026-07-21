@@ -182,7 +182,7 @@ impl ZkMerkleProofTargets {
 // ============================================================================
 
 /// Leaf data for the ZK Merkle proof.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ZkLeafData {
     /// Recipient account (32 bytes)
     pub to_account: [F; HASH_NUM_FELTS],
@@ -198,6 +198,25 @@ pub struct ZkLeafData {
     pub output_amount_2: F,
     /// Volume fee in bps
     pub volume_fee_bps: F,
+}
+
+/// Redacting `Debug`: `to_account` (the unspendable deposit account — the
+/// direct deposit/withdrawal link), `transfer_count`, and `input_amount` are
+/// felt-encoded copies of fields redacted on `PrivateCircuitInputs`.
+/// `asset_id`, the output amounts, and `volume_fee_bps` are public inputs and
+/// stay visible.
+impl core::fmt::Debug for ZkLeafData {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ZkLeafData")
+            .field("to_account", &"[REDACTED]")
+            .field("transfer_count", &"[REDACTED]")
+            .field("asset_id", &self.asset_id)
+            .field("input_amount", &"[REDACTED]")
+            .field("output_amount_1", &self.output_amount_1)
+            .field("output_amount_2", &self.output_amount_2)
+            .field("volume_fee_bps", &self.volume_fee_bps)
+            .finish()
+    }
 }
 
 impl ZkLeafData {
@@ -237,7 +256,7 @@ impl ZkLeafData {
 }
 
 /// Runtime data for ZK Merkle proof verification.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ZkMerkleProofData {
     /// Root hash (32 bytes as 4 felts)
     pub root_hash: [F; HASH_NUM_FELTS],
@@ -251,6 +270,24 @@ pub struct ZkMerkleProofData {
     pub leaf: ZkLeafData,
     /// Whether this is a real proof (not dummy)
     pub is_not_dummy: bool,
+}
+
+/// Redacting `Debug`: `siblings` and `positions` are the merkle-path witness
+/// (they identify the deposit leaf and are redacted on
+/// `PrivateCircuitInputs`); `leaf` uses `ZkLeafData`'s own redacted `Debug`.
+/// `root_hash` (the public zk_tree_root), `depth`, and `is_not_dummy` stay
+/// visible for debugging.
+impl core::fmt::Debug for ZkMerkleProofData {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ZkMerkleProofData")
+            .field("root_hash", &self.root_hash)
+            .field("depth", &self.depth)
+            .field("siblings", &"[REDACTED]")
+            .field("positions", &"[REDACTED]")
+            .field("leaf", &self.leaf)
+            .field("is_not_dummy", &self.is_not_dummy)
+            .finish()
+    }
 }
 
 impl ZkMerkleProofData {
@@ -615,5 +652,52 @@ impl CircuitFragment for ZkMerkleProofData {
         pw.set_target(targets.leaf.volume_fee_bps, self.leaf.volume_fee_bps)?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+
+    /// The leaf data copies `unspendable_account` (as `to_account`),
+    /// `transfer_count`, and `input_amount` out of the private circuit
+    /// inputs; all three are redacted on `PrivateCircuitInputs` because they
+    /// identify the deposit. They must stay redacted here.
+    #[test]
+    fn zk_leaf_data_debug_redacts_private_fields() {
+        let leaf = ZkLeafData::new(
+            [0xCD; 32],
+            0x0BAD_CAFE_DEAD_BEEF,
+            7,
+            313_131_313,
+            50,
+            49,
+            10,
+        );
+        let dump = alloc::format!("{:?}", leaf);
+        // to_account felts: each 8-byte chunk of [0xCD; 32].
+        assert!(!dump.contains("14829735431805717965"));
+        // transfer_count limbs (high, low).
+        assert!(!dump.contains("195906302"));
+        assert!(!dump.contains("3735928559"));
+        // input_amount (pre-fee deposit amount).
+        assert!(!dump.contains("313131313"));
+    }
+
+    /// Sibling hashes and position hints identify the leaf's location in the
+    /// ZK tree (the deposit/withdrawal link); `PrivateCircuitInputs` redacts
+    /// them, so the felt-encoded copies here must not be printable.
+    #[test]
+    fn zk_merkle_proof_data_debug_redacts_path_material() {
+        let leaf = ZkLeafData::new([0xCD; 32], 1, 0, 100, 50, 49, 10);
+        let siblings = vec![[[0xAB; 32]; SIBLINGS_PER_LEVEL]];
+        let proof_data = ZkMerkleProofData::new([0x11; 32], siblings, vec![2], leaf, true);
+
+        let dump = alloc::format!("{:?}", proof_data);
+        // Sibling hash felts: each 8-byte chunk of [0xAB; 32].
+        assert!(!dump.contains("12370169555311111083"));
+        // Position hints must not be printed as a list.
+        assert!(!dump.contains("positions: ["));
     }
 }

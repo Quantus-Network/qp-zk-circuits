@@ -146,3 +146,40 @@ impl CircuitFragment for BlockHeader {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block_header::header::DIGEST_LOGS_SIZE;
+    use plonky2::field::types::PrimeField64;
+
+    /// `BlockHeader` wraps `HeaderInputs`, so its Debug output must inherit
+    /// the redaction of the private `digest` witness field.
+    #[test]
+    fn block_header_debug_redacts_digest() {
+        let digest = [0xEE_u8; DIGEST_LOGS_SIZE];
+        let header = HeaderInputs::new(
+            BytesDigest::default(),
+            1,
+            BytesDigest::default(),
+            BytesDigest::default(),
+            BytesDigest::default(),
+            &digest,
+        )
+        .unwrap();
+        let block_header = BlockHeader::new(BytesDigest::default(), header).unwrap();
+
+        let dump = alloc::format!("{:?}", block_header);
+        for felt in block_header.header.digest.iter() {
+            let value = felt.to_canonical_u64();
+            if value > 0xFFFF {
+                let needle = alloc::format!("{}", value);
+                assert!(
+                    !dump.contains(&needle),
+                    "digest felt {} leaked in Debug output",
+                    needle
+                );
+            }
+        }
+    }
+}
