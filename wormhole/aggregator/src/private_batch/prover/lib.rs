@@ -13,12 +13,11 @@ use plonky2::{
     iop::witness::PartialWitness,
     plonk::{
         circuit_data::{
-            CircuitConfig, CommonCircuitData, ProverCircuitData, ProverOnlyCircuitData,
-            VerifierCircuitData, VerifierOnlyCircuitData,
+            CircuitConfig, CommonCircuitData, ProverCircuitData, VerifierCircuitData,
+            VerifierOnlyCircuitData,
         },
         proof::ProofWithPublicInputs,
     },
-    util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer},
 };
 use rand::seq::SliceRandom;
 
@@ -33,8 +32,7 @@ use zk_circuits_common::{
 
 use crate::{
     common::utils::{
-        ensure_common_matches_canonical, ensure_proof_public_input_len, leaf_proof_asset_id,
-        load_canonical_leaf_verifier_data,
+        ensure_proof_public_input_len, leaf_proof_asset_id, load_canonical_leaf_verifier_data,
     },
     dummy_proof::{generate_random_nullifier_preimage, load_dummy_proof},
     private_batch::{
@@ -101,26 +99,28 @@ impl PrivateBatchProver {
 
     /// Create a private-batch aggregation prover from serialized bytes.
     ///
+    /// The aggregation circuit's prover data is **rebuilt from source**, never
+    /// loaded from an artifact. `ProverOnlyCircuitData` carries the witness
+    /// generators and the `public_inputs` target list that decides which
+    /// witness values are exposed in the returned proof, so a poisoned
+    /// `private_batch_prover.bin` could otherwise make the prover emit chosen
+    /// witness targets (e.g. dummy-nullifier preimages that reveal padding
+    /// slots) in the serialized proof before any downstream verifier rejects
+    /// it. Rebuilding is free here because constructing the circuit is required
+    /// regardless, and it mirrors the leaf prover, which likewise never trusts a
+    /// serialized prover artifact.
+    ///
     /// Expected bytes:
-    /// - `aggregated_prover_only_bytes`: private-batch aggregated prover-only circuit data
-    /// - `aggregated_common_bytes`: private-batch aggregated common circuit data
     /// - `leaf_common_bytes`: leaf circuit common data (`common.bin`)
     /// - `leaf_verifier_only_bytes`: leaf verifier-only data (`verifier.bin`)
     /// - `dummy_proof_bytes`: serialized dummy leaf proof (`dummy_proof.bin`)
     /// - `num_leaf_proofs`: number of leaf proofs aggregated by this private-batch prover
     pub fn new_from_bytes(
-        aggregated_prover_only_bytes: &[u8],
-        aggregated_common_bytes: &[u8],
         leaf_common_bytes: &[u8],
         leaf_verifier_only_bytes: &[u8],
         dummy_proof_bytes: &[u8],
         num_leaf_proofs: usize,
     ) -> Result<Self> {
-        let gate_serializer = DefaultGateSerializer;
-        let generator_serializer = DefaultGeneratorSerializer::<C, D> {
-            _phantom: Default::default(),
-        };
-
         // Validate the batch count at the public byte-loading boundary so a zero
         // or oversized count returns an error instead of panicking inside the
         // circuit builder (#97027, #97070).
@@ -130,8 +130,10 @@ impl PrivateBatchProver {
         let leaf_verifier_data =
             load_canonical_leaf_verifier_data(leaf_common_bytes, leaf_verifier_only_bytes)?;
 
-        // 2) Reconstruct the canonical aggregation circuit once: it provides both the
-        // witness targets and the canonical common data used to pin the prebuilt artifacts.
+        // 2) Rebuild the aggregation circuit from source and take its prover
+        // data directly. The leaf verifier key is pinned above and baked in as
+        // constants, so this prover is a deterministic function of the compiled
+        // circuit code — no serialized prover/common artifact is trusted.
         let circuit = PrivateBatchCircuit::new(
             wormhole_private_batch_circuit_config(),
             &leaf_verifier_data.common,
@@ -139,22 +141,9 @@ impl PrivateBatchProver {
             num_leaf_proofs,
         )?;
         let targets = Some(circuit.targets());
-        let canonical_agg = circuit.build_verifier();
+        let circuit_data = circuit.build_prover();
 
-        // 3) Load prebuilt aggregation circuit prover data and pin common data.
-        let agg_common =
-            CommonCircuitData::from_bytes(aggregated_common_bytes.to_vec(), &gate_serializer)
-                .map_err(|e| anyhow!("failed to deserialize aggregated common data: {}", e))?;
-        ensure_common_matches_canonical(&agg_common, &canonical_agg.common, "private_batch")?;
-
-        let agg_prover_only = ProverOnlyCircuitData::from_bytes(
-            aggregated_prover_only_bytes,
-            &generator_serializer,
-            &agg_common,
-        )
-        .map_err(|e| anyhow!("failed to deserialize aggregated prover data: {}", e))?;
-
-        // 4) Load dummy proof template compatible with the leaf verifier common data
+        // 3) Load dummy proof template compatible with the leaf verifier common data
         let dummy_proof_template =
             load_dummy_proof(dummy_proof_bytes.to_vec(), &leaf_verifier_data.common)
                 .map_err(|e| anyhow!("failed to deserialize dummy proof: {}", e))?;
@@ -166,10 +155,7 @@ impl PrivateBatchProver {
         verify_dummy_leaf_template(&dummy_proof_template, &leaf_verifier_data)?;
 
         Ok(Self {
-            circuit_data: ProverCircuitData {
-                prover_only: agg_prover_only,
-                common: agg_common,
-            },
+            circuit_data,
             partial_witness: PartialWitness::new(),
             targets,
             num_leaf_proofs,
@@ -179,27 +165,12 @@ impl PrivateBatchProver {
 
     /// Create a private-batch aggregation prover from explicit file paths.
     #[cfg(feature = "std")]
-    #[allow(clippy::too_many_arguments)]
     pub fn new_from_files(
-        aggregated_prover_path: &Path,
-        aggregated_common_path: &Path,
         leaf_common_path: &Path,
         leaf_verifier_path: &Path,
         dummy_proof_path: &Path,
         num_leaf_proofs: usize,
     ) -> Result<Self> {
-        let aggregated_prover_only_bytes = fs::read(aggregated_prover_path).with_context(|| {
-            format!(
-                "Failed to read aggregated prover file {:?}",
-                aggregated_prover_path
-            )
-        })?;
-        let aggregated_common_bytes = fs::read(aggregated_common_path).with_context(|| {
-            format!(
-                "Failed to read aggregated common file {:?}",
-                aggregated_common_path
-            )
-        })?;
         let leaf_common_bytes = fs::read(leaf_common_path)
             .with_context(|| format!("Failed to read leaf common file {:?}", leaf_common_path))?;
         let leaf_verifier_only_bytes = fs::read(leaf_verifier_path).with_context(|| {
@@ -209,8 +180,6 @@ impl PrivateBatchProver {
             .with_context(|| format!("Failed to read dummy proof file {:?}", dummy_proof_path))?;
 
         Self::new_from_bytes(
-            &aggregated_prover_only_bytes,
-            &aggregated_common_bytes,
             &leaf_common_bytes,
             &leaf_verifier_only_bytes,
             &dummy_proof_bytes,
@@ -220,9 +189,10 @@ impl PrivateBatchProver {
 
     /// Convenience constructor that loads everything from a generated binaries directory.
     ///
+    /// The aggregation prover circuit is rebuilt from source, so no
+    /// `private_batch_prover.bin` is read.
+    ///
     /// Expected files:
-    /// - `private_batch_prover.bin`
-    /// - `private_batch_common.bin`
     /// - `common.bin`
     /// - `verifier.bin`
     /// - `dummy_proof.bin`
@@ -235,8 +205,6 @@ impl PrivateBatchProver {
         let num_leaf_proofs = bins_config.num_leaf_proofs;
 
         Self::new_from_files(
-            &bins_dir.join("private_batch_prover.bin"),
-            &bins_dir.join("private_batch_common.bin"),
             &bins_dir.join("common.bin"),
             &bins_dir.join("verifier.bin"),
             &bins_dir.join("dummy_proof.bin"),

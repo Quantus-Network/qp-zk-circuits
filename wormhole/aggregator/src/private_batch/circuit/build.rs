@@ -1,14 +1,17 @@
 //! Prebuild / serialization helpers for the monolithic Private-batch aggregation circuit.
 //!
-//! Generates: `private_batch_common.bin`, `private_batch_verifier.bin`, `private_batch_prover.bin`
+//! Generates: `private_batch_common.bin`, `private_batch_verifier.bin`
+//!
+//! No `private_batch_prover.bin` is emitted: `PrivateBatchProver` always rebuilds
+//! the aggregation prover from source, because a poisoned prover artifact could
+//! exfiltrate witness data through the proof's public-input list. `include_prover`
+//! now only controls generation of the dummy private-batch proof used to pad
+//! partial public batches.
 //!
 //! Expects `common.bin` and `verifier.bin` to already exist in the output directory.
 
 use anyhow::{anyhow, Context, Result};
-use plonky2::{
-    plonk::circuit_data::CommonCircuitData,
-    util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer},
-};
+use plonky2::{plonk::circuit_data::CommonCircuitData, util::serialization::DefaultGateSerializer};
 use qp_wormhole_inputs::validate_proof_count;
 use std::{
     fs::{create_dir_all, write},
@@ -56,9 +59,6 @@ pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
     let circuit_data = agg_circuit.build_circuit();
 
     let gate_serializer = DefaultGateSerializer;
-    let generator_serializer = DefaultGeneratorSerializer::<C, D> {
-        _phantom: Default::default(),
-    };
 
     // Generate the dummy private-batch proof template (an all-dummy batch) used to pad
     // partial public batches. Must happen BEFORE consuming circuit_data below
@@ -84,7 +84,6 @@ pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
     }
 
     let verifier_data = circuit_data.verifier_data();
-    let prover_data = circuit_data.prover_data();
     let common_data = &verifier_data.common;
 
     let agg_common_bytes = common_data
@@ -106,19 +105,6 @@ pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
     )?;
     println!("Saved {}/private_batch_verifier.bin", output_path.display());
 
-    if include_prover {
-        let agg_prover_only_bytes = prover_data
-            .prover_only
-            .to_bytes(&generator_serializer, common_data)
-            .map_err(|e| anyhow!("Failed to serialize aggregated prover data: {}", e))?;
-        write(
-            output_path.join("private_batch_prover.bin"),
-            agg_prover_only_bytes,
-        )?;
-        println!("Saved {}/private_batch_prover.bin", output_path.display());
-    } else {
-        println!("Skipping aggregated prover binary generation");
-    }
     Ok(())
 }
 

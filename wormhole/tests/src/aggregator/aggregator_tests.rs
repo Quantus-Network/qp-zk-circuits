@@ -352,6 +352,48 @@ fn private_batch_prover_rejects_poisoned_dummy_template() {
 }
 
 #[test]
+fn private_batch_prover_ignores_prover_artifact() {
+    // The private-batch aggregation prover is rebuilt from source, so it must
+    // never read private_batch_prover.bin. ProverOnlyCircuitData carries the
+    // witness generators and the public-input target list that decides which
+    // witness values are exposed in the returned proof; trusting a serialized
+    // prover artifact would let a poisoned file exfiltrate batch witness
+    // material (e.g. dummy-nullifier preimages) through the emitted proof. This
+    // test poisons and then deletes that artifact and shows loading and proving
+    // are unaffected, matching the leaf prover's build-from-source stance.
+    setup_test_binaries();
+
+    let dir = test_bins_root().join("private-ignored-prover");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for entry in std::fs::read_dir(private_bins_dir()).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), dir.join(entry.file_name())).unwrap();
+    }
+
+    let aggregate_and_verify = |bins: &std::path::Path| {
+        let proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
+        let aggregated = PrivateBatchProver::new_from_binaries_dir(bins)
+            .expect("prover must load without a trusted prover artifact")
+            .aggregate(vec![proof])
+            .expect("aggregation must succeed");
+        private_batch_verifier()
+            .verify(aggregated)
+            .expect("aggregated proof must verify");
+    };
+
+    // Garbage in place of the prover artifact must not affect loading or proving.
+    std::fs::write(dir.join("private_batch_prover.bin"), b"not a prover artifact").unwrap();
+    aggregate_and_verify(&dir);
+
+    // Nor must its absence: the file is not part of the trusted input set.
+    let _ = std::fs::remove_file(dir.join("private_batch_prover.bin"));
+    aggregate_and_verify(&dir);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn private_batch_build_rejects_substituted_leaf_artifacts() {
     // Regression (build-time verifier-key substitution): the private-batch build
     // bakes the leaf verifier key into the recursive circuit as constants, so it
