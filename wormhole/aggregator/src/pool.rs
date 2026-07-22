@@ -307,13 +307,16 @@ impl ProofPool {
 
     /// Validate and admit a proof, returning the bucket key it landed in.
     ///
-    /// Checks run cheapest-first: capacity limits, public-input shape,
-    /// duplicate-nullifier rejection, the verification budget
-    /// ([`PoolLimits::max_verifies_per_window`]), then cryptographic
-    /// verification. A proof admitted here is individually valid and, by
-    /// bucketing, batch-compatible with every other proof in its bucket, so
-    /// aggregation over a bucket cannot fail deterministically on admitted
-    /// inputs (#97067).
+    /// Checks run cheapest-first EXCEPT the duplicate-nullifier check:
+    /// capacity limits, public-input shape, dummy sentinel, bucket cap, the
+    /// verification budget ([`PoolLimits::max_verifies_per_window`]),
+    /// cryptographic verification, and only THEN duplicate-nullifier
+    /// rejection. The dedup check is deliberately gated behind verification so
+    /// its rejection cannot be used as a free, unlimited membership/status
+    /// oracle over the pool's not-yet-settled spends (see the check site). A
+    /// proof admitted here is individually valid and, by bucketing,
+    /// batch-compatible with every other proof in its bucket, so aggregation
+    /// over a bucket cannot fail deterministically on admitted inputs (#97067).
     ///
     /// Buckets are NOT capped at one batch: a hot key keeps admitting (up to
     /// the global limits) while earlier batches for it are out being proved;
@@ -338,30 +341,6 @@ impl ProofPool {
             bail!(
                 "refusing to pool an all-dummy private-batch proof (block_hash == 0): \
                  it settles nothing and can never be drained"
-            );
-        }
-
-        // A duplicate nullifier anywhere in the pool (including proofs out
-        // with a TakenBatch) means the same leaf spend is already staged; only
-        // one copy can ever settle. This is checked pool-wide (not per
-        // bucket): the cumulative merkle tree lets the same spend be proven
-        // against different recent blocks, i.e. into different buckets. It
-        // also deduplicates client re-submissions.
-        if let Some(dup) = metadata
-            .1
-            .iter()
-            .find(|n| self.nullifier_index.contains_key(n))
-        {
-            bail!(
-                "refusing to queue private-batch proof: nullifier {:?} is already \
-                 staged (bucket for block {:?}{})",
-                dup,
-                self.nullifier_index[dup].block_hash,
-                if self.taken_nullifiers.contains(dup) {
-                    ", currently out for proving"
-                } else {
-                    ""
-                }
             );
         }
 
@@ -400,6 +379,35 @@ impl ProofPool {
                 e
             )
         })?;
+
+        // A duplicate nullifier anywhere in the pool (including proofs out
+        // with a TakenBatch) means the same leaf spend is already staged; only
+        // one copy can ever settle. This is checked pool-wide (not per
+        // bucket): the cumulative merkle tree lets the same spend be proven
+        // against different recent blocks, i.e. into different buckets. It
+        // also deduplicates client re-submissions.
+        //
+        // Checked AFTER cryptographic verification and the verify budget, and
+        // with a generic message: otherwise this rejection is a free,
+        // unlimited membership/status oracle over the pool's not-yet-settled
+        // spends — an attacker submitting invalid proofs that reuse an
+        // observed nullifier could confirm the spend is pooled, learn which
+        // block it referenced, and detect when it goes out for proving, all
+        // without paying verification cost. Gating it behind verify means a
+        // probe now requires a cryptographically valid proof carrying the
+        // target nullifier (i.e. actually holding that spend), and the error
+        // reveals only that some nullifier collided, not which one, from which
+        // bucket, or its proving status.
+        if metadata
+            .1
+            .iter()
+            .any(|n| self.nullifier_index.contains_key(n))
+        {
+            bail!(
+                "refusing to queue private-batch proof: a nullifier in this proof \
+                 is already staged in the pool"
+            );
+        }
 
         let (key, nullifiers, volume) = metadata;
         for nullifier in &nullifiers {
@@ -867,12 +875,68 @@ mod tests {
         let err = pool
             .push(prove_fake(&data, &targets, &fake(2, 11)))
             .unwrap_err();
-        assert!(err.to_string().contains("out for proving"), "got: {err}");
+        assert!(err.to_string().contains("already staged"), "got: {err}");
 
         // The original comes back on proving failure, still deduplicated.
         assert_eq!(pool.reinsert(taken), 1);
         assert_eq!(pool.len(), 1);
         assert_eq!(pool.num_buckets(), 1);
+    }
+
+    /// The duplicate-nullifier rejection must not disclose internal pool state
+    /// to untrusted submitters: not the staged nullifier value, not the block
+    /// the staged copy referenced, and not whether it is out for proving.
+    #[test]
+    fn duplicate_rejection_does_not_leak_pool_state() {
+        let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
+
+        // Staged against block 1, then taken out for proving (the case whose
+        // old message leaked the most: nullifier + block + proving status).
+        let key = pool
+            .push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        let taken = pool.take_batch(&key).unwrap();
+
+        let err = pool
+            .push(prove_fake(&data, &targets, &fake(2, 11)))
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(!msg.contains("out for proving"), "leaks proving status: {msg}");
+        assert!(
+            !msg.contains(&format!("{:?}", nullifier_digest(11))),
+            "leaks staged nullifier: {msg}"
+        );
+        // The staged copy referenced block 1 (its block hash is the same
+        // 4-felt encoding nullifier_digest uses). The submitter only supplied
+        // block 2, so block 1 must never appear in the error.
+        assert!(
+            !msg.contains(&format!("{:?}", nullifier_digest(1))),
+            "leaks staged bucket block hash: {msg}"
+        );
+
+        let _ = pool.reinsert(taken);
+    }
+
+    /// The duplicate check must run AFTER cryptographic verification and the
+    /// verify budget, so it can't be probed as a free membership oracle with
+    /// cryptographically invalid proofs. A well-formed but invalid proof that
+    /// reuses a staged nullifier must be rejected as invalid, never revealed as
+    /// a duplicate.
+    #[test]
+    fn duplicate_check_runs_after_verification() {
+        let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
+
+        pool.push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+
+        // Same nullifier (11), tampered so verification fails.
+        let mut invalid = prove_fake(&data, &targets, &fake(2, 11));
+        invalid.public_inputs[aggregated_output::ASSET_ID_OFFSET] = F::from_canonical_u64(9);
+        let err = pool.push(invalid).unwrap_err();
+        assert!(
+            err.to_string().contains("verification failed"),
+            "duplicate check must not short-circuit ahead of verification, got: {err}"
+        );
     }
 
     /// The gap this closes: a proof settled on-chain while its batch was out
