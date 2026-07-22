@@ -27,6 +27,16 @@ pub const MAX_STORAGE_PROOF_HEX_BYTES: usize = 1 << 20;
 pub const MAX_MERKLE_INDICES: usize = 1024;
 /// Maximum byte length of the hex `state_root` string in [`TransferProofJson`].
 pub const MAX_STATE_ROOT_HEX_LEN: usize = 64;
+/// Maximum raw byte length of a serialized [`TransferProofJson`] document.
+///
+/// The per-field caps above bound what a parsed document may contain, but they
+/// are enforced from inside Serde visitor callbacks — by the time a visitor
+/// sees a string's length, the deserializer has already decoded any escaped
+/// content into scratch storage. Only a cap on the raw, undecoded input can
+/// bound that allocation. 8 MiB is ~8x the largest in-bounds document
+/// (storage_proof dominates at 1 MiB of hex), leaving room for maximally
+/// escape-inflated (6 bytes per decoded byte) but otherwise legal payloads.
+pub const MAX_TRANSFER_PROOF_JSON_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 pub struct TransferProofJson {
@@ -40,10 +50,32 @@ pub struct TransferProofJson {
 }
 
 impl TransferProofJson {
+    /// Parse untrusted transfer-proof JSON, bounding allocation up front.
+    ///
+    /// This is the entry point services should use for attacker-supplied
+    /// payloads. The raw document length is checked against
+    /// [`MAX_TRANSFER_PROOF_JSON_BYTES`] BEFORE any parsing: the per-field
+    /// Serde bounds only observe string lengths after the deserializer has
+    /// decoded escaped content into scratch storage, so on their own they
+    /// cannot stop a single escape-inflated field from allocating and
+    /// scanning arbitrarily far past its cap before being rejected.
+    pub fn from_json_str(json: &str) -> Result<Self, String> {
+        if json.len() > MAX_TRANSFER_PROOF_JSON_BYTES {
+            return Err(format!(
+                "transfer proof JSON exceeds {} bytes ({} bytes); refusing to parse it",
+                MAX_TRANSFER_PROOF_JSON_BYTES,
+                json.len()
+            ));
+        }
+        serde_json::from_str(json).map_err(|e| format!("failed to parse transfer proof JSON: {e}"))
+    }
+
     /// Validate the decoded transfer proof bounds.
     ///
-    /// `#[serde(deserialize_with)]` already caps each field at deserialization time;
-    /// this is a convenience check for callers that construct the struct directly.
+    /// `#[serde(deserialize_with)]` enforces the same caps on parsed documents
+    /// (though only after the deserializer has decoded each string — see
+    /// [`Self::from_json_str`] for the raw-input bound); this is a convenience
+    /// check for callers that construct the struct directly.
     pub fn validate(&self) -> Result<(), String> {
         if self.state_root.len() > MAX_STATE_ROOT_HEX_LEN {
             return Err(format!(
@@ -84,6 +116,11 @@ impl TransferProofJson {
 
 /// Deserialize a hex `state_root` string, rejecting inputs longer than
 /// [`MAX_STATE_ROOT_HEX_LEN`] before allocating the owned `String`.
+///
+/// NOTE: for escaped or streamed input the deserializer must decode the string
+/// into its own scratch storage before this visitor can observe the length, so
+/// this bound alone does not cap allocation. [`TransferProofJson::from_json_str`]
+/// bounds the raw document first; use it for untrusted payloads.
 fn deserialize_bounded_state_root<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
@@ -347,6 +384,51 @@ mod transfer_proof_json_tests {
         );
         let err = serde_json::from_str::<TransferProofJson>(&json).unwrap_err();
         assert!(err.to_string().contains("storage_proof node exceeds"));
+    }
+
+    /// A single field written as JSON escape sequences forces serde_json to
+    /// decode the whole thing into scratch storage BEFORE the visitor's field
+    /// bound can observe its length. The raw payload cap must therefore reject
+    /// oversized documents up front, without ever handing them to serde.
+    #[test]
+    fn oversized_escaped_payload_is_rejected_by_the_raw_size_cap() {
+        // An escaped state_root that decodes to megabytes: each `\u0061` is one
+        // decoded byte, so the field bound (64 bytes) only fires after the
+        // deserializer has already buffered the full decoded string.
+        let escaped = "\\u0061".repeat(MAX_TRANSFER_PROOF_JSON_BYTES / 6 + 1);
+        let json = format!(
+            r#"{{"transfer_count":1,"state_root":"{}","storage_proof":[],"indices":[]}}"#,
+            escaped
+        );
+        let err = TransferProofJson::from_json_str(&json).unwrap_err();
+        assert!(
+            err.contains("transfer proof JSON exceeds"),
+            "oversized payload must be rejected by the raw size cap before parsing, got: {err}"
+        );
+    }
+
+    /// Escapes are legal JSON: a payload whose fields are within bounds must
+    /// still parse even when its strings are escape-encoded.
+    #[test]
+    fn escaped_but_in_bounds_payload_still_parses() {
+        let escaped_root = "\\u0061".repeat(8); // decodes to "aaaaaaaa"
+        let json = format!(
+            r#"{{"transfer_count":1,"state_root":"{}","storage_proof":["00"],"indices":[0]}}"#,
+            escaped_root
+        );
+        let proof = TransferProofJson::from_json_str(&json).unwrap();
+        assert_eq!(proof.state_root, "a".repeat(8));
+    }
+
+    /// Payloads under the raw cap must still hit the per-field bounds.
+    #[test]
+    fn in_cap_payload_with_oversized_state_root_is_rejected_by_field_bound() {
+        let json = format!(
+            r#"{{"transfer_count":1,"state_root":"{}","storage_proof":[],"indices":[]}}"#,
+            "a".repeat(MAX_STATE_ROOT_HEX_LEN + 1)
+        );
+        let err = TransferProofJson::from_json_str(&json).unwrap_err();
+        assert!(err.contains("state_root exceeds"), "got: {err}");
     }
 
     #[test]
