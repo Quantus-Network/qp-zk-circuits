@@ -209,9 +209,9 @@ cargo run --release -p qp-wormhole-circuit-builder -- --num-leaf-proofs <N> [--n
 ```
 
 This creates `common.bin`, `verifier.bin`, `private_batch_common.bin`, `private_batch_verifier.bin`, `dummy_proof.bin`,
-and `config.json` inside `generated-bins/` (plus batch prover binaries unless `--skip-prover`).
+and `config.json` inside `generated-bins/` (plus the dummy private-batch padding proof unless `--skip-prover`).
 
-Note: no `prover.bin` is emitted for the leaf circuit. The leaf `WormholeProver` always builds
-its circuit from source (it is small and builds in milliseconds); loading serialized prover
-artifacts was removed because a poisoned artifact could exfiltrate private witness data
-through the proof's public-input list.
+Note: no `prover.bin` is emitted for any circuit. The provers (`WormholeProver`,
+`PrivateBatchProver`, `PublicBatchProver`) always rebuild their circuits from source;
+loading serialized prover artifacts was removed because a poisoned artifact could
+exfiltrate private witness data through the proof's public-input list.

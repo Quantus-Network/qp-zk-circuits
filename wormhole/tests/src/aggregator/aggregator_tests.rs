@@ -453,7 +453,7 @@ fn public_batch_build_rejects_substituted_private_batch_artifacts() {
     vk_bytes[last] ^= 0x01;
     std::fs::write(dir.join("private_batch_verifier.bin"), vk_bytes).unwrap();
 
-    let err = generate_public_batch_circuit_binaries(&dir, 1, false)
+    let err = generate_public_batch_circuit_binaries(&dir, 1)
         .expect_err("substituted private-batch artifacts must be rejected before baking");
     // `{err:#}` prints the whole context chain; the canonical mismatch is the cause.
     let chain = format!("{err:#}");
@@ -485,6 +485,55 @@ fn make_private_batch_proof_in_public_dir() -> ProofWithPublicInputs<F, C, D> {
                 .expect("private aggregate")
         })
         .clone()
+}
+
+#[test]
+fn public_batch_prover_ignores_prover_artifact() {
+    // Same stance as private_batch_prover_ignores_prover_artifact, one layer
+    // up: the public-batch prover is rebuilt from source, so it must never
+    // read public_batch_prover.bin. ProverOnlyCircuitData carries the
+    // public-input target list that decides which witness values the emitted
+    // proof exposes; trusting a serialized prover artifact would let a
+    // poisoned file exfiltrate batch witness material through the proof's
+    // public inputs. This test plants a garbage artifact (the builder no
+    // longer even emits one) and shows loading, proving, and verification are
+    // unaffected.
+    setup_public_test_binaries();
+
+    let dir = test_bins_root().join("public-ignored-prover");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for entry in std::fs::read_dir(public_bins_dir()).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), dir.join(entry.file_name())).unwrap();
+    }
+
+    let private_batch_proof = make_private_batch_proof_in_public_dir();
+    let address = BytesDigest::try_from([1u8; 32]).expect("valid address");
+
+    let aggregate_and_verify = |bins: &std::path::Path| {
+        let mut aggregator = PublicBatchAggregator::new(bins, address)
+            .expect("aggregator must load without a trusted prover artifact");
+        let key = aggregator
+            .push_proof(private_batch_proof.clone())
+            .expect("valid private-batch proof must be admitted");
+        let aggregated = aggregator
+            .aggregate(&key)
+            .expect("public aggregation must succeed");
+        aggregator
+            .verify(aggregated)
+            .expect("public-batch proof must verify");
+    };
+
+    // Garbage in place of the prover artifact must not affect loading or proving.
+    std::fs::write(dir.join("public_batch_prover.bin"), b"not a prover artifact").unwrap();
+    aggregate_and_verify(&dir);
+
+    // Nor must its absence: the file is not part of the trusted input set.
+    let _ = std::fs::remove_file(dir.join("public_batch_prover.bin"));
+    aggregate_and_verify(&dir);
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

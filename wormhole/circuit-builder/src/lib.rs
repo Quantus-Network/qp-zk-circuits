@@ -89,8 +89,10 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(output_dir: P) -> Result<()> {
 ///
 /// # Arguments
 /// * `output_dir` - Directory to write the binaries to
-/// * `include_prover` - Whether to include the prover binaries for the batch aggregation
-///   circuits (the leaf circuit never emits a prover binary; see [`generate_circuit_binaries`])
+/// * `include_prover` - Whether to generate the dummy private-batch proof used for
+///   public-batch padding (requires a private-batch proving run). No circuit emits a
+///   prover binary: provers always rebuild their circuits from source (see
+///   [`generate_circuit_binaries`])
 /// * `num_leaf_proofs` - Number of leaf proofs aggregated into a single proof (must be > 0)
 /// * `num_private_batch_proofs` - Optional param for number of inner proofs (for public-batch circuit). Set to none if you only want private-batch aggregation.
 ///
@@ -122,11 +124,7 @@ pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
 
         // If num_private_batch_proofs is specified, generate public-batch aggregation circuit binaries
         if let Some(num_private_batch_proofs) = config.num_private_batch_proofs {
-            generate_public_batch_circuit_binaries(
-                &staging_path,
-                num_private_batch_proofs,
-                include_prover,
-            )?;
+            generate_public_batch_circuit_binaries(&staging_path, num_private_batch_proofs)?;
         }
 
         // Save config file alongside binaries. Written last: its presence marks

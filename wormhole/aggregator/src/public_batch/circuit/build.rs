@@ -1,6 +1,9 @@
 //! Build + serialize public-batch aggregation circuit artifacts.
 //!
-//! Generates: `public_batch_common.bin`, `public_batch_verifier.bin`, `public_batch_prover.bin` (optional)
+//! Generates: `public_batch_common.bin`, `public_batch_verifier.bin`
+//! No `public_batch_prover.bin` is emitted: `PublicBatchProver` always rebuilds
+//! the circuit from source, because a poisoned prover artifact could exfiltrate
+//! witness data through the proof's public-input list.
 //!
 //! Expects private-batch artifacts to already exist in `output_dir`.
 
@@ -8,8 +11,8 @@ use anyhow::{anyhow, Context, Result};
 use std::fs::{create_dir_all, write};
 use std::path::Path;
 
-use plonky2::plonk::circuit_data::{ProverCircuitData, VerifierCircuitData};
-use plonky2::util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer};
+use plonky2::plonk::circuit_data::VerifierCircuitData;
+use plonky2::util::serialization::DefaultGateSerializer;
 
 use qp_wormhole_inputs::validate_proof_count;
 use zk_circuits_common::circuit::{wormhole_public_batch_circuit_config, C, D, F};
@@ -24,7 +27,6 @@ use crate::public_batch::circuit::circuit_logic::PublicBatchCircuit;
 pub fn generate_public_batch_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
     num_private_batch_proofs: usize,
-    include_prover: bool,
 ) -> Result<()> {
     let output_dir = output_dir.as_ref();
     // Bound the per-layer count before any circuit construction (#97021, #97070).
@@ -73,14 +75,8 @@ pub fn generate_public_batch_circuit_binaries<P: AsRef<Path>>(
         private_batch_num_leaves,
     )?;
 
-    let circuit_data = public_batch_circuit.build_circuit();
-    let verifier_data = circuit_data.verifier_data();
+    let verifier_data = public_batch_circuit.build_verifier();
     write_verifier_artifacts(output_dir, &verifier_data)?;
-
-    if include_prover {
-        let prover_data = circuit_data.prover_data();
-        write_prover_artifact(output_dir, &prover_data)?;
-    }
 
     println!(
         "Public-batch circuit artifacts written to {} (num_private_batch_proofs={}, private_batch_num_leaves={})",
@@ -139,22 +135,3 @@ fn write_verifier_artifacts(
     Ok(())
 }
 
-fn write_prover_artifact(bins_dir: &Path, prover_data: &ProverCircuitData<F, C, D>) -> Result<()> {
-    let generator_serializer = DefaultGeneratorSerializer::<C, D> {
-        _phantom: Default::default(),
-    };
-
-    let prover_bytes = prover_data
-        .prover_only
-        .to_bytes(&generator_serializer, &prover_data.common)
-        .map_err(|e| anyhow!("Failed to serialize public_batch prover data: {}", e))?;
-
-    write(bins_dir.join("public_batch_prover.bin"), prover_bytes).with_context(|| {
-        format!(
-            "Failed to write {}",
-            bins_dir.join("public_batch_prover.bin").display()
-        )
-    })?;
-
-    Ok(())
-}

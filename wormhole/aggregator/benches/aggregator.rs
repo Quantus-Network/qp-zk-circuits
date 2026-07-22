@@ -136,7 +136,7 @@ macro_rules! prove_public_batch_benchmark {
                 );
 
             let proof = generate_dummy_private_batch_proof();
-            generate_public_batch_circuit_binaries(BINS_DIR, $num_private_batch_proofs, true)
+            generate_public_batch_circuit_binaries(BINS_DIR, $num_private_batch_proofs)
                 .expect(
                     "Failed to generate public_batch circuit binaries for public_batch benchmark",
                 );
@@ -199,7 +199,7 @@ macro_rules! verify_public_batch_benchmark {
 
             let proof = generate_dummy_private_batch_proof();
 
-            generate_public_batch_circuit_binaries(BINS_DIR, $num_private_batch_proofs, true)
+            generate_public_batch_circuit_binaries(BINS_DIR, $num_private_batch_proofs)
                 .expect(
                     "Failed to generate public_batch circuit binaries for public_batch benchmark",
                 );

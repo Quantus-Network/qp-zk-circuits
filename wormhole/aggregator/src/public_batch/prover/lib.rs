@@ -1,7 +1,9 @@
-//! Public-batch aggregation prover (prebuilt-circuit proving API).
+//! Public-batch aggregation prover.
 //!
 //! The private-batch verifier key is baked in as constants at circuit build time to prevent
-//! verifier key substitution attacks.
+//! verifier key substitution attacks. The public-batch circuit (and its prover-only data)
+//! is always rebuilt from source rather than loaded from a serialized artifact; see
+//! [`PublicBatchProver::new_from_bytes`].
 
 use anyhow::{anyhow, bail, Context, Result};
 use plonky2::field::types::PrimeField64;
@@ -10,12 +12,11 @@ use plonky2::{
     iop::witness::PartialWitness,
     plonk::{
         circuit_data::{
-            CircuitConfig, CommonCircuitData, ProverCircuitData, ProverOnlyCircuitData,
-            VerifierCircuitData, VerifierOnlyCircuitData,
+            CircuitConfig, CommonCircuitData, ProverCircuitData, VerifierCircuitData,
+            VerifierOnlyCircuitData,
         },
         proof::ProofWithPublicInputs,
     },
-    util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer},
 };
 use qp_wormhole_inputs::{validate_proof_count, BytesDigest, PrivateBatchPublicInputs};
 
@@ -29,8 +30,8 @@ use zk_circuits_common::{
 
 use crate::{
     common::utils::{
-        canonical_leaf_verifier_data, ensure_common_matches_canonical,
-        ensure_proof_public_input_len, load_canonical_private_batch_verifier_data,
+        canonical_leaf_verifier_data, ensure_proof_public_input_len,
+        load_canonical_private_batch_verifier_data,
     },
     public_batch::{
         circuit::{
@@ -113,19 +114,19 @@ impl PublicBatchProver {
     }
 
     /// Create a public-batch prover from serialized bytes.
+    ///
+    /// The public-batch circuit itself (including its `ProverOnlyCircuitData`)
+    /// is always rebuilt from source rather than deserialized: prover-only data
+    /// decides which witness wires are exposed as public inputs, so a poisoned
+    /// prover artifact could exfiltrate witness data through the proof's
+    /// public-input list. The full circuit build was already required here to
+    /// pin the loaded artifacts, so rebuilding adds no extra cost.
     pub fn new_from_bytes(
-        public_batch_prover_only_bytes: &[u8],
-        public_batch_common_bytes: &[u8],
         private_batch_common_bytes: &[u8],
         private_batch_verifier_only_bytes: &[u8],
         dummy_private_batch_proof_bytes: &[u8],
         config: (usize, usize), // (num_leaf_proofs, num_private_batch_proofs)
     ) -> Result<Self> {
-        let gate_serializer = DefaultGateSerializer;
-        let generator_serializer = DefaultGeneratorSerializer::<C, D> {
-            _phantom: Default::default(),
-        };
-
         let (num_leaf_proofs, num_private_batch_proofs) = config;
 
         // Validate batch counts at the public byte-loading boundary so a zero or
@@ -156,8 +157,8 @@ impl PublicBatchProver {
             );
         }
 
-        // 2) Reconstruct the canonical public-batch circuit once: it provides both the
-        // witness targets and the canonical common data used to pin the prebuilt artifacts.
+        // 2) Rebuild the canonical public-batch circuit from source. Its prover
+        // data is used directly instead of loading a serialized prover artifact.
         let circuit = PublicBatchCircuit::new(
             wormhole_public_batch_circuit_config(),
             private_batch_verifier_data.common.clone(),
@@ -166,26 +167,9 @@ impl PublicBatchProver {
             num_leaf_proofs,
         )?;
         let targets = Some(circuit.targets());
-        let canonical_public = circuit.build_verifier();
+        let circuit_data = circuit.build_prover();
 
-        // 3) Load prebuilt public-batch circuit prover data and pin common data.
-        let public_batch_common =
-            CommonCircuitData::from_bytes(public_batch_common_bytes.to_vec(), &gate_serializer)
-                .map_err(|e| anyhow!("failed to deserialize public_batch common data: {}", e))?;
-        ensure_common_matches_canonical(
-            &public_batch_common,
-            &canonical_public.common,
-            "public_batch",
-        )?;
-
-        let public_batch_prover_only = ProverOnlyCircuitData::from_bytes(
-            public_batch_prover_only_bytes,
-            &generator_serializer,
-            &public_batch_common,
-        )
-        .map_err(|e| anyhow!("failed to deserialize public_batch prover data: {}", e))?;
-
-        // 4) Load the dummy private-batch proof template used to pad partial batches
+        // 3) Load the dummy private-batch proof template used to pad partial batches
         let dummy_proof_template = ProofWithPublicInputs::<F, C, D>::from_bytes(
             dummy_private_batch_proof_bytes.to_vec(),
             &private_batch_verifier_data.common,
@@ -198,10 +182,7 @@ impl PublicBatchProver {
         verify_dummy_private_batch_template(&dummy_proof_template, &private_batch_verifier_data)?;
 
         Ok(Self {
-            circuit_data: ProverCircuitData {
-                prover_only: public_batch_prover_only,
-                common: public_batch_common,
-            },
+            circuit_data,
             partial_witness: PartialWitness::new(),
             targets,
             num_private_batch_proofs,
@@ -211,20 +192,12 @@ impl PublicBatchProver {
     }
 
     #[cfg(feature = "std")]
-    #[allow(clippy::too_many_arguments)]
     pub fn new_from_files(
-        public_batch_prover_path: &Path,
-        public_batch_common_path: &Path,
         private_batch_common_path: &Path,
         private_batch_verifier_path: &Path,
         dummy_private_batch_proof_path: &Path,
         config: (usize, usize),
     ) -> Result<Self> {
-        let public_batch_prover_only_bytes = fs::read(public_batch_prover_path)
-            .with_context(|| format!("Failed to read {:?}", public_batch_prover_path))?;
-        let public_batch_common_bytes = fs::read(public_batch_common_path)
-            .with_context(|| format!("Failed to read {:?}", public_batch_common_path))?;
-
         let private_batch_common_bytes = fs::read(private_batch_common_path)
             .with_context(|| format!("Failed to read {:?}", private_batch_common_path))?;
         let private_batch_verifier_only_bytes = fs::read(private_batch_verifier_path)
@@ -233,8 +206,6 @@ impl PublicBatchProver {
             .with_context(|| format!("Failed to read {:?}", dummy_private_batch_proof_path))?;
 
         Self::new_from_bytes(
-            &public_batch_prover_only_bytes,
-            &public_batch_common_bytes,
             &private_batch_common_bytes,
             &private_batch_verifier_only_bytes,
             &dummy_private_batch_proof_bytes,
@@ -245,13 +216,14 @@ impl PublicBatchProver {
     /// Convenience constructor from a generated binaries directory.
     ///
     /// Expected files:
-    /// - `public_batch_prover.bin`
-    /// - `public_batch_common.bin`
     /// - `private_batch_common.bin`             (private-batch common)
     /// - `private_batch_verifier.bin`           (private-batch verifier-only)
     /// - `dummy_private_batch_proof.bin`        (padding template)
     /// - `config.json`
     ///
+    /// The public-batch circuit itself is rebuilt from source (see
+    /// [`Self::new_from_bytes`]); no `public_batch_prover.bin` or
+    /// `public_batch_common.bin` is read.
     #[cfg(feature = "std")]
     pub fn new_from_binaries_dir(bins_dir: &Path) -> Result<Self> {
         let bins_config = crate::config::CircuitBinsConfig::load(bins_dir)?;
@@ -264,8 +236,6 @@ impl PublicBatchProver {
         let config = (bins_config.num_leaf_proofs, num_private_batch_proofs);
 
         Self::new_from_files(
-            &bins_dir.join("public_batch_prover.bin"),
-            &bins_dir.join("public_batch_common.bin"),
             &bins_dir.join("private_batch_common.bin"),
             &bins_dir.join("private_batch_verifier.bin"),
             &bins_dir.join("dummy_private_batch_proof.bin"),
