@@ -59,7 +59,7 @@ impl PrivateBatchProver {
     /// In production, prefer `new_from_binaries_dir(...)` to load prebuilt circuits.
     /// Returns an error when `num_leaf_proofs` is outside the supported range,
     /// or when `dummy_proof_template` is not a valid leaf proof carrying the
-    /// strong dummy sentinel (zero block hash and zero outputs).
+    /// strong dummy sentinel (zero block hash, zero outputs, and zero asset_id).
     pub fn new(
         agg_circuit_config: CircuitConfig,
         leaf_common: CommonCircuitData<F, D>,
@@ -149,9 +149,10 @@ impl PrivateBatchProver {
                 .map_err(|e| anyhow!("failed to deserialize dummy proof: {}", e))?;
 
         // Verify the template is a valid leaf proof carrying the strong dummy
-        // sentinel (zero block hash AND zero outputs), so a poisoned padding
-        // template cannot inject a real payout into every partial batch. This
-        // mirrors the public-batch template check (#97026).
+        // sentinel (zero block hash, zero outputs, AND zero asset_id), so a
+        // poisoned padding template cannot inject a real payout into every
+        // partial batch or deny partial-batch padding with a nonzero asset.
+        // This mirrors the public-batch template check (#97026).
         verify_dummy_leaf_template(&dummy_proof_template, &leaf_verifier_data)?;
 
         Ok(Self {
@@ -404,13 +405,21 @@ fn ensure_leaf_batch_compatible(proofs: &[ProofWithPublicInputs<F, C, D>]) -> Re
 }
 
 /// Verify that the dummy leaf proof template is a valid leaf proof carrying the
-/// strong dummy sentinel: `block_hash == 0` AND both output amounts zero.
+/// strong dummy sentinel: `block_hash == 0`, both output amounts zero, AND
+/// `asset_id == 0`.
 ///
 /// The private-batch circuit only treats `block_hash == 0` slots as dummies, and
 /// its exit-dedup gadget sums output amounts across matching exit accounts. If a
 /// poisoned `dummy_proof.bin` contained a *real* proof (non-zero block hash or
 /// outputs), every empty slot in a partial batch would replay that payout. This
 /// mirrors `verify_dummy_private_batch_template` at the public-batch layer (#97026).
+///
+/// `asset_id` must be zero because `commit` pads native-asset (`asset_id = 0`)
+/// batches with this template and the circuit enforces asset_id equality across
+/// ALL slots, dummies included. A nonzero-asset template would pass loading but
+/// make every padded batch unprovable: partial native-asset batches fail the
+/// in-circuit asset-equality constraint, and nonzero-asset batches are already
+/// rejected by the padding preflight — denying the partial-batch path entirely.
 fn verify_dummy_leaf_template(
     template: &ProofWithPublicInputs<F, C, D>,
     leaf_verifier: &VerifierCircuitData<F, C, D>,
@@ -438,6 +447,14 @@ fn verify_dummy_leaf_template(
              padding templates must contribute zero to every exit slot",
             pis.output_amount_1,
             pis.output_amount_2
+        );
+    }
+    if pis.asset_id != 0 {
+        bail!(
+            "dummy leaf proof template has non-zero asset_id {}; padding templates \
+             must use the native asset (asset_id = 0) because the circuit enforces \
+             asset_id equality across all slots, dummies included",
+            pis.asset_id
         );
     }
 
@@ -490,6 +507,16 @@ mod tests {
             err.to_string().contains("non-zero block_hash"),
             "got: {err}"
         );
+    }
+
+    #[test]
+    fn dummy_template_with_nonzero_asset_id_is_rejected() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+        let mut pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
+        pis[ASSET_ID_START] = F::from_canonical_u32(7);
+        let template = prove_fake_leaf(&leaf, &targets, pis);
+        let err = verify_dummy_leaf_template(&template, &leaf.verifier_data()).unwrap_err();
+        assert!(err.to_string().contains("non-zero asset_id"), "got: {err}");
     }
 
     #[test]
