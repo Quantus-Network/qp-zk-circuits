@@ -19,7 +19,7 @@ use zk_circuits_common::circuit::{wormhole_public_batch_circuit_config, C, D, F}
 
 use crate::common::utils::{
     canonical_leaf_verifier_data, load_canonical_private_batch_verifier_data,
-    private_batch_num_leaves_from_padded_pi_len,
+    private_batch_num_leaves_from_padded_pi_len, read_artifact_file,
 };
 use crate::public_batch::circuit::circuit_logic::PublicBatchCircuit;
 
@@ -39,15 +39,15 @@ pub fn generate_public_batch_circuit_binaries<P: AsRef<Path>>(
     // count is derived from the (untrusted) common data first, but the subsequent
     // byte-exact comparison against a canonically rebuilt circuit for that count
     // rejects any substituted or stale artifact.
-    let private_batch_common_bytes = std::fs::read(output_dir.join("private_batch_common.bin"))
+    let private_batch_common_bytes = read_artifact_file(&output_dir.join("private_batch_common.bin"))
         .with_context(|| {
             format!(
                 "Failed to read {}",
                 output_dir.join("private_batch_common.bin").display()
             )
         })?;
-    let private_batch_verifier_bytes = std::fs::read(output_dir.join("private_batch_verifier.bin"))
-        .with_context(|| {
+    let private_batch_verifier_bytes =
+        read_artifact_file(&output_dir.join("private_batch_verifier.bin")).with_context(|| {
             format!(
                 "Failed to read {}",
                 output_dir.join("private_batch_verifier.bin").display()
@@ -133,5 +133,45 @@ fn write_verifier_artifacts(
     })?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::utils::MAX_ARTIFACT_FILE_BYTES;
+    use std::fs::File;
+    use std::path::PathBuf;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "qp-public-batch-build-{}-{}",
+            tag,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// An oversized (sparse) private-batch artifact must be rejected by the
+    /// size cap before its contents are allocated into memory and fed into
+    /// `peek_common_num_public_inputs`'s full deserialization.
+    #[test]
+    fn oversized_private_batch_common_artifact_is_rejected_by_size_cap() {
+        let dir = temp_dir("oversized-common");
+        File::create(dir.join("private_batch_common.bin"))
+            .unwrap()
+            .set_len(MAX_ARTIFACT_FILE_BYTES + 1)
+            .unwrap();
+        std::fs::write(dir.join("private_batch_verifier.bin"), b"irrelevant").unwrap();
+
+        let err = generate_public_batch_circuit_binaries(&dir, 1).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("exceeds the"),
+            "oversized artifact must be rejected by the size cap, got: {err:#}"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
 

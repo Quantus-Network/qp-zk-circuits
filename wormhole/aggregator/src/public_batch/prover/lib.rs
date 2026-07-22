@@ -21,13 +21,15 @@ use plonky2::{
 use qp_wormhole_inputs::{validate_proof_count, BytesDigest, PrivateBatchPublicInputs};
 
 #[cfg(feature = "std")]
-use std::{fs, path::Path};
+use std::path::Path;
 
 use zk_circuits_common::{
     circuit::{wormhole_public_batch_circuit_config, C, D, F},
     utils::bytes_to_digest,
 };
 
+#[cfg(feature = "std")]
+use crate::common::utils::read_artifact_file;
 use crate::{
     common::utils::{
         canonical_leaf_verifier_data, ensure_proof_public_input_len,
@@ -198,11 +200,11 @@ impl PublicBatchProver {
         dummy_private_batch_proof_path: &Path,
         config: (usize, usize),
     ) -> Result<Self> {
-        let private_batch_common_bytes = fs::read(private_batch_common_path)
+        let private_batch_common_bytes = read_artifact_file(private_batch_common_path)
             .with_context(|| format!("Failed to read {:?}", private_batch_common_path))?;
-        let private_batch_verifier_only_bytes = fs::read(private_batch_verifier_path)
+        let private_batch_verifier_only_bytes = read_artifact_file(private_batch_verifier_path)
             .with_context(|| format!("Failed to read {:?}", private_batch_verifier_path))?;
-        let dummy_private_batch_proof_bytes = fs::read(dummy_private_batch_proof_path)
+        let dummy_private_batch_proof_bytes = read_artifact_file(dummy_private_batch_proof_path)
             .with_context(|| format!("Failed to read {:?}", dummy_private_batch_proof_path))?;
 
         Self::new_from_bytes(

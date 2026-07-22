@@ -19,7 +19,7 @@ use std::{
 };
 use zk_circuits_common::circuit::{wormhole_private_batch_circuit_config, C, D, F};
 
-use crate::common::utils::load_canonical_leaf_verifier_data;
+use crate::common::utils::{load_canonical_leaf_verifier_data, read_artifact_file};
 use crate::private_batch::circuit::circuit_logic::PrivateBatchCircuit;
 
 /// Generate prebuilt Private-batch aggregation circuit binaries.
@@ -42,9 +42,9 @@ pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
     // their verifier key into the recursive circuit as constants. Without this, a
     // substituted or stale common.bin/verifier.bin would silently produce
     // private-batch artifacts with the wrong embedded inner verifier key.
-    let leaf_common_bytes = std::fs::read(output_path.join("common.bin"))
+    let leaf_common_bytes = read_artifact_file(&output_path.join("common.bin"))
         .with_context(|| format!("Failed to read {}/common.bin", output_path.display()))?;
-    let leaf_verifier_bytes = std::fs::read(output_path.join("verifier.bin"))
+    let leaf_verifier_bytes = read_artifact_file(&output_path.join("verifier.bin"))
         .with_context(|| format!("Failed to read {}/verifier.bin", output_path.display()))?;
     let leaf = load_canonical_leaf_verifier_data(&leaf_common_bytes, &leaf_verifier_bytes)?;
 
@@ -126,7 +126,7 @@ fn generate_dummy_private_batch_proof(
 
     println!("Generating dummy private-batch proof for public-batch padding...");
 
-    let dummy_leaf_bytes = std::fs::read(bins_dir.join("dummy_proof.bin"))
+    let dummy_leaf_bytes = read_artifact_file(&bins_dir.join("dummy_proof.bin"))
         .with_context(|| format!("Failed to read {}/dummy_proof.bin", bins_dir.display()))?;
     let dummy_leaf = crate::dummy_proof::load_dummy_proof(dummy_leaf_bytes, leaf_common)
         .map_err(|e| anyhow!("Failed to deserialize dummy leaf proof: {}", e))?;
@@ -148,4 +148,44 @@ fn generate_dummy_private_batch_proof(
         .prove(pw)
         .map_err(|e| anyhow!("Failed to prove dummy private batch: {}", e))?;
     Ok(proof.to_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::utils::MAX_ARTIFACT_FILE_BYTES;
+    use std::fs::File;
+    use std::path::PathBuf;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "qp-private-batch-build-{}-{}",
+            tag,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// An oversized (sparse) leaf artifact must be rejected by the size cap
+    /// before its contents are allocated into memory, not fed whole into
+    /// deserialization and canonical comparison.
+    #[test]
+    fn oversized_leaf_common_artifact_is_rejected_by_size_cap() {
+        let dir = temp_dir("oversized-common");
+        File::create(dir.join("common.bin"))
+            .unwrap()
+            .set_len(MAX_ARTIFACT_FILE_BYTES + 1)
+            .unwrap();
+        std::fs::write(dir.join("verifier.bin"), b"irrelevant").unwrap();
+
+        let err = generate_private_batch_circuit_binaries(&dir, 1, false).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("exceeds the"),
+            "oversized artifact must be rejected by the size cap, got: {err:#}"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

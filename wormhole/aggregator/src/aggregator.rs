@@ -52,7 +52,6 @@ use plonky2::plonk::{
 };
 use qp_wormhole_inputs::{public_batch_pi::AGGREGATOR_ADDRESS_LEN, BytesDigest};
 use std::collections::HashSet;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use zk_circuits_common::{
@@ -78,7 +77,7 @@ type Proof = ProofWithPublicInputs<F, C, D>;
 // ============================================================================
 
 fn read_bin(bins_dir: &Path, file: &str) -> Result<Vec<u8>> {
-    fs::read(bins_dir.join(file))
+    crate::common::utils::read_artifact_file(&bins_dir.join(file))
         .with_context(|| format!("failed to read {}", bins_dir.join(file).display()))
 }
 

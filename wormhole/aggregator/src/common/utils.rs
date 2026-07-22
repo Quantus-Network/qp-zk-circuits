@@ -1,4 +1,6 @@
 use anyhow::{anyhow, bail, Result};
+#[cfg(feature = "std")]
+use anyhow::Context;
 use plonky2::{
     field::types::PrimeField64,
     plonk::{
@@ -21,6 +23,58 @@ use crate::private_batch::circuit::{
     constants::{aggregated_output, ASSET_ID_START, LEAF_PI_LEN},
 };
 use crate::public_batch::circuit::circuit_logic::PublicBatchCircuit;
+
+/// Maximum size accepted for any serialized circuit-artifact file.
+///
+/// The largest legitimate artifact is a serialized recursive proof (hundreds
+/// of KB); common/verifier data is smaller still. 64 MiB gives generous
+/// headroom for config variations while bounding the allocation an untrusted
+/// artifact directory can force: without a cap, a single oversized or sparse
+/// `*.bin` file is read fully into memory BEFORE canonical validation gets a
+/// chance to reject it, letting an attacker-chosen directory crash or memory-
+/// starve the loading process.
+pub const MAX_ARTIFACT_FILE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Read a circuit-artifact file, refusing anything larger than
+/// [`MAX_ARTIFACT_FILE_BYTES`] before allocating for its contents.
+///
+/// The size is checked via `fstat` on the already-opened handle (no
+/// stat-then-open race), and the read itself is additionally capped with
+/// `Read::take` in case the file grows after the check.
+#[cfg(feature = "std")]
+pub fn read_artifact_file(path: &std::path::Path) -> Result<Vec<u8>> {
+    use std::io::Read as _;
+
+    let file = std::fs::File::open(path)
+        .with_context(|| format!("failed to open artifact file {}", path.display()))?;
+    let claimed_len = file
+        .metadata()
+        .with_context(|| format!("failed to stat artifact file {}", path.display()))?
+        .len();
+    if claimed_len > MAX_ARTIFACT_FILE_BYTES {
+        bail!(
+            "artifact file {} is {} bytes, which exceeds the {} byte limit for \
+             circuit artifacts; refusing to load it",
+            path.display(),
+            claimed_len,
+            MAX_ARTIFACT_FILE_BYTES
+        );
+    }
+
+    let mut bytes = Vec::with_capacity(claimed_len as usize);
+    file.take(MAX_ARTIFACT_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("failed to read artifact file {}", path.display()))?;
+    if bytes.len() as u64 > MAX_ARTIFACT_FILE_BYTES {
+        bail!(
+            "artifact file {} grew past the {} byte limit for circuit artifacts \
+             while being read; refusing to load it",
+            path.display(),
+            MAX_ARTIFACT_FILE_BYTES
+        );
+    }
+    Ok(bytes)
+}
 
 /// Load verifier circuit data (common + verifier-only) from serialized bytes.
 pub fn load_verifier_data_from_bytes(
@@ -470,10 +524,40 @@ pub fn private_batch_num_leaves_from_padded_pi_len(pi_len: usize) -> Result<usiz
 #[cfg(test)]
 mod tests {
     use super::private_batch_num_leaves_from_padded_pi_len;
+    use super::{read_artifact_file, MAX_ARTIFACT_FILE_BYTES};
 
     #[test]
     fn private_batch_num_leaves_from_padded_pi_len_rejects_malformed_lengths() {
         let err = private_batch_num_leaves_from_padded_pi_len(9).unwrap_err();
         assert!(err.to_string().contains("malformed"));
+    }
+
+    #[test]
+    fn read_artifact_file_round_trips_normal_files_and_rejects_oversized_ones() {
+        let dir = std::env::temp_dir().join(format!(
+            "qp-artifact-read-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let normal = dir.join("normal.bin");
+        std::fs::write(&normal, b"artifact bytes").unwrap();
+        assert_eq!(read_artifact_file(&normal).unwrap(), b"artifact bytes");
+
+        // A sparse file costs no disk but still claims an oversized length,
+        // exactly like an attacker-planted artifact would.
+        let oversized = dir.join("oversized.bin");
+        std::fs::File::create(&oversized)
+            .unwrap()
+            .set_len(MAX_ARTIFACT_FILE_BYTES + 1)
+            .unwrap();
+        let err = read_artifact_file(&oversized).unwrap_err();
+        assert!(
+            err.to_string().contains("exceeds the"),
+            "got: {err}"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

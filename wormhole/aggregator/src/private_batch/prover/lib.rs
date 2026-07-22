@@ -22,7 +22,7 @@ use plonky2::{
 use rand::seq::SliceRandom;
 
 #[cfg(feature = "std")]
-use std::{fs, path::Path};
+use std::path::Path;
 
 use qp_wormhole_inputs::{validate_proof_count, BytesDigest, PublicCircuitInputs};
 use zk_circuits_common::{
@@ -30,6 +30,8 @@ use zk_circuits_common::{
     utils::bytes_to_digest,
 };
 
+#[cfg(feature = "std")]
+use crate::common::utils::read_artifact_file;
 use crate::{
     common::utils::{
         ensure_proof_public_input_len, leaf_proof_asset_id, load_canonical_leaf_verifier_data,
@@ -172,12 +174,12 @@ impl PrivateBatchProver {
         dummy_proof_path: &Path,
         num_leaf_proofs: usize,
     ) -> Result<Self> {
-        let leaf_common_bytes = fs::read(leaf_common_path)
+        let leaf_common_bytes = read_artifact_file(leaf_common_path)
             .with_context(|| format!("Failed to read leaf common file {:?}", leaf_common_path))?;
-        let leaf_verifier_only_bytes = fs::read(leaf_verifier_path).with_context(|| {
+        let leaf_verifier_only_bytes = read_artifact_file(leaf_verifier_path).with_context(|| {
             format!("Failed to read leaf verifier file {:?}", leaf_verifier_path)
         })?;
-        let dummy_proof_bytes = fs::read(dummy_proof_path)
+        let dummy_proof_bytes = read_artifact_file(dummy_proof_path)
             .with_context(|| format!("Failed to read dummy proof file {:?}", dummy_proof_path))?;
 
         Self::new_from_bytes(
