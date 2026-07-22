@@ -312,7 +312,8 @@ pub fn hash_node_presorted(sorted_children: &[Hash256; ARITY]) -> Hash256 {
     }
 
     // Compact encoding (8 bytes/felt); lossy path for fixed-size hash payloads.
-    serialization::hash_bytes_compact(&data)
+    // 128 bytes is far below MAX_SERIALIZED_BYTES, so this cannot fail.
+    serialization::hash_bytes_compact(&data).expect("128-byte node payload is within bounds")
 }
 
 /// Hash 4 child hashes into a parent node hash.
@@ -332,7 +333,8 @@ pub fn hash_node(children: &[Hash256; ARITY]) -> Hash256 {
     }
 
     // Compact encoding (8 bytes/felt); 128 bytes -> 16 felts.
-    serialization::hash_bytes_compact(&data)
+    // 128 bytes is far below MAX_SERIALIZED_BYTES, so this cannot fail.
+    serialization::hash_bytes_compact(&data).expect("128-byte node payload is within bounds")
 }
 
 /// Empty hash value (all zeros).
