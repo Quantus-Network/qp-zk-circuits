@@ -75,7 +75,6 @@ impl HeaderTargets {
     }
 }
 
-#[derive(Debug)]
 pub struct HeaderInputs {
     /// parent_hash uses 4 felts (8 bytes/felt) for hash outputs
     pub parent_hash: Digest,
@@ -87,6 +86,25 @@ pub struct HeaderInputs {
     /// zk_tree_root uses 4 felts (8 bytes/felt) for hash outputs
     pub zk_tree_root: Digest,
     pub digest: [F; DIGEST_LOGS_FELTS],
+}
+
+/// Redacting `Debug`: `digest` is the felt-encoded copy of the private
+/// `PrivateCircuitInputs::digest` witness field (merkle-path material that
+/// identifies the leaf's block-header preimage), so it must stay redacted
+/// here too. The remaining header fields are public chain data fully
+/// determined by the proof's public `block_hash` and stay visible for
+/// debugging header hash mismatches.
+impl core::fmt::Debug for HeaderInputs {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("HeaderInputs")
+            .field("parent_hash", &self.parent_hash)
+            .field("block_number", &self.block_number)
+            .field("state_root", &self.state_root)
+            .field("extrinsics_root", &self.extrinsics_root)
+            .field("zk_tree_root", &self.zk_tree_root)
+            .field("digest", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl HeaderInputs {
@@ -135,5 +153,43 @@ impl TryFrom<&CircuitInputs> for HeaderInputs {
             inputs.private.zk_tree_root.try_into()?,
             &inputs.private.digest,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use plonky2::field::types::PrimeField64;
+
+    /// `PrivateCircuitInputs` redacts `digest` as private witness material
+    /// (it identifies the leaf's block-header preimage), so the felt-encoded
+    /// copy held by `HeaderInputs` must not become printable again.
+    #[test]
+    fn header_inputs_debug_redacts_digest() {
+        let digest = [0xEE_u8; DIGEST_LOGS_SIZE];
+        let header = HeaderInputs::new(
+            BytesDigest::default(),
+            1,
+            BytesDigest::default(),
+            BytesDigest::default(),
+            BytesDigest::default(),
+            &digest,
+        )
+        .unwrap();
+
+        let dump = alloc::format!("{:?}", header);
+        for felt in header.digest.iter() {
+            let value = felt.to_canonical_u64();
+            // Skip tiny felts (e.g. terminator chunks) that could collide with
+            // unrelated small numbers in the output.
+            if value > 0xFFFF {
+                let needle = alloc::format!("{}", value);
+                assert!(
+                    !dump.contains(&needle),
+                    "digest felt {} leaked in Debug output",
+                    needle
+                );
+            }
+        }
     }
 }

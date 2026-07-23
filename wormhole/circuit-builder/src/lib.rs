@@ -89,8 +89,10 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(output_dir: P) -> Result<()> {
 ///
 /// # Arguments
 /// * `output_dir` - Directory to write the binaries to
-/// * `include_prover` - Whether to include the prover binaries for the batch aggregation
-///   circuits (the leaf circuit never emits a prover binary; see [`generate_circuit_binaries`])
+/// * `include_prover` - Whether to generate the dummy private-batch proof used for
+///   public-batch padding (requires a private-batch proving run). No circuit emits a
+///   prover binary: provers always rebuild their circuits from source (see
+///   [`generate_circuit_binaries`])
 /// * `num_leaf_proofs` - Number of leaf proofs aggregated into a single proof (must be > 0)
 /// * `num_private_batch_proofs` - Optional param for number of inner proofs (for public-batch circuit). Set to none if you only want private-batch aggregation.
 ///
@@ -107,7 +109,7 @@ pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
     let config = CircuitBinsConfig::new(num_leaf_proofs, num_private_batch_proofs)?;
 
     let output_path = output_dir.as_ref();
-    let staging_path = staging_dir_for(output_path)?;
+    let staging_path = create_staging_dir(output_path)?;
 
     let generated = (|| -> Result<()> {
         // Generate regular circuit binaries
@@ -122,11 +124,7 @@ pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
 
         // If num_private_batch_proofs is specified, generate public-batch aggregation circuit binaries
         if let Some(num_private_batch_proofs) = config.num_private_batch_proofs {
-            generate_public_batch_circuit_binaries(
-                &staging_path,
-                num_private_batch_proofs,
-                include_prover,
-            )?;
+            generate_public_batch_circuit_binaries(&staging_path, num_private_batch_proofs)?;
         }
 
         // Save config file alongside binaries. Written last: its presence marks
@@ -146,16 +144,60 @@ pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
     commit_staging_dir(&staging_path, output_path)
 }
 
-/// A unique staging directory on the same filesystem as `output_dir` (a
-/// sibling), so the final `rename` is atomic.
-fn staging_dir_for(output_dir: &Path) -> Result<PathBuf> {
+/// Create the private staging directory that artifact generation writes into:
+/// a sibling of `output_dir` (same filesystem, so the final `rename` is
+/// atomic), created exclusively under an unpredictable name.
+///
+/// Exclusive `create_dir` (create-new semantics) is the symlink-safety
+/// guarantee: `mkdir` refuses to follow a symlink at the final component and
+/// fails if anything already exists at the path, so a local attacker with
+/// write access to the output parent can never get a pre-planted symlink (or
+/// a directory seeded with artifact-name symlinks) adopted as the staging
+/// dir and redirect the builder's `std::fs::write` calls onto arbitrary
+/// files. The random suffix makes the path unpredictable, so a planted entry
+/// cannot even force an error, and the pid keeps stale leftovers attributable.
+fn create_staging_dir(output_dir: &Path) -> Result<PathBuf> {
     let Some(name) = output_dir.file_name().and_then(|n| n.to_str()) else {
         bail!(
             "output dir {} has no usable directory name; pass an explicit directory path",
             output_dir.display()
         );
     };
-    Ok(output_dir.with_file_name(format!(".{}.staging-{}", name, std::process::id())))
+    if let Some(parent) = output_dir.parent() {
+        if !parent.as_os_str().is_empty() {
+            create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create output parent directory {}",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+    // A few attempts are plenty: a collision requires an identical 64-bit
+    // random suffix to appear in the same parent under the same pid.
+    for _ in 0..8 {
+        let candidate = output_dir.with_file_name(format!(
+            ".{}.staging-{}-{:016x}",
+            name,
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        match fs::create_dir(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                return Err(e).with_context(|| {
+                    format!("failed to create staging directory {}", candidate.display())
+                })
+            }
+        }
+    }
+    bail!(
+        "failed to create a fresh staging directory next to {}; \
+         remove stale .{}.staging-* entries and retry",
+        output_dir.display(),
+        name
+    );
 }
 
 /// Replace `output_dir` with the fully staged `staging_dir` via directory
@@ -180,6 +222,23 @@ fn commit_staging_dir_impl(
     output_dir: &Path,
     rename: impl Fn(&Path, &Path) -> std::io::Result<()>,
 ) -> Result<()> {
+    // Never publish a staging path we did not stage as a real directory:
+    // renaming a symlink into place would hand out an artifact dir whose
+    // contents remain mutable by whoever owns the link target.
+    let staging_meta = fs::symlink_metadata(staging_dir).with_context(|| {
+        format!(
+            "failed to inspect staged artifact dir {}",
+            staging_dir.display()
+        )
+    })?;
+    if !staging_meta.is_dir() {
+        bail!(
+            "staged artifact path {} is not a plain directory (symlink or file); \
+             refusing to publish it as the artifact dir",
+            staging_dir.display()
+        );
+    }
+
     let mut old_name = staging_dir.file_name().unwrap_or_default().to_os_string();
     old_name.push(".old");
     let old_path = staging_dir.with_file_name(old_name);
@@ -275,12 +334,12 @@ mod tests {
     fn commit_replaces_existing_output_dir_wholesale() {
         let root = unique_tmp_dir("commit-replace");
         let _ = fs::remove_dir_all(&root);
+        create_dir_all(&root).unwrap();
         let output = root.join("bins");
-        let staging = staging_dir_for(&output).unwrap();
+        let staging = create_staging_dir(&output).unwrap();
 
         create_dir_all(&output).unwrap();
         write(output.join("stale.bin"), b"old artifact").unwrap();
-        create_dir_all(&staging).unwrap();
         write(staging.join("fresh.bin"), b"new artifact").unwrap();
 
         commit_staging_dir(&staging, &output).unwrap();
@@ -301,9 +360,8 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         create_dir_all(&root).unwrap();
         let output = root.join("bins");
-        let staging = staging_dir_for(&output).unwrap();
+        let staging = create_staging_dir(&output).unwrap();
 
-        create_dir_all(&staging).unwrap();
         write(staging.join("fresh.bin"), b"new artifact").unwrap();
 
         commit_staging_dir(&staging, &output).unwrap();
@@ -313,21 +371,105 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
     }
 
+    /// Staging paths must be minted fresh on every call (exclusive creation
+    /// under an unpredictable name), never re-derived from the pid alone: a
+    /// predictable path is what lets a local attacker pre-create it.
     #[test]
-    fn staging_dir_is_a_sibling_of_the_output_dir() {
-        let staging = staging_dir_for(Path::new("/some/where/bins")).unwrap();
-        assert_eq!(staging.parent(), Some(Path::new("/some/where")));
-        assert!(staging
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .starts_with(".bins.staging-"));
+    fn create_staging_dir_mints_a_fresh_unique_directory_per_call() {
+        let root = unique_tmp_dir("staging-fresh");
+        let _ = fs::remove_dir_all(&root);
+        create_dir_all(&root).unwrap();
+        let output = root.join("bins");
+
+        let a = create_staging_dir(&output).unwrap();
+        let b = create_staging_dir(&output).unwrap();
+        assert_ne!(
+            a, b,
+            "staging paths must be unique per call, not a pid-only derivation"
+        );
+        for dir in [&a, &b] {
+            let meta = fs::symlink_metadata(dir).unwrap();
+            assert!(
+                meta.is_dir() && !meta.file_type().is_symlink(),
+                "staging path must be a freshly created real directory"
+            );
+            assert_eq!(
+                dir.parent(),
+                Some(root.as_path()),
+                "staging dir must stay a sibling of the output dir"
+            );
+            assert!(dir
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with(".bins.staging-"));
+        }
+
+        fs::remove_dir_all(&root).unwrap();
     }
 
-    /// A failed generation must not disturb pre-existing output contents.
-    /// Uses an invalid proof count to trip the earliest failure path, and a
-    /// crafted failure later via a file blocking the staging path.
+    /// A local attacker with write access to the output parent plants a
+    /// symlink at the predictable staging path. The builder must not adopt it:
+    /// artifact writes would land in attacker-controlled storage.
+    #[cfg(unix)]
+    #[test]
+    fn create_staging_dir_does_not_adopt_a_planted_symlink() {
+        let root = unique_tmp_dir("staging-symlink");
+        let _ = fs::remove_dir_all(&root);
+        create_dir_all(&root).unwrap();
+        let output = root.join("bins");
+        let attacker_target = root.join("attacker-target");
+        create_dir_all(&attacker_target).unwrap();
+
+        // The historical (predictable) staging name: .<name>.staging-<pid>.
+        let planted = output.with_file_name(format!(".bins.staging-{}", std::process::id()));
+        std::os::unix::fs::symlink(&attacker_target, &planted).unwrap();
+
+        let staging = create_staging_dir(&output).unwrap();
+        let meta = fs::symlink_metadata(&staging).unwrap();
+        assert!(
+            meta.is_dir() && !meta.file_type().is_symlink(),
+            "staging dir must be a freshly created real directory, not the planted symlink"
+        );
+        write(staging.join("probe.bin"), b"artifact").unwrap();
+        assert!(
+            !attacker_target.join("probe.bin").exists(),
+            "artifact writes must not land in attacker-controlled storage"
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The commit phase must refuse to publish a staging path that is not a
+    /// plain directory: renaming a symlink into place would hand out an
+    /// artifact dir whose contents remain attacker-mutable.
+    #[cfg(unix)]
+    #[test]
+    fn commit_refuses_to_publish_a_symlinked_staging_dir() {
+        let root = unique_tmp_dir("commit-symlink");
+        let _ = fs::remove_dir_all(&root);
+        create_dir_all(&root).unwrap();
+        let output = root.join("bins");
+        let attacker_target = root.join("attacker-target");
+        create_dir_all(&attacker_target).unwrap();
+        write(attacker_target.join("fresh.bin"), b"attacker mutable").unwrap();
+        let staging = root.join(".bins.staging-evil");
+        std::os::unix::fs::symlink(&attacker_target, &staging).unwrap();
+
+        let err = commit_staging_dir(&staging, &output).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("not a plain directory"),
+            "got: {err:#}"
+        );
+        assert!(
+            fs::symlink_metadata(&output).is_err(),
+            "a symlinked staging path must never be published as the artifact dir"
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
     fn io_fail() -> std::io::Error {
         std::io::Error::other("injected rename failure")
     }
@@ -340,10 +482,9 @@ mod tests {
         let root = unique_tmp_dir("swap-rollback");
         let _ = fs::remove_dir_all(&root);
         let output = root.join("bins");
-        let staging = staging_dir_for(&output).unwrap();
+        let staging = create_staging_dir(&output).unwrap();
         create_dir_all(&output).unwrap();
         write(output.join("previous.bin"), b"previous").unwrap();
-        create_dir_all(&staging).unwrap();
         write(staging.join("fresh.bin"), b"fresh").unwrap();
 
         // Fail only the staging -> output rename; move-aside and rollback work.
@@ -374,10 +515,9 @@ mod tests {
         let root = unique_tmp_dir("swap-rollback-fail");
         let _ = fs::remove_dir_all(&root);
         let output = root.join("bins");
-        let staging = staging_dir_for(&output).unwrap();
+        let staging = create_staging_dir(&output).unwrap();
         create_dir_all(&output).unwrap();
         write(output.join("previous.bin"), b"previous").unwrap();
-        create_dir_all(&staging).unwrap();
         write(staging.join("fresh.bin"), b"fresh").unwrap();
 
         // Fail every rename INTO output_dir: the swap-in and the rollback.
@@ -418,8 +558,7 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         create_dir_all(&root).unwrap();
         let output = root.join("bins");
-        let staging = staging_dir_for(&output).unwrap();
-        create_dir_all(&staging).unwrap();
+        let staging = create_staging_dir(&output).unwrap();
         write(staging.join("fresh.bin"), b"fresh").unwrap();
 
         let err = commit_staging_dir_impl(&staging, &output, |_, _| Err(io_fail())).unwrap_err();
@@ -440,10 +579,9 @@ mod tests {
         let root = unique_tmp_dir("swap-aside-fail");
         let _ = fs::remove_dir_all(&root);
         let output = root.join("bins");
-        let staging = staging_dir_for(&output).unwrap();
+        let staging = create_staging_dir(&output).unwrap();
         create_dir_all(&output).unwrap();
         write(output.join("previous.bin"), b"previous").unwrap();
-        create_dir_all(&staging).unwrap();
         write(staging.join("fresh.bin"), b"fresh").unwrap();
 
         let output_src = output.clone();
@@ -463,6 +601,7 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
     }
 
+    /// A failed generation must not disturb pre-existing output contents.
     #[test]
     fn failed_generation_leaves_existing_output_untouched() {
         let root = unique_tmp_dir("gen-fail");
@@ -475,12 +614,38 @@ mod tests {
         assert!(generate_all_circuit_binaries(&output, false, 0, None).is_err());
         assert!(output.join("existing.bin").exists());
 
-        // Block staging-dir creation with a plain file at the staging path:
-        // generation fails mid-stage, output must still be untouched and the
-        // blocking file (not a dir) must not be swapped in.
-        let staging = staging_dir_for(&output).unwrap();
-        write(&staging, b"not a directory").unwrap();
-        assert!(generate_all_circuit_binaries(&output, false, 1, None).is_err());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// If the staging directory cannot be created at all, generation must fail
+    /// before any circuit work begins and leave existing output untouched.
+    #[cfg(unix)]
+    #[test]
+    fn unwritable_parent_fails_before_building_and_leaves_output_untouched() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = unique_tmp_dir("gen-parent-ro");
+        let _ = fs::remove_dir_all(&root);
+        let output = root.join("bins");
+        create_dir_all(&output).unwrap();
+        write(output.join("existing.bin"), b"keep me").unwrap();
+
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o555)).unwrap();
+        // Running as root bypasses permission bits; nothing to exercise then.
+        if fs::create_dir(root.join(".probe")).is_ok() {
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
+            fs::remove_dir_all(&root).unwrap();
+            return;
+        }
+
+        let result = generate_all_circuit_binaries(&output, false, 1, None);
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let err = result.unwrap_err();
+        assert!(
+            format!("{err:#}").contains("staging directory"),
+            "got: {err:#}"
+        );
         assert!(output.join("existing.bin").exists());
         assert!(!output.join("common.bin").exists());
 

@@ -1,7 +1,9 @@
-//! Public-batch aggregation prover (prebuilt-circuit proving API).
+//! Public-batch aggregation prover.
 //!
 //! The private-batch verifier key is baked in as constants at circuit build time to prevent
-//! verifier key substitution attacks.
+//! verifier key substitution attacks. The public-batch circuit (and its prover-only data)
+//! is always rebuilt from source rather than loaded from a serialized artifact; see
+//! [`PublicBatchProver::new_from_bytes`].
 
 use anyhow::{anyhow, bail, Context, Result};
 use plonky2::field::types::PrimeField64;
@@ -10,27 +12,28 @@ use plonky2::{
     iop::witness::PartialWitness,
     plonk::{
         circuit_data::{
-            CircuitConfig, CommonCircuitData, ProverCircuitData, ProverOnlyCircuitData,
-            VerifierCircuitData, VerifierOnlyCircuitData,
+            CircuitConfig, CommonCircuitData, ProverCircuitData, VerifierCircuitData,
+            VerifierOnlyCircuitData,
         },
         proof::ProofWithPublicInputs,
     },
-    util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer},
 };
 use qp_wormhole_inputs::{validate_proof_count, BytesDigest, PrivateBatchPublicInputs};
 
 #[cfg(feature = "std")]
-use std::{fs, path::Path};
+use std::path::Path;
 
 use zk_circuits_common::{
     circuit::{wormhole_public_batch_circuit_config, C, D, F},
     utils::bytes_to_digest,
 };
 
+#[cfg(feature = "std")]
+use crate::common::utils::read_artifact_file;
 use crate::{
     common::utils::{
-        canonical_leaf_verifier_data, ensure_common_matches_canonical,
-        ensure_proof_public_input_len, load_canonical_private_batch_verifier_data,
+        canonical_leaf_verifier_data, ensure_proof_public_input_len,
+        load_canonical_private_batch_verifier_data,
     },
     public_batch::{
         circuit::{
@@ -113,19 +116,19 @@ impl PublicBatchProver {
     }
 
     /// Create a public-batch prover from serialized bytes.
+    ///
+    /// The public-batch circuit itself (including its `ProverOnlyCircuitData`)
+    /// is always rebuilt from source rather than deserialized: prover-only data
+    /// decides which witness wires are exposed as public inputs, so a poisoned
+    /// prover artifact could exfiltrate witness data through the proof's
+    /// public-input list. The full circuit build was already required here to
+    /// pin the loaded artifacts, so rebuilding adds no extra cost.
     pub fn new_from_bytes(
-        public_batch_prover_only_bytes: &[u8],
-        public_batch_common_bytes: &[u8],
         private_batch_common_bytes: &[u8],
         private_batch_verifier_only_bytes: &[u8],
         dummy_private_batch_proof_bytes: &[u8],
         config: (usize, usize), // (num_leaf_proofs, num_private_batch_proofs)
     ) -> Result<Self> {
-        let gate_serializer = DefaultGateSerializer;
-        let generator_serializer = DefaultGeneratorSerializer::<C, D> {
-            _phantom: Default::default(),
-        };
-
         let (num_leaf_proofs, num_private_batch_proofs) = config;
 
         // Validate batch counts at the public byte-loading boundary so a zero or
@@ -156,8 +159,8 @@ impl PublicBatchProver {
             );
         }
 
-        // 2) Reconstruct the canonical public-batch circuit once: it provides both the
-        // witness targets and the canonical common data used to pin the prebuilt artifacts.
+        // 2) Rebuild the canonical public-batch circuit from source. Its prover
+        // data is used directly instead of loading a serialized prover artifact.
         let circuit = PublicBatchCircuit::new(
             wormhole_public_batch_circuit_config(),
             private_batch_verifier_data.common.clone(),
@@ -166,26 +169,9 @@ impl PublicBatchProver {
             num_leaf_proofs,
         )?;
         let targets = Some(circuit.targets());
-        let canonical_public = circuit.build_verifier();
+        let circuit_data = circuit.build_prover();
 
-        // 3) Load prebuilt public-batch circuit prover data and pin common data.
-        let public_batch_common =
-            CommonCircuitData::from_bytes(public_batch_common_bytes.to_vec(), &gate_serializer)
-                .map_err(|e| anyhow!("failed to deserialize public_batch common data: {}", e))?;
-        ensure_common_matches_canonical(
-            &public_batch_common,
-            &canonical_public.common,
-            "public_batch",
-        )?;
-
-        let public_batch_prover_only = ProverOnlyCircuitData::from_bytes(
-            public_batch_prover_only_bytes,
-            &generator_serializer,
-            &public_batch_common,
-        )
-        .map_err(|e| anyhow!("failed to deserialize public_batch prover data: {}", e))?;
-
-        // 4) Load the dummy private-batch proof template used to pad partial batches
+        // 3) Load the dummy private-batch proof template used to pad partial batches
         let dummy_proof_template = ProofWithPublicInputs::<F, C, D>::from_bytes(
             dummy_private_batch_proof_bytes.to_vec(),
             &private_batch_verifier_data.common,
@@ -198,10 +184,7 @@ impl PublicBatchProver {
         verify_dummy_private_batch_template(&dummy_proof_template, &private_batch_verifier_data)?;
 
         Ok(Self {
-            circuit_data: ProverCircuitData {
-                prover_only: public_batch_prover_only,
-                common: public_batch_common,
-            },
+            circuit_data,
             partial_witness: PartialWitness::new(),
             targets,
             num_private_batch_proofs,
@@ -211,30 +194,20 @@ impl PublicBatchProver {
     }
 
     #[cfg(feature = "std")]
-    #[allow(clippy::too_many_arguments)]
     pub fn new_from_files(
-        public_batch_prover_path: &Path,
-        public_batch_common_path: &Path,
         private_batch_common_path: &Path,
         private_batch_verifier_path: &Path,
         dummy_private_batch_proof_path: &Path,
         config: (usize, usize),
     ) -> Result<Self> {
-        let public_batch_prover_only_bytes = fs::read(public_batch_prover_path)
-            .with_context(|| format!("Failed to read {:?}", public_batch_prover_path))?;
-        let public_batch_common_bytes = fs::read(public_batch_common_path)
-            .with_context(|| format!("Failed to read {:?}", public_batch_common_path))?;
-
-        let private_batch_common_bytes = fs::read(private_batch_common_path)
+        let private_batch_common_bytes = read_artifact_file(private_batch_common_path)
             .with_context(|| format!("Failed to read {:?}", private_batch_common_path))?;
-        let private_batch_verifier_only_bytes = fs::read(private_batch_verifier_path)
+        let private_batch_verifier_only_bytes = read_artifact_file(private_batch_verifier_path)
             .with_context(|| format!("Failed to read {:?}", private_batch_verifier_path))?;
-        let dummy_private_batch_proof_bytes = fs::read(dummy_private_batch_proof_path)
+        let dummy_private_batch_proof_bytes = read_artifact_file(dummy_private_batch_proof_path)
             .with_context(|| format!("Failed to read {:?}", dummy_private_batch_proof_path))?;
 
         Self::new_from_bytes(
-            &public_batch_prover_only_bytes,
-            &public_batch_common_bytes,
             &private_batch_common_bytes,
             &private_batch_verifier_only_bytes,
             &dummy_private_batch_proof_bytes,
@@ -245,13 +218,14 @@ impl PublicBatchProver {
     /// Convenience constructor from a generated binaries directory.
     ///
     /// Expected files:
-    /// - `public_batch_prover.bin`
-    /// - `public_batch_common.bin`
     /// - `private_batch_common.bin`             (private-batch common)
     /// - `private_batch_verifier.bin`           (private-batch verifier-only)
     /// - `dummy_private_batch_proof.bin`        (padding template)
     /// - `config.json`
     ///
+    /// The public-batch circuit itself is rebuilt from source (see
+    /// [`Self::new_from_bytes`]); no `public_batch_prover.bin` or
+    /// `public_batch_common.bin` is read.
     #[cfg(feature = "std")]
     pub fn new_from_binaries_dir(bins_dir: &Path) -> Result<Self> {
         let bins_config = crate::config::CircuitBinsConfig::load(bins_dir)?;
@@ -264,8 +238,6 @@ impl PublicBatchProver {
         let config = (bins_config.num_leaf_proofs, num_private_batch_proofs);
 
         Self::new_from_files(
-            &bins_dir.join("public_batch_prover.bin"),
-            &bins_dir.join("public_batch_common.bin"),
             &bins_dir.join("private_batch_common.bin"),
             &bins_dir.join("private_batch_verifier.bin"),
             &bins_dir.join("dummy_private_batch_proof.bin"),
@@ -761,5 +733,105 @@ mod tests {
                 || err.to_string().contains("failed to parse"),
             "got: {err}"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Witness-fill proof-shape preflight
+    //
+    // A proof with the expected public-input length can still carry internally
+    // inconsistent proof vectors. The pinned qp-plonky2 witness writer assigns
+    // those through zip_eq / debug-only length checks, so without a full shape
+    // preflight a malformed proof panics inside fill_public_batch_witness
+    // (or silently leaves targets unset) instead of returning Err. Mirrors the
+    // private-batch witness-fill preflight one layer down.
+    // -------------------------------------------------------------------------
+
+    /// Prove one valid all-dummy private-batch proof and build matching
+    /// 1-slot public-batch targets.
+    fn valid_private_batch_proof_and_targets(
+    ) -> (ProofWithPublicInputs<F, C, D>, PublicBatchCircuitTargets) {
+        let (leaf, leaf_targets) = build_fake_leaf_circuit();
+        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; 21]);
+        let proof = make_all_dummy_private_batch_template(&leaf, &dummy_leaf);
+
+        let private_batch = PrivateBatchCircuit::new(
+            wormhole_private_batch_circuit_config(),
+            &leaf.common,
+            &leaf.verifier_only,
+            1,
+        )
+        .unwrap()
+        .build_verifier();
+
+        let targets = PublicBatchCircuit::new(
+            wormhole_public_batch_circuit_config(),
+            private_batch.common,
+            &private_batch.verifier_only,
+            1,
+            1,
+        )
+        .unwrap()
+        .targets();
+
+        (proof, targets)
+    }
+
+    fn fill_witness_with_proof(
+        targets: &PublicBatchCircuitTargets,
+        proof: ProofWithPublicInputs<F, C, D>,
+    ) -> Result<()> {
+        let mut pw = PartialWitness::new();
+        fill_public_batch_witness(
+            &mut pw,
+            targets,
+            &[proof],
+            bytes_to_digest(BytesDigest::default()),
+        )
+    }
+
+    /// Control: an untampered proof must still pass the shape preflight.
+    #[test]
+    fn witness_fill_accepts_well_shaped_proof() {
+        let (proof, targets) = valid_private_batch_proof_and_targets();
+        fill_witness_with_proof(&targets, proof)
+            .expect("a valid, well-shaped proof must fill the witness");
+    }
+
+    /// A shortened FRI query-round list panics in plonky2's zip_eq without a
+    /// shape preflight; it must instead be rejected with an error.
+    #[test]
+    fn witness_fill_rejects_truncated_fri_query_rounds() {
+        let (mut proof, targets) = valid_private_batch_proof_and_targets();
+        proof.proof.opening_proof.query_round_proofs.pop();
+
+        let err = fill_witness_with_proof(&targets, proof)
+            .expect_err("proof with truncated FRI query rounds must be rejected");
+        assert!(err.to_string().contains("query_round_proofs"), "got: {err}");
+    }
+
+    /// A truncated opening set trips a debug-only length check in plonky2's
+    /// witness writer (silent partial assignment in release); it must instead
+    /// be rejected with an error.
+    #[test]
+    fn witness_fill_rejects_truncated_openings() {
+        let (mut proof, targets) = valid_private_batch_proof_and_targets();
+        proof.proof.openings.wires.pop();
+
+        let err = fill_witness_with_proof(&targets, proof)
+            .expect_err("proof with truncated openings must be rejected");
+        assert!(err.to_string().contains("openings.wires"), "got: {err}");
+    }
+
+    /// A shortened wires Merkle cap is assigned through a plain zip, silently
+    /// leaving trailing cap targets unset and deferring failure to prove time;
+    /// it must instead be rejected with an error.
+    #[test]
+    fn witness_fill_rejects_truncated_wires_cap() {
+        let (mut proof, targets) = valid_private_batch_proof_and_targets();
+        proof.proof.wires_cap.0.pop();
+
+        let err = fill_witness_with_proof(&targets, proof)
+            .expect_err("proof with truncated wires_cap must be rejected");
+        assert!(err.to_string().contains("wires_cap"), "got: {err}");
     }
 }

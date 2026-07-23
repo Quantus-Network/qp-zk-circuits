@@ -1,3 +1,5 @@
+#[cfg(feature = "std")]
+use anyhow::Context;
 use anyhow::{anyhow, bail, Result};
 use plonky2::{
     field::types::PrimeField64,
@@ -5,7 +7,7 @@ use plonky2::{
         circuit_data::{
             CircuitConfig, CommonCircuitData, VerifierCircuitData, VerifierOnlyCircuitData,
         },
-        proof::ProofWithPublicInputs,
+        proof::{ProofWithPublicInputs, ProofWithPublicInputsTarget},
     },
     util::serialization::DefaultGateSerializer,
 };
@@ -21,6 +23,58 @@ use crate::private_batch::circuit::{
     constants::{aggregated_output, ASSET_ID_START, LEAF_PI_LEN},
 };
 use crate::public_batch::circuit::circuit_logic::PublicBatchCircuit;
+
+/// Maximum size accepted for any serialized circuit-artifact file.
+///
+/// The largest legitimate artifact is a serialized recursive proof (hundreds
+/// of KB); common/verifier data is smaller still. 64 MiB gives generous
+/// headroom for config variations while bounding the allocation an untrusted
+/// artifact directory can force: without a cap, a single oversized or sparse
+/// `*.bin` file is read fully into memory BEFORE canonical validation gets a
+/// chance to reject it, letting an attacker-chosen directory crash or memory-
+/// starve the loading process.
+pub const MAX_ARTIFACT_FILE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Read a circuit-artifact file, refusing anything larger than
+/// [`MAX_ARTIFACT_FILE_BYTES`] before allocating for its contents.
+///
+/// The size is checked via `fstat` on the already-opened handle (no
+/// stat-then-open race), and the read itself is additionally capped with
+/// `Read::take` in case the file grows after the check.
+#[cfg(feature = "std")]
+pub fn read_artifact_file(path: &std::path::Path) -> Result<Vec<u8>> {
+    use std::io::Read as _;
+
+    let file = std::fs::File::open(path)
+        .with_context(|| format!("failed to open artifact file {}", path.display()))?;
+    let claimed_len = file
+        .metadata()
+        .with_context(|| format!("failed to stat artifact file {}", path.display()))?
+        .len();
+    if claimed_len > MAX_ARTIFACT_FILE_BYTES {
+        bail!(
+            "artifact file {} is {} bytes, which exceeds the {} byte limit for \
+             circuit artifacts; refusing to load it",
+            path.display(),
+            claimed_len,
+            MAX_ARTIFACT_FILE_BYTES
+        );
+    }
+
+    let mut bytes = Vec::with_capacity(claimed_len as usize);
+    file.take(MAX_ARTIFACT_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("failed to read artifact file {}", path.display()))?;
+    if bytes.len() as u64 > MAX_ARTIFACT_FILE_BYTES {
+        bail!(
+            "artifact file {} grew past the {} byte limit for circuit artifacts \
+             while being read; refusing to load it",
+            path.display(),
+            MAX_ARTIFACT_FILE_BYTES
+        );
+    }
+    Ok(bytes)
+}
 
 /// Load verifier circuit data (common + verifier-only) from serialized bytes.
 pub fn load_verifier_data_from_bytes(
@@ -173,6 +227,249 @@ pub fn canonical_public_batch_verifier_data(
     .build_verifier())
 }
 
+fn ensure_len_matches(
+    actual: usize,
+    expected: usize,
+    label: &str,
+    slot: usize,
+    what: &str,
+) -> Result<()> {
+    if actual != expected {
+        bail!(
+            "{} at slot {} is malformed: {} has length {}, but the circuit expects {}",
+            label,
+            slot,
+            what,
+            actual,
+            expected
+        );
+    }
+    Ok(())
+}
+
+/// Preflight a caller-supplied proof's full internal shape against the
+/// circuit's proof targets, so a malformed proof is rejected at a Result
+/// boundary instead of reaching plonky2's witness writer.
+///
+/// `set_proof_with_pis_target` assigns the proof's internals through
+/// length-sensitive iterator paths: `zip_eq` (panics on mismatch, e.g. for the
+/// FRI query-round list), debug-only length asserts (silent partial assignment
+/// in release), and plain `zip` (silently leaves trailing targets unset, e.g.
+/// for Merkle caps). A proof with the expected public-input length but
+/// internally inconsistent vectors would otherwise crash the process or defer
+/// the failure to prove time. Plonky2's own shape validation is private to the
+/// crate and only runs inside `verify`, after witness filling.
+///
+/// `label` names the proof kind in error messages (e.g. "leaf proof").
+pub fn ensure_proof_shape_matches_targets(
+    proof_t: &ProofWithPublicInputsTarget<D>,
+    proof: &ProofWithPublicInputs<F, C, D>,
+    slot: usize,
+    label: &str,
+) -> Result<()> {
+    // With fewer public inputs than targets, set_proof_with_pis_target's
+    // internal zip_eq would panic instead of erroring.
+    ensure_len_matches(
+        proof.public_inputs.len(),
+        proof_t.public_inputs.len(),
+        label,
+        slot,
+        "public inputs",
+    )?;
+
+    let p = &proof.proof;
+    let t = &proof_t.proof;
+
+    ensure_len_matches(
+        p.wires_cap.0.len(),
+        t.wires_cap.0.len(),
+        label,
+        slot,
+        "wires_cap",
+    )?;
+    ensure_len_matches(
+        p.plonk_zs_partial_products_cap.0.len(),
+        t.plonk_zs_partial_products_cap.0.len(),
+        label,
+        slot,
+        "plonk_zs_partial_products_cap",
+    )?;
+    ensure_len_matches(
+        p.quotient_polys_cap.0.len(),
+        t.quotient_polys_cap.0.len(),
+        label,
+        slot,
+        "quotient_polys_cap",
+    )?;
+
+    let o = &p.openings;
+    let ot = &t.openings;
+    ensure_len_matches(
+        o.constants.len(),
+        ot.constants.len(),
+        label,
+        slot,
+        "openings.constants",
+    )?;
+    ensure_len_matches(
+        o.plonk_sigmas.len(),
+        ot.plonk_sigmas.len(),
+        label,
+        slot,
+        "openings.plonk_sigmas",
+    )?;
+    ensure_len_matches(o.wires.len(), ot.wires.len(), label, slot, "openings.wires")?;
+    ensure_len_matches(
+        o.plonk_zs.len(),
+        ot.plonk_zs.len(),
+        label,
+        slot,
+        "openings.plonk_zs",
+    )?;
+    ensure_len_matches(
+        o.plonk_zs_next.len(),
+        ot.plonk_zs_next.len(),
+        label,
+        slot,
+        "openings.plonk_zs_next",
+    )?;
+    ensure_len_matches(
+        o.partial_products.len(),
+        ot.partial_products.len(),
+        label,
+        slot,
+        "openings.partial_products",
+    )?;
+    ensure_len_matches(
+        o.quotient_polys.len(),
+        ot.quotient_polys.len(),
+        label,
+        slot,
+        "openings.quotient_polys",
+    )?;
+    ensure_len_matches(
+        o.lookup_zs.len(),
+        ot.lookup_zs.len(),
+        label,
+        slot,
+        "openings.lookup_zs",
+    )?;
+    ensure_len_matches(
+        o.lookup_zs_next.len(),
+        ot.next_lookup_zs.len(),
+        label,
+        slot,
+        "openings.lookup_zs_next",
+    )?;
+
+    let f = &p.opening_proof;
+    let ft = &t.opening_proof;
+
+    ensure_len_matches(
+        f.commit_phase_merkle_caps.len(),
+        ft.commit_phase_merkle_caps.len(),
+        label,
+        slot,
+        "opening_proof.commit_phase_merkle_caps",
+    )?;
+    for (i, (cap, cap_t)) in f
+        .commit_phase_merkle_caps
+        .iter()
+        .zip(ft.commit_phase_merkle_caps.iter())
+        .enumerate()
+    {
+        ensure_len_matches(
+            cap.0.len(),
+            cap_t.0.len(),
+            label,
+            slot,
+            &format!("opening_proof.commit_phase_merkle_caps[{i}]"),
+        )?;
+    }
+
+    ensure_len_matches(
+        f.query_round_proofs.len(),
+        ft.query_round_proofs.len(),
+        label,
+        slot,
+        "opening_proof.query_round_proofs",
+    )?;
+    for (i, (round, round_t)) in f
+        .query_round_proofs
+        .iter()
+        .zip(ft.query_round_proofs.iter())
+        .enumerate()
+    {
+        ensure_len_matches(
+            round.initial_trees_proof.evals_proofs.len(),
+            round_t.initial_trees_proof.evals_proofs.len(),
+            label,
+            slot,
+            &format!("opening_proof.query_round_proofs[{i}].initial_trees_proof.evals_proofs"),
+        )?;
+        for (j, ((evals, merkle), (evals_t, merkle_t))) in round
+            .initial_trees_proof
+            .evals_proofs
+            .iter()
+            .zip(round_t.initial_trees_proof.evals_proofs.iter())
+            .enumerate()
+        {
+            ensure_len_matches(
+                evals.len(),
+                evals_t.len(),
+                label,
+                slot,
+                &format!(
+                    "opening_proof.query_round_proofs[{i}].initial_trees_proof.evals_proofs[{j}].evals"
+                ),
+            )?;
+            ensure_len_matches(
+                merkle.siblings.len(),
+                merkle_t.siblings.len(),
+                label,
+                slot,
+                &format!(
+                    "opening_proof.query_round_proofs[{i}].initial_trees_proof.evals_proofs[{j}].siblings"
+                ),
+            )?;
+        }
+
+        ensure_len_matches(
+            round.steps.len(),
+            round_t.steps.len(),
+            label,
+            slot,
+            &format!("opening_proof.query_round_proofs[{i}].steps"),
+        )?;
+        for (j, (step, step_t)) in round.steps.iter().zip(round_t.steps.iter()).enumerate() {
+            ensure_len_matches(
+                step.evals.len(),
+                step_t.evals.len(),
+                label,
+                slot,
+                &format!("opening_proof.query_round_proofs[{i}].steps[{j}].evals"),
+            )?;
+            ensure_len_matches(
+                step.merkle_proof.siblings.len(),
+                step_t.merkle_proof.siblings.len(),
+                label,
+                slot,
+                &format!("opening_proof.query_round_proofs[{i}].steps[{j}].merkle_proof.siblings"),
+            )?;
+        }
+    }
+
+    ensure_len_matches(
+        f.final_poly.coeffs.len(),
+        ft.final_poly.0.len(),
+        label,
+        slot,
+        "opening_proof.final_poly",
+    )?;
+
+    Ok(())
+}
+
 pub fn ensure_proof_public_input_len(
     proof: &ProofWithPublicInputs<F, C, D>,
     expected_len: usize,
@@ -227,10 +524,35 @@ pub fn private_batch_num_leaves_from_padded_pi_len(pi_len: usize) -> Result<usiz
 #[cfg(test)]
 mod tests {
     use super::private_batch_num_leaves_from_padded_pi_len;
+    use super::{read_artifact_file, MAX_ARTIFACT_FILE_BYTES};
 
     #[test]
     fn private_batch_num_leaves_from_padded_pi_len_rejects_malformed_lengths() {
         let err = private_batch_num_leaves_from_padded_pi_len(9).unwrap_err();
         assert!(err.to_string().contains("malformed"));
+    }
+
+    #[test]
+    fn read_artifact_file_round_trips_normal_files_and_rejects_oversized_ones() {
+        let dir =
+            std::env::temp_dir().join(format!("qp-artifact-read-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let normal = dir.join("normal.bin");
+        std::fs::write(&normal, b"artifact bytes").unwrap();
+        assert_eq!(read_artifact_file(&normal).unwrap(), b"artifact bytes");
+
+        // A sparse file costs no disk but still claims an oversized length,
+        // exactly like an attacker-planted artifact would.
+        let oversized = dir.join("oversized.bin");
+        std::fs::File::create(&oversized)
+            .unwrap()
+            .set_len(MAX_ARTIFACT_FILE_BYTES + 1)
+            .unwrap();
+        let err = read_artifact_file(&oversized).unwrap_err();
+        assert!(err.to_string().contains("exceeds the"), "got: {err}");
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

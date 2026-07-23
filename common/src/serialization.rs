@@ -190,14 +190,23 @@ pub fn bytes_to_felts_compact(input: &[u8]) -> Result<Vec<F>, &'static str> {
 /// always hash (matching pallet-zk-tree). Prefer this over calling
 /// `qp_poseidon_core::serialization::bytes_to_felts_compact`, which is fallible
 /// in poseidon-core ≥ 3.0.
-pub fn hash_bytes_compact(input: &[u8]) -> [u8; 32] {
+///
+/// Returns an error if `input.len()` exceeds [`MAX_SERIALIZED_BYTES`], matching
+/// the sibling byte-consuming helpers in this module: the intermediate felt
+/// buffer and the hashing work both scale with the input, so an unbounded
+/// public path here would let untrusted caller-supplied data force
+/// size-proportional allocation (audit #97066).
+pub fn hash_bytes_compact(input: &[u8]) -> Result<[u8; 32], &'static str> {
     use qp_poseidon_core::Goldilocks;
 
+    if input.len() > MAX_SERIALIZED_BYTES {
+        return Err("hash_bytes_compact: input exceeds maximum serialized length");
+    }
     let felts: Vec<Goldilocks> = qp_poseidon_core::serialization::bytes_to_u64s_compact(input)
         .into_iter()
         .map(Goldilocks::from_u64)
         .collect();
-    qp_poseidon_core::hash_to_bytes(&felts)
+    Ok(qp_poseidon_core::hash_to_bytes(&felts))
 }
 
 // ============================================================================
@@ -293,6 +302,26 @@ mod tests {
             let reconstructed = felts_to_bytes(&felts).unwrap();
             assert_eq!(original, reconstructed);
         }
+    }
+
+    /// `hash_bytes_compact` must enforce the same MAX_SERIALIZED_BYTES bound as
+    /// every sibling public byte-consuming helper in this module, so untrusted
+    /// input cannot force size-proportional allocation and hashing (audit
+    /// follow-up to #97066, which added the bound to the other helpers).
+    #[test]
+    fn hash_bytes_compact_rejects_oversized_input() {
+        let oversized = vec![0u8; MAX_SERIALIZED_BYTES + 1];
+        let err = hash_bytes_compact(&oversized).unwrap_err();
+        assert!(err.contains("maximum serialized length"), "got: {err}");
+    }
+
+    /// In-bounds inputs (including the exact maximum and the fixed 128-byte
+    /// merkle-node payload) must still hash.
+    #[test]
+    fn hash_bytes_compact_accepts_in_bounds_input() {
+        hash_bytes_compact(&[0x5au8; 128]).expect("merkle-node payload must hash");
+        hash_bytes_compact(&vec![0x5au8; MAX_SERIALIZED_BYTES])
+            .expect("input at the exact bound must hash");
     }
 
     #[test]

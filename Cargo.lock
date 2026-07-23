@@ -1126,6 +1126,7 @@ dependencies = [
  "qp-wormhole-aggregator",
  "qp-wormhole-circuit",
  "qp-zk-circuits-common",
+ "rand 0.8.6",
 ]
 
 [[package]]

@@ -26,12 +26,15 @@ struct Args {
     output: String,
 
     /// Number of leaf proofs aggregated into a single private-batch proof (must be 1-64)
-    #[arg(short, long, value_parser = parse_proof_count)]
+    // Long-form only: a bare `short` on the two proof-count fields would infer
+    // `-n` for both, which clap rejects (panics in debug builds, and silently
+    // binds `-n` to the first-declared field in release builds).
+    #[arg(long, value_parser = parse_proof_count)]
     num_leaf_proofs: usize,
 
     /// Number of inner private-batch proofs aggregated into a single public-batch proof (must be 1-64 if specified)
     /// Omit this flag to only generate private-batch artifacts.
-    #[arg(short, long, value_parser = parse_proof_count)]
+    #[arg(long, value_parser = parse_proof_count)]
     num_private_batch_proofs: Option<usize>,
 
     /// Skip prover binary generation for the batch aggregation circuits (only generate
@@ -60,4 +63,20 @@ fn main() -> Result<()> {
         args.num_leaf_proofs,
         args.num_private_batch_proofs,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// clap only checks the argument definition via debug assertions inside
+    /// `Command::build()`; a duplicate short flag (e.g. two fields inferring
+    /// `-n`) panics every debug-build invocation and silently resolves to the
+    /// first-declared field in release builds. Run those assertions as a test
+    /// so an invalid CLI definition fails CI instead of operators.
+    #[test]
+    fn cli_definition_is_valid() {
+        use clap::CommandFactory;
+        Args::command().debug_assert();
+    }
 }

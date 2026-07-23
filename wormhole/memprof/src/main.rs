@@ -45,7 +45,9 @@ struct Args {
 
     /// Limit the rayon thread pool. `1` = single-threaded; `0` = system
     /// default. Useful for comparing parallel vs serial allocation patterns.
-    #[arg(long, default_value_t = 0)]
+    /// Capped at the host's available parallelism: this flag only ever
+    /// shrinks the pool, never grows it.
+    #[arg(long, default_value_t = 0, value_parser = parse_rayon_threads)]
     rayon_threads: usize,
 
     /// Skip leaf-proof generation entirely (use cloned dummy proof). Isolates
@@ -72,6 +74,32 @@ struct Args {
 
     #[command(flatten)]
     agg_cfg: AggConfigArgs,
+}
+
+/// Upper bound for `--rayon-threads`: the host's available parallelism.
+fn max_rayon_threads() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+}
+
+/// Value parser for `--rayon-threads`. The flag exists to LIMIT the rayon
+/// pool below the system default; a value above the host's available
+/// parallelism has no profiling use and would only force the process to
+/// spawn that many OS threads (`build_global` creates them eagerly), so it
+/// is rejected before any thread-pool setup or circuit work.
+fn parse_rayon_threads(s: &str) -> Result<usize, String> {
+    let n: usize = s
+        .parse()
+        .map_err(|_| format!("'{s}' is not a valid number"))?;
+    let max = max_rayon_threads();
+    if n > max {
+        return Err(format!(
+            "value must be at most the host's available parallelism ({max}); \
+             use 0 for the system default"
+        ));
+    }
+    Ok(n)
 }
 
 fn validate_workload_counts(num_leaf_proofs: usize, real_proofs: usize) -> Result<()> {
@@ -104,6 +132,13 @@ fn main() -> Result<()> {
     print_config_summary("leaf", &leaf_cfg);
     print_config_summary("agg", &agg_cfg);
 
+    let num_leaf_proofs = args.num_leaf_proofs;
+    let real_proofs = args.real_proofs.unwrap_or(num_leaf_proofs);
+    // Bound the circuit dimension before construction while permitting an
+    // all-dummy profiling run (`real_proofs == 0`). Validated before the
+    // thread-pool setup so a rejected workload never spawns worker threads.
+    validate_workload_counts(num_leaf_proofs, real_proofs)?;
+
     if args.rayon_threads > 0 {
         eprintln!("Configuring rayon with {} threads", args.rayon_threads);
         rayon::ThreadPoolBuilder::new()
@@ -116,12 +151,6 @@ fn main() -> Result<()> {
                 )
             })?;
     }
-
-    let num_leaf_proofs = args.num_leaf_proofs;
-    let real_proofs = args.real_proofs.unwrap_or(num_leaf_proofs);
-    // Bound the circuit dimension before construction while permitting an
-    // all-dummy profiling run (`real_proofs == 0`).
-    validate_workload_counts(num_leaf_proofs, real_proofs)?;
 
     let mut report = PhaseReport::new(args.sample_period_ms)?;
 
@@ -168,7 +197,38 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_workload_counts;
+    use super::{validate_workload_counts, Args};
+    use clap::Parser;
+
+    /// `--rayon-threads` exists to LIMIT the pool; values beyond the host's
+    /// available parallelism have no legitimate use and only serve to exhaust
+    /// OS threads, so they must be rejected at argument-parse time.
+    #[test]
+    fn rayon_threads_beyond_available_parallelism_is_rejected_at_parse_time() {
+        let err = Args::try_parse_from(["wormhole-memprof", "--rayon-threads", "1000000"]);
+        assert!(
+            err.is_err(),
+            "an absurd --rayon-threads value must be rejected before any thread creation"
+        );
+
+        let max = super::max_rayon_threads();
+        let just_over = (max + 1).to_string();
+        assert!(
+            Args::try_parse_from(["wormhole-memprof", "--rayon-threads", &just_over]).is_err(),
+            "values above available parallelism ({max}) must be rejected"
+        );
+    }
+
+    #[test]
+    fn rayon_threads_within_capacity_is_accepted() {
+        let max = super::max_rayon_threads().to_string();
+        for value in ["0", "1", &max] {
+            assert!(
+                Args::try_parse_from(["wormhole-memprof", "--rayon-threads", value]).is_ok(),
+                "--rayon-threads {value} must be accepted"
+            );
+        }
+    }
 
     #[test]
     fn zero_real_proofs_is_valid_for_all_dummy_profile() {

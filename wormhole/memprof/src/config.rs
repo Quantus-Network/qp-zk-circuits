@@ -74,8 +74,9 @@ pub struct AggConfigArgs {
     #[arg(long)]
     pub num_wires: Option<usize>,
 
-    /// Number of routed wires. Must be <= num_wires (routed wires are a
-    /// prefix of the wire columns). Production: 60.
+    /// Number of routed wires. Must be >= 37 (recursion gate floor) and
+    /// <= num_wires (routed wires are a prefix of the wire columns).
+    /// Production: 60.
     #[arg(long)]
     pub num_routed_wires: Option<usize>,
 
@@ -118,15 +119,34 @@ const MIN_NUM_WIRES: usize = 135;
 /// cannot express them and fails during circuit construction.
 const MIN_MAX_QUOTIENT_DEGREE_FACTOR: usize = 7;
 
+/// Structural routed-wire floor for the pinned plonky2 recursion stack.
+///
+/// Gates pack operations into the routed-wire prefix, and several derive
+/// their op count from `num_routed_wires`: base arithmetic uses 4 routed
+/// wires per op, extension arithmetic `4*D = 8`, and the FRI verifier's
+/// random-access gate `2 + 2^4 = 18` per copy (arity/cap lists are 16
+/// entries under the production `ConstantArityBits(4, 5)` / `cap_height=4`
+/// FRI shape). Below a gate's width it instantiates with ZERO operation
+/// slots: `find_slot`'s `num_ops - 1` underflows (debug panic; in release an
+/// under-constraining zero-op gate is added and the build only dies later on
+/// a routability assert). The binding floor is the 16-point
+/// coset-interpolation gate, which routes `1 + 16*D + D + D = 37` wires
+/// outright; plonky2's own `check_recursion_config` assert for it fires only
+/// mid-build, after the expensive leaf context already exists. Reject all of
+/// these at the CLI boundary — none is a sound or profitable circuit shape,
+/// so none should ever be profiled as a safe memory-saving configuration.
+const MIN_NUM_ROUTED_WIRES: usize = 37;
+
 impl AggConfigArgs {
     /// Validate the override knobs:
     ///   1. Numeric knobs must be > 0 (zero would silently break the
     ///      FRI soundness product or trip a panic deep inside plonky2).
     ///   2. Structural circuit floors documented on the flags
     ///      (`num_wires >= 135`, `max_quotient_degree_factor >= 7`,
-    ///      `num_routed_wires <= num_wires`) are enforced here so bad
+    ///      `37 <= num_routed_wires <= num_wires`) are enforced here so bad
     ///      sweeps fail at the CLI boundary instead of panicking after the
-    ///      leaf context is already built.
+    ///      leaf context is already built (or, worse, instantiating
+    ///      zero-op-slot gates — see [`MIN_NUM_ROUTED_WIRES`]).
     ///   3. Security-affecting knobs must be gated by
     ///      `--allow-weakening-security`.
     pub fn validate(&self) -> Result<(), String> {
@@ -164,6 +184,13 @@ impl AggConfigArgs {
             }
         }
         if let Some(routed) = self.num_routed_wires {
+            if routed < MIN_NUM_ROUTED_WIRES {
+                return Err(format!(
+                    "--num-routed-wires must be >= {MIN_NUM_ROUTED_WIRES} (recursion gate floor: \
+                     the FRI coset-interpolation gate routes 37 wires, and narrower widths leave \
+                     slot-packed gates with zero operation slots), got {routed}"
+                ));
+            }
             let effective_num_wires = self
                 .num_wires
                 .unwrap_or_else(|| wormhole_private_batch_circuit_config().num_wires);
@@ -335,6 +362,31 @@ mod tests {
             .validate()
             .unwrap_err();
         assert!(err.contains(">= 7"), "got: {err}");
+    }
+
+    /// The pinned plonky2 recursion stack packs operations into routed wires:
+    /// base arithmetic gates use 4 per op, extension arithmetic 4*D=8, FRI
+    /// random-access 18 per copy, and the 16-point coset-interpolation gate
+    /// routes 37 wires outright. Below a gate's width it instantiates with
+    /// ZERO operation slots (slot-index underflow / under-constrained gate
+    /// shape) or trips asserts only after the expensive leaf context is
+    /// already built. A knob documented as safe must reject such values at
+    /// the CLI boundary instead of profiling them as viable configurations.
+    #[test]
+    fn routed_wires_below_recursion_gate_floor_are_rejected() {
+        for routed in [1, 2, 3, 4, 17, 36] {
+            let err = args_with(|a| a.num_routed_wires = Some(routed))
+                .validate()
+                .expect_err(&format!(
+                    "--num-routed-wires {routed} cannot express the recursion \
+                     stack's gates and must be rejected"
+                ));
+            assert!(err.contains(">= 37"), "got: {err}");
+        }
+        // The floor itself passes CLI validation (build may still fail loudly).
+        args_with(|a| a.num_routed_wires = Some(37))
+            .validate()
+            .unwrap();
     }
 
     #[test]

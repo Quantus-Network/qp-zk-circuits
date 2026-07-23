@@ -3,7 +3,8 @@
 //! For each branching factor M (number of private-batch proofs per public batch):
 //! 1. Generates the public-batch circuit binaries (leaf + private-batch circuits are
 //!    built once and reused, since they don't depend on M).
-//! 2. Loads the prover from the serialized binaries (measures aggregator startup).
+//! 2. Loads the prover, which rebuilds the circuit from source (measures aggregator
+//!    startup).
 //! 3. Proves a public batch padded entirely with the dummy private-batch template.
 //!    Proving cost is witness-independent, so this is representative of real batches.
 //!
@@ -66,24 +67,26 @@ fn main() -> anyhow::Result<()> {
     for &m in &branching_factors {
         println!("== M = {m} ==");
 
-        // 1) Build + serialize the public-batch circuit.
+        // 1) Build + serialize the public-batch verifier artifacts.
         let build_start = Instant::now();
-        generate_public_batch_circuit_binaries(&dir, m, true)?;
+        generate_public_batch_circuit_binaries(&dir, m)?;
         let build_time = build_start.elapsed();
         CircuitBinsConfig::new(NUM_LEAF_PROOFS, Some(m))?.save(&dir)?;
-        let prover_bin_size = file_size(&dir.join("public_batch_prover.bin"));
+        let verifier_bins_size = file_size(&dir.join("public_batch_common.bin"))
+            + file_size(&dir.join("public_batch_verifier.bin"));
         println!(
-            "  circuit build + serialize: {:.1}s (prover.bin: {:.1} MB)",
+            "  circuit build + serialize: {:.1}s (verifier bins: {:.1} KB)",
             build_time.as_secs_f64(),
-            prover_bin_size as f64 / 1e6
+            verifier_bins_size as f64 / 1e3
         );
 
-        // 2) Load the prover from binaries (aggregator startup cost).
+        // 2) Load the prover (aggregator startup cost; rebuilds the circuit
+        // from source — no prover.bin exists).
         let load_start = Instant::now();
         let prover = PublicBatchProver::new_from_binaries_dir(&dir)?;
         let load_time = load_start.elapsed();
         println!(
-            "  prover load from bins:     {:.1}s",
+            "  prover load (rebuild):     {:.1}s",
             load_time.as_secs_f64()
         );
 
@@ -113,32 +116,24 @@ fn main() -> anyhow::Result<()> {
             proof.public_inputs.len()
         );
 
-        results.push((
-            m,
-            build_time,
-            load_time,
-            prove_time,
-            proof_size,
-            prover_bin_size,
-        ));
+        results.push((m, build_time, load_time, prove_time, proof_size));
         println!();
     }
 
     println!("== Summary (N={NUM_LEAF_PROOFS} leaves/private batch, 2N outputs each) ==");
     println!(
-        "{:>5} {:>8} {:>12} {:>10} {:>10} {:>12} {:>14}",
-        "M", "outputs", "build (s)", "load (s)", "prove (s)", "proof (KB)", "prover (MB)"
+        "{:>5} {:>8} {:>12} {:>10} {:>10} {:>12}",
+        "M", "outputs", "build (s)", "load (s)", "prove (s)", "proof (KB)"
     );
-    for (m, build, load, prove, proof_size, prover_bin) in &results {
+    for (m, build, load, prove, proof_size) in &results {
         println!(
-            "{:>5} {:>8} {:>12.1} {:>10.1} {:>10.1} {:>12.1} {:>14.1}",
+            "{:>5} {:>8} {:>12.1} {:>10.1} {:>10.1} {:>12.1}",
             m,
             m * NUM_LEAF_PROOFS * 2,
             build.as_secs_f64(),
             load.as_secs_f64(),
             prove.as_secs_f64(),
             *proof_size as f64 / 1e3,
-            *prover_bin as f64 / 1e6,
         );
     }
 

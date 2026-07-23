@@ -32,10 +32,14 @@ pub struct UnspendableAccount {
     pub secret: Secret,
 }
 
+/// Redacting `Debug`: `secret` is the spend credential, and `account_id` is
+/// the unspendable deposit account — the direct deposit/withdrawal link that
+/// `PrivateCircuitInputs` redacts as `unspendable_account`. Neither may reach
+/// logs, error contexts, or telemetry via `{:?}`.
 impl core::fmt::Debug for UnspendableAccount {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("UnspendableAccount")
-            .field("account_id", &self.account_id)
+            .field("account_id", &"[REDACTED]")
             .field("secret", &"[REDACTED]")
             .finish()
     }
@@ -224,3 +228,25 @@ impl CircuitFragment for UnspendableAccount {
 // reached for `UnspendableAccount::default()` created an account anyone could
 // drain. Constructing an account must always require an explicit secret
 // (`from_secret`) or an explicit (account_id, secret) pair (`new`).
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The account id is the unspendable deposit account, which
+    /// `PrivateCircuitInputs` redacts as the direct deposit/withdrawal link.
+    /// The secret is the spend credential. Neither may appear in Debug output.
+    #[test]
+    fn unspendable_account_debug_redacts_account_id_and_secret() {
+        let account = UnspendableAccount::new(
+            BytesDigest::try_from([0xCD; 32].as_slice()).unwrap(),
+            BytesDigest::try_from([0xAB; 32].as_slice()).unwrap(),
+        );
+        let dump = alloc::format!("{:?}", account);
+        assert!(dump.contains("[REDACTED]"));
+        // account_id felts: each 8-byte chunk of [0xCD; 32].
+        assert!(!dump.contains("14829735431805717965"));
+        // secret felts: each 8-byte chunk of [0xAB; 32].
+        assert!(!dump.contains("12370169555311111083"));
+    }
+}

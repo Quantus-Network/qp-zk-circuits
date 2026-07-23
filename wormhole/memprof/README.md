@@ -86,6 +86,10 @@ top of the production `wormhole_private_batch_circuit_config()` (currently
 RowBlinding ZK, `num_wires=135`, `num_routed_wires=60`). Run
 `cargo run -p wormhole-memprof --release -- --help` for the full list. Safe
 (non-security-affecting) knobs include `--zk-mode {polyfri,rowblinding}`,
-`--rate-bits` (auto-rebalances `num_query_rounds`), `--num-wires`,
-`--num-routed-wires`, and `--max-quotient-degree-factor`. Anything that lowers
-soundness or removes ZK is gated behind `--allow-weakening-security`.
+`--rate-bits` (auto-rebalances `num_query_rounds`), `--num-wires` (>= 135),
+`--num-routed-wires` (>= 37, <= num_wires), and
+`--max-quotient-degree-factor` (>= 7). Values below the documented structural
+floors are rejected at the CLI: they cannot express the recursion stack's
+gates, so profiling them would label broken circuit shapes as viable. Anything
+that lowers soundness or removes ZK is gated behind
+`--allow-weakening-security`.

@@ -5,31 +5,29 @@ use std::fs;
 use std::path::Path;
 use test_helpers::TestInputs;
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
-use wormhole_circuit::circuit::{circuit_data_from_bytes, circuit_data_to_bytes};
 use wormhole_circuit::inputs::CircuitInputs;
 use wormhole_verifier::WormholeVerifier;
 
+/// The circuit crate must not expose a deserializer for the full leaf
+/// `CircuitData`. A full `CircuitData` carries prover-only data (witness
+/// generators plus the target list that decides which witness values become
+/// `public_inputs`), so loading one from untrusted bytes could exfiltrate
+/// private witness material such as the Wormhole `secret` through a proof's
+/// public inputs. The leaf circuit builds from source in ~40 ms (release), so
+/// there is no need for serialized full-circuit artifacts; provers always
+/// construct `WormholeCircuit` directly and verifiers load pinned artifacts
+/// through `WormholeVerifier::new_from_bytes`.
+///
+/// This is a compile-time guarantee: if `circuit_data_from_bytes` (or a
+/// similar unauthenticated full-circuit loader) is ever reintroduced, this
+/// test file is where its fail-closed behavior must be covered again.
 #[test]
-fn test_circuit_data_serialization() {
-    // Build the circuit from source
+fn full_circuit_data_loader_is_not_exposed() {
+    // `wormhole_circuit::circuit` intentionally only exposes `circuit_logic`.
+    // Building from source is the only way to obtain leaf CircuitData.
     let config = CircuitConfig::standard_recursion_config();
-    let circuit = WormholeCircuit::new(config);
-    let built_circuit_data = circuit.build_circuit();
-
-    // Serialize the circuit data to bytes
-    let serialized_bytes =
-        circuit_data_to_bytes(&built_circuit_data).expect("Failed to serialize circuit data");
-
-    // Deserialize the bytes back to circuit data
-    let deserialized_circuit_data =
-        circuit_data_from_bytes(&serialized_bytes).expect("Failed to deserialize circuit data");
-
-    // Re-serialize the deserialized circuit data
-    let reserialized_bytes = circuit_data_to_bytes(&deserialized_circuit_data)
-        .expect("Failed to re-serialize circuit data");
-
-    // Assert that the original and re-serialized bytes are identical
-    assert_eq!(serialized_bytes, reserialized_bytes);
+    let circuit_data = WormholeCircuit::new(config).build_circuit();
+    assert_eq!(circuit_data.common.num_public_inputs, 21);
 }
 
 #[test]

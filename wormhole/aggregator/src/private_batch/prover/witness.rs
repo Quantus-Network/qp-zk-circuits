@@ -8,6 +8,7 @@ use plonky2::{
 
 use zk_circuits_common::circuit::{C, D, F};
 
+use crate::common::utils::ensure_proof_shape_matches_targets;
 use crate::private_batch::circuit::circuit_logic::PrivateBatchCircuitTargets;
 
 /// Fill the partial witness for the prebuilt private-batch aggregation circuit.
@@ -44,17 +45,11 @@ pub fn fill_private_batch_witness(
     }
 
     for (i, (proof_t, proof)) in targets.leaf_proofs.iter().zip(proofs.iter()).enumerate() {
-        // Reject shape mismatches at this Result boundary: with fewer public
-        // inputs than targets, set_proof_with_pis_target's internal zip would
-        // silently leave trailing PI targets unset instead of erroring.
-        if proof.public_inputs.len() != proof_t.public_inputs.len() {
-            bail!(
-                "leaf proof at slot {} has {} public inputs, but the circuit expects {}",
-                i,
-                proof.public_inputs.len(),
-                proof_t.public_inputs.len()
-            );
-        }
+        // Full proof-shape preflight at this Result boundary: a malformed
+        // proof (wrong PI count, truncated FRI query rounds, inconsistent
+        // opening vectors, ...) would otherwise panic inside plonky2's
+        // witness writer or silently leave targets unset.
+        ensure_proof_shape_matches_targets(proof_t, proof, i, "leaf proof")?;
         pw.set_proof_with_pis_target(proof_t, proof)
             .map_err(|e| anyhow!("failed to set leaf proof target at slot {}: {}", i, e))?;
     }

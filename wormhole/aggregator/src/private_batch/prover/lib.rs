@@ -13,17 +13,16 @@ use plonky2::{
     iop::witness::PartialWitness,
     plonk::{
         circuit_data::{
-            CircuitConfig, CommonCircuitData, ProverCircuitData, ProverOnlyCircuitData,
-            VerifierCircuitData, VerifierOnlyCircuitData,
+            CircuitConfig, CommonCircuitData, ProverCircuitData, VerifierCircuitData,
+            VerifierOnlyCircuitData,
         },
         proof::ProofWithPublicInputs,
     },
-    util::serialization::{DefaultGateSerializer, DefaultGeneratorSerializer},
 };
 use rand::seq::SliceRandom;
 
 #[cfg(feature = "std")]
-use std::{fs, path::Path};
+use std::path::Path;
 
 use qp_wormhole_inputs::{validate_proof_count, BytesDigest, PublicCircuitInputs};
 use zk_circuits_common::{
@@ -31,10 +30,11 @@ use zk_circuits_common::{
     utils::bytes_to_digest,
 };
 
+#[cfg(feature = "std")]
+use crate::common::utils::read_artifact_file;
 use crate::{
     common::utils::{
-        ensure_common_matches_canonical, ensure_proof_public_input_len, leaf_proof_asset_id,
-        load_canonical_leaf_verifier_data,
+        ensure_proof_public_input_len, leaf_proof_asset_id, load_canonical_leaf_verifier_data,
     },
     dummy_proof::{generate_random_nullifier_preimage, load_dummy_proof},
     private_batch::{
@@ -61,7 +61,7 @@ impl PrivateBatchProver {
     /// In production, prefer `new_from_binaries_dir(...)` to load prebuilt circuits.
     /// Returns an error when `num_leaf_proofs` is outside the supported range,
     /// or when `dummy_proof_template` is not a valid leaf proof carrying the
-    /// strong dummy sentinel (zero block hash and zero outputs).
+    /// strong dummy sentinel (zero block hash, zero outputs, and zero asset_id).
     pub fn new(
         agg_circuit_config: CircuitConfig,
         leaf_common: CommonCircuitData<F, D>,
@@ -101,26 +101,28 @@ impl PrivateBatchProver {
 
     /// Create a private-batch aggregation prover from serialized bytes.
     ///
+    /// The aggregation circuit's prover data is **rebuilt from source**, never
+    /// loaded from an artifact. `ProverOnlyCircuitData` carries the witness
+    /// generators and the `public_inputs` target list that decides which
+    /// witness values are exposed in the returned proof, so a poisoned
+    /// `private_batch_prover.bin` could otherwise make the prover emit chosen
+    /// witness targets (e.g. dummy-nullifier preimages that reveal padding
+    /// slots) in the serialized proof before any downstream verifier rejects
+    /// it. Rebuilding is free here because constructing the circuit is required
+    /// regardless, and it mirrors the leaf prover, which likewise never trusts a
+    /// serialized prover artifact.
+    ///
     /// Expected bytes:
-    /// - `aggregated_prover_only_bytes`: private-batch aggregated prover-only circuit data
-    /// - `aggregated_common_bytes`: private-batch aggregated common circuit data
     /// - `leaf_common_bytes`: leaf circuit common data (`common.bin`)
     /// - `leaf_verifier_only_bytes`: leaf verifier-only data (`verifier.bin`)
     /// - `dummy_proof_bytes`: serialized dummy leaf proof (`dummy_proof.bin`)
     /// - `num_leaf_proofs`: number of leaf proofs aggregated by this private-batch prover
     pub fn new_from_bytes(
-        aggregated_prover_only_bytes: &[u8],
-        aggregated_common_bytes: &[u8],
         leaf_common_bytes: &[u8],
         leaf_verifier_only_bytes: &[u8],
         dummy_proof_bytes: &[u8],
         num_leaf_proofs: usize,
     ) -> Result<Self> {
-        let gate_serializer = DefaultGateSerializer;
-        let generator_serializer = DefaultGeneratorSerializer::<C, D> {
-            _phantom: Default::default(),
-        };
-
         // Validate the batch count at the public byte-loading boundary so a zero
         // or oversized count returns an error instead of panicking inside the
         // circuit builder (#97027, #97070).
@@ -130,8 +132,10 @@ impl PrivateBatchProver {
         let leaf_verifier_data =
             load_canonical_leaf_verifier_data(leaf_common_bytes, leaf_verifier_only_bytes)?;
 
-        // 2) Reconstruct the canonical aggregation circuit once: it provides both the
-        // witness targets and the canonical common data used to pin the prebuilt artifacts.
+        // 2) Rebuild the aggregation circuit from source and take its prover
+        // data directly. The leaf verifier key is pinned above and baked in as
+        // constants, so this prover is a deterministic function of the compiled
+        // circuit code — no serialized prover/common artifact is trusted.
         let circuit = PrivateBatchCircuit::new(
             wormhole_private_batch_circuit_config(),
             &leaf_verifier_data.common,
@@ -139,37 +143,22 @@ impl PrivateBatchProver {
             num_leaf_proofs,
         )?;
         let targets = Some(circuit.targets());
-        let canonical_agg = circuit.build_verifier();
+        let circuit_data = circuit.build_prover();
 
-        // 3) Load prebuilt aggregation circuit prover data and pin common data.
-        let agg_common =
-            CommonCircuitData::from_bytes(aggregated_common_bytes.to_vec(), &gate_serializer)
-                .map_err(|e| anyhow!("failed to deserialize aggregated common data: {}", e))?;
-        ensure_common_matches_canonical(&agg_common, &canonical_agg.common, "private_batch")?;
-
-        let agg_prover_only = ProverOnlyCircuitData::from_bytes(
-            aggregated_prover_only_bytes,
-            &generator_serializer,
-            &agg_common,
-        )
-        .map_err(|e| anyhow!("failed to deserialize aggregated prover data: {}", e))?;
-
-        // 4) Load dummy proof template compatible with the leaf verifier common data
+        // 3) Load dummy proof template compatible with the leaf verifier common data
         let dummy_proof_template =
             load_dummy_proof(dummy_proof_bytes.to_vec(), &leaf_verifier_data.common)
                 .map_err(|e| anyhow!("failed to deserialize dummy proof: {}", e))?;
 
         // Verify the template is a valid leaf proof carrying the strong dummy
-        // sentinel (zero block hash AND zero outputs), so a poisoned padding
-        // template cannot inject a real payout into every partial batch. This
-        // mirrors the public-batch template check (#97026).
+        // sentinel (zero block hash, zero outputs, AND zero asset_id), so a
+        // poisoned padding template cannot inject a real payout into every
+        // partial batch or deny partial-batch padding with a nonzero asset.
+        // This mirrors the public-batch template check (#97026).
         verify_dummy_leaf_template(&dummy_proof_template, &leaf_verifier_data)?;
 
         Ok(Self {
-            circuit_data: ProverCircuitData {
-                prover_only: agg_prover_only,
-                common: agg_common,
-            },
+            circuit_data,
             partial_witness: PartialWitness::new(),
             targets,
             num_leaf_proofs,
@@ -179,38 +168,22 @@ impl PrivateBatchProver {
 
     /// Create a private-batch aggregation prover from explicit file paths.
     #[cfg(feature = "std")]
-    #[allow(clippy::too_many_arguments)]
     pub fn new_from_files(
-        aggregated_prover_path: &Path,
-        aggregated_common_path: &Path,
         leaf_common_path: &Path,
         leaf_verifier_path: &Path,
         dummy_proof_path: &Path,
         num_leaf_proofs: usize,
     ) -> Result<Self> {
-        let aggregated_prover_only_bytes = fs::read(aggregated_prover_path).with_context(|| {
-            format!(
-                "Failed to read aggregated prover file {:?}",
-                aggregated_prover_path
-            )
-        })?;
-        let aggregated_common_bytes = fs::read(aggregated_common_path).with_context(|| {
-            format!(
-                "Failed to read aggregated common file {:?}",
-                aggregated_common_path
-            )
-        })?;
-        let leaf_common_bytes = fs::read(leaf_common_path)
+        let leaf_common_bytes = read_artifact_file(leaf_common_path)
             .with_context(|| format!("Failed to read leaf common file {:?}", leaf_common_path))?;
-        let leaf_verifier_only_bytes = fs::read(leaf_verifier_path).with_context(|| {
-            format!("Failed to read leaf verifier file {:?}", leaf_verifier_path)
-        })?;
-        let dummy_proof_bytes = fs::read(dummy_proof_path)
+        let leaf_verifier_only_bytes =
+            read_artifact_file(leaf_verifier_path).with_context(|| {
+                format!("Failed to read leaf verifier file {:?}", leaf_verifier_path)
+            })?;
+        let dummy_proof_bytes = read_artifact_file(dummy_proof_path)
             .with_context(|| format!("Failed to read dummy proof file {:?}", dummy_proof_path))?;
 
         Self::new_from_bytes(
-            &aggregated_prover_only_bytes,
-            &aggregated_common_bytes,
             &leaf_common_bytes,
             &leaf_verifier_only_bytes,
             &dummy_proof_bytes,
@@ -220,9 +193,10 @@ impl PrivateBatchProver {
 
     /// Convenience constructor that loads everything from a generated binaries directory.
     ///
+    /// The aggregation prover circuit is rebuilt from source, so no
+    /// `private_batch_prover.bin` is read.
+    ///
     /// Expected files:
-    /// - `private_batch_prover.bin`
-    /// - `private_batch_common.bin`
     /// - `common.bin`
     /// - `verifier.bin`
     /// - `dummy_proof.bin`
@@ -235,8 +209,6 @@ impl PrivateBatchProver {
         let num_leaf_proofs = bins_config.num_leaf_proofs;
 
         Self::new_from_files(
-            &bins_dir.join("private_batch_prover.bin"),
-            &bins_dir.join("private_batch_common.bin"),
             &bins_dir.join("common.bin"),
             &bins_dir.join("verifier.bin"),
             &bins_dir.join("dummy_proof.bin"),
@@ -436,13 +408,21 @@ fn ensure_leaf_batch_compatible(proofs: &[ProofWithPublicInputs<F, C, D>]) -> Re
 }
 
 /// Verify that the dummy leaf proof template is a valid leaf proof carrying the
-/// strong dummy sentinel: `block_hash == 0` AND both output amounts zero.
+/// strong dummy sentinel: `block_hash == 0`, both output amounts zero, AND
+/// `asset_id == 0`.
 ///
 /// The private-batch circuit only treats `block_hash == 0` slots as dummies, and
 /// its exit-dedup gadget sums output amounts across matching exit accounts. If a
 /// poisoned `dummy_proof.bin` contained a *real* proof (non-zero block hash or
 /// outputs), every empty slot in a partial batch would replay that payout. This
 /// mirrors `verify_dummy_private_batch_template` at the public-batch layer (#97026).
+///
+/// `asset_id` must be zero because `commit` pads native-asset (`asset_id = 0`)
+/// batches with this template and the circuit enforces asset_id equality across
+/// ALL slots, dummies included. A nonzero-asset template would pass loading but
+/// make every padded batch unprovable: partial native-asset batches fail the
+/// in-circuit asset-equality constraint, and nonzero-asset batches are already
+/// rejected by the padding preflight — denying the partial-batch path entirely.
 fn verify_dummy_leaf_template(
     template: &ProofWithPublicInputs<F, C, D>,
     leaf_verifier: &VerifierCircuitData<F, C, D>,
@@ -470,6 +450,14 @@ fn verify_dummy_leaf_template(
              padding templates must contribute zero to every exit slot",
             pis.output_amount_1,
             pis.output_amount_2
+        );
+    }
+    if pis.asset_id != 0 {
+        bail!(
+            "dummy leaf proof template has non-zero asset_id {}; padding templates \
+             must use the native asset (asset_id = 0) because the circuit enforces \
+             asset_id equality across all slots, dummies included",
+            pis.asset_id
         );
     }
 
@@ -522,6 +510,16 @@ mod tests {
             err.to_string().contains("non-zero block_hash"),
             "got: {err}"
         );
+    }
+
+    #[test]
+    fn dummy_template_with_nonzero_asset_id_is_rejected() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+        let mut pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
+        pis[ASSET_ID_START] = F::from_canonical_u32(7);
+        let template = prove_fake_leaf(&leaf, &targets, pis);
+        let err = verify_dummy_leaf_template(&template, &leaf.verifier_data()).unwrap_err();
+        assert!(err.to_string().contains("non-zero asset_id"), "got: {err}");
     }
 
     #[test]
