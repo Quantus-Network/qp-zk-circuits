@@ -901,7 +901,10 @@ mod tests {
             .push(prove_fake(&data, &targets, &fake(2, 11)))
             .unwrap_err();
         let msg = err.to_string();
-        assert!(!msg.contains("out for proving"), "leaks proving status: {msg}");
+        assert!(
+            !msg.contains("out for proving"),
+            "leaks proving status: {msg}"
+        );
         assert!(
             !msg.contains(&format!("{:?}", nullifier_digest(11))),
             "leaks staged nullifier: {msg}"

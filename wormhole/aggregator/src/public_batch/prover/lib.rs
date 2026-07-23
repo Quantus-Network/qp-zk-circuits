@@ -748,10 +748,8 @@ mod tests {
 
     /// Prove one valid all-dummy private-batch proof and build matching
     /// 1-slot public-batch targets.
-    fn valid_private_batch_proof_and_targets() -> (
-        ProofWithPublicInputs<F, C, D>,
-        PublicBatchCircuitTargets,
-    ) {
+    fn valid_private_batch_proof_and_targets(
+    ) -> (ProofWithPublicInputs<F, C, D>, PublicBatchCircuitTargets) {
         let (leaf, leaf_targets) = build_fake_leaf_circuit();
         let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; 21]);
         let proof = make_all_dummy_private_batch_template(&leaf, &dummy_leaf);

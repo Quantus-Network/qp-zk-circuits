@@ -187,10 +187,7 @@ fn create_staging_dir(output_dir: &Path) -> Result<PathBuf> {
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => {
                 return Err(e).with_context(|| {
-                    format!(
-                        "failed to create staging directory {}",
-                        candidate.display()
-                    )
+                    format!("failed to create staging directory {}", candidate.display())
                 })
             }
         }

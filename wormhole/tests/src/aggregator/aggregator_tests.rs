@@ -383,7 +383,11 @@ fn private_batch_prover_ignores_prover_artifact() {
     };
 
     // Garbage in place of the prover artifact must not affect loading or proving.
-    std::fs::write(dir.join("private_batch_prover.bin"), b"not a prover artifact").unwrap();
+    std::fs::write(
+        dir.join("private_batch_prover.bin"),
+        b"not a prover artifact",
+    )
+    .unwrap();
     aggregate_and_verify(&dir);
 
     // Nor must its absence: the file is not part of the trusted input set.
@@ -526,7 +530,11 @@ fn public_batch_prover_ignores_prover_artifact() {
     };
 
     // Garbage in place of the prover artifact must not affect loading or proving.
-    std::fs::write(dir.join("public_batch_prover.bin"), b"not a prover artifact").unwrap();
+    std::fs::write(
+        dir.join("public_batch_prover.bin"),
+        b"not a prover artifact",
+    )
+    .unwrap();
     aggregate_and_verify(&dir);
 
     // Nor must its absence: the file is not part of the trusted input set.

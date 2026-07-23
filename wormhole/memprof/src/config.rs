@@ -384,7 +384,9 @@ mod tests {
             assert!(err.contains(">= 37"), "got: {err}");
         }
         // The floor itself passes CLI validation (build may still fail loudly).
-        args_with(|a| a.num_routed_wires = Some(37)).validate().unwrap();
+        args_with(|a| a.num_routed_wires = Some(37))
+            .validate()
+            .unwrap();
     }
 
     #[test]

@@ -49,8 +49,8 @@ pub fn generate_public_batch_circuit_binaries<P: AsRef<Path>>(
     // count is derived from the (untrusted) common data first, but the subsequent
     // byte-exact comparison against a canonically rebuilt circuit for that count
     // rejects any substituted or stale artifact.
-    let private_batch_common_bytes = read_artifact_file(&output_dir.join("private_batch_common.bin"))
-        .with_context(|| {
+    let private_batch_common_bytes =
+        read_artifact_file(&output_dir.join("private_batch_common.bin")).with_context(|| {
             format!(
                 "Failed to read {}",
                 output_dir.join("private_batch_common.bin").display()
@@ -185,7 +185,10 @@ fn commit_artifact_set(bins_dir: &Path, files: &[(&str, Vec<u8>)]) -> Result<()>
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => {
                     return Err(e).with_context(|| {
-                        format!("Failed to move previous {} aside", bins_dir.join(name).display())
+                        format!(
+                            "Failed to move previous {} aside",
+                            bins_dir.join(name).display()
+                        )
                     })
                 }
             }
@@ -351,4 +354,3 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
-

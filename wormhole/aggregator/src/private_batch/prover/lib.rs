@@ -176,9 +176,10 @@ impl PrivateBatchProver {
     ) -> Result<Self> {
         let leaf_common_bytes = read_artifact_file(leaf_common_path)
             .with_context(|| format!("Failed to read leaf common file {:?}", leaf_common_path))?;
-        let leaf_verifier_only_bytes = read_artifact_file(leaf_verifier_path).with_context(|| {
-            format!("Failed to read leaf verifier file {:?}", leaf_verifier_path)
-        })?;
+        let leaf_verifier_only_bytes =
+            read_artifact_file(leaf_verifier_path).with_context(|| {
+                format!("Failed to read leaf verifier file {:?}", leaf_verifier_path)
+            })?;
         let dummy_proof_bytes = read_artifact_file(dummy_proof_path)
             .with_context(|| format!("Failed to read dummy proof file {:?}", dummy_proof_path))?;
 

@@ -1,6 +1,6 @@
-use anyhow::{anyhow, bail, Result};
 #[cfg(feature = "std")]
 use anyhow::Context;
+use anyhow::{anyhow, bail, Result};
 use plonky2::{
     field::types::PrimeField64,
     plonk::{
@@ -534,10 +534,8 @@ mod tests {
 
     #[test]
     fn read_artifact_file_round_trips_normal_files_and_rejects_oversized_ones() {
-        let dir = std::env::temp_dir().join(format!(
-            "qp-artifact-read-test-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("qp-artifact-read-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -553,10 +551,7 @@ mod tests {
             .set_len(MAX_ARTIFACT_FILE_BYTES + 1)
             .unwrap();
         let err = read_artifact_file(&oversized).unwrap_err();
-        assert!(
-            err.to_string().contains("exceeds the"),
-            "got: {err}"
-        );
+        assert!(err.to_string().contains("exceeds the"), "got: {err}");
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

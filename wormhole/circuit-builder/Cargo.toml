@@ -17,8 +17,8 @@ zk-circuits-common = { package = "qp-zk-circuits-common", version = "=3.1.0", pa
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
 clap = { version = "=4.6.1", features = ["derive"] }
-rand = "=0.8.6"
 qp-plonky2 = { workspace = true, features = ["default"] }
+rand = "=0.8.6"
 wormhole-aggregator = { package = "qp-wormhole-aggregator", version = "=3.1.0", path = "../aggregator", default-features = false, features = [
 	"std",
 ] }
