@@ -186,21 +186,33 @@ pub fn bytes_to_felts_compact(input: &[u8]) -> Result<Vec<F>, &'static str> {
 
 /// Hash bytes with Poseidon2 using compact (8 bytes/felt) encoding.
 ///
-/// Uses the lossy `bytes_to_u64s_compact` path so fixed-size merkle-node payloads
+/// Uses the `bytes_to_u64s_compact` path so fixed-size merkle-node payloads
 /// always hash (matching pallet-zk-tree). Prefer this over calling
 /// `qp_poseidon_core::serialization::bytes_to_felts_compact`, which is fallible
 /// in poseidon-core ≥ 3.0.
+///
+/// The compact encoding zero-pads the final 8-byte chunk, so on unaligned
+/// input it is lossy: `x` and `x || 0x00` would encode to the same felt
+/// vector and collide. To keep this helper collision-resistant, the input
+/// length must be a multiple of 8; unaligned input returns an error. On the
+/// aligned domain the encoding is injective and the sponge's 10* padding
+/// separates different felt counts, so distinct inputs hash distinctly.
+/// This helper is deliberately crate-private so it cannot be misused
+/// downstream as a general-purpose variable-length byte commitment.
 ///
 /// Returns an error if `input.len()` exceeds [`MAX_SERIALIZED_BYTES`], matching
 /// the sibling byte-consuming helpers in this module: the intermediate felt
 /// buffer and the hashing work both scale with the input, so an unbounded
 /// public path here would let untrusted caller-supplied data force
 /// size-proportional allocation (audit #97066).
-pub fn hash_bytes_compact(input: &[u8]) -> Result<[u8; 32], &'static str> {
+pub(crate) fn hash_bytes_compact(input: &[u8]) -> Result<[u8; 32], &'static str> {
     use qp_poseidon_core::Goldilocks;
 
     if input.len() > MAX_SERIALIZED_BYTES {
         return Err("hash_bytes_compact: input exceeds maximum serialized length");
+    }
+    if input.len() % 8 != 0 {
+        return Err("hash_bytes_compact: input length must be a multiple of 8");
     }
     let felts: Vec<Goldilocks> = qp_poseidon_core::serialization::bytes_to_u64s_compact(input)
         .into_iter()
@@ -322,6 +334,46 @@ mod tests {
         hash_bytes_compact(&[0x5au8; 128]).expect("merkle-node payload must hash");
         hash_bytes_compact(&vec![0x5au8; MAX_SERIALIZED_BYTES])
             .expect("input at the exact bound must hash");
+    }
+
+    /// The compact encoding zero-pads the final 8-byte chunk, so unaligned
+    /// inputs that differ only by trailing zero bytes (e.g. `x` vs `x || 0x00`)
+    /// would encode to the same felt vector and collide. `hash_bytes_compact`
+    /// must therefore reject inputs whose length is not a multiple of 8; on
+    /// the aligned domain the encoding is injective and the sponge's own
+    /// padding separates different lengths (audit finding: lossy compact
+    /// encoding exposed as a general byte hash).
+    #[test]
+    fn hash_bytes_compact_rejects_unaligned_input() {
+        // The would-be collision pair: identical zero-padded representation.
+        let x = [1u8, 2, 3];
+        let x_padded = [1u8, 2, 3, 0];
+        assert!(
+            hash_bytes_compact(&x).is_err(),
+            "unaligned input must be rejected"
+        );
+        assert!(
+            hash_bytes_compact(&x_padded).is_err(),
+            "unaligned input must be rejected"
+        );
+
+        for len in [1usize, 7, 9, 127, 129] {
+            let err = hash_bytes_compact(&vec![0x5au8; len]).unwrap_err();
+            assert!(err.contains("multiple of 8"), "len {len}: got: {err}");
+        }
+    }
+
+    /// On the accepted (8-byte-aligned) domain, appending a zero chunk must
+    /// change the hash: the sponge's 10* padding binds the felt count.
+    #[test]
+    fn hash_bytes_compact_aligned_trailing_zero_chunk_changes_hash() {
+        let x = [0x5au8; 16];
+        let mut x_extended = x.to_vec();
+        x_extended.extend_from_slice(&[0u8; 8]);
+        assert_ne!(
+            hash_bytes_compact(&x).unwrap(),
+            hash_bytes_compact(&x_extended).unwrap()
+        );
     }
 
     #[test]
