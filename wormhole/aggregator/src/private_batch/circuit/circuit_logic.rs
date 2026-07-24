@@ -16,7 +16,11 @@
 //! This circuit forwards one nullifier per leaf slot into the aggregated public
 //! inputs (dummy slots get the hash of a fresh random preimage instead, so
 //! padding never produces on-chain nullifier collisions and stays
-//! indistinguishable from real slots). It deliberately does NOT check
+//! indistinguishable from real slots). The region is emitted in canonical
+//! sorted order rather than leaf-slot order, so its positions carry no
+//! correlation with the (positionally bound) exit slots — otherwise a nonzero
+//! exit slot would identify its proof's nullifier as real and pair the public
+//! payout with it. It deliberately does NOT check
 //! nullifiers for uniqueness — not against chain state, and not even across
 //! slots in the same batch. Two leaves spending the same deposit aggregate into
 //! a cryptographically valid batch; the wormhole pallet's persistent settled-
@@ -42,7 +46,7 @@ use qp_wormhole_inputs::validate_proof_count;
 
 use zk_circuits_common::{
     circuit::{C, D, F},
-    gadgets::{bytes_digest_eq, limb1_at_offset, limbs4_at_offset},
+    gadgets::{bytes_digest_eq, limb1_at_offset, limbs4_at_offset, sort_digests4},
 };
 
 use crate::common::recursive::add_recursive_verifiers;
@@ -350,7 +354,19 @@ fn build_private_batch_constraints(
     // =========================================================================
     // Nullifiers (replace dummies with hashes of provided random preimages)
     // =========================================================================
+    //
+    // The selected nullifiers are emitted in CANONICAL SORTED ORDER, not in
+    // leaf-slot order. Exit slots above are positionally bound to proofs
+    // (slots 2i/2i+1 come from proof i, and dummy slots are zero), so if
+    // nullifier i also came from proof i, any nonzero exit slot would mark
+    // its nullifier as real and pair the public payout with it — defeating
+    // the dummy padding and the uniform shuffle (audit finding). Sorting by
+    // value makes the region's order independent of slot position; combined
+    // with value-indistinguishable dummy nullifiers, an observer of the
+    // aggregated public inputs can no longer tell which nullifiers are real.
+    // The chain consumes this region with set semantics, so order is free.
 
+    let mut selected_nullifiers: Vec<[Target; 4]> = Vec::with_capacity(n_leaf);
     for i in 0..n_leaf {
         let pis_i = leaf_pi_targets[i];
         let real_null_i = limbs4_at_offset::<LEAF_PI_LEN, NULLIFIER_START>(pis_i, 0);
@@ -358,13 +374,22 @@ fn build_private_batch_constraints(
             hash_dummy_nullifier_pre_image(builder, targets.dummy_nullifier_pre_images[i]);
         let is_dummy_i = is_dummy_flags[i];
 
-        // output = is_dummy ? hash(dummy_nullifier_pre_image[i]) : real_nullifier[i]
-        output_pis.extend_from_slice(&[
+        // selected = is_dummy ? hash(dummy_nullifier_pre_image[i]) : real_nullifier[i]
+        selected_nullifiers.push([
             builder.select(is_dummy_i, dummy_null_i[0], real_null_i[0]),
             builder.select(is_dummy_i, dummy_null_i[1], real_null_i[1]),
             builder.select(is_dummy_i, dummy_null_i[2], real_null_i[2]),
             builder.select(is_dummy_i, dummy_null_i[3], real_null_i[3]),
         ]);
+    }
+
+    // The sorting network emits a permutation of `selected_nullifiers`
+    // unconditionally (multiset integrity is structural, independent of the
+    // comparators), and its comparators are canonicity-enforced, so the
+    // sorted order also holds against a malicious prover — the public record
+    // is guaranteed decorrelated. See `sort_digests4`.
+    for nullifier in sort_digests4(builder, selected_nullifiers) {
+        output_pis.extend_from_slice(&nullifier);
     }
 
     // =========================================================================
@@ -519,6 +544,21 @@ mod tests {
     fn hash_dummy_nullifier_pre_image_native(pre_image: [F; 4]) -> [F; 4] {
         let inner_hash = Poseidon2Hash::hash_no_pad(&pre_image).elements;
         Poseidon2Hash::hash_no_pad(&inner_hash).elements
+    }
+
+    /// Native mirror of the circuit's canonical nullifier ordering: ascending
+    /// lexicographic over canonical u64 limbs, limb 0 most significant.
+    fn sorted_nullifiers(mut nullifiers: Vec<[F; 4]>) -> Vec<[F; 4]> {
+        nullifiers.sort_by_key(|n| core::array::from_fn::<u64, 4, _>(|i| n[i].to_canonical_u64()));
+        nullifiers
+    }
+
+    /// Read the nullifier region (`n_leaf` entries of 4 felts) from aggregated PIs.
+    fn nullifier_region(pis: &[F], n_leaf: usize) -> Vec<[F; 4]> {
+        let start = ROOT_HEADER_LEN + n_leaf * 2 * aggregated_output::EXIT_SLOT_LEN;
+        (0..n_leaf)
+            .map(|i| core::array::from_fn(|j| pis[start + i * 4 + j]))
+            .collect()
     }
 
     // ---------------- Packing helpers ----------------
@@ -935,14 +975,16 @@ mod tests {
             );
         }
 
-        // Nullifiers (real-proof-only test => should match leaf nullifiers exactly)
-        for (leaf_idx, nullifier_expected) in nullifiers_ref.iter().enumerate() {
+        // Nullifiers (real-proof-only test => region is the canonically sorted
+        // multiset of the leaf nullifiers)
+        let expected_nullifiers = sorted_nullifiers(nullifiers_ref);
+        for (region_idx, nullifier_expected) in expected_nullifiers.iter().enumerate() {
             let got = [pis[idx], pis[idx + 1], pis[idx + 2], pis[idx + 3]];
             idx += 4;
 
             assert_eq!(
                 got, *nullifier_expected,
-                "nullifier mismatch at leaf {leaf_idx}"
+                "nullifier mismatch at sorted region index {region_idx}"
             );
         }
 
@@ -1158,25 +1200,19 @@ mod tests {
         let block_num_circuit = pis[ROOT_BLOCK_NUMBER_IDX];
         assert_eq!(block_num_circuit, common_block_number);
 
-        let nullifier_region_start =
-            ROOT_HEADER_LEN + (pis_list.len() * 2 * aggregated_output::EXIT_SLOT_LEN);
-        for (i, nullifier) in nullifiers_felts.iter().enumerate().take(num_real_proofs) {
-            let idx = nullifier_region_start + i * 4;
-            let got = [pis[idx], pis[idx + 1], pis[idx + 2], pis[idx + 3]];
-            assert_eq!(got, *nullifier, "real nullifier mismatch at leaf {i}");
-        }
-
-        for (i, pre_image) in dummy_nullifier_pre_images
-            .iter()
-            .enumerate()
-            .take(pis_list.len())
-            .skip(num_real_proofs)
-        {
-            let idx = nullifier_region_start + i * 4;
-            let got = [pis[idx], pis[idx + 1], pis[idx + 2], pis[idx + 3]];
-            let expected = hash_dummy_nullifier_pre_image_native(*pre_image);
-            assert_eq!(got, expected, "dummy nullifier hash mismatch at leaf {i}");
-        }
+        // Region = sorted multiset of {real nullifiers} ∪ {dummy replacement hashes}.
+        let mut expected: Vec<[F; 4]> = nullifiers_felts[..num_real_proofs].to_vec();
+        expected.extend(
+            dummy_nullifier_pre_images
+                .iter()
+                .skip(num_real_proofs)
+                .map(|p| hash_dummy_nullifier_pre_image_native(*p)),
+        );
+        assert_eq!(
+            nullifier_region(pis, pis_list.len()),
+            sorted_nullifiers(expected),
+            "nullifier region must be the sorted multiset of real + dummy-replacement nullifiers"
+        );
 
         println!(
             "Successfully aggregated {} real proofs + {} dummy proofs!",
@@ -1282,24 +1318,22 @@ mod tests {
             );
             assert_eq!(pis[ROOT_BLOCK_NUMBER_IDX], common_block_number);
 
-            let nullifier_region_start =
-                ROOT_HEADER_LEN + (N_LEAF * 2 * aggregated_output::EXIT_SLOT_LEN);
-
-            for (i, pre_image) in dummy_nullifier_pre_images.iter().enumerate() {
-                let idx = nullifier_region_start + i * 4;
-                let got = [pis[idx], pis[idx + 1], pis[idx + 2], pis[idx + 3]];
-                if i == real_slot {
-                    // Real nullifier must be forwarded unchanged.
-                    assert_eq!(
-                        got, nullifiers_felts[i],
-                        "real nullifier must be preserved in slot {i}"
-                    );
-                } else {
-                    // Dummy nullifiers must be replaced with hashes of the preimages.
-                    let expected = hash_dummy_nullifier_pre_image_native(*pre_image);
-                    assert_eq!(got, expected, "dummy nullifier hash mismatch at leaf {i}");
-                }
-            }
+            // Region = sorted multiset: the real slot's nullifier forwarded
+            // unchanged, every dummy slot replaced with H(H(pre_image)).
+            let expected: Vec<[F; 4]> = (0..N_LEAF)
+                .map(|i| {
+                    if i == real_slot {
+                        nullifiers_felts[i]
+                    } else {
+                        hash_dummy_nullifier_pre_image_native(dummy_nullifier_pre_images[i])
+                    }
+                })
+                .collect();
+            assert_eq!(
+                nullifier_region(pis, N_LEAF),
+                sorted_nullifiers(expected),
+                "nullifier region mismatch with real proof in slot {real_slot}"
+            );
         }
     }
 
@@ -1370,14 +1404,16 @@ mod tests {
         );
 
         // All nullifiers should be replaced with hashes of the pre-images
-        let nullifier_region_start =
-            ROOT_HEADER_LEN + (pis_list.len() * 2 * aggregated_output::EXIT_SLOT_LEN);
-        for (i, pre_image) in dummy_nullifier_pre_images.iter().enumerate() {
-            let idx = nullifier_region_start + i * 4;
-            let got = [pis[idx], pis[idx + 1], pis[idx + 2], pis[idx + 3]];
-            let expected = hash_dummy_nullifier_pre_image_native(*pre_image);
-            assert_eq!(got, expected, "dummy nullifier hash mismatch at leaf {i}");
-        }
+        // (region is emitted as a sorted multiset).
+        let expected: Vec<[F; 4]> = dummy_nullifier_pre_images
+            .iter()
+            .map(|p| hash_dummy_nullifier_pre_image_native(*p))
+            .collect();
+        assert_eq!(
+            nullifier_region(pis, pis_list.len()),
+            sorted_nullifiers(expected),
+            "all-dummy nullifier region must be the sorted replacement hashes"
+        );
 
         println!("Successfully aggregated all-dummy batch of 8 proofs!");
     }
@@ -1566,43 +1602,103 @@ mod tests {
         root_verifier.verify(root_proof.clone()).unwrap();
 
         let pis = &root_proof.public_inputs;
-        let nullifier_region_start =
-            ROOT_HEADER_LEN + (pis_list.len() * 2 * aggregated_output::EXIT_SLOT_LEN);
+        let region = nullifier_region(pis, pis_list.len());
 
-        // Check real proof nullifier is preserved
-        let real_nullifier_idx = nullifier_region_start;
-        let real_nullifier_got = [
-            pis[real_nullifier_idx],
-            pis[real_nullifier_idx + 1],
-            pis[real_nullifier_idx + 2],
-            pis[real_nullifier_idx + 3],
-        ];
+        // Region = sorted multiset of the preserved real nullifier plus the
+        // dummy replacement hashes.
+        let mut expected: Vec<[F; 4]> = vec![nullifiers_felts[0]];
+        expected.extend(
+            dummy_nullifier_pre_images
+                .iter()
+                .skip(1)
+                .map(|p| hash_dummy_nullifier_pre_image_native(*p)),
+        );
         assert_eq!(
-            real_nullifier_got, nullifiers_felts[0],
-            "real proof nullifier should be preserved"
+            region,
+            sorted_nullifiers(expected),
+            "region must contain the real nullifier and every dummy replacement hash"
         );
 
-        // Check ALL dummy nullifiers are replaced (not equal to original)
-        for i in 1..8 {
-            let idx = nullifier_region_start + i * 4;
-            let got = [pis[idx], pis[idx + 1], pis[idx + 2], pis[idx + 3]];
-            let original = nullifiers_felts[i];
-            let expected_replacement =
-                hash_dummy_nullifier_pre_image_native(dummy_nullifier_pre_images[i]);
-
-            assert_ne!(
-                got, original,
-                "dummy nullifier at index {i} should NOT equal original"
-            );
-            assert_eq!(
-                got, expected_replacement,
-                "dummy nullifier at index {i} should equal H(H(pre_image))"
+        // No dummy slot's ORIGINAL nullifier may leak into the output.
+        for original in nullifiers_felts.iter().skip(1) {
+            assert!(
+                !region.contains(original),
+                "original dummy nullifier must be replaced, not forwarded"
             );
         }
 
         println!(
             "Verified dummy nullifier replacement for {} dummy proofs",
             7
+        );
+    }
+
+    /// Privacy (audit finding): the nullifier region must be emitted in an
+    /// order independent of leaf-slot position. Exit slots are positionally
+    /// bound to proofs (slot 2i/2i+1 come from proof i), so if nullifier i
+    /// also came from proof i, any nonzero exit slot would identify its
+    /// nullifier and pair the public payout with it. The circuit therefore
+    /// sorts the nullifier region canonically (ascending lexicographic over
+    /// canonical limbs), breaking the positional correlation.
+    ///
+    /// The test feeds real proofs whose nullifiers are in strictly DESCENDING
+    /// order, so proof-order emission (the vulnerable behavior) produces a
+    /// region that is maximally different from the required sorted order.
+    #[test]
+    fn nullifier_region_is_canonically_sorted() {
+        const N_LEAF: usize = 4;
+
+        let exits_felts: [[F; 8]; 8] = EXIT_ACCOUNTS.map(limbs8_u64_to_felts);
+        let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs4_u64_to_felts);
+        // NULLIFIERS[0..4] have descending leading limbs (0x90.., 0x80.., 0x70.., 0x60..).
+        let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs4_u64_to_felts);
+
+        let common_block_hash = block_hashes_felts[0];
+        let common_block_number = F::from_canonical_u64(42);
+        let asset_id = F::from_canonical_u64(TEST_ASSET_ID_U64);
+        let volume_fee_bps = F::from_canonical_u64(TEST_VOLUME_FEE_BPS);
+
+        let mut pis_list: Vec<[F; LEAF_PI_LEN]> = Vec::with_capacity(N_LEAF);
+        for i in 0..N_LEAF {
+            pis_list.push(make_pi_from_felts(
+                asset_id,
+                F::from_canonical_u64(100 + i as u64),
+                F::ZERO,
+                volume_fee_bps,
+                nullifiers_felts[i],
+                exits_felts[i],
+                [F::ZERO; 8],
+                common_block_hash,
+                common_block_number,
+            ));
+        }
+
+        let leaves = pis_list
+            .clone()
+            .into_iter()
+            .map(prove_fake_leaf_standalone)
+            .collect::<Vec<_>>();
+        let leaf_common = leaves[0].1.common.clone();
+        let leaf_verifier_only = leaves[0].1.verifier_only.clone();
+        let proofs = leaves
+            .into_iter()
+            .map(|(proof, _)| proof)
+            .collect::<Vec<_>>();
+
+        let (root_proof, root_verifier) = aggregate_proofs_private_batch(
+            proofs,
+            leaf_common,
+            leaf_verifier_only,
+            deterministic_dummy_nullifier_pre_images(N_LEAF),
+        )
+        .unwrap();
+        root_verifier.verify(root_proof.clone()).unwrap();
+
+        let got = nullifier_region(&root_proof.public_inputs, N_LEAF);
+        let expected = sorted_nullifiers(nullifiers_felts[..N_LEAF].to_vec());
+        assert_eq!(
+            got, expected,
+            "nullifier region must be canonically sorted, not in leaf-slot order"
         );
     }
 
