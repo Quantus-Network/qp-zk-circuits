@@ -27,7 +27,7 @@ pub struct PhaseReport {
 
 impl PhaseReport {
     pub fn new(sample_period_ms: u64) -> Result<Self> {
-        let sampler = PeakSampler::start(sample_period_ms);
+        let sampler = PeakSampler::start(sample_period_ms)?;
         let (start, _) = process_memory()?;
         let rows = vec![PhaseRow {
             label: "startup".to_string(),

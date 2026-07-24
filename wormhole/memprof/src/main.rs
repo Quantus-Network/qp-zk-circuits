@@ -64,8 +64,12 @@ struct Args {
     #[arg(long, default_value_t = false)]
     release_after_each: bool,
 
-    /// Memory sampler poll period in milliseconds.
-    #[arg(long, default_value_t = 25)]
+    /// Memory sampler poll period in milliseconds. Bounded at parse time:
+    /// `0` would busy-loop the sampler thread, and an oversized period is
+    /// useless for profiling (the poll wait itself is interruptible, so
+    /// shutdown never blocks on it either way).
+    #[arg(long, default_value_t = 25,
+          value_parser = clap::value_parser!(u64).range(1..=crate::memory::MAX_SAMPLE_PERIOD_MS))]
     sample_period_ms: u64,
 
     /// If set, exits non-zero when overall peak exceeds this MB. CI guard.
@@ -226,6 +230,27 @@ mod tests {
             assert!(
                 Args::try_parse_from(["wormhole-memprof", "--rayon-threads", value]).is_ok(),
                 "--rayon-threads {value} must be accepted"
+            );
+        }
+    }
+
+    /// `--sample-period-ms 0` turns the sampler thread into a busy loop on
+    /// the process-memory read, and an absurdly large period parks the thread
+    /// in a sleep that shutdown must wait out; both must be rejected at
+    /// argument-parse time (audit finding: unbounded sampler interval).
+    #[test]
+    fn sample_period_out_of_range_is_rejected_at_parse_time() {
+        for value in ["0", "86400000"] {
+            assert!(
+                Args::try_parse_from(["wormhole-memprof", "--sample-period-ms", value]).is_err(),
+                "--sample-period-ms {value} must be rejected at parse time"
+            );
+        }
+        let max = crate::memory::MAX_SAMPLE_PERIOD_MS.to_string();
+        for value in ["1", "25", &max] {
+            assert!(
+                Args::try_parse_from(["wormhole-memprof", "--sample-period-ms", value]).is_ok(),
+                "--sample-period-ms {value} must be accepted"
             );
         }
     }
