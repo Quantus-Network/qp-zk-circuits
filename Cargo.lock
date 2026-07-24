@@ -1126,8 +1126,10 @@ dependencies = [
  "qp-plonky2",
  "qp-wormhole-aggregator",
  "qp-wormhole-circuit",
+ "qp-wormhole-prover",
  "qp-zk-circuits-common",
  "rand 0.8.6",
+ "test-helpers",
 ]
 
 [[package]]

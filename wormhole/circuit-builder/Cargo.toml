@@ -26,3 +26,9 @@ wormhole-circuit = { package = "qp-wormhole-circuit", version = "=3.1.0", path =
 	"std",
 ] }
 zk-circuits-common = { package = "qp-zk-circuits-common", version = "=3.1.0", path = "../../common" }
+
+[dev-dependencies]
+test-helpers = { path = "../tests/test-helpers", default-features = false }
+wormhole-prover = { package = "qp-wormhole-prover", version = "=3.1.0", path = "../prover", default-features = false, features = [
+	"std",
+] }

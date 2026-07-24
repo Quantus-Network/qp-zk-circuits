@@ -40,12 +40,30 @@ fn make_private_prover() -> PrivateBatchProver {
         .expect("Failed to load private-batch prover from binaries dir")
 }
 
-/// Generate a dummy private-batch proof over "PUBLIC_BATCH_INNER_NUM_LEAVES" dummy leaves.
-fn generate_dummy_private_batch_proof() -> Proof {
-    let dummy_leaf_proof = load_dummy_leaf_proof();
+/// Generate a REAL private-batch proof: one real leaf (genuine block hash
+/// computed from the test header fields) padded with dummy leaves.
+///
+/// The public-batch benches need a non-dummy proof because
+/// `PublicBatchProver::commit` rejects all-dummy batches (they settle nothing
+/// on-chain). Proving cost is witness-independent, so this measures the same
+/// work as a production batch.
+fn generate_real_private_batch_proof() -> Proof {
+    use test_helpers::TestInputs as _;
+    use wormhole_circuit::block_header::header::HeaderInputs;
+    use wormhole_circuit::inputs::CircuitInputs;
+
+    let mut inputs = CircuitInputs::test_inputs_0();
+    inputs.public.block_hash = HeaderInputs::try_from(&inputs)
+        .expect("header inputs from test inputs")
+        .block_hash();
+    let real_leaf = wormhole_prover::build_fresh()
+        .commit(&inputs)
+        .expect("Failed to commit real leaf inputs")
+        .prove()
+        .expect("Failed to prove real leaf");
     make_private_prover()
-        .aggregate(vec![dummy_leaf_proof; PUBLIC_BATCH_INNER_NUM_LEAVES])
-        .unwrap()
+        .aggregate(vec![real_leaf])
+        .expect("Failed to aggregate real leaf into a private batch")
 }
 
 // A macro for creating an aggregation benchmark with a specified number of leaf proofs.
@@ -135,7 +153,7 @@ macro_rules! prove_public_batch_benchmark {
                     "Failed to generate private_batch circuit binaries for public_batch benchmark",
                 );
 
-            let proof = generate_dummy_private_batch_proof();
+            let proof = generate_real_private_batch_proof();
             generate_public_batch_circuit_binaries(BINS_DIR, $num_private_batch_proofs).expect(
                 "Failed to generate public_batch circuit binaries for public_batch benchmark",
             );
@@ -152,7 +170,7 @@ macro_rules! prove_public_batch_benchmark {
             let aggregator_address = BytesDigest::try_from(LAYER1_AGGREGATOR_ADDRESS)
                 .expect("Failed to create aggregator address bytes digest");
 
-            // The prover is driven directly: the benchmark batch reuses one dummy
+            // The prover is driven directly: the benchmark batch reuses one real
             // private-batch proof N times, which the ProofPool would reject as
             // duplicate nullifiers (and generating N distinct private batches
             // would dwarf the benchmark setup).
@@ -196,7 +214,7 @@ macro_rules! verify_public_batch_benchmark {
                     "Failed to generate private_batch circuit binaries for public_batch benchmark",
                 );
 
-            let proof = generate_dummy_private_batch_proof();
+            let proof = generate_real_private_batch_proof();
 
             generate_public_batch_circuit_binaries(BINS_DIR, $num_private_batch_proofs).expect(
                 "Failed to generate public_batch circuit binaries for public_batch benchmark",
