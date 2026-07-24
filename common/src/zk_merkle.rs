@@ -203,12 +203,21 @@ impl ZkMerkleProof {
     ///
     /// This takes unsorted siblings and computes the correct sorted order
     /// and position hints for circuit verification.
+    ///
+    /// Returns an error if the supplied path is deeper than [`MAX_DEPTH`].
+    /// The bound is enforced *before* any allocation or hashing so untrusted
+    /// raw siblings cannot force per-level Poseidon work on a proof that
+    /// [`Self::verify_with_positions`] would reject anyway.
     pub fn from_unsorted(
         leaf_index: u64,
         unsorted_siblings: Vec<[Hash256; SIBLINGS_PER_LEVEL]>,
         leaf_hash: Hash256,
         root: Hash256,
-    ) -> Self {
+    ) -> Result<Self, &'static str> {
+        if unsorted_siblings.len() > MAX_DEPTH {
+            return Err("from_unsorted: proof depth exceeds MAX_DEPTH");
+        }
+
         let mut current_hash = leaf_hash;
         let mut sorted_siblings = Vec::with_capacity(unsorted_siblings.len());
         let mut positions = Vec::with_capacity(unsorted_siblings.len());
@@ -247,13 +256,13 @@ impl ZkMerkleProof {
             current_hash = hash_node_presorted(&all_four);
         }
 
-        Self {
+        Ok(Self {
             leaf_index,
             siblings: sorted_siblings,
             positions,
             leaf_hash,
             root,
-        }
+        })
     }
 }
 
@@ -457,13 +466,14 @@ mod tests {
         let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]);
 
         // Create proof for leaf0 using from_unsorted
-        let proof = ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root);
+        let proof = ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root).unwrap();
 
         assert!(proof.verify());
         assert!(proof.verify_with_positions());
 
         // Create proof for leaf2 using from_unsorted
-        let proof2 = ZkMerkleProof::from_unsorted(2, vec![[leaf0, leaf1, leaf3]], leaf2, root);
+        let proof2 =
+            ZkMerkleProof::from_unsorted(2, vec![[leaf0, leaf1, leaf3]], leaf2, root).unwrap();
 
         assert!(proof2.verify());
         assert!(proof2.verify_with_positions());
@@ -479,12 +489,34 @@ mod tests {
         let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]);
 
         // leaf0 is smallest, so position should be 0
-        let proof0 = ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root);
+        let proof0 = ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root).unwrap();
         assert_eq!(proof0.positions[0], 0);
 
         // leaf3 is largest, so position should be 3
-        let proof3 = ZkMerkleProof::from_unsorted(3, vec![[leaf0, leaf1, leaf2]], leaf3, root);
+        let proof3 =
+            ZkMerkleProof::from_unsorted(3, vec![[leaf0, leaf1, leaf2]], leaf3, root).unwrap();
         assert_eq!(proof3.positions[0], 3);
+    }
+
+    /// `from_unsorted` must enforce the same MAX_DEPTH bound that
+    /// `verify_with_positions` enforces, *before* doing per-level allocation,
+    /// sorting, and Poseidon hashing. Otherwise a caller normalizing
+    /// untrusted raw siblings can be forced into work proportional to an
+    /// attacker-controlled depth, only for the proof to be rejected later
+    /// (audit finding: missing depth limit in proof normalization).
+    #[test]
+    fn from_unsorted_rejects_oversized_depth() {
+        let levels = vec![[[0x11u8; 32], [0x22u8; 32], [0x33u8; 32]]; MAX_DEPTH + 1];
+        let err = ZkMerkleProof::from_unsorted(0, levels, [0x42u8; 32], [0u8; 32]).unwrap_err();
+        assert!(err.contains("MAX_DEPTH"), "got: {err}");
+    }
+
+    /// Proofs at exactly MAX_DEPTH must still construct.
+    #[test]
+    fn from_unsorted_accepts_max_depth() {
+        let levels = vec![[[0x11u8; 32], [0x22u8; 32], [0x33u8; 32]]; MAX_DEPTH];
+        ZkMerkleProof::from_unsorted(0, levels, [0x42u8; 32], [0u8; 32])
+            .expect("MAX_DEPTH proof must construct");
     }
 
     #[test]
@@ -502,7 +534,8 @@ mod tests {
             vec![[leaf1, leaf2, leaf3]],
             [0xff; 32], // wrong!
             root,
-        );
+        )
+        .unwrap();
 
         assert!(!bad_proof.verify());
     }
@@ -519,7 +552,7 @@ mod tests {
         let leaf3 = [0x33; 32];
         let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]);
 
-        let mut proof = ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root);
+        let mut proof = ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root).unwrap();
         assert!(proof.verify(), "sanity: correct positions must verify");
 
         // Corrupt the position hint; membership data is untouched.
@@ -577,7 +610,7 @@ mod tests {
         let leaf3 = hash_from_limbs([3, 0, 0, 0]);
         let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]);
 
-        let mut proof = ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root);
+        let mut proof = ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root).unwrap();
         assert!(proof.verify(), "sanity: canonical proof must verify");
 
         // Alias of leaf0: limb 0 replaced by `p`, which reduces to 0 mod p.
@@ -601,7 +634,7 @@ mod tests {
         let leaf3 = hash_from_limbs([3, 0, 0, 0]);
         let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]);
 
-        let mut proof = ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root);
+        let mut proof = ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root).unwrap();
         assert!(proof.verify(), "sanity: canonical proof must verify");
 
         // Replace the first sibling with its noncanonical alias.
