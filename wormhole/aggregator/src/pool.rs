@@ -16,7 +16,10 @@
 //! indexed, so duplicate spends are still rejected at admission and
 //! settlements observed by [`ProofPool::evict_settled`] during the proving
 //! window are remembered: `reinsert` drops the affected proofs instead of
-//! restoring dead weight.
+//! restoring dead weight. A batch that is DROPPED instead of handed back
+//! (e.g. the proving worker panicked) self-releases its reservations at the
+//! pool's next operation via [`TakenBatch`]'s drop guard, so no spend is ever
+//! permanently wedged by a lost batch.
 //!
 //! Staleness: a queued proof becomes worthless once any of its nullifiers is
 //! settled on-chain (e.g. another miner included the same private batch, or a
@@ -44,6 +47,7 @@
 //! template.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, ensure, Result};
@@ -156,21 +160,39 @@ struct PooledProof {
     admitted_at: Instant,
 }
 
+/// Shared inbox for nullifier reservations released by a [`TakenBatch`] that
+/// was dropped without being handed back. Drained by the pool at the start of
+/// its next operation. The mutex is only ever held to push or drain a `Vec`,
+/// never across pool logic, so it cannot deadlock with any pool lock the
+/// operator wraps around [`ProofPool`] itself.
+type OrphanedReservations = Arc<Mutex<Vec<BytesDigest>>>;
+
 /// A batch of admission-verified proofs removed from the pool for proving.
 ///
 /// Opaque by design: it can only be produced by [`ProofPool::take_batch`], so
 /// [`ProofPool::reinsert`] can restore it on proving failure without repeating
 /// cryptographic verification.
 ///
-/// Callers MUST hand it back: [`ProofPool::complete`] on proving success or
+/// Hand it back via [`ProofPool::complete`] on proving success or
 /// [`ProofPool::reinsert`] on failure. The pool keeps the batch's nullifiers
 /// indexed while it is out (so duplicates stay rejected and settlements
-/// observed meanwhile are tracked); dropping the batch without either call
-/// leaks those reservations, permanently blocking re-admission of the spends.
+/// observed meanwhile are tracked). If the batch is instead dropped — e.g.
+/// the proving worker panicked and unwound — its `Drop` impl deposits the
+/// reservations into the pool's orphan inbox and the pool releases them at
+/// its next operation, so the affected spends can be resubmitted instead of
+/// being wedged until the aggregator is rebuilt. The dropped proofs
+/// themselves are gone; clients must resubmit them (re-admission re-verifies
+/// as usual).
 #[derive(Debug)]
 pub struct TakenBatch {
     key: BatchKey,
     proofs: Vec<PooledProof>,
+    /// Where `Drop` deposits this batch's reservations; shared with the pool
+    /// that produced it.
+    orphaned: OrphanedReservations,
+    /// Cleared by `complete`/`reinsert` before they consume the batch, so an
+    /// explicit hand-back does not also release through `Drop`.
+    armed: bool,
 }
 
 impl TakenBatch {
@@ -189,6 +211,23 @@ impl TakenBatch {
     /// Clone the contained proofs (e.g. to feed a prover's `commit`).
     pub fn proofs(&self) -> Vec<Proof> {
         self.proofs.iter().map(|q| q.proof.clone()).collect()
+    }
+}
+
+impl Drop for TakenBatch {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        // Robust to a poisoned mutex: a panic elsewhere must not turn into a
+        // permanently wedged reservation, which is the bug this guards against.
+        let mut orphaned = self
+            .orphaned
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for queued in &self.proofs {
+            orphaned.extend(queued.nullifiers.iter().copied());
+        }
     }
 }
 
@@ -224,6 +263,10 @@ pub struct ProofPool {
     /// instead of restoring it) and [`Self::complete`]. Bounded by the size of
     /// outstanding taken batches.
     settled_while_taken: HashSet<BytesDigest>,
+    /// Reservations deposited by dropped (not handed-back) [`TakenBatch`]es,
+    /// released by [`Self::reap_orphaned`] at the start of every pool
+    /// operation. Shared with every `TakenBatch` this pool produces.
+    orphaned: OrphanedReservations,
     /// Start of the current verification budget window (fixed-window counter).
     verify_window_started: Instant,
     /// Verification attempts (successful or not) in the current window.
@@ -283,9 +326,30 @@ impl ProofPool {
             nullifier_index: HashMap::new(),
             taken_nullifiers: HashSet::new(),
             settled_while_taken: HashSet::new(),
+            orphaned: Arc::new(Mutex::new(Vec::new())),
             verify_window_started: Instant::now(),
             verifies_in_window: 0,
         })
+    }
+
+    /// Release reservations deposited by dropped (not handed-back)
+    /// [`TakenBatch`]es. Called at the start of every pool operation, so a
+    /// batch lost to a panicking or killed proving worker frees its spends
+    /// for resubmission at the next pool touch instead of wedging them until
+    /// the aggregator is reconstructed.
+    fn reap_orphaned(&mut self) {
+        let orphaned: Vec<BytesDigest> = {
+            let mut inbox = self
+                .orphaned
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            std::mem::take(&mut *inbox)
+        };
+        for nullifier in orphaned {
+            self.nullifier_index.remove(&nullifier);
+            self.taken_nullifiers.remove(&nullifier);
+            self.settled_while_taken.remove(&nullifier);
+        }
     }
 
     /// Total number of proofs across all buckets.
@@ -322,6 +386,7 @@ impl ProofPool {
     /// the global limits) while earlier batches for it are out being proved;
     /// [`Self::take_batch`] takes the oldest `batch_size` proofs at a time.
     pub fn push(&mut self, proof: Proof) -> Result<BatchKey> {
+        self.reap_orphaned();
         if self.len() >= self.limits.max_proofs {
             bail!(
                 "proof pool is full ({} proofs, limit {})",
@@ -433,6 +498,7 @@ impl ProofPool {
     /// longer holds them), but their settlements are remembered: a later
     /// [`Self::reinsert`] drops the affected proofs instead of restoring them.
     pub fn evict_settled(&mut self, settled: &HashSet<BytesDigest>) -> usize {
+        self.reap_orphaned();
         // Settlements hitting out-for-proving proofs can't be evicted now;
         // record them so reinsert doesn't restore dead weight after the
         // settled set of this block has already been consumed.
@@ -514,6 +580,7 @@ impl ProofPool {
     /// observed by [`Self::evict_settled`] meanwhile are remembered so
     /// `reinsert` drops the affected proofs instead of restoring dead weight.
     pub fn take_batch(&mut self, key: &BatchKey) -> Option<TakenBatch> {
+        self.reap_orphaned();
         let bucket = self.buckets.get_mut(key)?;
         let n = bucket.len().min(self.batch_size);
         let taken: Vec<PooledProof> = bucket.drain(..n).collect();
@@ -528,6 +595,8 @@ impl ProofPool {
         Some(TakenBatch {
             key: *key,
             proofs: taken,
+            orphaned: self.orphaned.clone(),
+            armed: true,
         })
     }
 
@@ -535,7 +604,9 @@ impl ProofPool {
     /// reservations (they are about to settle on-chain via the public batch;
     /// the post-submission [`Self::evict_settled`] cadence no longer needs to
     /// track them here).
-    pub fn complete(&mut self, batch: TakenBatch) {
+    pub fn complete(&mut self, mut batch: TakenBatch) {
+        self.reap_orphaned();
+        batch.armed = false;
         for queued in &batch.proofs {
             for nullifier in &queued.nullifiers {
                 self.nullifier_index.remove(nullifier);
@@ -555,9 +626,11 @@ impl ProofPool {
     /// is dropped instead of restored (re-proving it would waste minutes on a
     /// batch the chain refuses). Returns the number of proofs actually
     /// restored.
-    pub fn reinsert(&mut self, batch: TakenBatch) -> usize {
+    pub fn reinsert(&mut self, mut batch: TakenBatch) -> usize {
+        self.reap_orphaned();
+        batch.armed = false;
         let mut restored: Vec<PooledProof> = Vec::with_capacity(batch.proofs.len());
-        for queued in batch.proofs {
+        for queued in std::mem::take(&mut batch.proofs) {
             let stale = queued
                 .nullifiers
                 .iter()
@@ -590,6 +663,7 @@ impl ProofPool {
     /// Used both to drain a bucket after successful aggregation and as an
     /// operator recovery/expiry path for buckets that will never be aggregated.
     pub fn remove_bucket(&mut self, key: &BatchKey) -> Vec<Proof> {
+        self.reap_orphaned();
         self.buckets
             .remove(key)
             .map(|bucket| {
@@ -805,6 +879,47 @@ mod tests {
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].num_proofs, 3);
         assert!(stats[0].is_full());
+    }
+
+    /// A TakenBatch dropped without complete/reinsert — e.g. the minutes-long
+    /// proving worker in the documented split flow panics — must not wedge its
+    /// spends forever. Reservations of a dropped batch must be released (at
+    /// the pool's next operation) so clients can resubmit; no operator-side
+    /// recovery API or pool reconstruction should be needed (audit finding:
+    /// dropped in-flight batch permanently wedges spends).
+    #[test]
+    fn dropped_taken_batch_releases_reservations_for_resubmission() {
+        let (mut pool, data, targets) = make_pool(1, PoolLimits::default());
+        let proof = prove_fake(&data, &targets, &fake(1, 11));
+        let key = pool.push(proof.clone()).unwrap();
+
+        let batch = pool.take_batch(&key).expect("bucket must be takeable");
+        drop(batch);
+
+        pool.push(proof)
+            .expect("resubmission of a spend from a dropped batch must be admitted");
+        assert_eq!(pool.len(), 1);
+    }
+
+    /// The realistic loss mode from the audit finding: the batch is moved into
+    /// a proving worker thread that panics mid-proving. Unwinding drops the
+    /// batch, which must still release its reservations back to the pool.
+    #[test]
+    fn batch_lost_to_panicking_worker_releases_reservations() {
+        let (mut pool, data, targets) = make_pool(1, PoolLimits::default());
+        let proof = prove_fake(&data, &targets, &fake(1, 11));
+        let key = pool.push(proof.clone()).unwrap();
+        let batch = pool.take_batch(&key).unwrap();
+
+        let worker = std::thread::spawn(move || {
+            let _owned = batch;
+            panic!("simulated proving failure");
+        });
+        assert!(worker.join().is_err());
+
+        pool.push(proof)
+            .expect("resubmission after a panicked proving worker must be admitted");
+        assert_eq!(pool.len(), 1);
     }
 
     #[test]

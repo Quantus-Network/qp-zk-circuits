@@ -41,9 +41,12 @@
 //! settlements observed by the regular
 //! [`PublicBatchAggregator::evict_settled`] cadence during the proving window
 //! are remembered, and [`PublicBatchAggregator::reinsert_batch`] drops the
-//! affected (now-stale) proofs instead of restoring them. Every taken batch
-//! MUST be handed back via [`PublicBatchAggregator::complete_batch`] (success)
-//! or [`PublicBatchAggregator::reinsert_batch`] (failure).
+//! affected (now-stale) proofs instead of restoring them. Hand every taken
+//! batch back via [`PublicBatchAggregator::complete_batch`] (success) or
+//! [`PublicBatchAggregator::reinsert_batch`] (failure); a batch that is
+//! instead dropped (e.g. its proving worker panicked) self-releases its
+//! nullifier reservations at the pool's next operation, so the affected
+//! spends can be resubmitted rather than staying wedged.
 
 use anyhow::{anyhow, bail, Context, Result};
 use plonky2::plonk::{
