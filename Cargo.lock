@@ -1092,6 +1092,7 @@ dependencies = [
  "criterion",
  "env_logger",
  "hex",
+ "libc",
  "qp-plonky2",
  "qp-wormhole-circuit",
  "qp-wormhole-inputs",

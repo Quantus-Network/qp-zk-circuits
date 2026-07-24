@@ -38,6 +38,14 @@ pub const MAX_ARTIFACT_FILE_BYTES: u64 = 64 * 1024 * 1024;
 /// Read a circuit-artifact file, refusing anything larger than
 /// [`MAX_ARTIFACT_FILE_BYTES`] before allocating for its contents.
 ///
+/// Only regular files are accepted. A FIFO, device node, or symlink to one
+/// planted at an artifact path would otherwise block `open` (a FIFO with no
+/// writer) or `read_to_end` (a stream that never reaches EOF) forever,
+/// independent of the size cap below. On unix the open uses `O_NONBLOCK` so
+/// even the FIFO-open case cannot stall; the file type is then checked via
+/// `fstat` on the opened handle before any read. `O_NONBLOCK` has no effect
+/// on regular-file opens or reads.
+///
 /// The size is checked via `fstat` on the already-opened handle (no
 /// stat-then-open race), and the read itself is additionally capped with
 /// `Read::take` in case the file grows after the check.
@@ -45,12 +53,26 @@ pub const MAX_ARTIFACT_FILE_BYTES: u64 = 64 * 1024 * 1024;
 pub fn read_artifact_file(path: &std::path::Path) -> Result<Vec<u8>> {
     use std::io::Read as _;
 
-    let file = std::fs::File::open(path)
+    let mut options = std::fs::File::options();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = options
+        .open(path)
         .with_context(|| format!("failed to open artifact file {}", path.display()))?;
-    let claimed_len = file
+    let metadata = file
         .metadata()
-        .with_context(|| format!("failed to stat artifact file {}", path.display()))?
-        .len();
+        .with_context(|| format!("failed to stat artifact file {}", path.display()))?;
+    if !metadata.file_type().is_file() {
+        bail!(
+            "artifact file {} is not a regular file; refusing to load it",
+            path.display()
+        );
+    }
+    let claimed_len = metadata.len();
     if claimed_len > MAX_ARTIFACT_FILE_BYTES {
         bail!(
             "artifact file {} is {} bytes, which exceeds the {} byte limit for \
@@ -552,6 +574,52 @@ mod tests {
             .unwrap();
         let err = read_artifact_file(&oversized).unwrap_err();
         assert!(err.to_string().contains("exceeds the"), "got: {err}");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A FIFO planted at an expected `*.bin` path must produce a prompt
+    /// invalid-artifact error, not a hang: a blocking `File::open` on a FIFO
+    /// with no writer stalls forever, before the size check can run,
+    /// converting artifact loading into a startup denial of service when the
+    /// artifact directory is untrusted (audit finding: non-regular files
+    /// bypass the bounded-read protections).
+    #[cfg(unix)]
+    #[test]
+    fn read_artifact_file_rejects_fifo_without_blocking() {
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let dir =
+            std::env::temp_dir().join(format!("qp-artifact-fifo-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let fifo = dir.join("leaf_common.bin");
+        let c_path = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        assert_eq!(
+            unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) },
+            0,
+            "mkfifo failed"
+        );
+
+        // Run the read on a helper thread so a regression (blocking open or
+        // read) surfaces as a test failure instead of hanging the suite.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let fifo_for_thread = fifo.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(read_artifact_file(&fifo_for_thread).map(drop));
+        });
+
+        match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            Ok(result) => {
+                let err = result.unwrap_err();
+                assert!(
+                    err.to_string().contains("not a regular file"),
+                    "got: {err}"
+                );
+            }
+            Err(_) => panic!("read_artifact_file blocked on a FIFO artifact path"),
+        }
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

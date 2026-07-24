@@ -56,12 +56,18 @@ impl CircuitBinsConfig {
 
     /// Load config from a directory containing circuit binaries.
     ///
+    /// Reads through [`crate::common::utils::read_artifact_file`], which
+    /// rejects non-regular files and oversized inputs, so an untrusted bins
+    /// directory cannot stall or memory-starve config loading (this runs
+    /// before any of the `*.bin` artifacts are touched).
+    ///
     /// # Errors
     /// Returns an error if the file cannot be read, parsed, or contains invalid values.
     pub fn load<P: AsRef<Path>>(bins_dir: P) -> Result<Self> {
         let config_path = bins_dir.as_ref().join("config.json");
-        let config_str = std::fs::read_to_string(&config_path)
-            .map_err(|e| anyhow!("failed to read {}: {}", config_path.display(), e))?;
+        let config_bytes = crate::common::utils::read_artifact_file(&config_path)?;
+        let config_str = String::from_utf8(config_bytes)
+            .map_err(|e| anyhow!("{} is not valid UTF-8: {}", config_path.display(), e))?;
         let config: Self = serde_json::from_str(&config_str)
             .map_err(|e| anyhow!("failed to parse {}: {}", config_path.display(), e))?;
         config.validate()?;
