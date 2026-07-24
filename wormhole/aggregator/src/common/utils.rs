@@ -116,8 +116,14 @@ pub fn read_artifact_file(path: &std::path::Path) -> Result<Vec<u8>> {
 /// or the complete new set — never a mix. The unwritten window shrinks from
 /// the whole multi-minute build-and-write to the instants between renames of
 /// already-complete files.
+///
+/// Because staging opens with create-new semantics and publication renames
+/// over the final name, a symlink pre-planted at an artifact filename is
+/// replaced as an entry rather than followed, so a write can never be
+/// redirected onto the symlink's target. Public so `circuit-builder` can
+/// publish the leaf artifact set through the same path.
 #[cfg(feature = "std")]
-pub(crate) fn commit_artifact_set(
+pub fn commit_artifact_set(
     bins_dir: &std::path::Path,
     files: &[(&str, Vec<u8>)],
     remove_stale: &[&str],

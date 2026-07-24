@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Result};
 pub use qp_wormhole_inputs::validate_proof_count;
 use serde::{Deserialize, Serialize};
-use std::fs::write;
 use std::path::Path;
 
 /// Maximum number of proofs aggregated per layer.
@@ -74,14 +73,22 @@ impl CircuitBinsConfig {
         Ok(config)
     }
 
-    /// Save config to a directory
+    /// Save config to a directory.
+    ///
+    /// Published through [`crate::common::utils::commit_artifact_set`]
+    /// (exclusive-create staging plus rename into place), so a symlink
+    /// pre-planted at `config.json` is replaced rather than followed and a
+    /// failed write never leaves a truncated config behind.
     pub fn save<P: AsRef<Path>>(&self, bins_dir: P) -> Result<()> {
-        let config_path = bins_dir.as_ref().join("config.json");
+        let bins_dir = bins_dir.as_ref();
         let config_str = serde_json::to_string_pretty(self)
             .map_err(|e| anyhow!("failed to serialize config: {}", e))?;
-        write(&config_path, config_str)
-            .map_err(|e| anyhow!("failed to write {}: {}", config_path.display(), e))?;
-        println!("Config saved to {}", config_path.display());
+        crate::common::utils::commit_artifact_set(
+            bins_dir,
+            &[("config.json", config_str.into_bytes())],
+            &[],
+        )?;
+        println!("Config saved to {}", bins_dir.join("config.json").display());
         Ok(())
     }
 }

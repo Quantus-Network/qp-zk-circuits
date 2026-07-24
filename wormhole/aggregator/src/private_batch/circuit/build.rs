@@ -237,6 +237,39 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A symlink pre-planted at an artifact filename must not redirect the
+    /// write onto its target (audit finding: symlink-following artifact
+    /// writes). `commit_artifact_set` stages under exclusive-create temp names
+    /// and renames into place, which replaces the planted entry itself; this
+    /// guards against regressing to direct `std::fs::write` calls.
+    #[cfg(unix)]
+    #[test]
+    fn artifact_writes_do_not_follow_planted_symlinks() {
+        let dir = temp_dir("symlink-clobber");
+        write_canonical_leaf_artifacts(&dir);
+
+        let victim = dir.join("victim.txt");
+        std::fs::write(&victim, b"precious data").unwrap();
+        std::os::unix::fs::symlink(&victim, dir.join("private_batch_verifier.bin")).unwrap();
+
+        let result = generate_private_batch_circuit_binaries(&dir, 1, false);
+
+        assert_eq!(
+            std::fs::read(&victim).unwrap(),
+            b"precious data",
+            "artifact publication must never write through a planted symlink"
+        );
+        if result.is_ok() {
+            let verifier = std::fs::read(dir.join("private_batch_verifier.bin")).unwrap();
+            assert_ne!(
+                verifier, b"precious data",
+                "a successful run must have replaced the planted entry with a real artifact"
+            );
+        }
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A verifier-only rerun (`include_prover == false`) over a directory that
     /// previously held prover output must not leave the old
     /// `dummy_private_batch_proof.bin` beside freshly regenerated
