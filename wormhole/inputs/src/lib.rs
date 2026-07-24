@@ -240,9 +240,13 @@ pub struct BlockData {
 /// Aggregated public inputs from multiple wormhole proofs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrivateBatchPublicInputs {
-    /// Number of unique exit-account groups reported by the wrapper circuit.
-    /// This is informational only; semantic validation remains the circuit's responsibility.
-    pub num_unique_exits: u32,
+    /// Total number of exit slots in the batch: the structural constant
+    /// `2 * n_leaf` (two outputs per leaf) that the aggregation circuit writes
+    /// at index 0, always equal to `account_data.len()`. NOT a deduplicated
+    /// unique-account count: the circuit zeroes duplicate and dummy slots
+    /// inside `account_data` instead of shrinking it. The parser validates
+    /// this felt against the length-derived leaf count.
+    pub num_exit_slots: u32,
     /// The asset ID of the set (0 for native token).
     pub asset_id: u32,
     /// Volume fee rate in basis points (1 basis point = 0.01%).
@@ -414,7 +418,7 @@ impl PrivateBatchPublicInputs {
     /// Parse aggregated public inputs from a slice of u64 values.
     pub fn try_from_u64_slice(pis: &[u64]) -> anyhow::Result<Self> {
         // Layout in the FINAL (deduped) wrapper proof PIs:
-        // [num_unique_exits, asset_id, volume_fee_bps, block_data(5),
+        // [num_exit_slots, asset_id, volume_fee_bps, block_data(5),
         //  [output_sum(1), exit_account(4)] * 2*N,  <-- 2 outputs per leaf
         //  nullifiers(4) * N, padding...]
         //
@@ -438,9 +442,9 @@ impl PrivateBatchPublicInputs {
             );
         }
 
-        let num_unique_exits: u32 = pis[0]
+        let num_exit_slots: u32 = pis[0]
             .try_into()
-            .context("AggregatedPI: num_unique_exits at index 0 exceeds u32 range")?;
+            .context("AggregatedPI: num_exit_slots at index 0 exceeds u32 range")?;
 
         let asset_id: u32 = pis[1]
             .try_into()
@@ -452,6 +456,19 @@ impl PrivateBatchPublicInputs {
         // Number of leaf proofs (N) is derived from the padded total PI length.
         let n_leaf = payload_len / PUBLIC_INPUTS_FELTS_LEN;
         validate_proof_count(n_leaf, "AggregatedPI: n_leaf")?;
+
+        // The circuit provably writes the structural constant 2*N (total exit
+        // slots, two per leaf) at index 0; any other value means these PIs
+        // did not come from the private-batch aggregation circuit.
+        if num_exit_slots as usize != n_leaf * 2 {
+            bail!(
+                "AggregatedPI: num_exit_slots at index 0 is {}, but the layout implies {} \
+                 exit slots ({} leaves); these are not private-batch aggregation PIs",
+                num_exit_slots,
+                n_leaf * 2,
+                n_leaf
+            );
+        }
 
         let block_hash = hash_u64s_to_bytes_digest(&pis[3..7])
             .context("AggregatedPI: parsing block_hash from indices 3..7")?;
@@ -466,10 +483,11 @@ impl PrivateBatchPublicInputs {
 
         let mut cursor = 8usize;
 
-        // Read 2*N exit account slots (two outputs per leaf proof)
-        let num_exit_slots = n_leaf * 2;
-        let mut account_data = Vec::with_capacity(num_exit_slots);
-        for i in 0..num_exit_slots {
+        // Read 2*N exit account slots (two outputs per leaf proof); validated
+        // above to equal the num_exit_slots header felt.
+        let total_slots = n_leaf * 2;
+        let mut account_data = Vec::with_capacity(total_slots);
+        for i in 0..total_slots {
             if cursor >= pis.len() {
                 bail!(
                     "AggregatedPI: cursor {} out of bounds (pis.len={}) while reading account {}",
@@ -533,7 +551,7 @@ impl PrivateBatchPublicInputs {
 
         // Verify we consumed expected number of felts
         // 8 metadata + 2*N*5 exit slots (1 sum + 4 account) + N*4 nullifiers
-        let expected_felts = 8 + num_exit_slots * 5 + n_leaf * 4;
+        let expected_felts = 8 + total_slots * 5 + n_leaf * 4;
         if cursor != expected_felts {
             bail!(
                 "AggregatedPI: cursor mismatch - consumed {} felts, expected {} (n_leaf={}, num_exit_slots={})",
@@ -545,7 +563,7 @@ impl PrivateBatchPublicInputs {
         }
 
         Ok(PrivateBatchPublicInputs {
-            num_unique_exits,
+            num_exit_slots,
             asset_id,
             volume_fee_bps,
             block_data,
@@ -702,16 +720,30 @@ mod tests {
     }
 
     #[test]
-    fn aggregated_public_inputs_parse_num_unique_exits() {
+    fn aggregated_public_inputs_parse_header() {
         let mut pis = vec![0u64; 8 + PUBLIC_INPUTS_FELTS_LEN];
-        pis[0] = 1; // num_unique_exits
+        pis[0] = 2; // num_exit_slots: structural constant 2*N for N = 1 leaf
         pis[7] = 42; // block_number
 
         let parsed = PrivateBatchPublicInputs::try_from_u64_slice(&pis).unwrap();
-        assert_eq!(parsed.num_unique_exits, 1);
+        assert_eq!(parsed.num_exit_slots, 2);
+        assert_eq!(parsed.num_exit_slots as usize, parsed.account_data.len());
         assert_eq!(parsed.block_data.block_number, 42);
         assert_eq!(parsed.account_data.len(), 2);
         assert_eq!(parsed.nullifiers.len(), 1);
+    }
+
+    /// The aggregation circuit provably writes the structural constant `2*N`
+    /// (total exit slots, two per leaf) at index 0; any other value means the
+    /// public inputs did not come from that circuit and the parser must not
+    /// hand the mismatched header on as truth (audit finding: aggregated
+    /// public input mislabels exit-slot count).
+    #[test]
+    fn aggregated_public_inputs_reject_header_slot_count_mismatch() {
+        let mut pis = vec![0u64; 8 + PUBLIC_INPUTS_FELTS_LEN];
+        pis[0] = 1; // one leaf means 2 exit slots; 1 is impossible
+        let err = PrivateBatchPublicInputs::try_from_u64_slice(&pis).unwrap_err();
+        assert!(err.to_string().contains("exit slot"), "got: {err}");
     }
 
     #[test]

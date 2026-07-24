@@ -201,7 +201,7 @@ pub trait ParsePrivateBatchPublicInputs {
 
 impl ParsePrivateBatchPublicInputs for PrivateBatchPublicInputs {
     fn try_from_felts(pis: &[GoldilocksField]) -> anyhow::Result<PrivateBatchPublicInputs> {
-        // Layout: [num_unique_exits, asset_id, volume_fee_bps, block_hash(4), block_number,
+        // Layout: [num_exit_slots, asset_id, volume_fee_bps, block_hash(4), block_number,
         //          [output_sum(1), exit_account(4)] * 2*N, nullifiers(4) * N, padding...]
 
         // Validate layout: total length must be 8 + N * PUBLIC_INPUTS_FELTS_LEN
@@ -231,7 +231,19 @@ impl ParsePrivateBatchPublicInputs for PrivateBatchPublicInputs {
         };
 
         // Parse header (indices 0-7)
-        let num_unique_exits = read_u32(pis[0]).context("num_unique_exits")?;
+        let num_exit_slots = read_u32(pis[0]).context("num_exit_slots")?;
+        // The circuit provably writes the structural constant 2*N (total exit
+        // slots, two per leaf) at index 0; any other value means these felts
+        // did not come from the private-batch aggregation circuit.
+        if num_exit_slots as usize != n_leaf * 2 {
+            anyhow::bail!(
+                "AggregatedPI: num_exit_slots at index 0 is {}, but the layout implies {} \
+                 exit slots ({} leaves); these are not private-batch aggregation PIs",
+                num_exit_slots,
+                n_leaf * 2,
+                n_leaf
+            );
+        }
         let asset_id = read_u32(pis[1]).context("asset_id")?;
         let volume_fee_bps = read_u32(pis[2]).context("volume_fee_bps")?;
         let block_data = BlockData {
@@ -264,7 +276,7 @@ impl ParsePrivateBatchPublicInputs for PrivateBatchPublicInputs {
             .collect::<anyhow::Result<Vec<_>>>()?;
 
         Ok(PrivateBatchPublicInputs {
-            num_unique_exits,
+            num_exit_slots,
             asset_id,
             volume_fee_bps,
             block_data,
@@ -344,15 +356,31 @@ mod tests {
     #[test]
     fn aggregated_try_from_felts_accepts_valid_input() {
         // Valid input: 8 header + 21 (one leaf worth of data)
-        let valid_slice: Vec<GoldilocksField> =
+        let mut valid_slice: Vec<GoldilocksField> =
             vec![GoldilocksField::ZERO; 8 + PUBLIC_INPUTS_FELTS_LEN];
+        valid_slice[0] = GoldilocksField::from_canonical_u64(2); // 2*N exit slots for N = 1
         let result = <PrivateBatchPublicInputs as ParsePrivateBatchPublicInputs>::try_from_felts(
             &valid_slice,
         );
         assert!(result.is_ok(), "Expected valid input to parse successfully");
         let parsed = result.unwrap();
+        assert_eq!(parsed.num_exit_slots, 2);
         assert_eq!(parsed.account_data.len(), 2); // 2 outputs per leaf
         assert_eq!(parsed.nullifiers.len(), 1); // 1 nullifier per leaf
+    }
+
+    /// The aggregation circuit provably writes the structural constant `2*N`
+    /// (total exit slots, two per leaf) at index 0; any other value means the
+    /// felts did not come from that circuit and must be rejected (audit
+    /// finding: aggregated public input mislabels exit-slot count).
+    #[test]
+    fn aggregated_try_from_felts_rejects_header_slot_count_mismatch() {
+        let mut pis = vec![GoldilocksField::ZERO; 8 + PUBLIC_INPUTS_FELTS_LEN];
+        pis[0] = GoldilocksField::from_canonical_u64(1); // must be 2 for one leaf
+        let result =
+            <PrivateBatchPublicInputs as ParsePrivateBatchPublicInputs>::try_from_felts(&pis);
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("exit slot"), "got: {err_msg}");
     }
 
     #[test]

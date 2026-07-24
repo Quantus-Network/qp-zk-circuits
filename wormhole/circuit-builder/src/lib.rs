@@ -1,6 +1,6 @@
 use anyhow::{anyhow, bail, Context, Result};
 use std::fs;
-use std::fs::{create_dir_all, write};
+use std::fs::create_dir_all;
 use std::path::{Path, PathBuf};
 use wormhole_aggregator::common::utils::commit_artifact_set;
 use wormhole_aggregator::public_batch::circuit::generate_public_batch_circuit_binaries;
