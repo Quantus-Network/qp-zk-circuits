@@ -211,7 +211,7 @@ pub(crate) fn hash_bytes_compact(input: &[u8]) -> Result<[u8; 32], &'static str>
     if input.len() > MAX_SERIALIZED_BYTES {
         return Err("hash_bytes_compact: input exceeds maximum serialized length");
     }
-    if input.len() % 8 != 0 {
+    if !input.len().is_multiple_of(8) {
         return Err("hash_bytes_compact: input length must be a multiple of 8");
     }
     let felts: Vec<Goldilocks> = qp_poseidon_core::serialization::bytes_to_u64s_compact(input)

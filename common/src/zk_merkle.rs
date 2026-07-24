@@ -466,7 +466,8 @@ mod tests {
         let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]);
 
         // Create proof for leaf0 using from_unsorted
-        let proof = ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root).unwrap();
+        let proof =
+            ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root).unwrap();
 
         assert!(proof.verify());
         assert!(proof.verify_with_positions());
@@ -489,7 +490,8 @@ mod tests {
         let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]);
 
         // leaf0 is smallest, so position should be 0
-        let proof0 = ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root).unwrap();
+        let proof0 =
+            ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root).unwrap();
         assert_eq!(proof0.positions[0], 0);
 
         // leaf3 is largest, so position should be 3
@@ -552,7 +554,8 @@ mod tests {
         let leaf3 = [0x33; 32];
         let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]);
 
-        let mut proof = ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root).unwrap();
+        let mut proof =
+            ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root).unwrap();
         assert!(proof.verify(), "sanity: correct positions must verify");
 
         // Corrupt the position hint; membership data is untouched.
@@ -610,7 +613,8 @@ mod tests {
         let leaf3 = hash_from_limbs([3, 0, 0, 0]);
         let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]);
 
-        let mut proof = ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root).unwrap();
+        let mut proof =
+            ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root).unwrap();
         assert!(proof.verify(), "sanity: canonical proof must verify");
 
         // Alias of leaf0: limb 0 replaced by `p`, which reduces to 0 mod p.
@@ -634,7 +638,8 @@ mod tests {
         let leaf3 = hash_from_limbs([3, 0, 0, 0]);
         let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]);
 
-        let mut proof = ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root).unwrap();
+        let mut proof =
+            ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root).unwrap();
         assert!(proof.verify(), "sanity: canonical proof must verify");
 
         // Replace the first sibling with its noncanonical alias.

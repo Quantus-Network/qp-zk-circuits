@@ -327,6 +327,7 @@ fn commit_staging_dir_impl(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::write;
 
     fn unique_tmp_dir(tag: &str) -> PathBuf {
         std::env::temp_dir().join(format!(

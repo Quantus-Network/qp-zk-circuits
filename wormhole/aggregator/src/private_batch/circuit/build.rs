@@ -194,7 +194,11 @@ mod tests {
             leaf.common.to_bytes(&gate_serializer).unwrap(),
         )
         .unwrap();
-        std::fs::write(dir.join("verifier.bin"), leaf.verifier_only.to_bytes().unwrap()).unwrap();
+        std::fs::write(
+            dir.join("verifier.bin"),
+            leaf.verifier_only.to_bytes().unwrap(),
+        )
+        .unwrap();
     }
 
     /// The private-batch files are consumed as a matched set (public-batch

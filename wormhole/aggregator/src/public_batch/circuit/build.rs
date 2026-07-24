@@ -18,9 +18,8 @@ use qp_wormhole_inputs::validate_proof_count;
 use zk_circuits_common::circuit::{wormhole_public_batch_circuit_config, C, D, F};
 
 use crate::common::utils::{
-    canonical_leaf_verifier_data, commit_artifact_set,
-    load_canonical_private_batch_verifier_data, private_batch_num_leaves_from_padded_pi_len,
-    read_artifact_file,
+    canonical_leaf_verifier_data, commit_artifact_set, load_canonical_private_batch_verifier_data,
+    private_batch_num_leaves_from_padded_pi_len, read_artifact_file,
 };
 use crate::public_batch::circuit::circuit_logic::PublicBatchCircuit;
 

@@ -739,10 +739,7 @@ mod tests {
         match rx.recv_timeout(std::time::Duration::from_secs(5)) {
             Ok(result) => {
                 let err = result.unwrap_err();
-                assert!(
-                    err.to_string().contains("not a regular file"),
-                    "got: {err}"
-                );
+                assert!(err.to_string().contains("not a regular file"), "got: {err}");
             }
             Err(_) => panic!("read_artifact_file blocked on a FIFO artifact path"),
         }
