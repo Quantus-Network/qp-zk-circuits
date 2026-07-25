@@ -321,9 +321,12 @@ fn private_batch_prover_rejects_poisoned_dummy_template() {
         std::fs::copy(entry.path(), poisoned_dir.join(entry.file_name())).unwrap();
     }
 
-    // Sentinel-neutral tampering: block_hash and outputs stay zero, so only the
-    // cryptographic check can catch it.
-    let mut poisoned = make_leaf_proof(&CircuitInputs::test_inputs_0());
+    // Sentinel-neutral tampering: block_hash, outputs, and exit accounts stay
+    // zero (test_inputs_0 carries a nonzero exit_account_1, which the sentinel
+    // now rejects on its own), so only the cryptographic check can catch it.
+    let mut dummy_inputs = CircuitInputs::test_inputs_0();
+    dummy_inputs.public.exit_account_1 = zk_circuits_common::utils::BytesDigest::default();
+    let mut poisoned = make_leaf_proof(&dummy_inputs);
     poisoned.public_inputs[4] = F::from_canonical_u64(0xdead_beef); // nullifier felt
     std::fs::write(poisoned_dir.join("dummy_proof.bin"), poisoned.to_bytes()).unwrap();
 
@@ -332,6 +335,24 @@ fn private_batch_prover_rejects_poisoned_dummy_template() {
     assert!(
         err.to_string()
             .contains("dummy leaf proof template failed verification"),
+        "got: {err}"
+    );
+
+    // A cryptographically VALID dummy proof (over the real leaf circuit) with a
+    // nonzero exit account is exactly the poisoned-padding shape from the audit
+    // finding (incomplete dummy sentinel): block hash and amounts are zero, yet
+    // its exit bytes would mark every padded slot. The sentinel must reject it.
+    let marked_exits = make_leaf_proof(&CircuitInputs::test_inputs_0());
+    std::fs::write(
+        poisoned_dir.join("dummy_proof.bin"),
+        marked_exits.to_bytes(),
+    )
+    .unwrap();
+
+    let err = PrivateBatchProver::new_from_binaries_dir(&poisoned_dir)
+        .expect_err("dummy template with a nonzero exit account must be rejected at load time");
+    assert!(
+        err.to_string().contains("non-zero exit account"),
         "got: {err}"
     );
 

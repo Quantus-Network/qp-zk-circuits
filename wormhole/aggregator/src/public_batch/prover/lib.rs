@@ -430,15 +430,10 @@ fn verify_dummy_private_batch_template(
     template: &ProofWithPublicInputs<F, C, D>,
     private_batch_verifier: &VerifierCircuitData<F, C, D>,
 ) -> Result<()> {
-    private_batch_verifier
-        .verify(template.clone())
-        .map_err(|e| {
-            anyhow!(
-                "dummy private-batch proof template failed verification: {}",
-                e
-            )
-        })?;
-
+    // Check the sentinel first (cheap, independently testable, and
+    // attributable), mirroring `verify_dummy_leaf_template`; a template is
+    // only acceptable if BOTH the sentinel and cryptographic verification
+    // pass.
     let u64s: Vec<u64> = template
         .public_inputs
         .iter()
@@ -463,7 +458,27 @@ fn verify_dummy_private_batch_template(
                 slot.summed_output_amount
             );
         }
+        if slot.exit_account != BytesDigest::default() {
+            bail!(
+                "dummy private-batch proof template has non-zero exit account at slot {}; \
+                 padding templates must carry the canonical all-zero exit account so \
+                 padded slots stay indistinguishable from unused ones (the private-batch \
+                 circuit masks dummy exits to zero, so a canonical-circuit template can \
+                 never trip this; it guards templates from variant circuits)",
+                i
+            );
+        }
     }
+
+    private_batch_verifier
+        .verify(template.clone())
+        .map_err(|e| {
+            anyhow!(
+                "dummy private-batch proof template failed verification: {}",
+                e
+            )
+        })?;
+
     Ok(())
 }
 
@@ -669,6 +684,47 @@ mod tests {
             .expect_err("tampered private-batch proof must be rejected at commit");
         assert!(
             err.to_string().contains("failed verification"),
+            "got: {err}"
+        );
+    }
+
+    /// A poisoned padding template can be all-dummy in every enforced respect
+    /// (zero block hash, zero forwarded amounts) yet carry attacker-chosen
+    /// exit accounts in its zero-amount exit slots, marking every padded slot
+    /// of a partial public batch (audit finding: incomplete dummy sentinel).
+    /// The sentinel check must cover exit accounts and run before
+    /// cryptographic verification (mirroring the leaf-template validator) so
+    /// the rejection is attributable, not a generic verify failure.
+    #[test]
+    fn constructor_rejects_dummy_template_with_nonzero_exit_account() {
+        use crate::private_batch::circuit::constants::aggregated_output;
+
+        let (leaf, leaf_targets) = build_fake_leaf_circuit();
+        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; 21]);
+        let private_batch = PrivateBatchCircuit::new(
+            wormhole_private_batch_circuit_config(),
+            &leaf.common,
+            &leaf.verifier_only,
+            1,
+        )
+        .unwrap()
+        .build_verifier();
+
+        let mut template = make_all_dummy_private_batch_template(&leaf, &dummy_leaf);
+        // First exit slot's first exit-account limb: zero amount, marked exit.
+        template.public_inputs[aggregated_output::exit_slots_start() + 1] = F::ONE;
+
+        let err = PublicBatchProver::new(
+            wormhole_public_batch_circuit_config(),
+            private_batch.common.clone(),
+            &private_batch.verifier_only,
+            1,
+            1,
+            template,
+        )
+        .expect_err("padding template with a nonzero exit account must be rejected");
+        assert!(
+            err.to_string().contains("non-zero exit account"),
             "got: {err}"
         );
     }

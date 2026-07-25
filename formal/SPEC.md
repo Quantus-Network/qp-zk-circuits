@@ -86,8 +86,8 @@ hermetic. Toolchain is pinned in `lean-toolchain` (Lean `v4.30`).
 | `nullifiersReplaced` `DNull(u)=H(H(u))`, held of the pre-sort list (`∃ raw, … ∧ Perm` in `RPrivateBatch`) | `hash_dummy_nullifier_pre_image` — `circuit_logic.rs` |
 | `nullifiersSorted` over `digestLt`/`digestLE` (region in ascending canonical order; position decorrelated from exit slots) | `sort_digests4` over selected nullifiers — `circuit_logic.rs`; gadget in `common/src/gadgets.rs` |
 | `isDummyPrivateBatch = blockHash=0` (weaker sentinel) | dummy detection at private-batch — `circuit_logic.rs` |
-| `groupExits` / `matchSum` (per-slot group sum + first-occurrence dedup) | exit-account grouping loop — `circuit_logic.rs:214–287` |
-| **thm** `RPrivateBatch_value_conservation`: `outputExitTotal = rawOutputTotal` | derived from the grouping primitive (was an assumed conjunct) |
+| `maskedChildPairs` → `groupExits` / `matchSum` (dummy slots masked to `(zero, 0)` at ingress; per-slot group sum + first-occurrence dedup) | dummy-mask selects + exit-account grouping loop — `circuit_logic.rs` |
+| **thm** `RPrivateBatch_value_conservation`: `outputExitTotal = inputExitTotal` (non-dummy total) | derived from the grouping primitive (was an assumed conjunct) |
 | **thm** `rawOutputTotal_lt_modulus`: total `< goldilocks` | explicit no-wraparound bound from 32-bit output range checks; Phase-2 field hypothesis (see note below) |
 | output layout (`PrivateBatchOutput`) | `aggregated_output` — `private_batch/circuit/constants.rs` |
 | `RPublicBatch` forwarding + consistency | `build_public_batch_constraints` — `public_batch/circuit/circuit_logic.rs` |
@@ -155,9 +155,13 @@ step is the Phase-4 preimage game, as for the other security theorems.
    `output_amount_2`, `volume_fee_bps` (all unconditional 32-bit), plus
    `block_number` in `BlockHeader::circuit_without_hash_binding`. `Rleaf` now asserts the full set.
 2. ~~Exit grouping/dedup.~~ **Done (conservation).** `RPrivateBatch` now pins the exact
-   in-circuit grouping (`groupExits`), and value conservation is the *derived*
-   theorem `RPrivateBatch_value_conservation` (with `rawOutputTotal_eq_inputExitTotal`
-   bridging to the non-dummy total under the dummy⟹zero-outputs guarantee).
+   in-circuit grouping (`groupExits` over the dummy-masked `maskedChildPairs`),
+   and value conservation is the *derived* theorem
+   `RPrivateBatch_value_conservation` — stated directly against the non-dummy
+   total `inputExitTotal`, with no compatibility hypothesis: the ingress mask
+   discharges dummy⟹zero-contribution structurally
+   (`rawOutputTotal_eq_inputExitTotal` remains as the leaf-side compatibility
+   statement for a full composition proof).
    Remaining: the full per-account *multiset* characterization (which account
    gets which sum) and `numExitSlots = 2·N` slot accounting (Phase 3).
    **Field caveat:** conservation is an exact `Nat` identity; over `ZMod p`
@@ -169,10 +173,15 @@ step is the Phase-4 preimage game, as for the other security theorems.
 3. **public-batch accounting.** `totalExitSlots` and aggregator-address binding semantics
    (Phase 3).
 4. **Dummy-notion compatibility.** Prove the leaf dummy (`blockHash=0 ∧ outs=0`)
-   and private-batch dummy (`blockHash=0`) interact safely (Phase 3).
+   and private-batch dummy (`blockHash=0`) interact safely (Phase 3). The exit
+   region is now independent of the gap (the ingress mask zeroes whatever a
+   `blockHash=0` child carries), narrowing the obligation to the nullifier and
+   metadata clauses.
 5. **`exit_account_1/2` are unconstrained at the leaf** — bound only at private-batch. The
    spec reflects this (no `Rleaf` clause references them); the binding obligation
-   lives in `RPrivateBatch`.
+   lives in `RPrivateBatch`, whose grouping masks dummy children's exits to the
+   canonical zero account (`maskedChildPairs`) so unconstrained dummy exit bytes
+   cannot mark padded slots in the aggregated output.
 6. **Game-based probabilistic accounting.** `Security.lean` proves the
    *deterministic* cores of one-time withdrawal and spend-path exclusivity as
    reductions to an `H` collision, clean under the `CollisionResistant` hypothesis.
@@ -224,7 +233,8 @@ step is the Phase-4 preimage game, as for the other security theorems.
 
 ## Intentionally-loose facts (must NOT be flagged as bugs)
 
-- Leaf exit accounts are free public inputs (above).
+- Leaf exit accounts are free public inputs (above); for dummy children the
+  private-batch wrapper masks them to zero in the output.
 - `asset_id` is constrained only via the Merkle leaf preimage, not a registry.
 - The two dummy notions differ by layer (above).
 - The `fake_leaf` test circuit does **not** implement C1–C5 and is not a
