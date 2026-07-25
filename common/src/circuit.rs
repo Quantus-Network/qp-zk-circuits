@@ -38,27 +38,67 @@ pub const MAX_STATE_ROOT_HEX_LEN: usize = 64;
 /// escape-inflated (6 bytes per decoded byte) but otherwise legal payloads.
 pub const MAX_TRANSFER_PROOF_JSON_BYTES: usize = 8 * 1024 * 1024;
 
-#[derive(Debug, Deserialize)]
+/// A parsed transfer-proof document.
+///
+/// This type deliberately does NOT implement `serde::Deserialize`: generic
+/// entry points (`serde_json::from_str`, `from_slice`, and especially the
+/// streaming `from_reader`) would bypass the raw-input cap that
+/// [`Self::from_json_str`] enforces, and the per-field visitor bounds alone
+/// cannot stop a streamed, escape-inflated string from being decoded into
+/// unbounded scratch storage first. All parsing must go through
+/// [`Self::from_json_str`].
+///
+/// ```compile_fail
+/// fn requires_deserialize<'de, T: serde::Deserialize<'de>>() {}
+/// requires_deserialize::<qp_zk_circuits_common::circuit::TransferProofJson>();
+/// ```
+#[derive(Debug)]
 pub struct TransferProofJson {
     pub transfer_count: u64,
-    #[serde(deserialize_with = "deserialize_bounded_state_root")]
-    pub state_root: String, // hex (no 0x)
-    #[serde(deserialize_with = "deserialize_bounded_storage_proof")]
+    pub state_root: String,         // hex (no 0x)
     pub storage_proof: Vec<String>, // hex-encoded nodes
-    #[serde(deserialize_with = "deserialize_bounded_indices")]
     pub indices: Vec<usize>,
+}
+
+/// Private deserialization target for [`TransferProofJson::from_json_str`].
+///
+/// The `Deserialize` impl lives on this non-public mirror so the only way to
+/// parse a [`TransferProofJson`] is through the raw-capped entry point; the
+/// per-field bounds below are defense in depth behind that cap, not a
+/// substitute for it.
+#[derive(Deserialize)]
+struct TransferProofJsonRaw {
+    transfer_count: u64,
+    #[serde(deserialize_with = "deserialize_bounded_state_root")]
+    state_root: String,
+    #[serde(deserialize_with = "deserialize_bounded_storage_proof")]
+    storage_proof: Vec<String>,
+    #[serde(deserialize_with = "deserialize_bounded_indices")]
+    indices: Vec<usize>,
+}
+
+impl From<TransferProofJsonRaw> for TransferProofJson {
+    fn from(raw: TransferProofJsonRaw) -> Self {
+        Self {
+            transfer_count: raw.transfer_count,
+            state_root: raw.state_root,
+            storage_proof: raw.storage_proof,
+            indices: raw.indices,
+        }
+    }
 }
 
 impl TransferProofJson {
     /// Parse untrusted transfer-proof JSON, bounding allocation up front.
     ///
-    /// This is the entry point services should use for attacker-supplied
-    /// payloads. The raw document length is checked against
-    /// [`MAX_TRANSFER_PROOF_JSON_BYTES`] BEFORE any parsing: the per-field
-    /// Serde bounds only observe string lengths after the deserializer has
-    /// decoded escaped content into scratch storage, so on their own they
-    /// cannot stop a single escape-inflated field from allocating and
-    /// scanning arbitrarily far past its cap before being rejected.
+    /// This is the ONLY parse path (the type does not implement
+    /// `Deserialize`; see the type-level docs). The raw document length is
+    /// checked against [`MAX_TRANSFER_PROOF_JSON_BYTES`] BEFORE any parsing:
+    /// the per-field Serde bounds only observe string lengths after the
+    /// deserializer has decoded escaped content into scratch storage, so on
+    /// their own they cannot stop a single escape-inflated field from
+    /// allocating and scanning arbitrarily far past its cap before being
+    /// rejected.
     pub fn from_json_str(json: &str) -> Result<Self, String> {
         if json.len() > MAX_TRANSFER_PROOF_JSON_BYTES {
             return Err(format!(
@@ -67,14 +107,16 @@ impl TransferProofJson {
                 json.len()
             ));
         }
-        serde_json::from_str(json).map_err(|e| format!("failed to parse transfer proof JSON: {e}"))
+        serde_json::from_str::<TransferProofJsonRaw>(json)
+            .map(Self::from)
+            .map_err(|e| format!("failed to parse transfer proof JSON: {e}"))
     }
 
     /// Validate the decoded transfer proof bounds.
     ///
-    /// `#[serde(deserialize_with)]` enforces the same caps on parsed documents
-    /// (though only after the deserializer has decoded each string — see
-    /// [`Self::from_json_str`] for the raw-input bound); this is a convenience
+    /// Parsed documents already satisfy these caps (the private
+    /// deserialization mirror enforces them per field, behind
+    /// [`Self::from_json_str`]'s raw-input bound); this is a convenience
     /// check for callers that construct the struct directly.
     pub fn validate(&self) -> Result<(), String> {
         if self.state_root.len() > MAX_STATE_ROOT_HEX_LEN {
@@ -119,8 +161,9 @@ impl TransferProofJson {
 ///
 /// NOTE: for escaped or streamed input the deserializer must decode the string
 /// into its own scratch storage before this visitor can observe the length, so
-/// this bound alone does not cap allocation. [`TransferProofJson::from_json_str`]
-/// bounds the raw document first; use it for untrusted payloads.
+/// this bound alone does not cap allocation. That is why these visitors are
+/// only reachable through [`TransferProofJson::from_json_str`], which bounds
+/// the raw document first.
 fn deserialize_bounded_state_root<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
@@ -382,8 +425,8 @@ mod transfer_proof_json_tests {
             r#"{{"transfer_count":1,"state_root":"00","storage_proof":["{}"],"indices":[]}}"#,
             oversized
         );
-        let err = serde_json::from_str::<TransferProofJson>(&json).unwrap_err();
-        assert!(err.to_string().contains("storage_proof node exceeds"));
+        let err = TransferProofJson::from_json_str(&json).unwrap_err();
+        assert!(err.contains("storage_proof node exceeds"));
     }
 
     /// A single field written as JSON escape sequences forces serde_json to
