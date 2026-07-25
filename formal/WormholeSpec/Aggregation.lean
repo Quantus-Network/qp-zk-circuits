@@ -159,13 +159,14 @@ def nullifiersReplaced (ro : RandomOracle) :
   | _,       _,       _       => False
 
 /-- Strict lexicographic order on digests, limb 0 most significant, each limb a
-    canonical 64-bit integer — exactly the order `digest4_lt` computes in-circuit
-    (`common/src/gadgets.rs`). -/
+    canonical 64-bit integer — exactly the order the `sort_digests4` network
+    computes in-circuit, via `halves8_lt` over the canonical 32-bit halves each
+    limb is split into at ingress (`common/src/gadgets.rs`). -/
 def digestLt (a b : Digest) : Prop :=
   a.x0 < b.x0 ∨ (a.x0 = b.x0 ∧ (a.x1 < b.x1 ∨ (a.x1 = b.x1 ∧
     (a.x2 < b.x2 ∨ (a.x2 = b.x2 ∧ a.x3 < b.x3)))))
 
-/-- Non-strict companion of `digestLt` (`digest4_lt`-or-equal): the condition each
+/-- Non-strict companion of `digestLt` (`halves8_lt`-or-equal): the condition each
     comparator of the sorting network leaves established between adjacent slots. -/
 def digestLE (a b : Digest) : Prop := digestLt a b ∨ a = b
 

@@ -227,8 +227,7 @@ fn verify_proof_native(
     for (level_siblings, &position) in siblings.iter().zip(positions.iter()) {
         let sorted_children = insert_at_position(current_hash, level_siblings, position)
             .expect("test positions are always 0-3");
-        current_hash =
-            hash_node_presorted(&sorted_children).expect("test children are canonical");
+        current_hash = hash_node_presorted(&sorted_children).expect("test children are canonical");
     }
 
     current_hash == expected_root

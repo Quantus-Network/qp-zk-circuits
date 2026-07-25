@@ -193,52 +193,11 @@ fn split_canonical_u32_halves<F: RichField + Extendable<D>, const D: usize>(
     (lo, hi)
 }
 
-/// Compare two field elements as 64-bit integers: returns `(x < y, x == y)`.
-///
-/// Each element is split into range-checked, canonicity-enforced 32-bit
-/// halves (see [`split_canonical_u32_halves`]) and compared high-half first,
-/// so the comparison result is sound even against a malicious prover that
-/// hand-picks witness values for the split targets.
-fn felt64_lt_eq<F: RichField + Extendable<D>, const D: usize>(
-    b: &mut CircuitBuilder<F, D>,
-    x: Target,
-    y: Target,
-) -> (BoolTarget, BoolTarget) {
-    let (x_lo, x_hi) = split_canonical_u32_halves(b, x);
-    let (y_lo, y_hi) = split_canonical_u32_halves(b, y);
-
-    let hi_lt = u32_lt(b, x_hi, y_hi);
-    let hi_eq = b.is_equal(x_hi, y_hi);
-    let lo_lt = u32_lt(b, x_lo, y_lo);
-
-    // lt = hi_lt OR (hi_eq AND lo_lt)
-    let lo_decides = b.and(hi_eq, lo_lt);
-    let lt = b.or(hi_lt, lo_decides);
-    let eq = b.is_equal(x, y);
-    (lt, eq)
-}
-
-/// Compare two 4-limb digests lexicographically (limb 0 most significant),
-/// treating each limb as a canonical 64-bit integer: returns `a < b`.
-///
-/// Sound against malicious provers: every limb split is canonicity-enforced
-/// (see [`split_canonical_u32_halves`]), so the comparison result is fully
-/// constrained by the input values.
-pub fn digest4_lt<F: RichField + Extendable<D>, const D: usize>(
-    b: &mut CircuitBuilder<F, D>,
-    lhs: [Target; 4],
-    rhs: [Target; 4],
-) -> BoolTarget {
-    // Fold from the least-significant limb up:
-    // lt = lt_0 OR (eq_0 AND (lt_1 OR (eq_1 AND ...)))
-    let mut lt = b._false();
-    for i in (0..4).rev() {
-        let (lt_i, eq_i) = felt64_lt_eq(b, lhs[i], rhs[i]);
-        let carry = b.and(eq_i, lt);
-        lt = b.or(lt_i, carry);
-    }
-    lt
-}
+// NOTE: a standalone whole-digest comparator (`digest4_lt` over
+// `felt64_lt_eq`) used to live here; it re-split both operands at every call,
+// and once `sort_digests4` hoisted splitting to ingress it had no callers
+// left, so it was removed. If a one-off digest comparison is needed again,
+// compose [`split_canonical_u32_halves`] + [`halves8_lt`].
 
 /// Lexicographic `lhs < rhs` over 8 range-checked 32-bit half-limbs (most
 /// significant first). Inputs must already be range-constrained to 32 bits;

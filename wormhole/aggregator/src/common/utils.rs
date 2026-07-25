@@ -288,11 +288,20 @@ pub fn sweep_stale_artifact_droppings(bins_dir: &std::path::Path) -> Result<usiz
         let path = entry.path();
         // Moved-aside entries can be directory-shaped (a planted directory
         // that a previous publish moved aside), so fall back accordingly.
-        if fs::remove_file(&path).is_err() {
-            let _ = fs::remove_dir_all(&path);
-        }
+        let dir_fallback = match fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(_) => fs::remove_dir_all(&path),
+        };
         if !path.exists() {
             removed += 1;
+        } else if let Err(e) = dir_fallback {
+            // Don't fail the rebuild over an unremovable dropping, but don't
+            // let the accumulation this sweep exists to prevent silently
+            // resume either.
+            eprintln!(
+                "warning: failed to remove orphaned artifact dropping {}: {e}",
+                path.display()
+            );
         }
     }
     if removed > 0 {
@@ -807,6 +816,35 @@ mod tests {
         // A missing directory is a no-op, not an error (fresh builder runs).
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(sweep_stale_artifact_droppings(&dir).unwrap(), 0);
+    }
+
+    /// An unremovable dropping must not fail the sweep, and must not be
+    /// counted as removed (it is reported on stderr, not silently skipped —
+    /// the warning itself is not capturable in-process, so this asserts the
+    /// count and survival).
+    #[test]
+    #[cfg(unix)]
+    fn sweep_survives_unremovable_dropping_without_counting_it() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("qp-sweep-stuck-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // A directory-shaped dropping whose contents cannot be unlinked:
+        // remove_file fails (it is a directory) and remove_dir_all fails
+        // (no write permission on the directory itself).
+        let stuck = dir.join(".common.bin.old-42-00112233445566ff");
+        std::fs::create_dir(&stuck).unwrap();
+        std::fs::write(stuck.join("inner"), b"x").unwrap();
+        std::fs::set_permissions(&stuck, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let removed = sweep_stale_artifact_droppings(&dir).unwrap();
+        assert_eq!(removed, 0, "a still-present entry must not be counted");
+        assert!(stuck.exists());
+
+        std::fs::set_permissions(&stuck, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

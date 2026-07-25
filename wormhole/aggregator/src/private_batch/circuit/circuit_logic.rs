@@ -385,9 +385,10 @@ fn build_private_batch_constraints(
 
     // The sorting network emits a permutation of `selected_nullifiers`
     // unconditionally (multiset integrity is structural, independent of the
-    // comparators), and its comparators are canonicity-enforced, so the
-    // sorted order also holds against a malicious prover — the public record
-    // is guaranteed decorrelated. See `sort_digests4`.
+    // comparators). Limbs are split into canonical 32-bit halves once at
+    // ingress, so the comparators only route already-constrained values and
+    // the sorted order also holds against a malicious prover — the public
+    // record is guaranteed decorrelated. See `sort_digests4`.
     for nullifier in sort_digests4(builder, selected_nullifiers) {
         output_pis.extend_from_slice(&nullifier);
     }

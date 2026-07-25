@@ -15,8 +15,10 @@
   over `Felt = ℕ` and does not import the plonky2 spec). Concretely:
 
     * nullifier per slot      `select(is_dummy, H(H u), real)`  — `Plonky2Spec.Wrapper.nullifier_replacement`
-    * nullifier sort          `sort_digests4` comparator network — gadget-level (canonicity-enforced
-                              comparators; see `common/src/gadgets.rs`), surfaced here as the
+    * nullifier sort          `sort_digests4` comparator network — gadget-level (limbs are split
+                              into canonical 32-bit halves once at ingress; the `halves8_lt`
+                              comparators route those already-constrained halves; see
+                              `common/src/gadgets.rs`), surfaced here as the
                               `nullsPerm`/`nullsSorted` fields of `PrivateBatchCircuit`
     * exit grouping/dedup     `select`/`matchSum`/`groupAux`     — `Plonky2Spec.Wrapper.{match_contribution, dedup_select}`
     * block reference         first-real prefix scan             — `Plonky2Spec.Wrapper.scanFirst_correct`
