@@ -231,7 +231,7 @@ proptest! {
             bytes32_from_limbs(c3),
         ];
         // Chain/circuit node hash (presorted path does not sort), decoded to felts.
-        let actual = hash_to_felts(&hash_node_presorted(&children_bytes));
+        let actual = hash_to_felts(&hash_node_presorted(&children_bytes).unwrap());
 
         // Spec nodeHash: H over the concatenated child digests (4 × 4 = 16 felts).
         let mut preimage: Vec<F> = Vec::with_capacity(16);
@@ -259,7 +259,7 @@ proptest! {
         let sibs_b: [Hash256; 3] =
             [bytes32_from_limbs(s0), bytes32_from_limbs(s1), bytes32_from_limbs(s2)];
         let ordered = insert_at_position(cur_b, &sibs_b, pos).unwrap();
-        let actual = hash_to_felts(&hash_node_presorted(&ordered));
+        let actual = hash_to_felts(&hash_node_presorted(&ordered).unwrap());
 
         // Spec stepUp: the four children with `cur` at `pos`.
         let children = match pos {

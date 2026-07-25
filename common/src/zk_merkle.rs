@@ -192,8 +192,13 @@ impl ZkMerkleProof {
                 return false;
             };
 
-            // Hash the sorted children directly (no sorting needed)
-            current_hash = hash_node_presorted(&sorted_children);
+            // Hash the sorted children directly (no sorting needed). The
+            // canonicality pre-check above makes an error unreachable, but a
+            // verifier must never panic on proof bytes.
+            let Ok(parent) = hash_node_presorted(&sorted_children) else {
+                return false;
+            };
+            current_hash = parent;
         }
 
         current_hash == self.root
@@ -263,8 +268,10 @@ impl ZkMerkleProof {
             };
             sorted_siblings.push(sorted_sibs);
 
-            // Compute parent hash for next level
-            current_hash = hash_node_presorted(&all_four);
+            // Compute parent hash for next level (the canonicality check
+            // above makes an error unreachable, but propagate rather than
+            // panic on caller-supplied bytes).
+            current_hash = hash_node_presorted(&all_four)?;
         }
 
         Ok(Self {
@@ -325,11 +332,14 @@ pub fn insert_at_position(
 /// Unlike `hash_node`, this does NOT sort - it assumes the input is already sorted.
 /// This is used by the circuit verification path.
 ///
+/// # Errors
+///
 /// Children must be canonical hash bytes (see [`is_canonical_hash`]); genuine
-/// hash outputs always are, and `ZkMerkleProof::verify` rejects noncanonical
-/// bytes before reaching this function. A noncanonical child panics here
-/// rather than silently aliasing another child's hash.
-pub fn hash_node_presorted(sorted_children: &[Hash256; ARITY]) -> Hash256 {
+/// hash outputs always are. A noncanonical child would silently alias another
+/// child's hash mod p, so it is rejected. This is a public API that may
+/// receive attacker-controlled bytes, so like [`insert_at_position`] it
+/// produces a normal invalid-input error, not a panic.
+pub fn hash_node_presorted(sorted_children: &[Hash256; ARITY]) -> Result<Hash256, &'static str> {
     // Concatenate all 4 child hashes (128 bytes total)
     let mut data = Vec::with_capacity(CHILDREN_BYTES);
     for child in sorted_children {
@@ -337,10 +347,8 @@ pub fn hash_node_presorted(sorted_children: &[Hash256; ARITY]) -> Hash256 {
     }
 
     // Compact encoding (8 bytes/felt): 128 bytes is far below
-    // MAX_SERIALIZED_BYTES and canonical children have canonical limbs,
-    // so this cannot fail.
+    // MAX_SERIALIZED_BYTES, so only a noncanonical limb can fail here.
     serialization::hash_bytes_compact(&data)
-        .expect("node payload is within bounds with canonical limbs")
 }
 
 /// Hash 4 child hashes into a parent node hash.
@@ -349,10 +357,14 @@ pub fn hash_node_presorted(sorted_children: &[Hash256; ARITY]) -> Hash256 {
 /// Uses compact Poseidon encoding (8 bytes/felt) - safe because internal
 /// nodes only contain fixed-size hash outputs, whose limbs are canonical.
 ///
+/// # Errors
+///
 /// Children must be canonical hash bytes (see [`is_canonical_hash`]); a
-/// noncanonical child panics here rather than silently aliasing another
-/// child's hash.
-pub fn hash_node(children: &[Hash256; ARITY]) -> Hash256 {
+/// noncanonical child would silently alias another child's hash mod p, so it
+/// is rejected. This is a public API that may receive attacker-controlled
+/// bytes, so like [`insert_at_position`] it produces a normal invalid-input
+/// error, not a panic.
+pub fn hash_node(children: &[Hash256; ARITY]) -> Result<Hash256, &'static str> {
     // Sort children to make hash order-independent
     let mut sorted = *children;
     sorted.sort();
@@ -364,10 +376,8 @@ pub fn hash_node(children: &[Hash256; ARITY]) -> Hash256 {
     }
 
     // Compact encoding (8 bytes/felt): 128 bytes is far below
-    // MAX_SERIALIZED_BYTES and canonical children have canonical limbs,
-    // so this cannot fail.
+    // MAX_SERIALIZED_BYTES, so only a noncanonical limb can fail here.
     serialization::hash_bytes_compact(&data)
-        .expect("node payload is within bounds with canonical limbs")
 }
 
 /// Empty hash value (all zeros).
@@ -487,7 +497,7 @@ mod tests {
         let leaf3 = [0x33; 32];
 
         // Compute expected root
-        let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]);
+        let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]).unwrap();
 
         // Create proof for leaf0 using from_unsorted
         let proof =
@@ -511,7 +521,7 @@ mod tests {
         let leaf2 = [0x22; 32];
         let leaf3 = [0x33; 32];
 
-        let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]);
+        let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]).unwrap();
 
         // leaf0 is smallest, so position should be 0
         let proof0 =
@@ -552,7 +562,7 @@ mod tests {
         let leaf2 = [0x22; 32];
         let leaf3 = [0x33; 32];
 
-        let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]);
+        let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]).unwrap();
 
         // Wrong leaf hash should fail
         let bad_proof = ZkMerkleProof::from_unsorted(
@@ -566,6 +576,18 @@ mod tests {
         assert!(!bad_proof.verify());
     }
 
+    /// `hash_node` / `hash_node_presorted` are public APIs that may receive
+    /// attacker-controlled bytes; like `insert_at_position`, a noncanonical
+    /// child (whose limbs would alias mod p) must produce a normal
+    /// invalid-input error, not a panic.
+    #[test]
+    fn hash_node_rejects_noncanonical_child_with_error_not_panic() {
+        let bad = [0xff; 32]; // every limb exceeds the Goldilocks modulus
+        let ok = [0x11; 32];
+        assert!(hash_node(&[bad, ok, ok, ok]).is_err());
+        assert!(hash_node_presorted(&[ok, ok, ok, bad]).is_err());
+    }
+
     /// `from_unsorted` hashes caller-supplied bytes, so noncanonical limbs
     /// (which the node hash rejects as mod-p aliases) must surface as an
     /// error, not a panic mid-hash.
@@ -575,7 +597,7 @@ mod tests {
         let leaf1 = [0x11; 32];
         let leaf2 = [0x22; 32];
         let leaf3 = [0x33; 32];
-        let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]);
+        let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]).unwrap();
 
         // Every limb of 0xff..ff exceeds the Goldilocks modulus.
         let err = ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], [0xff; 32], root)
@@ -597,7 +619,7 @@ mod tests {
         let leaf1 = [0x11; 32];
         let leaf2 = [0x22; 32];
         let leaf3 = [0x33; 32];
-        let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]);
+        let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]).unwrap();
 
         let mut proof =
             ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root).unwrap();
@@ -656,7 +678,7 @@ mod tests {
         let leaf1 = hash_from_limbs([1, 0, 0, 0]);
         let leaf2 = hash_from_limbs([2, 0, 0, 0]);
         let leaf3 = hash_from_limbs([3, 0, 0, 0]);
-        let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]);
+        let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]).unwrap();
 
         let mut proof =
             ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root).unwrap();
@@ -681,7 +703,7 @@ mod tests {
         let leaf1 = hash_from_limbs([1, 0, 0, 0]);
         let leaf2 = hash_from_limbs([2, 0, 0, 0]);
         let leaf3 = hash_from_limbs([3, 0, 0, 0]);
-        let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]);
+        let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]).unwrap();
 
         let mut proof =
             ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], leaf0, root).unwrap();
@@ -773,7 +795,7 @@ mod tests {
             positions_list.push(pos);
 
             // Compute parent hash for next level
-            current_hash = hash_node_presorted(&all_four);
+            current_hash = hash_node_presorted(&all_four).unwrap();
         }
 
         let root = current_hash;

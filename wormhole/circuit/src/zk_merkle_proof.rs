@@ -388,8 +388,10 @@ impl ZkMerkleProofData {
             };
             sorted_siblings_bytes.push(sorted_sibs);
 
-            // Compute parent hash for next level
-            current_hash = hash_node_presorted(&all_four);
+            // Compute parent hash for next level (the canonicality check
+            // above makes an error unreachable, but propagate rather than
+            // panic on caller-supplied bytes).
+            current_hash = hash_node_presorted(&all_four)?;
         }
 
         // Convert to felts
