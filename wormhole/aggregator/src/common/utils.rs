@@ -111,11 +111,23 @@ pub fn read_artifact_file(path: &std::path::Path) -> Result<Vec<u8>> {
 /// in the same directory (exclusive create, so a pre-planted entry or symlink
 /// is never adopted), and only after all stages succeed are the previous
 /// artifacts (including any `remove_stale` entries) moved aside and the
-/// staged files renamed into place. Any failure rolls the moved-aside
-/// originals back, so an error always leaves either the complete previous set
-/// or the complete new set — never a mix. The unwritten window shrinks from
-/// the whole multi-minute build-and-write to the instants between renames of
-/// already-complete files.
+/// staged files renamed into place. Any HANDLED failure rolls the moved-aside
+/// originals back, so an error return always leaves either the complete
+/// previous set or the complete new set — never a mix. The unwritten window
+/// shrinks from the whole multi-minute build-and-write to the instants
+/// between renames of already-complete files.
+///
+/// A hard crash (SIGKILL, power loss) inside that window is NOT rolled back:
+/// dying between the move-aside loop and the rename-in loop leaves the
+/// directory with no live artifacts plus orphaned `.<name>.old-<pid>-<rand>`
+/// (and possibly `.<name>.tmp-<pid>-<rand>`) entries. That state is
+/// fail-closed — loaders see missing artifacts, never a mixed generation —
+/// but it needs regeneration to recover. The builder entry points call
+/// [`sweep_stale_artifact_droppings`] before regenerating so those orphans do
+/// not accumulate. For whole-directory consistency across all stages, the
+/// staging-directory swap in `circuit-builder`'s
+/// `generate_all_circuit_binaries` remains the only true whole-set atomic
+/// primitive.
 ///
 /// Because staging opens with create-new semantics and publication renames
 /// over the final name, a symlink pre-planted at an artifact filename is
@@ -222,6 +234,74 @@ pub fn commit_artifact_set(
             Err(e)
         }
     }
+}
+
+/// Remove orphaned `commit_artifact_set` droppings from `bins_dir`.
+///
+/// A publish hard-killed mid-swap (SIGKILL, power loss) leaves behind
+/// `.<name>.tmp-<pid>-<rand>` staged files and/or `.<name>.old-<pid>-<rand>`
+/// moved-aside originals that no later run adopts (the random suffix is fresh
+/// per call). This sweep deletes exactly those patterns: a leading dot, a
+/// `.tmp-`/`.old-` marker, and the `<pid>-<16 hex>` suffix `commit_artifact_set`
+/// generates. Unrelated dotfiles are left alone.
+///
+/// Only called from the builder entry points, immediately before
+/// regeneration: on the read/prove paths a sweep could race a concurrent
+/// publisher and delete its in-flight staging files, but a builder is about
+/// to replace the whole set anyway. Returns the number of entries removed.
+#[cfg(feature = "std")]
+pub fn sweep_stale_artifact_droppings(bins_dir: &std::path::Path) -> Result<usize> {
+    use std::fs;
+
+    fn is_dropping(name: &str) -> bool {
+        if !name.starts_with('.') {
+            return false;
+        }
+        let Some(idx) = name.rfind(".tmp-").or_else(|| name.rfind(".old-")) else {
+            return false;
+        };
+        // Suffix shape from commit_artifact_set: "<pid>-<16 lowercase hex>".
+        let suffix = &name[idx + ".tmp-".len()..];
+        let Some((pid, rand)) = suffix.split_once('-') else {
+            return false;
+        };
+        !pid.is_empty()
+            && pid.bytes().all(|b| b.is_ascii_digit())
+            && rand.len() == 16
+            && rand.bytes().all(|b| b.is_ascii_hexdigit())
+    }
+
+    let entries = match fs::read_dir(bins_dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(e).with_context(|| format!("Failed to list {}", bins_dir.display())),
+    };
+
+    let mut removed = 0usize;
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !is_dropping(name) {
+            continue;
+        }
+        let path = entry.path();
+        // Moved-aside entries can be directory-shaped (a planted directory
+        // that a previous publish moved aside), so fall back accordingly.
+        if fs::remove_file(&path).is_err() {
+            let _ = fs::remove_dir_all(&path);
+        }
+        if !path.exists() {
+            removed += 1;
+        }
+    }
+    if removed > 0 {
+        println!(
+            "Removed {removed} orphaned staging/backup entries from {} (leftovers of an interrupted artifact publish)",
+            bins_dir.display()
+        );
+    }
+    Ok(removed)
 }
 
 /// Load verifier circuit data (common + verifier-only) from serialized bytes.
@@ -672,12 +752,61 @@ pub fn private_batch_num_leaves_from_padded_pi_len(pi_len: usize) -> Result<usiz
 #[cfg(test)]
 mod tests {
     use super::private_batch_num_leaves_from_padded_pi_len;
-    use super::{read_artifact_file, MAX_ARTIFACT_FILE_BYTES};
+    use super::{read_artifact_file, sweep_stale_artifact_droppings, MAX_ARTIFACT_FILE_BYTES};
 
     #[test]
     fn private_batch_num_leaves_from_padded_pi_len_rejects_malformed_lengths() {
         let err = private_batch_num_leaves_from_padded_pi_len(9).unwrap_err();
         assert!(err.to_string().contains("malformed"));
+    }
+
+    /// The sweep must remove exactly the `.<name>.tmp-<pid>-<rand>` /
+    /// `.<name>.old-<pid>-<rand>` patterns `commit_artifact_set` generates —
+    /// including directory-shaped moved-aside entries — and leave everything
+    /// else (live artifacts, unrelated dotfiles, near-miss names) alone.
+    #[test]
+    fn sweep_removes_publish_droppings_and_nothing_else() {
+        let dir = std::env::temp_dir().join(format!("qp-sweep-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Droppings: staged file, moved-aside file, directory-shaped
+        // moved-aside entry (a planted directory a publish moved aside).
+        std::fs::write(dir.join(".common.bin.tmp-42-00112233445566ff"), b"x").unwrap();
+        std::fs::write(dir.join(".verifier.bin.old-42-00112233445566ff"), b"x").unwrap();
+        std::fs::create_dir(dir.join(".config.json.old-42-aabbccddeeff0011")).unwrap();
+
+        // Survivors: live artifact, unrelated dotfiles, near-miss suffixes.
+        std::fs::write(dir.join("common.bin"), b"live").unwrap();
+        std::fs::write(dir.join(".gitignore"), b"*.log").unwrap();
+        std::fs::write(dir.join(".config.json.old-backup"), b"manual backup").unwrap();
+        std::fs::write(dir.join(".x.tmp-notapid-00112233445566ff"), b"x").unwrap();
+        std::fs::write(dir.join(".x.tmp-42-shorthex"), b"x").unwrap();
+        std::fs::write(dir.join("common.bin.tmp-42-00112233445566ff"), b"no dot").unwrap();
+
+        let removed = sweep_stale_artifact_droppings(&dir).unwrap();
+        assert_eq!(removed, 3, "exactly the three droppings must be removed");
+
+        let mut names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                ".config.json.old-backup".to_string(),
+                ".gitignore".to_string(),
+                ".x.tmp-42-shorthex".to_string(),
+                ".x.tmp-notapid-00112233445566ff".to_string(),
+                "common.bin".to_string(),
+                "common.bin.tmp-42-00112233445566ff".to_string(),
+            ]
+        );
+
+        // A missing directory is a no-op, not an error (fresh builder runs).
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(sweep_stale_artifact_droppings(&dir).unwrap(), 0);
     }
 
     #[test]

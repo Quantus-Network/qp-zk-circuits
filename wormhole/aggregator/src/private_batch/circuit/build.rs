@@ -18,6 +18,7 @@ use zk_circuits_common::circuit::{wormhole_private_batch_circuit_config, C, D, F
 
 use crate::common::utils::{
     commit_artifact_set, load_canonical_leaf_verifier_data, read_artifact_file,
+    sweep_stale_artifact_droppings,
 };
 use crate::private_batch::circuit::circuit_logic::PrivateBatchCircuit;
 
@@ -44,6 +45,9 @@ pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
     // Bound the per-layer count before any circuit construction (#97021, #97070).
     validate_proof_count(num_leaf_proofs, "num_leaf_proofs")?;
     create_dir_all(output_path)?;
+    // A previous publish hard-killed mid-swap leaves orphaned temp/backup
+    // entries behind; we are about to replace the set, so sweep them now.
+    sweep_stale_artifact_droppings(output_path)?;
 
     println!(
         "Building prebuilt private-batch aggregation circuit (num_leaf_proofs={})...",
@@ -308,6 +312,41 @@ mod tests {
                 "verifier.bin".to_string(),
             ],
             "publish must not leave temp/old files behind"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A publish hard-killed mid-swap (SIGKILL/power loss) leaves orphaned
+    /// `.<name>.tmp-*` / `.<name>.old-*` droppings that no later run adopts
+    /// (the random suffix is fresh per call). The builder path must sweep
+    /// them before regenerating so they do not accumulate forever (audit
+    /// finding: crash-path droppings never cleaned up). Unrelated dotfiles
+    /// must survive the sweep.
+    #[test]
+    fn rebuild_sweeps_droppings_of_interrupted_publish() {
+        let dir = temp_dir("crash-droppings");
+        write_canonical_leaf_artifacts(&dir);
+
+        // Simulate the post-SIGKILL state: originals moved aside, staged
+        // files still present, nothing live.
+        let dropping_old = dir.join(".private_batch_common.bin.old-12345-0123456789abcdef");
+        let dropping_tmp = dir.join(".private_batch_verifier.bin.tmp-12345-0123456789abcdef");
+        std::fs::write(&dropping_old, b"moved-aside original").unwrap();
+        std::fs::write(&dropping_tmp, b"orphaned staged file").unwrap();
+        // An unrelated dotfile must not be swept.
+        let innocent = dir.join(".gitignore");
+        std::fs::write(&innocent, b"*.log").unwrap();
+
+        generate_private_batch_circuit_binaries(&dir, 1, false).unwrap();
+
+        assert!(
+            !dropping_old.exists() && !dropping_tmp.exists(),
+            "regeneration must sweep droppings of an interrupted publish"
+        );
+        assert!(
+            innocent.exists(),
+            "the sweep must not touch unrelated dotfiles"
         );
 
         std::fs::remove_dir_all(&dir).unwrap();

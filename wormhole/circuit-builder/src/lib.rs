@@ -42,6 +42,9 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(output_dir: P) -> Result<()> {
 
     let output_path = output_dir.as_ref();
     create_dir_all(output_path)?;
+    // A previous publish hard-killed mid-swap leaves orphaned temp/backup
+    // entries behind; we are about to replace the set, so sweep them now.
+    wormhole_aggregator::common::utils::sweep_stale_artifact_droppings(output_path)?;
 
     // Generate dummy proof BEFORE consuming circuit_data (prove() borrows, prover_data() moves)
     println!("Generating dummy proof for aggregation padding...");

@@ -20,6 +20,7 @@ use zk_circuits_common::circuit::{wormhole_public_batch_circuit_config, C, D, F}
 use crate::common::utils::{
     canonical_leaf_verifier_data, commit_artifact_set, load_canonical_private_batch_verifier_data,
     private_batch_num_leaves_from_padded_pi_len, read_artifact_file,
+    sweep_stale_artifact_droppings,
 };
 use crate::public_batch::circuit::circuit_logic::PublicBatchCircuit;
 
@@ -42,6 +43,9 @@ pub fn generate_public_batch_circuit_binaries<P: AsRef<Path>>(
     validate_proof_count(num_private_batch_proofs, "num_private_batch_proofs")?;
     create_dir_all(output_dir)
         .with_context(|| format!("Failed to create output dir {}", output_dir.display()))?;
+    // A previous publish hard-killed mid-swap leaves orphaned temp/backup
+    // entries behind; we are about to replace the set, so sweep them now.
+    sweep_stale_artifact_droppings(output_dir)?;
 
     // Pin the private-batch artifacts to the canonical private-batch circuit BEFORE
     // baking their verifier key into the public-batch circuit as constants. The leaf
