@@ -83,8 +83,8 @@ hermetic. Toolchain is pinned in `lean-toolchain` (Lean `v4.30`).
 |-------------|-------------|
 | `metadataConsistent` (asset/fee/block across non-dummy) | `build_private_batch_constraints` — `private_batch/circuit/circuit_logic.rs` |
 | `referenceFromFirstReal` (block ref = first non-dummy slot) | prefix-scan selection — `private_batch/circuit/circuit_logic.rs` (the `illuzen/full-shuffle` fix) |
-| `nullifiersReplaced` `DNull(u)=H(H(u))` | `hash_dummy_nullifier_pre_image` — `circuit_logic.rs` |
-| nullifier region canonically sorted (position decorrelated from exit slots) | `sort_digests4` over selected nullifiers — `circuit_logic.rs`; gadget in `common/src/gadgets.rs` |
+| `nullifiersReplaced` `DNull(u)=H(H(u))`, held of the pre-sort list (`∃ raw, … ∧ Perm` in `RPrivateBatch`) | `hash_dummy_nullifier_pre_image` — `circuit_logic.rs` |
+| `nullifiersSorted` over `digestLt`/`digestLE` (region in ascending canonical order; position decorrelated from exit slots) | `sort_digests4` over selected nullifiers — `circuit_logic.rs`; gadget in `common/src/gadgets.rs` |
 | `isDummyPrivateBatch = blockHash=0` (weaker sentinel) | dummy detection at private-batch — `circuit_logic.rs` |
 | `groupExits` / `matchSum` (per-slot group sum + first-occurrence dedup) | exit-account grouping loop — `circuit_logic.rs:214–287` |
 | **thm** `RPrivateBatch_value_conservation`: `outputExitTotal = rawOutputTotal` | derived from the grouping primitive (was an assumed conjunct) |
