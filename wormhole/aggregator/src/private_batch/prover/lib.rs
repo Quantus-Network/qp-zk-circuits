@@ -334,7 +334,12 @@ impl PrivateBatchProver {
 ///
 /// - `asset_id` must match across ALL proofs (dummies included),
 /// - `block_hash` and `volume_fee_bps` must match between non-dummy proofs
-///   (`block_hash == 0` slots are exempt).
+///   (`block_hash == 0` slots are exempt),
+/// - at least one proof must be non-dummy: an all-dummy batch settles nothing,
+///   so proving it only burns the proving window. The intentional all-dummy
+///   padding template is built on the circuit-build path, which fills the
+///   witness directly and never calls this. Mirrors
+///   `ensure_private_batch_compatible` at the public-batch layer.
 ///
 /// NOTE: keep in lockstep with the circuit's cross-slot constraints
 /// (`private_batch::circuit::circuit_logic`). The circuit remains the enforcer;
@@ -403,6 +408,12 @@ fn ensure_leaf_batch_compatible(proofs: &[ProofWithPublicInputs<F, C, D>]) -> Re
                 }
             }
         }
+    }
+    if reference.is_none() {
+        bail!(
+            "every supplied leaf proof is all-dummy (block_hash == 0): such a batch \
+             settles nothing; supply at least one real leaf proof"
+        );
     }
     Ok(())
 }
@@ -593,6 +604,24 @@ mod tests {
         ];
         let err = ensure_leaf_batch_compatible(&proofs).unwrap_err();
         assert!(err.to_string().contains("volume_fee_bps"), "got: {err}");
+    }
+
+    /// A non-empty batch of only dummy leaf proofs (block_hash == 0) settles
+    /// nothing; proving it burns a full private-batch prove. The intentional
+    /// all-dummy padding template is built on the circuit-build path, which
+    /// fills the witness directly and never calls commit, so this can only be
+    /// a caller bug — reject it at the API boundary, mirroring
+    /// `ensure_private_batch_compatible` at the public-batch layer (audit
+    /// finding: leaf layer skips all-dummy rejection).
+    #[test]
+    fn all_dummy_leaf_batch_is_rejected() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+        let proofs = vec![
+            prove_fake_leaf(&leaf, &targets, leaf_pis(0, 10, 0)),
+            prove_fake_leaf(&leaf, &targets, leaf_pis(0, 10, 0)),
+        ];
+        let err = ensure_leaf_batch_compatible(&proofs).unwrap_err();
+        assert!(err.to_string().contains("all-dummy"), "got: {err}");
     }
 
     #[test]

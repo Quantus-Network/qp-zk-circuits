@@ -527,22 +527,40 @@ mod tests {
 
     /// A genuine all-dummy private-batch proof over the fake leaf circuit:
     /// the only template the (now-validating) direct constructor accepts.
+    ///
+    /// Built the way production builds its padding template (the
+    /// circuit-build path): fill the witness with explicit dummy leaves and
+    /// prove directly. It cannot go through `PrivateBatchProver::commit`,
+    /// which rejects all-dummy leaf batches.
     fn make_all_dummy_private_batch_template(
         leaf: &plonky2::plonk::circuit_data::CircuitData<F, C, D>,
         fake_leaf_proof: &ProofWithPublicInputs<F, C, D>,
     ) -> ProofWithPublicInputs<F, C, D> {
-        PrivateBatchProver::new(
+        use plonky2::iop::witness::PartialWitness;
+        use zk_circuits_common::utils::bytes_to_digest;
+
+        let circuit = PrivateBatchCircuit::new(
             wormhole_private_batch_circuit_config(),
-            leaf.common.clone(),
+            &leaf.common,
             &leaf.verifier_only,
             1,
-            fake_leaf_proof.clone(),
         )
-        .unwrap()
-        .commit(vec![fake_leaf_proof.clone()])
-        .unwrap()
-        .prove()
-        .unwrap()
+        .unwrap();
+        let targets = circuit.targets();
+        let circuit_data = circuit.build_circuit();
+
+        let pre_images = vec![bytes_to_digest(
+            crate::dummy_proof::generate_random_nullifier_preimage(),
+        )];
+        let mut pw = PartialWitness::new();
+        crate::private_batch::prover::fill_private_batch_witness(
+            &mut pw,
+            &targets,
+            std::slice::from_ref(fake_leaf_proof),
+            &pre_images,
+        )
+        .unwrap();
+        circuit_data.prove(pw).unwrap()
     }
 
     #[test]
