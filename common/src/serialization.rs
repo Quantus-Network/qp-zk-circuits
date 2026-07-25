@@ -186,19 +186,20 @@ pub fn bytes_to_felts_compact(input: &[u8]) -> Result<Vec<F>, &'static str> {
 
 /// Hash bytes with Poseidon2 using compact (8 bytes/felt) encoding.
 ///
-/// Uses the `bytes_to_u64s_compact` path so fixed-size merkle-node payloads
-/// always hash (matching pallet-zk-tree). Prefer this over calling
-/// `qp_poseidon_core::serialization::bytes_to_felts_compact`, which is fallible
-/// in poseidon-core ≥ 3.0.
-///
 /// The compact encoding zero-pads the final 8-byte chunk, so on unaligned
 /// input it is lossy: `x` and `x || 0x00` would encode to the same felt
 /// vector and collide. To keep this helper collision-resistant, the input
-/// length must be a multiple of 8; unaligned input returns an error. On the
-/// aligned domain the encoding is injective and the sponge's 10* padding
-/// separates different felt counts, so distinct inputs hash distinctly.
-/// This helper is deliberately crate-private so it cannot be misused
-/// downstream as a general-purpose variable-length byte commitment.
+/// length must be a multiple of 8; unaligned input returns an error.
+///
+/// An 8-byte limb `>=` the Goldilocks modulus `p` is also rejected: the field
+/// map reduces mod `p` (lazily), so a limb `v` and its byte-distinct alias
+/// `v + p` would otherwise hash identically even on the aligned domain. With
+/// both checks the encoding is injective on the accepted domain, and the
+/// sponge's 10* padding separates different felt counts, so distinct accepted
+/// inputs hash distinctly. Hash outputs re-encoded via [`digest_to_bytes`]
+/// (e.g. merkle-node payloads) are always canonical and always pass. This
+/// helper is deliberately crate-private so it cannot be misused downstream
+/// as a general-purpose variable-length byte commitment.
 ///
 /// Returns an error if `input.len()` exceeds [`MAX_SERIALIZED_BYTES`], matching
 /// the sibling byte-consuming helpers in this module: the intermediate felt
@@ -206,18 +207,13 @@ pub fn bytes_to_felts_compact(input: &[u8]) -> Result<Vec<F>, &'static str> {
 /// public path here would let untrusted caller-supplied data force
 /// size-proportional allocation (audit #97066).
 pub(crate) fn hash_bytes_compact(input: &[u8]) -> Result<[u8; 32], &'static str> {
-    use qp_poseidon_core::Goldilocks;
-
     if input.len() > MAX_SERIALIZED_BYTES {
         return Err("hash_bytes_compact: input exceeds maximum serialized length");
     }
     if !input.len().is_multiple_of(8) {
         return Err("hash_bytes_compact: input length must be a multiple of 8");
     }
-    let felts: Vec<Goldilocks> = qp_poseidon_core::serialization::bytes_to_u64s_compact(input)
-        .into_iter()
-        .map(Goldilocks::from_u64)
-        .collect();
+    let felts = qp_poseidon_core::serialization::bytes_to_felts_compact(input)?;
     Ok(qp_poseidon_core::hash_to_bytes(&felts))
 }
 
@@ -361,6 +357,26 @@ mod tests {
             let err = hash_bytes_compact(&vec![0x5au8; len]).unwrap_err();
             assert!(err.contains("multiple of 8"), "len {len}: got: {err}");
         }
+    }
+
+    /// `Goldilocks::from_u64` keeps the raw u64 (lazy reduction), so a limb
+    /// `v` and its byte-distinct alias `v + p` are the same field element and
+    /// hash identically even on the aligned domain. To make the encoding
+    /// injective on the domain it accepts, `hash_bytes_compact` must reject
+    /// non-canonical limbs instead of silently reducing them.
+    #[test]
+    fn hash_bytes_compact_rejects_noncanonical_limb_alias() {
+        const GOLDILOCKS_MODULUS: u64 = 0xFFFF_FFFF_0000_0001;
+        // 16-byte aligned inputs differing only by +p in the first limb.
+        let mut canonical = [0u8; 16];
+        canonical[..8].copy_from_slice(&1u64.to_le_bytes());
+        let mut alias = canonical;
+        alias[..8].copy_from_slice(&(1u64 + GOLDILOCKS_MODULUS).to_le_bytes());
+
+        hash_bytes_compact(&canonical).expect("canonical limbs must hash");
+        let err = hash_bytes_compact(&alias)
+            .expect_err("byte-distinct +p limb alias must be rejected, not hashed identically");
+        assert!(err.contains("Goldilocks modulus"), "got: {err}");
     }
 
     /// On the accepted (8-byte-aligned) domain, appending a zero chunk must

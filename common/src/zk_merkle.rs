@@ -204,10 +204,12 @@ impl ZkMerkleProof {
     /// This takes unsorted siblings and computes the correct sorted order
     /// and position hints for circuit verification.
     ///
-    /// Returns an error if the supplied path is deeper than [`MAX_DEPTH`].
-    /// The bound is enforced *before* any allocation or hashing so untrusted
-    /// raw siblings cannot force per-level Poseidon work on a proof that
-    /// [`Self::verify_with_positions`] would reject anyway.
+    /// Returns an error if the supplied path is deeper than [`MAX_DEPTH`], or
+    /// if the leaf or any sibling is not canonical hash bytes (see
+    /// [`is_canonical_hash`]). Both bounds are enforced *before* any
+    /// allocation or hashing so untrusted raw siblings cannot force per-level
+    /// Poseidon work on a proof that [`Self::verify_with_positions`] would
+    /// reject anyway.
     pub fn from_unsorted(
         leaf_index: u64,
         unsorted_siblings: Vec<[Hash256; SIBLINGS_PER_LEVEL]>,
@@ -216,6 +218,15 @@ impl ZkMerkleProof {
     ) -> Result<Self, &'static str> {
         if unsorted_siblings.len() > MAX_DEPTH {
             return Err("from_unsorted: proof depth exceeds MAX_DEPTH");
+        }
+        // The node hash rejects noncanonical limbs (they alias mod p), and
+        // `verify_with_positions` would refuse the resulting proof anyway;
+        // reject untrusted raw bytes here instead of panicking mid-hash.
+        if !is_canonical_hash(&leaf_hash) {
+            return Err("from_unsorted: leaf hash bytes are noncanonical");
+        }
+        if !unsorted_siblings.iter().flatten().all(is_canonical_hash) {
+            return Err("from_unsorted: sibling hash bytes are noncanonical");
         }
 
         let mut current_hash = leaf_hash;
@@ -313,6 +324,11 @@ pub fn insert_at_position(
 ///
 /// Unlike `hash_node`, this does NOT sort - it assumes the input is already sorted.
 /// This is used by the circuit verification path.
+///
+/// Children must be canonical hash bytes (see [`is_canonical_hash`]); genuine
+/// hash outputs always are, and `ZkMerkleProof::verify` rejects noncanonical
+/// bytes before reaching this function. A noncanonical child panics here
+/// rather than silently aliasing another child's hash.
 pub fn hash_node_presorted(sorted_children: &[Hash256; ARITY]) -> Hash256 {
     // Concatenate all 4 child hashes (128 bytes total)
     let mut data = Vec::with_capacity(CHILDREN_BYTES);
@@ -320,16 +336,22 @@ pub fn hash_node_presorted(sorted_children: &[Hash256; ARITY]) -> Hash256 {
         data.extend_from_slice(child);
     }
 
-    // Compact encoding (8 bytes/felt); lossy path for fixed-size hash payloads.
-    // 128 bytes is far below MAX_SERIALIZED_BYTES, so this cannot fail.
-    serialization::hash_bytes_compact(&data).expect("128-byte node payload is within bounds")
+    // Compact encoding (8 bytes/felt): 128 bytes is far below
+    // MAX_SERIALIZED_BYTES and canonical children have canonical limbs,
+    // so this cannot fail.
+    serialization::hash_bytes_compact(&data)
+        .expect("node payload is within bounds with canonical limbs")
 }
 
 /// Hash 4 child hashes into a parent node hash.
 ///
 /// Children are sorted before hashing to eliminate the need for path indices.
-/// Uses non-injective Poseidon (8 bytes/felt) - safe because internal nodes
-/// only contain fixed-size hash outputs.
+/// Uses compact Poseidon encoding (8 bytes/felt) - safe because internal
+/// nodes only contain fixed-size hash outputs, whose limbs are canonical.
+///
+/// Children must be canonical hash bytes (see [`is_canonical_hash`]); a
+/// noncanonical child panics here rather than silently aliasing another
+/// child's hash.
 pub fn hash_node(children: &[Hash256; ARITY]) -> Hash256 {
     // Sort children to make hash order-independent
     let mut sorted = *children;
@@ -341,9 +363,11 @@ pub fn hash_node(children: &[Hash256; ARITY]) -> Hash256 {
         data.extend_from_slice(child);
     }
 
-    // Compact encoding (8 bytes/felt); 128 bytes -> 16 felts.
-    // 128 bytes is far below MAX_SERIALIZED_BYTES, so this cannot fail.
-    serialization::hash_bytes_compact(&data).expect("128-byte node payload is within bounds")
+    // Compact encoding (8 bytes/felt): 128 bytes is far below
+    // MAX_SERIALIZED_BYTES and canonical children have canonical limbs,
+    // so this cannot fail.
+    serialization::hash_bytes_compact(&data)
+        .expect("node payload is within bounds with canonical limbs")
 }
 
 /// Empty hash value (all zeros).
@@ -534,12 +558,33 @@ mod tests {
         let bad_proof = ZkMerkleProof::from_unsorted(
             0,
             vec![[leaf1, leaf2, leaf3]],
-            [0xff; 32], // wrong!
+            [0x44; 32], // wrong!
             root,
         )
         .unwrap();
 
         assert!(!bad_proof.verify());
+    }
+
+    /// `from_unsorted` hashes caller-supplied bytes, so noncanonical limbs
+    /// (which the node hash rejects as mod-p aliases) must surface as an
+    /// error, not a panic mid-hash.
+    #[test]
+    fn from_unsorted_rejects_noncanonical_bytes() {
+        let leaf0 = [0x00; 32];
+        let leaf1 = [0x11; 32];
+        let leaf2 = [0x22; 32];
+        let leaf3 = [0x33; 32];
+        let root = hash_node(&[leaf0, leaf1, leaf2, leaf3]);
+
+        // Every limb of 0xff..ff exceeds the Goldilocks modulus.
+        let err = ZkMerkleProof::from_unsorted(0, vec![[leaf1, leaf2, leaf3]], [0xff; 32], root)
+            .unwrap_err();
+        assert!(err.contains("leaf hash"), "got: {err}");
+
+        let err = ZkMerkleProof::from_unsorted(0, vec![[leaf1, [0xff; 32], leaf3]], leaf0, root)
+            .unwrap_err();
+        assert!(err.contains("sibling hash"), "got: {err}");
     }
 
     /// Regression (audit): `verify()` used to hash through the
