@@ -31,7 +31,9 @@ pub use wormhole_aggregator::CircuitBinsConfig;
 /// removed because a poisoned artifact could exfiltrate private witness data through the
 /// proof's public-input list.
 pub fn generate_circuit_binaries<P: AsRef<Path>>(output_dir: P) -> Result<()> {
-    println!("Building wormhole leaf circuit (non-ZK for faster proving)...");
+    println!(
+        "Building wormhole leaf circuit (non-ZK by design; ZK lives at the private-batch layer)..."
+    );
     let config = wormhole_leaf_circuit_config();
     let circuit = WormholeCircuit::new(config);
     let targets = circuit.targets();

@@ -50,7 +50,7 @@ pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
     sweep_stale_artifact_droppings(output_path)?;
 
     println!(
-        "Building prebuilt private-batch aggregation circuit (num_leaf_proofs={})...",
+        "Building prebuilt private-batch aggregation circuit (num_leaf_proofs={}, ZK row blinding)...",
         num_leaf_proofs
     );
 
