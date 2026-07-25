@@ -330,7 +330,8 @@ impl PrivateBatchProver {
 
 /// Check that a set of leaf proofs is mutually compatible under the
 /// private-batch circuit's cross-slot constraints, so an incompatible batch is
-/// rejected at commit time instead of failing after minutes of proving:
+/// rejected at commit time instead of failing after a full proving run
+/// (potentially minutes on the phone-class hardware clients prove on):
 ///
 /// - `asset_id` must match across ALL proofs (dummies included),
 /// - `block_hash` and `volume_fee_bps` must match between non-dummy proofs

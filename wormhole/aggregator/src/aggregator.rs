@@ -13,40 +13,35 @@
 //!
 //! # Concurrency
 //!
-//! Public-batch proving takes minutes. [`PublicBatchAggregator::aggregate`] is
-//! the simple blocking convenience; a service that must keep admitting proofs
-//! while proving should split the phases and only lock around the cheap pool
-//! operations:
+//! Public-batch proving takes tens of seconds (~16 s for a 53-proof batch on
+//! Apple-Silicon-class hardware; a few block times, so settlements can land
+//! mid-prove). [`PublicBatchAggregator::aggregate`] is the simple blocking
+//! convenience; a service that must keep admitting proofs while proving
+//! should snapshot under a short lock and prove without it:
 //!
 //! ```text
-//! // admission thread, short lock:
-//! let taken = aggregator.lock().take_batch(&key)?;
+//! // policy loop, short lock:
+//! let proofs = aggregator.lock().snapshot_batch(&key)?;
 //!
 //! // proving worker, NO lock held (use its own prover instance):
 //! let prover = PublicBatchProver::new_from_binaries_dir(&bins_dir)?;
-//! let result = prover
-//!     .commit(PublicBatchInputs { proofs: taken.proofs(), aggregator_address })?
-//!     .prove();
-//!
-//! // back under a short lock:
-//! match result {
-//!     Ok(proof) => { aggregator.lock().complete_batch(taken); /* submit `proof` */ }
-//!     Err(_) => { aggregator.lock().reinsert_batch(taken); }
-//! }
+//! let proof = prover
+//!     .commit(PublicBatchInputs { proofs, aggregator_address })?
+//!     .prove()?;
+//! // submit `proof`; the block-import evict_settled cadence retires the
+//! // proved inputs from the pool once their segments settle on-chain.
 //! ```
 //!
-//! Buckets queue deeper than one batch, so admissions for the same key keep
-//! landing while its previous batch is out being proved. Reinserted proofs are
-//! not re-verified. A taken batch's nullifiers stay tracked while it is out:
-//! settlements observed by the regular
-//! [`PublicBatchAggregator::evict_settled`] cadence during the proving window
-//! are remembered, and [`PublicBatchAggregator::reinsert_batch`] drops the
-//! affected (now-stale) proofs instead of restoring them. Hand every taken
-//! batch back via [`PublicBatchAggregator::complete_batch`] (success) or
-//! [`PublicBatchAggregator::reinsert_batch`] (failure); a batch that is
-//! instead dropped (e.g. its proving worker panicked) self-releases its
-//! nullifier reservations at the pool's next operation, so the affected
-//! spends can be resubmitted rather than staying wedged.
+//! Proving is NON-CONSUMING: the snapshot is a clone and the pooled originals
+//! stay put, because a claiming miner's pool may hold the only copy of a
+//! proof in the network (see the custody section in [`crate::pool`]). A
+//! failed or crashed proving worker therefore needs no recovery protocol —
+//! the pool never changed — and buckets queue deeper than one batch, so
+//! admissions for the same key keep landing while it is being proved. The
+//! only removal paths are settlement eviction
+//! ([`PublicBatchAggregator::evict_settled`], call it on every imported
+//! block) and the operator override
+//! [`PublicBatchAggregator::remove_bucket`].
 
 use anyhow::{anyhow, bail, Context, Result};
 use plonky2::plonk::{
@@ -62,7 +57,7 @@ use zk_circuits_common::{
     utils::try_4_felts_to_bytes,
 };
 
-use crate::pool::{BatchKey, BucketStats, PoolLimits, ProofPool, TakenBatch};
+use crate::pool::{BatchKey, BucketStats, PoolLimits, ProofPool};
 use crate::public_batch::prover::{PublicBatchInputs, PublicBatchProver};
 use crate::{
     common::utils::{
@@ -185,46 +180,39 @@ impl PublicBatchAggregator {
     /// bound to this aggregator's address. Partial batches are padded with the
     /// dummy private-batch template.
     ///
-    /// Only the proofs actually proved are drained, and only on success; a
-    /// failed attempt reinserts them for retry without re-verification
-    /// (#97067). Proofs beyond `batch_size` stay queued for the next call.
+    /// NON-CONSUMING: the proved proofs stay pooled — they may exist nowhere
+    /// else in the network (see the custody section in [`crate::pool`]) — so
+    /// a failed attempt needs no cleanup, and calling this again before the
+    /// submitted batch settles re-proves the same batch. Removal happens
+    /// through the block-import [`Self::evict_settled`] cadence once the
+    /// batch's segments settle on-chain, or via [`Self::remove_bucket`].
+    /// Proofs beyond `batch_size` stay queued for the next call.
     ///
-    /// This convenience method holds `&mut self` for the entire (minutes-long)
-    /// proving run, so a lock-wrapped aggregator admits nothing meanwhile. A
-    /// concurrent service should use the split API instead: [`Self::take_batch`]
-    /// under a short lock, [`Self::prove_taken`] on a proving worker WITHOUT
-    /// holding the lock, then [`Self::complete_batch`] on success or
-    /// [`Self::reinsert_batch`] on failure.
-    pub fn aggregate(&mut self, key: &BatchKey) -> Result<Proof> {
-        let taken = self.take_batch(key)?;
-
-        match self.prove_taken(&taken) {
-            Ok(proof) => {
-                self.pool.complete(taken);
-                Ok(proof)
-            }
-            Err(e) => {
-                self.pool.reinsert(taken);
-                Err(e)
-            }
-        }
+    /// This convenience method blocks for the whole proving run (tens of
+    /// seconds). A concurrent service should use the split API instead:
+    /// [`Self::snapshot_batch`] under a short lock, then [`Self::prove_batch`]
+    /// on a proving worker WITHOUT holding the lock.
+    pub fn aggregate(&self, key: &BatchKey) -> Result<Proof> {
+        let proofs = self.snapshot_batch(key)?;
+        self.prove_batch(proofs)
     }
 
-    /// Remove up to `batch_size` of the oldest proofs for `key` from the pool,
-    /// for proving via [`Self::prove_taken`]. Cheap; see [`ProofPool::take_batch`].
+    /// Clone the oldest up-to-`batch_size` proofs of one bucket, for proving
+    /// via [`Self::prove_batch`]. Cheap and non-consuming; see
+    /// [`ProofPool::snapshot_batch`].
     ///
-    /// Refuses the dummy sentinel bucket: an all-dummy public batch is a valid
-    /// proof that settles nothing, so proving it only wastes minutes. (Defense
-    /// in depth — [`ProofPool::push`] already rejects all-dummy proofs, so the
-    /// bucket should never exist.)
-    pub fn take_batch(&mut self, key: &BatchKey) -> Result<TakenBatch> {
+    /// Refuses the dummy sentinel bucket: an all-dummy public batch is a
+    /// valid proof that settles nothing, so proving it only wastes the
+    /// proving run. (Defense in depth — [`ProofPool::push`] already rejects
+    /// all-dummy proofs, so the bucket should never exist.)
+    pub fn snapshot_batch(&self, key: &BatchKey) -> Result<Vec<Proof>> {
         if key.is_dummy() {
             bail!(
                 "refusing to aggregate the dummy sentinel bucket (block_hash == 0): \
                  an all-dummy public batch settles nothing"
             );
         }
-        self.pool.take_batch(key).ok_or_else(|| {
+        self.pool.snapshot_batch(key).ok_or_else(|| {
             anyhow!(
                 "no pooled proofs for block {:?} (asset {}, fee {})",
                 key.block_hash,
@@ -234,28 +222,15 @@ impl PublicBatchAggregator {
         })
     }
 
-    /// Retire a taken batch after successful proving, releasing its nullifier
-    /// reservations; see [`ProofPool::complete`].
-    pub fn complete_batch(&mut self, batch: TakenBatch) {
-        self.pool.complete(batch)
-    }
-
-    /// Restore a taken batch after a failed proving attempt (no cryptographic
-    /// re-verification). Proofs observed settled while the batch was out are
-    /// dropped instead of restored. Returns the number of proofs restored; see
-    /// [`ProofPool::reinsert`].
-    pub fn reinsert_batch(&mut self, batch: TakenBatch) -> usize {
-        self.pool.reinsert(batch)
-    }
-
-    /// Prove a taken batch into a public-batch proof bound to this
-    /// aggregator's address. Does not touch the pool.
+    /// Prove a snapshot of private-batch proofs into a public-batch proof
+    /// bound to this aggregator's address. Does not touch the pool.
     ///
-    /// Takes minutes. In a concurrent service, run this on a dedicated proving
-    /// worker without holding whatever lock guards the aggregator — either via
-    /// a separately constructed [`PublicBatchProver`] fed `batch.proofs()`, or
-    /// by cheaply cloning the `TakenBatch`-relevant state out of the lock.
-    pub fn prove_taken(&self, batch: &TakenBatch) -> Result<Proof> {
+    /// Takes tens of seconds (~16 s for a 53-proof batch on
+    /// Apple-Silicon-class hardware, plus prover load). In a concurrent
+    /// service, run this on a dedicated proving worker without holding
+    /// whatever lock guards the aggregator — the snapshot is already
+    /// independent of the pool.
+    pub fn prove_batch(&self, proofs: Vec<Proof>) -> Result<Proof> {
         let prover = PublicBatchProver::new_from_binaries_dir(&self.bins_dir)
             .context("failed to load prebuilt public-batch prover")?;
 
@@ -264,7 +239,7 @@ impl PublicBatchAggregator {
         // so the chain can attribute each segment to its inner proof).
         prover
             .commit(PublicBatchInputs {
-                proofs: batch.proofs(),
+                proofs,
                 aggregator_address: self.aggregator_address,
             })
             .context("failed to commit private-batch proofs to public-batch prover")
@@ -281,7 +256,7 @@ impl PublicBatchAggregator {
         self.pool.len()
     }
 
-    /// Proofs per public batch (how many one `take_batch`/`aggregate` proves).
+    /// Proofs per public batch (how many one `snapshot_batch`/`aggregate` proves).
     pub fn batch_size(&self) -> usize {
         self.pool.batch_size()
     }

@@ -61,7 +61,7 @@ pub struct PublicBatchProver {
     /// nullifiers, so one template can fill several slots without collisions.
     dummy_proof_template: ProofWithPublicInputs<F, C, D>,
     /// Private-batch verifier data, kept so `commit` can cheaply verify each
-    /// supplied inner proof before starting the minutes-long proving run.
+    /// supplied inner proof before starting the expensive proving run.
     private_batch_verifier: VerifierCircuitData<F, C, D>,
 }
 
@@ -255,7 +255,7 @@ impl PublicBatchProver {
     /// The circuit exempts dummies (`block_hash == 0`) from metadata consistency
     /// and zeroes their forwarded exit slots and nullifiers.
     ///
-    /// Fails fast (milliseconds, before the minutes-long proving run) on inputs
+    /// Fails fast (milliseconds, before the tens-of-seconds proving run) on inputs
     /// the public-batch circuit could never prove or that could never settle:
     /// each supplied proof is cryptographically verified against the pinned
     /// private-batch verifier, non-dummy proofs must share one (block hash,
@@ -334,7 +334,7 @@ impl PublicBatchProver {
 
 /// Check that a set of private-batch proofs is mutually compatible under the
 /// public-batch circuit's cross-proof constraints, so an incompatible batch is
-/// rejected at commit time instead of failing after minutes of proving:
+/// rejected at commit time instead of failing after a full proving run:
 /// non-dummy proofs (`block_hash != 0`) must share one block hash, asset id,
 /// and volume fee; dummy proofs are exempt. At least one proof must be
 /// non-dummy: an all-dummy batch carries zero block references and settles
@@ -771,7 +771,7 @@ mod tests {
     /// Individually valid inner proofs with incompatible batch metadata (here:
     /// different block hashes) can never satisfy the circuit's cross-proof
     /// constraints; commit must reject them fail-fast instead of letting prove
-    /// burn minutes of CPU.
+    /// burn a full proving run.
     #[test]
     fn commit_rejects_batch_incompatible_private_batch_proofs() {
         let (leaf, leaf_targets) = build_fake_leaf_circuit();
