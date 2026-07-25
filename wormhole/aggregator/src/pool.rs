@@ -83,7 +83,12 @@ impl BatchKey {
 /// Global size limits protecting a pool that fronts untrusted traffic.
 #[derive(Debug, Clone, Copy)]
 pub struct PoolLimits {
-    /// Maximum number of proofs across all buckets.
+    /// Maximum number of proofs the pool retains, counting both
+    /// bucket-resident proofs AND proofs currently out for proving with a
+    /// [`TakenBatch`]. Counting taken proofs is what makes this a real memory
+    /// bound: otherwise admissions could refill the pool to the cap while a
+    /// batch was out, and a failed prove's [`ProofPool::reinsert`] would push
+    /// residency to `max_proofs + batch_size` (audit finding).
     pub max_proofs: usize,
     /// Maximum number of distinct buckets (keys).
     pub max_buckets: usize,
@@ -160,12 +165,23 @@ struct PooledProof {
     admitted_at: Instant,
 }
 
-/// Shared inbox for nullifier reservations released by a [`TakenBatch`] that
-/// was dropped without being handed back. Drained by the pool at the start of
-/// its next operation. The mutex is only ever held to push or drain a `Vec`,
-/// never across pool logic, so it cannot deadlock with any pool lock the
-/// operator wraps around [`ProofPool`] itself.
-type OrphanedReservations = Arc<Mutex<Vec<BytesDigest>>>;
+/// What a dropped (not handed-back) [`TakenBatch`] leaves behind for the pool
+/// to release: its nullifier reservations, and the number of proofs it held —
+/// the latter so [`ProofPool::reap_orphaned`] can return the batch's capacity
+/// to the `max_proofs` accounting (out-for-proving proofs count against the
+/// cap; see [`PoolLimits::max_proofs`]).
+#[derive(Debug, Default)]
+struct OrphanInbox {
+    nullifiers: Vec<BytesDigest>,
+    proofs: usize,
+}
+
+/// Shared inbox for reservations and capacity released by a [`TakenBatch`]
+/// that was dropped without being handed back. Drained by the pool at the
+/// start of its next operation. The mutex is only ever held to push or drain
+/// the inbox, never across pool logic, so it cannot deadlock with any pool
+/// lock the operator wraps around [`ProofPool`] itself.
+type OrphanedReservations = Arc<Mutex<OrphanInbox>>;
 
 /// A batch of admission-verified proofs removed from the pool for proving.
 ///
@@ -178,11 +194,11 @@ type OrphanedReservations = Arc<Mutex<Vec<BytesDigest>>>;
 /// indexed while it is out (so duplicates stay rejected and settlements
 /// observed meanwhile are tracked). If the batch is instead dropped — e.g.
 /// the proving worker panicked and unwound — its `Drop` impl deposits the
-/// reservations into the pool's orphan inbox and the pool releases them at
-/// its next operation, so the affected spends can be resubmitted instead of
-/// being wedged until the aggregator is rebuilt. The dropped proofs
-/// themselves are gone; clients must resubmit them (re-admission re-verifies
-/// as usual).
+/// reservations and the batch's capacity into the pool's orphan inbox and
+/// the pool releases both at its next operation, so the affected spends can
+/// be resubmitted instead of being wedged until the aggregator is rebuilt.
+/// The dropped proofs themselves are gone; clients must resubmit them
+/// (re-admission re-verifies as usual).
 #[derive(Debug)]
 pub struct TakenBatch {
     key: BatchKey,
@@ -226,8 +242,11 @@ impl Drop for TakenBatch {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         for queued in &self.proofs {
-            orphaned.extend(queued.nullifiers.iter().copied());
+            orphaned
+                .nullifiers
+                .extend(queued.nullifiers.iter().copied());
         }
+        orphaned.proofs += self.proofs.len();
     }
 }
 
@@ -263,9 +282,15 @@ pub struct ProofPool {
     /// instead of restoring it) and [`Self::complete`]. Bounded by the size of
     /// outstanding taken batches.
     settled_while_taken: HashSet<BytesDigest>,
-    /// Reservations deposited by dropped (not handed-back) [`TakenBatch`]es,
-    /// released by [`Self::reap_orphaned`] at the start of every pool
-    /// operation. Shared with every `TakenBatch` this pool produces.
+    /// Number of proofs currently out for proving with [`TakenBatch`]es.
+    /// Counted against [`PoolLimits::max_proofs`] at admission so `reinsert`
+    /// can never push residency past the cap. Decremented when a batch is
+    /// handed back (`complete`/`reinsert`) or reaped after being dropped.
+    taken_count: usize,
+    /// Reservations and capacity deposited by dropped (not handed-back)
+    /// [`TakenBatch`]es, released by [`Self::reap_orphaned`] at the start of
+    /// every pool operation. Shared with every `TakenBatch` this pool
+    /// produces.
     orphaned: OrphanedReservations,
     /// Start of the current verification budget window (fixed-window counter).
     verify_window_started: Instant,
@@ -326,7 +351,8 @@ impl ProofPool {
             nullifier_index: HashMap::new(),
             taken_nullifiers: HashSet::new(),
             settled_while_taken: HashSet::new(),
-            orphaned: Arc::new(Mutex::new(Vec::new())),
+            taken_count: 0,
+            orphaned: Arc::new(Mutex::new(OrphanInbox::default())),
             verify_window_started: Instant::now(),
             verifies_in_window: 0,
         })
@@ -338,21 +364,25 @@ impl ProofPool {
     /// for resubmission at the next pool touch instead of wedging them until
     /// the aggregator is reconstructed.
     fn reap_orphaned(&mut self) {
-        let orphaned: Vec<BytesDigest> = {
+        let orphaned: OrphanInbox = {
             let mut inbox = self
                 .orphaned
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             std::mem::take(&mut *inbox)
         };
-        for nullifier in orphaned {
+        for nullifier in orphaned.nullifiers {
             self.nullifier_index.remove(&nullifier);
             self.taken_nullifiers.remove(&nullifier);
             self.settled_while_taken.remove(&nullifier);
         }
+        // Return the dropped batches' capacity to the max_proofs accounting.
+        self.taken_count = self.taken_count.saturating_sub(orphaned.proofs);
     }
 
-    /// Total number of proofs across all buckets.
+    /// Total number of proofs across all buckets. Excludes proofs out for
+    /// proving with a [`TakenBatch`]; those still count against
+    /// [`PoolLimits::max_proofs`] at admission.
     pub fn len(&self) -> usize {
         self.buckets.values().map(Vec::len).sum()
     }
@@ -387,10 +417,14 @@ impl ProofPool {
     /// [`Self::take_batch`] takes the oldest `batch_size` proofs at a time.
     pub fn push(&mut self, proof: Proof) -> Result<BatchKey> {
         self.reap_orphaned();
-        if self.len() >= self.limits.max_proofs {
+        // Out-for-proving proofs count against the cap: they still occupy
+        // memory and return to the buckets on a failed prove's reinsert,
+        // which performs no capacity check of its own.
+        if self.len() + self.taken_count >= self.limits.max_proofs {
             bail!(
-                "proof pool is full ({} proofs, limit {})",
+                "proof pool is full ({} pooled + {} out for proving, limit {})",
                 self.len(),
+                self.taken_count,
                 self.limits.max_proofs
             );
         }
@@ -592,6 +626,7 @@ impl ProofPool {
                 self.taken_nullifiers.insert(*nullifier);
             }
         }
+        self.taken_count += taken.len();
         Some(TakenBatch {
             key: *key,
             proofs: taken,
@@ -607,6 +642,7 @@ impl ProofPool {
     pub fn complete(&mut self, mut batch: TakenBatch) {
         self.reap_orphaned();
         batch.armed = false;
+        self.taken_count = self.taken_count.saturating_sub(batch.proofs.len());
         for queued in &batch.proofs {
             for nullifier in &queued.nullifiers {
                 self.nullifier_index.remove(nullifier);
@@ -629,6 +665,11 @@ impl ProofPool {
     pub fn reinsert(&mut self, mut batch: TakenBatch) -> usize {
         self.reap_orphaned();
         batch.armed = false;
+        // Every proof in the batch leaves the out-for-proving state here;
+        // the restored ones re-enter the bucket-resident count instead.
+        // Admission held `len() + taken_count` under `max_proofs` the whole
+        // time the batch was out, so this restore cannot overshoot the cap.
+        self.taken_count = self.taken_count.saturating_sub(batch.proofs.len());
         let mut restored: Vec<PooledProof> = Vec::with_capacity(batch.proofs.len());
         for queued in std::mem::take(&mut batch.proofs) {
             let stale = queued
@@ -1212,6 +1253,76 @@ mod tests {
             .push(prove_fake(&data, &targets, &fake(2, 12)))
             .unwrap_err();
         assert!(err.to_string().contains("pool is full"), "got: {err}");
+    }
+
+    /// `max_proofs` is documented as the pool's global retained-proof bound,
+    /// but a batch out for proving used to vanish from the accounting: `len()`
+    /// counts bucket residents only, so admissions could refill the pool to
+    /// `max_proofs` while a batch was out, and a failed prove's `reinsert`
+    /// (which has no capacity check) then pushed residency to
+    /// `max_proofs + batch_size` (audit finding). Out-for-proving proofs must
+    /// count against the cap so reinsert can never overshoot it.
+    #[test]
+    fn proof_cap_counts_out_for_proving_proofs_so_reinsert_cannot_overshoot() {
+        let (mut pool, data, targets) = make_pool(
+            2,
+            PoolLimits {
+                max_proofs: 3,
+                ..PoolLimits::default()
+            },
+        );
+
+        let key = pool
+            .push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        pool.push(prove_fake(&data, &targets, &fake(1, 12)))
+            .unwrap();
+        let taken = pool.take_batch(&key).unwrap();
+
+        // Two of the three slots are out being proved; one admission remains.
+        pool.push(prove_fake(&data, &targets, &fake(1, 13)))
+            .unwrap();
+        let err = pool
+            .push(prove_fake(&data, &targets, &fake(1, 14)))
+            .unwrap_err();
+        assert!(err.to_string().contains("pool is full"), "got: {err}");
+
+        // The failed batch comes back: the documented global bound still holds.
+        assert_eq!(pool.reinsert(taken), 2);
+        assert_eq!(pool.len(), 3);
+
+        // ...and the freed accounting admits again only after a take.
+        let err = pool
+            .push(prove_fake(&data, &targets, &fake(1, 14)))
+            .unwrap_err();
+        assert!(err.to_string().contains("pool is full"), "got: {err}");
+    }
+
+    /// A `TakenBatch` dropped by a crashed proving worker must return its
+    /// capacity along with its nullifier reservations at the next pool
+    /// operation, or the out-for-proving count would leak and permanently
+    /// shrink the pool.
+    #[test]
+    fn dropped_batch_returns_capacity_to_the_pool() {
+        let (mut pool, data, targets) = make_pool(
+            1,
+            PoolLimits {
+                max_proofs: 1,
+                ..PoolLimits::default()
+            },
+        );
+
+        let key = pool
+            .push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        let taken = pool.take_batch(&key).unwrap();
+        drop(taken); // proving worker crashed
+
+        // The next operation reaps the orphaned batch: both the reservation
+        // and the capacity slot are free again.
+        pool.push(prove_fake(&data, &targets, &fake(1, 11)))
+            .expect("dropped batch must free its capacity slot");
+        assert_eq!(pool.len(), 1);
     }
 
     #[test]
