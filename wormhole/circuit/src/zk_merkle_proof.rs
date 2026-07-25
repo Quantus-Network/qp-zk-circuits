@@ -422,6 +422,30 @@ impl TryFrom<&CircuitInputs> for ZkMerkleProofData {
     type Error = anyhow::Error;
 
     fn try_from(inputs: &CircuitInputs) -> Result<Self, Self::Error> {
+        use anyhow::bail;
+
+        // Bound and cross-check the caller-controlled vectors BEFORE cloning
+        // them below: the clones are O(len), so deferring these O(1) checks
+        // to `fill_targets` would let malformed inputs force allocation and
+        // copying proportional to an arbitrarily large positions vector
+        // before being rejected (audit finding: validation order).
+        let siblings_len = inputs.private.zk_merkle_siblings.len();
+        let positions_len = inputs.private.zk_merkle_positions.len();
+        if siblings_len > MAX_DEPTH {
+            bail!(
+                "ZK Merkle proof depth {} exceeds maximum supported depth {}",
+                siblings_len,
+                MAX_DEPTH
+            );
+        }
+        if positions_len != siblings_len {
+            bail!(
+                "ZK Merkle proof positions length {} doesn't match siblings length {}",
+                positions_len,
+                siblings_len
+            );
+        }
+
         // Detect dummy proofs (block_hash == 0 and outputs == 0)
         let is_not_dummy = !(inputs.public.block_hash.as_ref() == [0u8; 32]
             && inputs.public.output_amount_1 == 0
@@ -751,6 +775,62 @@ mod tests {
         let err = ZkMerkleProofData::from_unsorted([0x11; 32], bad_levels, [0x42; 32], leaf, true)
             .unwrap_err();
         assert!(err.contains("sibling hash"), "got: {err}");
+    }
+
+    /// `TryFrom<&CircuitInputs>` clones the caller-controlled siblings and
+    /// positions vectors, so a positions vector that cannot possibly be valid
+    /// (length mismatched with siblings, or beyond MAX_DEPTH) must be
+    /// rejected at the conversion boundary, BEFORE the O(len) clone — not
+    /// deferred to `fill_targets` after the allocation and copying already
+    /// happened (audit finding: validation order).
+    #[test]
+    fn try_from_rejects_bad_position_vectors_before_cloning() {
+        use crate::inputs::{CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs};
+
+        let base = CircuitInputs {
+            private: PrivateCircuitInputs {
+                secret: [0xAB; 32].try_into().unwrap(),
+                transfer_count: 0,
+                unspendable_account: [0xCD; 32].try_into().unwrap(),
+                parent_hash: [5u8; 32].try_into().unwrap(),
+                state_root: [3u8; 32].try_into().unwrap(),
+                extrinsics_root: [4u8; 32].try_into().unwrap(),
+                digest: [0xEE; 110],
+                input_amount: 1000,
+                zk_tree_root: [0u8; 32],
+                zk_merkle_siblings: vec![],
+                zk_merkle_positions: vec![],
+            },
+            public: PublicCircuitInputs {
+                asset_id: 0,
+                output_amount_1: 900,
+                output_amount_2: 99,
+                volume_fee_bps: 10,
+                nullifier: [1u8; 32].try_into().unwrap(),
+                block_hash: [0u8; 32].try_into().unwrap(),
+                exit_account_1: [2u8; 32].try_into().unwrap(),
+                exit_account_2: [3u8; 32].try_into().unwrap(),
+                block_number: 1,
+            },
+        };
+
+        // Valid (empty) siblings with an oversized positions vector.
+        let mut inputs = base;
+        inputs.private.zk_merkle_positions = vec![0u8; MAX_DEPTH + 1];
+        let err = ZkMerkleProofData::try_from(&inputs).unwrap_err();
+        assert!(err.to_string().contains("positions length"), "got: {err}");
+
+        // Oversized siblings must also be rejected at the conversion, not
+        // just at the prover entry point.
+        inputs.private.zk_merkle_siblings = vec![[[0u8; 32]; SIBLINGS_PER_LEVEL]; MAX_DEPTH + 1];
+        inputs.private.zk_merkle_positions = vec![0u8; MAX_DEPTH + 1];
+        let err = ZkMerkleProofData::try_from(&inputs).unwrap_err();
+        assert!(err.to_string().contains("depth"), "got: {err}");
+
+        // A consistent in-bounds pair still converts.
+        inputs.private.zk_merkle_siblings = vec![[[0u8; 32]; SIBLINGS_PER_LEVEL]; 2];
+        inputs.private.zk_merkle_positions = vec![0u8, 1];
+        ZkMerkleProofData::try_from(&inputs).expect("valid proof inputs must convert");
     }
 
     /// Sibling hashes and position hints identify the leaf's location in the
