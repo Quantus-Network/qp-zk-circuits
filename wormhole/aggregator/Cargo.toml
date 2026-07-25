@@ -20,8 +20,11 @@ wormhole-circuit = { package = "qp-wormhole-circuit", version = "=3.1.0", path =
 wormhole-prover = { package = "qp-wormhole-prover", version = "=3.1.0", path = "../prover", default-features = false }
 zk-circuits-common = { package = "qp-zk-circuits-common", version = "=3.1.0", path = "../../common" }
 
+# Only used by the std-gated artifact reader (O_NONBLOCK open); optional and
+# std-gated so --no-default-features builds keep libc (and libc/std) out of
+# the dependency graph entirely.
 [target.'cfg(unix)'.dependencies]
-libc = "=0.2.186"
+libc = { version = "=0.2.186", default-features = false, optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
@@ -35,6 +38,7 @@ no_zk = []
 profile = ["qp-plonky2/rand", "qp-plonky2/timing", "std"]
 std = [
 	"anyhow/std",
+	"dep:libc",
 	"qp-plonky2/std",
 	"wormhole-circuit/std",
 	"wormhole-prover/std",
