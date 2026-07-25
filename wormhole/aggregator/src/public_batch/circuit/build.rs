@@ -8,8 +8,7 @@
 //! Expects private-batch artifacts to already exist in `output_dir`.
 
 use anyhow::{anyhow, Context, Result};
-use std::fs::{self, create_dir_all};
-use std::io::Write as _;
+use std::fs::create_dir_all;
 use std::path::Path;
 
 use plonky2::plonk::circuit_data::VerifierCircuitData;
@@ -19,8 +18,9 @@ use qp_wormhole_inputs::validate_proof_count;
 use zk_circuits_common::circuit::{wormhole_public_batch_circuit_config, C, D, F};
 
 use crate::common::utils::{
-    canonical_leaf_verifier_data, load_canonical_private_batch_verifier_data,
+    canonical_leaf_verifier_data, commit_artifact_set, load_canonical_private_batch_verifier_data,
     private_batch_num_leaves_from_padded_pi_len, read_artifact_file,
+    sweep_stale_artifact_droppings,
 };
 use crate::public_batch::circuit::circuit_logic::PublicBatchCircuit;
 
@@ -43,6 +43,9 @@ pub fn generate_public_batch_circuit_binaries<P: AsRef<Path>>(
     validate_proof_count(num_private_batch_proofs, "num_private_batch_proofs")?;
     create_dir_all(output_dir)
         .with_context(|| format!("Failed to create output dir {}", output_dir.display()))?;
+    // A previous publish hard-killed mid-swap leaves orphaned temp/backup
+    // entries behind; we are about to replace the set, so sweep them now.
+    sweep_stale_artifact_droppings(output_dir)?;
 
     // Pin the private-batch artifacts to the canonical private-batch circuit BEFORE
     // baking their verifier key into the public-batch circuit as constants. The leaf
@@ -129,115 +132,15 @@ fn write_verifier_artifacts(
         .to_bytes()
         .map_err(|e| anyhow!("Failed to serialize public_batch verifier data: {}", e))?;
 
+    // Published all-or-nothing; see `commit_artifact_set` in `common::utils`.
     commit_artifact_set(
         bins_dir,
         &[
             ("public_batch_common.bin", common_bytes),
             ("public_batch_verifier.bin", verifier_bytes),
         ],
+        &[],
     )
-}
-
-/// Publish a matched set of artifact files into `bins_dir` all-or-nothing.
-///
-/// `public_batch_common.bin` and `public_batch_verifier.bin` are consumed as a
-/// matched pair (loaders pin them against a canonical circuit rebuild), so a
-/// directory holding a fresh file from one generation beside a stale file from
-/// another is rejected until regenerated. Naive in-place writes create exactly
-/// that state whenever a re-run fails between files.
-///
-/// Instead, every file is first staged under a fresh unpredictable temp name
-/// in the same directory (exclusive create, so a pre-planted entry or symlink
-/// is never adopted), and only after all stages succeed are the previous
-/// artifacts moved aside and the staged files renamed into place. Any failure
-/// rolls the moved-aside originals back, so an error always leaves either the
-/// complete previous set or the complete new set — never a mix. The unwritten
-/// window shrinks from the whole multi-minute build-and-write to the instants
-/// between renames of already-complete files.
-fn commit_artifact_set(bins_dir: &Path, files: &[(&str, Vec<u8>)]) -> Result<()> {
-    let unique = format!("{}-{:016x}", std::process::id(), rand::random::<u64>());
-    let tmp_path = |name: &str| bins_dir.join(format!(".{name}.tmp-{unique}"));
-    let old_path = |name: &str| bins_dir.join(format!(".{name}.old-{unique}"));
-
-    // Phase 1: stage every file. Any failure here leaves the originals untouched.
-    for (i, (name, bytes)) in files.iter().enumerate() {
-        let path = tmp_path(name);
-        let staged = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .and_then(|mut f| f.write_all(bytes));
-        if let Err(e) = staged {
-            for (name, _) in &files[..=i] {
-                let _ = fs::remove_file(tmp_path(name));
-            }
-            return Err(e).with_context(|| format!("Failed to stage {}", path.display()));
-        }
-    }
-
-    // Phase 2: move previous artifacts aside, then swap the staged set in.
-    let mut moved_aside: Vec<&str> = Vec::new();
-    let mut swapped: Vec<&str> = Vec::new();
-    let swap_result = (|| -> Result<()> {
-        for (name, _) in files {
-            match fs::rename(bins_dir.join(name), old_path(name)) {
-                Ok(()) => moved_aside.push(name),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => {
-                    return Err(e).with_context(|| {
-                        format!(
-                            "Failed to move previous {} aside",
-                            bins_dir.join(name).display()
-                        )
-                    })
-                }
-            }
-        }
-        for (name, _) in files {
-            fs::rename(tmp_path(name), bins_dir.join(name)).with_context(|| {
-                format!(
-                    "Failed to move staged artifact into place at {}",
-                    bins_dir.join(name).display()
-                )
-            })?;
-            swapped.push(name);
-        }
-        Ok(())
-    })();
-
-    match swap_result {
-        Ok(()) => {
-            // The new set is committed; the moved-aside copies are redundant.
-            for name in moved_aside {
-                let old = old_path(name);
-                if fs::remove_file(&old).is_err() {
-                    let _ = fs::remove_dir_all(&old);
-                }
-            }
-            Ok(())
-        }
-        Err(e) => {
-            // Restore the previous set: renaming the old copy back atomically
-            // overwrites any already-swapped new file; names that had no old
-            // copy get their new file removed instead.
-            for (name, _) in files {
-                let final_path = bins_dir.join(name);
-                if moved_aside.contains(name) {
-                    if fs::rename(old_path(name), &final_path).is_err() {
-                        // A blocking entry (e.g. an already-swapped file under
-                        // a directory-shaped old copy) must not strand the
-                        // rollback in a mixed state.
-                        let _ = fs::remove_file(&final_path);
-                        let _ = fs::rename(old_path(name), &final_path);
-                    }
-                } else if swapped.contains(name) {
-                    let _ = fs::remove_file(&final_path);
-                }
-                let _ = fs::remove_file(tmp_path(name));
-            }
-            Err(e)
-        }
-    }
 }
 
 #[cfg(test)]

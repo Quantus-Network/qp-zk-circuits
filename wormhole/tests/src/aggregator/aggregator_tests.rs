@@ -119,14 +119,21 @@ fn private_batch_verifier() -> VerifierCircuitData<F, C, D> {
 /// from the header fields, so the proof is non-dummy (`test_inputs_0` uses the
 /// dummy sentinel `block_hash == 0`, which pools into the dummy bucket that
 /// `PublicBatchAggregator` refuses to aggregate).
-fn test_inputs_with_real_block() -> CircuitInputs {
+/// Replace the dummy-sentinel block hash (0) with the genuine hash of the
+/// inputs' header fields, making the resulting leaf proof non-dummy. Needed
+/// wherever a batch is aggregated: `PrivateBatchProver::commit` rejects
+/// all-dummy leaf batches (they settle nothing on-chain).
+fn with_real_block(mut inputs: CircuitInputs) -> CircuitInputs {
     use wormhole_circuit::block_header::header::HeaderInputs;
 
-    let mut inputs = CircuitInputs::test_inputs_0();
     inputs.public.block_hash = HeaderInputs::try_from(&inputs)
         .expect("header inputs from test inputs")
         .block_hash();
     inputs
+}
+
+fn test_inputs_with_real_block() -> CircuitInputs {
+    with_real_block(CircuitInputs::test_inputs_0())
 }
 
 /// Valid leaf inputs like `test_inputs_0` but for a non-native asset. The asset
@@ -149,7 +156,7 @@ fn test_inputs_with_asset(asset_id: u32) -> CircuitInputs {
 
 #[test]
 fn aggregate_single_proof() {
-    let proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
+    let proof = make_leaf_proof(&test_inputs_with_real_block());
 
     // A single proof in a 2-slot batch exercises dummy padding.
     let aggregated = make_private_batch_prover()
@@ -163,7 +170,7 @@ fn aggregate_single_proof() {
 #[test]
 fn aggregate_proofs_into_tree() {
     // All proofs must be from the SAME BLOCK for fixed-structure aggregation.
-    let inputs = CircuitInputs::test_inputs_0();
+    let inputs = test_inputs_with_real_block();
 
     let proof_0 = make_leaf_proof(&inputs);
     let proof_1 = make_leaf_proof(&inputs);
@@ -225,7 +232,7 @@ fn full_batch_of_same_nonzero_asset_aggregates() {
     // Sanity check for the fail-fast path: a FULL batch of same-asset proofs
     // needs no dummy padding, so a non-native asset is fine and the
     // compatibility preflight lets it through to real proving.
-    let inputs = test_inputs_with_asset(5);
+    let inputs = with_real_block(test_inputs_with_asset(5));
     let proof_0 = make_leaf_proof(&inputs);
     let proof_1 = make_leaf_proof(&inputs);
 
@@ -248,13 +255,13 @@ fn aggregate_proofs_from_separate_prover_instances_hex_serialized() {
 
     // Proof 1 from prover A
     let prover_a = WormholeProver::new(circuit_config());
-    let inputs_1 = CircuitInputs::test_inputs_0();
+    let inputs_1 = test_inputs_with_real_block();
     let proof_1 = prover_a.commit(&inputs_1).unwrap().prove().unwrap();
     let proof_1_hex = hex::encode(proof_1.to_bytes());
 
     // Proof 2 from prover B (same block)
     let prover_b = WormholeProver::new(circuit_config());
-    let inputs_2 = CircuitInputs::test_inputs_0();
+    let inputs_2 = test_inputs_with_real_block();
     let proof_2 = prover_b.commit(&inputs_2).unwrap().prove().unwrap();
     let proof_2_hex = hex::encode(proof_2.to_bytes());
 
@@ -372,7 +379,7 @@ fn private_batch_prover_ignores_prover_artifact() {
     }
 
     let aggregate_and_verify = |bins: &std::path::Path| {
-        let proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
+        let proof = make_leaf_proof(&test_inputs_with_real_block());
         let aggregated = PrivateBatchProver::new_from_binaries_dir(bins)
             .expect("prover must load without a trusted prover artifact")
             .aggregate(vec![proof])

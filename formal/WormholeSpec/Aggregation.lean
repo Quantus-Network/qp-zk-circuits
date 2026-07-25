@@ -9,6 +9,10 @@
       position-independent selection from the `illuzen/full-shuffle` fix), with
       an all-dummy batch settling to a zero block hash;
     * dummy-nullifier replacement `DNull(u) = H(H(u))`;
+    * the nullifier region emitted as a *canonically sorted permutation* of the
+      per-slot selections (`sort_digests4`, the `illuzen/v12-5089` privacy fix):
+      output position no longer identifies the producing leaf slot, so payout
+      slots cannot be linked to nullifiers positionally;
     * the exit *grouping/dedup* primitive (`groupExits`) that builds the `2N`
       settled slots.
 
@@ -140,7 +144,12 @@ def referenceFromFirstReal (leaves : List LeafPublic) (out : PrivateBatchOutput)
   | none   => out.blockHash = Digest.zero
 
 /-- Per-slot nullifier output: real children forward `nullifier`; private-batch dummies
-    are replaced by `DNull(u)` for the witnessed preimage `u`. -/
+    are replaced by `DNull(u)` for the witnessed preimage `u`.
+
+    This is the *pre-sort* per-slot correspondence: slot `i` of the list relates
+    to leaf `i`. The circuit no longer emits this list positionally — the output
+    region is a canonically sorted permutation of it (see `nullifiersSorted` and
+    the `∃ raw, … ∧ Perm` conjunct of `RPrivateBatch`). -/
 def nullifiersReplaced (ro : RandomOracle) :
     List LeafPublic → List (List Felt) → List Digest → Prop
   | [],      [],      []      => True
@@ -148,6 +157,24 @@ def nullifiersReplaced (ro : RandomOracle) :
       (n = if isDummyPrivateBatch p then ro.dummyNull u else p.nullifier) ∧
       nullifiersReplaced ro ps us ns
   | _,       _,       _       => False
+
+/-- Strict lexicographic order on digests, limb 0 most significant, each limb a
+    canonical 64-bit integer — exactly the order the `sort_digests4` network
+    computes in-circuit, via `halves8_lt` over the canonical 32-bit halves each
+    limb is split into at ingress (`common/src/gadgets.rs`). -/
+def digestLt (a b : Digest) : Prop :=
+  a.x0 < b.x0 ∨ (a.x0 = b.x0 ∧ (a.x1 < b.x1 ∨ (a.x1 = b.x1 ∧
+    (a.x2 < b.x2 ∨ (a.x2 = b.x2 ∧ a.x3 < b.x3)))))
+
+/-- Non-strict companion of `digestLt` (`halves8_lt`-or-equal): the condition each
+    comparator of the sorting network leaves established between adjacent slots. -/
+def digestLE (a b : Digest) : Prop := digestLt a b ∨ a = b
+
+/-- The nullifier region is in ascending canonical order (`sort_digests4`): every
+    pair, not just adjacent ones, is ordered. For the total, transitive `digestLE`
+    this `Pairwise` form is the standard sortedness predicate and coincides with
+    the adjacent-pair chain the network's comparators enforce. -/
+def nullifiersSorted (ns : List Digest) : Prop := ns.Pairwise digestLE
 
 /--
 `RPrivateBatch ro leaves us out` holds iff the private-batch wrapper accepts children `leaves`
@@ -159,13 +186,22 @@ witness layout exactly: `PrivateBatchCircuitTargets.dummy_nullifier_pre_images` 
 per dummy — see `private_batch/circuit/circuit_logic.rs:46–47, 76–85`. The wrapper reads
 slot `i`'s preimage only when slot `i` is a dummy (`select(is_dummy_i, …)`), so the
 per-child length bookkeeping here (`out.nullifiers.length = leaves.length`) lines up
-with the circuit.
+with the circuit (permutation preserves length).
+
+NULLIFIER ORDERING. The output nullifier region is NOT positional: the circuit
+routes the per-slot selections through `sort_digests4` before registering them,
+so `out.nullifiers` is a *canonically sorted permutation* of the per-slot list
+(`∃ raw, nullifiersReplaced … raw ∧ Perm`, plus `nullifiersSorted`). This is the
+`illuzen/v12-5089` privacy fix: exit slots stay in slot order, so a positional
+nullifier region would let an observer link payout `⌊i/2⌋`'s slots to nullifier
+`i`; sorting decorrelates them.
 -/
 def RPrivateBatch (ro : RandomOracle) (leaves : List LeafPublic) (us : List (List Felt))
     (out : PrivateBatchOutput) : Prop :=
   metadataConsistent leaves out ∧
   referenceFromFirstReal leaves out ∧
-  nullifiersReplaced ro leaves us out.nullifiers ∧
+  (∃ raw, nullifiersReplaced ro leaves us raw ∧ out.nullifiers.Perm raw) ∧
+  nullifiersSorted out.nullifiers ∧
   out.nullifiers.length = leaves.length ∧
   -- Primitive exit construction: the settled slots are *exactly* the in-circuit
   -- group/dedup of every child's two (account, amount) outputs. Value
@@ -277,7 +313,7 @@ theorem RPrivateBatch_value_conservation {ro : RandomOracle} {leaves : List Leaf
     {us : List (List Felt)} {out : PrivateBatchOutput} (h : RPrivateBatch ro leaves us out) :
     outputExitTotal out = rawOutputTotal leaves := by
   unfold outputExitTotal
-  rw [h.2.2.2.2]
+  rw [h.2.2.2.2.2]
   exact groupExits_childPairs leaves
 
 -- ── No-wraparound bound (makes the Phase-2 field hypothesis explicit) ────────

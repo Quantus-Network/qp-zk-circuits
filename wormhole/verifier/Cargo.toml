@@ -13,6 +13,12 @@ qp-plonky2-verifier = { version = "=1.5.4", default-features = false }
 qp-wormhole-inputs = { version = "=3.1.0", path = "../inputs", default-features = false }
 tiny-keccak = { workspace = true }
 
+# Only used by the std-gated artifact reader (O_NONBLOCK open); optional and
+# std-gated so --no-default-features builds keep libc (and libc/std) out of
+# the dependency graph entirely.
+[target.'cfg(unix)'.dependencies]
+libc = { version = "=0.2.186", default-features = false, optional = true }
+
 [dev-dependencies]
 criterion = { workspace = true }
 
@@ -20,6 +26,7 @@ criterion = { workspace = true }
 default = ["std"]
 std = [
 	"anyhow/std",
+	"dep:libc",
 	"qp-plonky2-verifier/std",
 	"qp-wormhole-inputs/std",
 ]

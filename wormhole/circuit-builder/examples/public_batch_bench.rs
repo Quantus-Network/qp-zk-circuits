@@ -5,25 +5,24 @@
 //!    built once and reused, since they don't depend on M).
 //! 2. Loads the prover, which rebuilds the circuit from source (measures aggregator
 //!    startup).
-//! 3. Proves a public batch padded entirely with the dummy private-batch template.
-//!    Proving cost is witness-independent, so this is representative of real batches.
+//! 3. Proves a public batch with one real private-batch proof, padded with the
+//!    dummy template. Proving cost is witness-independent, so this is
+//!    representative of full batches.
 //!
 //! Usage: cargo run --release -p qp-wormhole-circuit-builder --example public_batch_bench -- 32 64 128
 
 use std::{fs, path::Path, time::Instant};
 
-use plonky2::{
-    plonk::{circuit_data::CommonCircuitData, proof::ProofWithPublicInputs},
-    util::serialization::DefaultGateSerializer,
-};
+use test_helpers::TestInputs as _;
 use wormhole_aggregator::{
+    private_batch::prover::PrivateBatchProver,
     public_batch::{
         circuit::generate_public_batch_circuit_binaries,
         prover::{PublicBatchInputs, PublicBatchProver},
     },
     CircuitBinsConfig,
 };
-use zk_circuits_common::circuit::{C, D, F};
+use wormhole_circuit::{block_header::header::HeaderInputs, inputs::CircuitInputs};
 
 const NUM_LEAF_PROOFS: usize = 7;
 
@@ -62,6 +61,26 @@ fn main() -> anyhow::Result<()> {
         setup_start.elapsed().as_secs_f64()
     );
 
+    // One real private-batch proof (a single real leaf padded with dummy
+    // leaves), reused for every M: PublicBatchProver::commit rejects all-dummy
+    // batches (they settle nothing on-chain), and the private-batch circuit
+    // doesn't depend on M.
+    println!("== One-time setup: real private-batch proof ==");
+    let proof_start = Instant::now();
+    CircuitBinsConfig::new(NUM_LEAF_PROOFS, None)?.save(&dir)?;
+    let real_private_batch = {
+        let mut inputs = CircuitInputs::test_inputs_0();
+        inputs.public.block_hash = HeaderInputs::try_from(&inputs)
+            .expect("header inputs from test inputs")
+            .block_hash();
+        let real_leaf = wormhole_prover::build_fresh().commit(&inputs)?.prove()?;
+        PrivateBatchProver::new_from_binaries_dir(&dir)?.aggregate(vec![real_leaf])?
+    };
+    println!(
+        "Real private-batch proof done in {:.1}s\n",
+        proof_start.elapsed().as_secs_f64()
+    );
+
     let mut results = Vec::new();
 
     for &m in &branching_factors {
@@ -90,20 +109,10 @@ fn main() -> anyhow::Result<()> {
             load_time.as_secs_f64()
         );
 
-        // 3) Prove an all-dummy-padded batch (1 template proof, M-1 dummies).
-        let dummy_bytes = fs::read(dir.join("dummy_private_batch_proof.bin"))?;
-        let private_batch_common = CommonCircuitData::<F, D>::from_bytes(
-            fs::read(dir.join("private_batch_common.bin"))?,
-            &DefaultGateSerializer,
-        )
-        .map_err(|e| anyhow::anyhow!("failed to load private-batch common data: {e}"))?;
-        let template =
-            ProofWithPublicInputs::<F, C, D>::from_bytes(dummy_bytes, &private_batch_common)
-                .map_err(|e| anyhow::anyhow!("failed to load dummy template: {e}"))?;
-
+        // 3) Prove a batch with one real private-batch proof (M-1 dummy pads).
         let prove_start = Instant::now();
         let prover = prover.commit(PublicBatchInputs {
-            proofs: vec![template],
+            proofs: vec![real_private_batch.clone()],
             aggregator_address: Default::default(),
         })?;
         let proof = prover.prove()?;

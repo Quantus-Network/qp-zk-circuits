@@ -325,15 +325,34 @@ impl ZkMerkleProofData {
     }
 
     /// Create proof data from unsorted siblings, computing positions automatically.
+    ///
+    /// Returns an error if the supplied path is deeper than [`MAX_DEPTH`], or
+    /// if the leaf or any sibling is not canonical hash bytes (each 8-byte
+    /// little-endian limb below the Goldilocks modulus). Both bounds are
+    /// enforced *before* any allocation or hashing so untrusted raw siblings
+    /// cannot force per-level Poseidon work on a proof the circuit cannot use
+    /// anyway.
     pub fn from_unsorted(
         root_hash: [u8; 32],
         unsorted_siblings: Vec<[[u8; 32]; SIBLINGS_PER_LEVEL]>,
         leaf_hash: [u8; 32],
         leaf: ZkLeafData,
         is_not_dummy: bool,
-    ) -> Self {
+    ) -> Result<Self, &'static str> {
         use zk_circuits_common::serialization::bytes_to_digest;
-        use zk_circuits_common::zk_merkle::hash_node_presorted;
+        use zk_circuits_common::zk_merkle::{hash_node_presorted, is_canonical_hash};
+
+        if unsorted_siblings.len() > MAX_DEPTH {
+            return Err("from_unsorted: proof depth exceeds MAX_DEPTH");
+        }
+        // The node hash rejects noncanonical limbs (they alias mod p);
+        // reject untrusted raw bytes here instead of panicking mid-hash.
+        if !is_canonical_hash(&leaf_hash) {
+            return Err("from_unsorted: leaf hash bytes are noncanonical");
+        }
+        if !unsorted_siblings.iter().flatten().all(is_canonical_hash) {
+            return Err("from_unsorted: sibling hash bytes are noncanonical");
+        }
 
         let mut current_hash = leaf_hash;
         let mut sorted_siblings_bytes = Vec::with_capacity(unsorted_siblings.len());
@@ -369,8 +388,10 @@ impl ZkMerkleProofData {
             };
             sorted_siblings_bytes.push(sorted_sibs);
 
-            // Compute parent hash for next level
-            current_hash = hash_node_presorted(&all_four);
+            // Compute parent hash for next level (the canonicality check
+            // above makes an error unreachable, but propagate rather than
+            // panic on caller-supplied bytes).
+            current_hash = hash_node_presorted(&all_four)?;
         }
 
         // Convert to felts
@@ -386,14 +407,14 @@ impl ZkMerkleProofData {
             })
             .collect();
 
-        Self {
+        Ok(Self {
             root_hash,
             depth: siblings.len(),
             siblings,
             positions,
             leaf,
             is_not_dummy,
-        }
+        })
     }
 }
 
@@ -683,6 +704,53 @@ mod tests {
         assert!(!dump.contains("3735928559"));
         // input_amount (pre-fee deposit amount).
         assert!(!dump.contains("313131313"));
+    }
+
+    /// `from_unsorted` must reject depths beyond MAX_DEPTH before doing
+    /// per-level sorting and Poseidon hashing, mirroring the bound enforced
+    /// by `ZkMerkleProof::verify_with_positions` (audit finding: missing
+    /// depth limit in proof normalization).
+    #[test]
+    fn from_unsorted_rejects_oversized_depth() {
+        let leaf = ZkLeafData::new([0xCD; 32], 1, 0, 100, 50, 49, 10);
+        let levels = vec![[[0xABu8; 32]; SIBLINGS_PER_LEVEL]; MAX_DEPTH + 1];
+        let err = ZkMerkleProofData::from_unsorted([0x11; 32], levels, [0x42; 32], leaf, true)
+            .unwrap_err();
+        assert!(err.contains("MAX_DEPTH"), "got: {err}");
+    }
+
+    /// Proofs at exactly MAX_DEPTH must still construct.
+    #[test]
+    fn from_unsorted_accepts_max_depth() {
+        let leaf = ZkLeafData::new([0xCD; 32], 1, 0, 100, 50, 49, 10);
+        let levels = vec![[[0xABu8; 32]; SIBLINGS_PER_LEVEL]; MAX_DEPTH];
+        ZkMerkleProofData::from_unsorted([0x11; 32], levels, [0x42; 32], leaf, true)
+            .expect("MAX_DEPTH proof must construct");
+    }
+
+    /// `from_unsorted` hashes caller-supplied bytes, so noncanonical limbs
+    /// (which the node hash rejects as mod-p aliases) must surface as an
+    /// error, not a panic mid-hash.
+    #[test]
+    fn from_unsorted_rejects_noncanonical_bytes() {
+        // Every limb of 0xff..ff exceeds the Goldilocks modulus.
+        let leaf = ZkLeafData::new([0xCD; 32], 1, 0, 100, 50, 49, 10);
+        let levels = vec![[[0xABu8; 32]; SIBLINGS_PER_LEVEL]];
+
+        let err = ZkMerkleProofData::from_unsorted(
+            [0x11; 32],
+            levels.clone(),
+            [0xff; 32],
+            leaf.clone(),
+            true,
+        )
+        .unwrap_err();
+        assert!(err.contains("leaf hash"), "got: {err}");
+
+        let bad_levels = vec![[[0xffu8; 32]; SIBLINGS_PER_LEVEL]];
+        let err = ZkMerkleProofData::from_unsorted([0x11; 32], bad_levels, [0x42; 32], leaf, true)
+            .unwrap_err();
+        assert!(err.contains("sibling hash"), "got: {err}");
     }
 
     /// Sibling hashes and position hints identify the leaf's location in the

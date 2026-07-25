@@ -256,13 +256,15 @@ impl PublicBatchProver {
     /// and zeroes their forwarded exit slots and nullifiers.
     ///
     /// Fails fast (milliseconds, before the minutes-long proving run) on inputs
-    /// the public-batch circuit could never prove: each supplied proof is
-    /// cryptographically verified against the pinned private-batch verifier,
-    /// and non-dummy proofs must share one (block hash, asset id, fee) triple —
-    /// the cross-proof consistency the circuit enforces. Proofs arriving via
-    /// [`crate::pool::ProofPool`] already satisfy both by construction; this
-    /// protects services that feed untrusted proof vectors to the prover
-    /// directly.
+    /// the public-batch circuit could never prove or that could never settle:
+    /// each supplied proof is cryptographically verified against the pinned
+    /// private-batch verifier, non-dummy proofs must share one (block hash,
+    /// asset id, fee) triple — the cross-proof consistency the circuit
+    /// enforces — and at least one supplied proof must be real (non-dummy),
+    /// since an all-dummy batch produces a proof with zero block references
+    /// that settles nothing. Proofs arriving via [`crate::pool::ProofPool`]
+    /// already satisfy all of these by construction; this protects services
+    /// that feed untrusted proof vectors to the prover directly.
     pub fn commit(mut self, inputs: PublicBatchInputs) -> Result<Self> {
         let Some(targets) = self.targets.take() else {
             bail!("public-batch aggregation prover has already committed to inputs");
@@ -334,7 +336,9 @@ impl PublicBatchProver {
 /// public-batch circuit's cross-proof constraints, so an incompatible batch is
 /// rejected at commit time instead of failing after minutes of proving:
 /// non-dummy proofs (`block_hash != 0`) must share one block hash, asset id,
-/// and volume fee; dummy proofs are exempt.
+/// and volume fee; dummy proofs are exempt. At least one proof must be
+/// non-dummy: an all-dummy batch carries zero block references and settles
+/// nothing on-chain.
 ///
 /// NOTE: keep in lockstep with the circuit's cross-proof constraints
 /// (`public_batch::circuit::circuit_logic`). The circuit remains the enforcer;
@@ -402,6 +406,18 @@ fn ensure_private_batch_compatible(proofs: &[ProofWithPublicInputs<F, C, D>]) ->
                 }
             }
         }
+    }
+    // No non-dummy reference found: an all-dummy batch yields a public proof
+    // with zero block references that the chain rejects, so proving it only
+    // burns the proving window. The pool enforces this at admission
+    // (`ProofPool::push`); this guards the direct prover API against
+    // untrusted proof vectors.
+    if reference.is_none() {
+        bail!(
+            "every supplied private-batch proof is all-dummy (block_hash == 0): \
+             such a batch settles nothing on-chain; supply at least one real \
+             private-batch proof"
+        );
     }
     Ok(())
 }
@@ -511,22 +527,40 @@ mod tests {
 
     /// A genuine all-dummy private-batch proof over the fake leaf circuit:
     /// the only template the (now-validating) direct constructor accepts.
+    ///
+    /// Built the way production builds its padding template (the
+    /// circuit-build path): fill the witness with explicit dummy leaves and
+    /// prove directly. It cannot go through `PrivateBatchProver::commit`,
+    /// which rejects all-dummy leaf batches.
     fn make_all_dummy_private_batch_template(
         leaf: &plonky2::plonk::circuit_data::CircuitData<F, C, D>,
         fake_leaf_proof: &ProofWithPublicInputs<F, C, D>,
     ) -> ProofWithPublicInputs<F, C, D> {
-        PrivateBatchProver::new(
+        use plonky2::iop::witness::PartialWitness;
+        use zk_circuits_common::utils::bytes_to_digest;
+
+        let circuit = PrivateBatchCircuit::new(
             wormhole_private_batch_circuit_config(),
-            leaf.common.clone(),
+            &leaf.common,
             &leaf.verifier_only,
             1,
-            fake_leaf_proof.clone(),
         )
-        .unwrap()
-        .commit(vec![fake_leaf_proof.clone()])
-        .unwrap()
-        .prove()
-        .unwrap()
+        .unwrap();
+        let targets = circuit.targets();
+        let circuit_data = circuit.build_circuit();
+
+        let pre_images = vec![bytes_to_digest(
+            crate::dummy_proof::generate_random_nullifier_preimage(),
+        )];
+        let mut pw = PartialWitness::new();
+        crate::private_batch::prover::fill_private_batch_witness(
+            &mut pw,
+            &targets,
+            std::slice::from_ref(fake_leaf_proof),
+            &pre_images,
+        )
+        .unwrap();
+        circuit_data.prove(pw).unwrap()
     }
 
     #[test]
@@ -637,6 +671,45 @@ mod tests {
             err.to_string().contains("failed verification"),
             "got: {err}"
         );
+    }
+
+    /// An all-dummy batch (every proof carries the zero block-hash sentinel)
+    /// produces a public-batch proof with zero block references that settles
+    /// nothing on-chain; the pool rejects such proofs at admission, and the
+    /// direct prover API must equally reject them at commit instead of
+    /// spending a full proving run on unusable output (audit finding).
+    #[test]
+    fn commit_rejects_all_dummy_batch() {
+        let (leaf, leaf_targets) = build_fake_leaf_circuit();
+        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; 21]);
+        let private_batch = PrivateBatchCircuit::new(
+            wormhole_private_batch_circuit_config(),
+            &leaf.common,
+            &leaf.verifier_only,
+            1,
+        )
+        .unwrap()
+        .build_verifier();
+
+        let template = make_all_dummy_private_batch_template(&leaf, &dummy_leaf);
+        let prover = PublicBatchProver::new(
+            wormhole_public_batch_circuit_config(),
+            private_batch.common.clone(),
+            &private_batch.verifier_only,
+            2,
+            1,
+            template.clone(),
+        )
+        .unwrap();
+
+        // A cryptographically valid all-dummy proof as the only real input.
+        let err = prover
+            .commit(PublicBatchInputs {
+                proofs: vec![template],
+                aggregator_address: BytesDigest::default(),
+            })
+            .expect_err("an all-dummy public batch must be rejected at commit");
+        assert!(err.to_string().contains("all-dummy"), "got: {err}");
     }
 
     /// Individually valid inner proofs with incompatible batch metadata (here:

@@ -1,7 +1,8 @@
 use anyhow::{anyhow, bail, Context, Result};
 use std::fs;
-use std::fs::{create_dir_all, write};
+use std::fs::create_dir_all;
 use std::path::{Path, PathBuf};
+use wormhole_aggregator::common::utils::commit_artifact_set;
 use wormhole_aggregator::public_batch::circuit::generate_public_batch_circuit_binaries;
 
 use plonky2::util::serialization::DefaultGateSerializer;
@@ -17,11 +18,13 @@ pub use wormhole_aggregator::CircuitBinsConfig;
 /// This is a low-level helper for partial artifact generation. For the full flow that also
 /// emits `config.json`, use [`generate_all_circuit_binaries`].
 ///
-/// WARNING: writes into `output_dir` in place, without clearing pre-existing
-/// files or staging a complete set first. Interrupted or partial runs can
-/// leave a mixed artifact set. [`generate_all_circuit_binaries`] stages and
-/// atomically replaces the directory instead; prefer it unless you are
-/// deliberately regenerating one stage into an existing set.
+/// The three leaf files are published all-or-nothing through the aggregator's
+/// `commit_artifact_set` (exclusive-create staging plus rename into place), so
+/// a failed re-run never leaves a mixed leaf set and a symlink pre-planted at
+/// an artifact filename is replaced rather than followed. Whole-directory
+/// consistency across all stages is still only guaranteed by
+/// [`generate_all_circuit_binaries`]; prefer it unless you are deliberately
+/// regenerating one stage into an existing set.
 ///
 /// Note: no `prover.bin` is emitted for the leaf circuit. `WormholeProver` always builds
 /// the (small, fast-to-build) leaf circuit from source; loading prover-only artifacts was
@@ -39,36 +42,43 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(output_dir: P) -> Result<()> {
 
     let output_path = output_dir.as_ref();
     create_dir_all(output_path)?;
+    // A previous publish hard-killed mid-swap leaves orphaned temp/backup
+    // entries behind; we are about to replace the set, so sweep them now.
+    wormhole_aggregator::common::utils::sweep_stale_artifact_droppings(output_path)?;
 
     // Generate dummy proof BEFORE consuming circuit_data (prove() borrows, prover_data() moves)
     println!("Generating dummy proof for aggregation padding...");
     let dummy_proof_bytes = wormhole_aggregator::generate_dummy_proof(&circuit_data, &targets)
         .map_err(|e| anyhow!("failed to generate dummy proof: {}", e))?;
-    write(output_path.join("dummy_proof.bin"), &dummy_proof_bytes)?;
-    println!(
-        "Dummy proof saved to {}/dummy_proof.bin ({} bytes)",
-        output_path.display(),
-        dummy_proof_bytes.len()
-    );
 
     println!("Serializing circuit data...");
 
     let verifier_data = circuit_data.verifier_data();
     let common_data = &verifier_data.common;
 
-    // Serialize common data
     let common_bytes = common_data
         .to_bytes(&gate_serializer)
         .map_err(|e| anyhow!("failed to serialize common data: {}", e))?;
-    write(output_path.join("common.bin"), common_bytes)?;
-    println!("Common data saved to {}/common.bin", output_path.display());
-
-    // Serialize verifier only data
     let verifier_only_bytes = verifier_data
         .verifier_only
         .to_bytes()
         .map_err(|e| anyhow!("failed to serialize verifier data: {}", e))?;
-    write(output_path.join("verifier.bin"), verifier_only_bytes)?;
+
+    println!(
+        "Publishing {}/dummy_proof.bin ({} bytes)",
+        output_path.display(),
+        dummy_proof_bytes.len()
+    );
+    commit_artifact_set(
+        output_path,
+        &[
+            ("dummy_proof.bin", dummy_proof_bytes),
+            ("common.bin", common_bytes),
+            ("verifier.bin", verifier_only_bytes),
+        ],
+        &[],
+    )?;
+    println!("Common data saved to {}/common.bin", output_path.display());
     println!(
         "Verifier data saved to {}/verifier.bin",
         output_path.display()
@@ -320,6 +330,7 @@ fn commit_staging_dir_impl(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::write;
 
     fn unique_tmp_dir(tag: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -597,6 +608,42 @@ mod tests {
         assert!(format!("{err:#}").contains("move previous"), "got: {err:#}");
         assert!(output.join("previous.bin").exists());
         assert!(!staging.exists());
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A symlink pre-planted at an artifact filename must not redirect the
+    /// write onto its target: `std::fs::write` follows symlinks and truncates,
+    /// so an attacker with write access to the output directory could make the
+    /// builder clobber any file writable by the invoking account (audit
+    /// finding: symlink-following artifact writes). Publishing must replace
+    /// the planted entry itself and leave the victim untouched.
+    #[cfg(unix)]
+    #[test]
+    fn leaf_artifact_writes_do_not_follow_planted_symlinks() {
+        let root = unique_tmp_dir("symlink-clobber");
+        let _ = fs::remove_dir_all(&root);
+        let output = root.join("bins");
+        create_dir_all(&output).unwrap();
+
+        let victim = root.join("victim.txt");
+        write(&victim, b"precious data").unwrap();
+        std::os::unix::fs::symlink(&victim, output.join("common.bin")).unwrap();
+
+        let result = generate_circuit_binaries(&output);
+
+        assert_eq!(
+            fs::read(&victim).unwrap(),
+            b"precious data",
+            "artifact publication must never write through a planted symlink"
+        );
+        if result.is_ok() {
+            let common = fs::read(output.join("common.bin")).unwrap();
+            assert_ne!(
+                common, b"precious data",
+                "a successful run must have replaced the planted entry with a real artifact"
+            );
+        }
 
         fs::remove_dir_all(&root).unwrap();
     }

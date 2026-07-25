@@ -4,8 +4,8 @@
 //! - Linux: `/proc/self/status:VmRSS`.
 //! - Other: returns `(0, 0)`.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -52,23 +52,46 @@ pub fn release_memory() -> anyhow::Result<(u64, u64, u64)> {
     Ok((released_reported, before, after))
 }
 
+/// Upper bound for the sampler poll period. Sampling slower than once a
+/// minute cannot produce a useful peak profile, and bounding the period keeps
+/// the poll loop's wait short-lived relative to any run.
+pub const MAX_SAMPLE_PERIOD_MS: u64 = 60_000;
+
 /// A background thread that samples `phys_footprint` (or `RSS`) at a fixed
 /// interval and tracks the maximum observed value. Cheap enough to run with a
 /// 25-50ms period.
+#[derive(Debug)]
 pub struct PeakSampler {
     peak: Arc<AtomicU64>,
-    stop: Arc<AtomicBool>,
+    /// `true` once shutdown is requested; paired with the condvar so the
+    /// sampler's poll wait can be interrupted immediately on drop.
+    shutdown: Arc<(Mutex<bool>, Condvar)>,
     handle: Option<thread::JoinHandle<()>>,
 }
 
 impl PeakSampler {
-    pub fn start(period_ms: u64) -> Self {
+    /// Start the sampler thread polling every `period_ms` milliseconds.
+    ///
+    /// Rejects `period_ms == 0` (the poll wait would return immediately,
+    /// turning the sampler into a busy loop on the process-memory read) and
+    /// periods above [`MAX_SAMPLE_PERIOD_MS`] (useless for profiling). The
+    /// poll wait is condvar-based, so dropping the sampler interrupts it
+    /// immediately instead of blocking shutdown for up to a full period.
+    pub fn start(period_ms: u64) -> anyhow::Result<Self> {
+        if period_ms == 0 || period_ms > MAX_SAMPLE_PERIOD_MS {
+            anyhow::bail!(
+                "sample period must be between 1 and {} ms, got {}",
+                MAX_SAMPLE_PERIOD_MS,
+                period_ms
+            );
+        }
         let peak = Arc::new(AtomicU64::new(0));
-        let stop = Arc::new(AtomicBool::new(false));
+        let shutdown = Arc::new((Mutex::new(false), Condvar::new()));
         let peak_t = peak.clone();
-        let stop_t = stop.clone();
+        let shutdown_t = shutdown.clone();
         let handle = thread::spawn(move || {
-            while !stop_t.load(Ordering::Relaxed) {
+            let (stopped, cvar) = &*shutdown_t;
+            loop {
                 let rss = match process_memory() {
                     Ok((rss, _)) => rss,
                     Err(e) => {
@@ -88,14 +111,21 @@ impl PeakSampler {
                         Err(observed) => cur = observed,
                     }
                 }
-                thread::sleep(Duration::from_millis(period_ms));
+                // Wait out the poll period, waking immediately on shutdown.
+                let guard = stopped.lock().unwrap();
+                let (guard, _timeout) = cvar
+                    .wait_timeout_while(guard, Duration::from_millis(period_ms), |stop| !*stop)
+                    .unwrap();
+                if *guard {
+                    break;
+                }
             }
         });
-        Self {
+        Ok(Self {
             peak,
-            stop,
+            shutdown,
             handle: Some(handle),
-        }
+        })
     }
 
     /// Read current peak without resetting.
@@ -111,7 +141,9 @@ impl PeakSampler {
 
 impl Drop for PeakSampler {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
+        let (stopped, cvar) = &*self.shutdown;
+        *stopped.lock().unwrap() = true;
+        cvar.notify_all();
         if let Some(h) = self.handle.take() {
             let _ = h.join();
         }
@@ -120,6 +152,40 @@ impl Drop for PeakSampler {
 
 pub fn fmt_mb(bytes: u64) -> String {
     format!("{:.1}", bytes as f64 / (1024.0 * 1024.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    /// Dropping the sampler must not block on the tail of a long poll sleep:
+    /// `Drop` joins the sampler thread, so a non-interruptible
+    /// `thread::sleep(period)` makes shutdown take up to a full period after
+    /// the work is done (audit finding: unbounded sampler interval).
+    #[test]
+    fn dropping_sampler_with_long_period_is_prompt() {
+        let t0 = Instant::now();
+        {
+            let _sampler = PeakSampler::start(10_000).unwrap();
+            thread::sleep(Duration::from_millis(50));
+        }
+        assert!(
+            t0.elapsed() < Duration::from_secs(2),
+            "dropping the sampler blocked on its poll sleep ({}ms)",
+            t0.elapsed().as_millis()
+        );
+    }
+
+    /// A zero period would make the poll wait return immediately, turning the
+    /// sampler thread into a busy loop on the process-memory read.
+    #[test]
+    fn sampler_rejects_out_of_range_periods() {
+        let err = PeakSampler::start(0).unwrap_err();
+        assert!(err.to_string().contains("between 1 and"), "got: {err}");
+        let err = PeakSampler::start(MAX_SAMPLE_PERIOD_MS + 1).unwrap_err();
+        assert!(err.to_string().contains("between 1 and"), "got: {err}");
+    }
 }
 
 #[cfg(target_vendor = "apple")]
