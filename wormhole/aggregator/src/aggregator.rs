@@ -20,7 +20,9 @@
 //! should snapshot under a short lock and prove without it:
 //!
 //! ```text
-//! // policy loop, short lock:
+//! // policy loop, short exclusive lock (snapshot_batch takes &mut self —
+//! // it records the snapshot time, so racing policy workers see each
+//! // other's mark instead of both proving the same key):
 //! let proofs = aggregator.lock().snapshot_batch(&key)?;
 //!
 //! // proving worker, NO lock held (use its own prover instance):
@@ -37,10 +39,19 @@
 //! proof in the network (see the custody section in [`crate::pool`]). A
 //! failed or crashed proving worker therefore needs no recovery protocol —
 //! the pool never changed — and buckets queue deeper than one batch, so
-//! admissions for the same key keep landing while it is being proved. The
-//! only removal paths are settlement eviction
+//! admissions for the same key keep landing while it is being proved.
+//!
+//! Because success does not drain the bucket, a policy loop must NOT blindly
+//! re-aggregate the same key every cycle: until settlement lands (a few
+//! block times), each re-prove burns a full proving run to produce a
+//! duplicate submission. Use [`BucketStats::last_snapshot_age`] to skip
+//! buckets with a submission plausibly still in flight.
+//!
+//! The removal paths are settlement eviction
 //! ([`PublicBatchAggregator::evict_settled`], call it on every imported
-//! block) and the operator override
+//! block), expiry ([`PublicBatchAggregator::evict_older_than`] — operators
+//! MUST run it, or their own expiry policy, on a cadence; see the expiry
+//! section in [`crate::pool`]), and the operator override
 //! [`PublicBatchAggregator::remove_bucket`].
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -183,29 +194,35 @@ impl PublicBatchAggregator {
     /// NON-CONSUMING: the proved proofs stay pooled — they may exist nowhere
     /// else in the network (see the custody section in [`crate::pool`]) — so
     /// a failed attempt needs no cleanup, and calling this again before the
-    /// submitted batch settles re-proves the same batch. Removal happens
-    /// through the block-import [`Self::evict_settled`] cadence once the
-    /// batch's segments settle on-chain, or via [`Self::remove_bucket`].
-    /// Proofs beyond `batch_size` stay queued for the next call.
+    /// submitted batch settles re-proves the same batch (check
+    /// [`BucketStats::last_snapshot_age`] first; see the module docs).
+    /// Removal happens through the block-import [`Self::evict_settled`]
+    /// cadence once the batch's segments settle on-chain, through expiry
+    /// ([`Self::evict_older_than`]), or via [`Self::remove_bucket`]. Proofs
+    /// beyond `batch_size` stay queued for the next call.
     ///
     /// This convenience method blocks for the whole proving run (tens of
-    /// seconds). A concurrent service should use the split API instead:
-    /// [`Self::snapshot_batch`] under a short lock, then [`Self::prove_batch`]
-    /// on a proving worker WITHOUT holding the lock.
-    pub fn aggregate(&self, key: &BatchKey) -> Result<Proof> {
+    /// seconds) and, taking `&mut self`, holds exclusive access to the
+    /// aggregator throughout — which also means concurrent aggregation of
+    /// the same key is serialized structurally. A concurrent service should
+    /// use the split API instead: [`Self::snapshot_batch`] under a short
+    /// lock, then [`Self::prove_batch`] on a proving worker WITHOUT holding
+    /// the lock.
+    pub fn aggregate(&mut self, key: &BatchKey) -> Result<Proof> {
         let proofs = self.snapshot_batch(key)?;
         self.prove_batch(proofs)
     }
 
     /// Clone the oldest up-to-`batch_size` proofs of one bucket, for proving
-    /// via [`Self::prove_batch`]. Cheap and non-consuming; see
-    /// [`ProofPool::snapshot_batch`].
+    /// via [`Self::prove_batch`]. Cheap and non-consuming; records the
+    /// snapshot time (see [`BucketStats::last_snapshot_age`]) so policy can
+    /// avoid re-proving an in-flight batch. See [`ProofPool::snapshot_batch`].
     ///
     /// Refuses the dummy sentinel bucket: an all-dummy public batch is a
     /// valid proof that settles nothing, so proving it only wastes the
     /// proving run. (Defense in depth — [`ProofPool::push`] already rejects
     /// all-dummy proofs, so the bucket should never exist.)
-    pub fn snapshot_batch(&self, key: &BatchKey) -> Result<Vec<Proof>> {
+    pub fn snapshot_batch(&mut self, key: &BatchKey) -> Result<Vec<Proof>> {
         if key.is_dummy() {
             bail!(
                 "refusing to aggregate the dummy sentinel bucket (block_hash == 0): \
@@ -267,6 +284,16 @@ impl PublicBatchAggregator {
     /// slots. See [`ProofPool::evict_settled`].
     pub fn evict_settled(&mut self, settled: &HashSet<BytesDigest>) -> usize {
         self.pool.evict_settled(settled)
+    }
+
+    /// Evict every pooled proof admitted more than `max_age` ago, returning
+    /// the number evicted. Settlement only reclaims proofs whose nullifiers
+    /// reach the chain, so operators MUST run this (or their own expiry
+    /// policy) on a cadence with a `max_age` past the chain's acceptance
+    /// window — otherwise proofs that lost their inclusion race occupy
+    /// `max_proofs` forever. See [`ProofPool::evict_older_than`].
+    pub fn evict_older_than(&mut self, max_age: std::time::Duration) -> usize {
+        self.pool.evict_older_than(max_age)
     }
 
     /// Remove one bucket entirely, returning its proofs (operator recovery /

@@ -52,6 +52,21 @@ pub const MAX_TRANSFER_PROOF_JSON_BYTES: usize = 8 * 1024 * 1024;
 /// fn requires_deserialize<'de, T: serde::Deserialize<'de>>() {}
 /// requires_deserialize::<qp_zk_circuits_common::circuit::TransferProofJson>();
 /// ```
+///
+/// The passing companion below exercises the same fully qualified path (and
+/// the sanctioned parse route). A `compile_fail` test asserts only that
+/// *some* compile error occurs, so on its own it would keep passing — for
+/// the wrong reason — if the crate were renamed, the module moved, or serde
+/// stopped resolving in the doctest environment. Any of those now breaks
+/// this visible test instead of silently disarming the pin above.
+///
+/// ```
+/// use serde::Deserialize as _; // serde must resolve here for the pin to be meaningful
+/// let doc = qp_zk_circuits_common::circuit::TransferProofJson::from_json_str(
+///     r#"{"transfer_count":1,"state_root":"00","storage_proof":["00"],"indices":[0]}"#,
+/// ).unwrap();
+/// assert_eq!(doc.transfer_count, 1);
+/// ```
 #[derive(Debug)]
 pub struct TransferProofJson {
     pub transfer_count: u64,

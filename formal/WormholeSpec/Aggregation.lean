@@ -44,8 +44,9 @@
   while the total cannot wrap — i.e. under the explicit hypothesis
   `rawOutputTotal leaves < goldilocks`. That bound is *not* hand-waved: it is
   discharged below (`rawOutputTotal_lt_modulus`) from the leaf circuit's 32-bit
-  output range checks plus a batch-size bound (and it covers the masked
-  accumulator too, via `inputExitTotal_le_rawOutputTotal`), with an enormous margin
+  output range checks plus a batch-size bound — with the masked-accumulator form
+  the circuit actually needs stated as `inputExitTotal_lt_modulus` — and it has
+  an enormous margin
   (`n · 2³³ < p` holds for any `n < 2³¹`, versus realistic batches of a few
   dozen). Phase 2 must (a) carry `rawOutputTotal leaves < goldilocks` as a
   hypothesis on the field-level conservation statement, and (b) rework the
@@ -398,6 +399,18 @@ theorem rawOutputTotal_lt_modulus {leaves : List LeafPublic} {M : Felt}
     (hbatch : leaves.length * (2 * M) < goldilocks) :
     rawOutputTotal leaves < goldilocks :=
   Nat.lt_of_le_of_lt (rawOutputTotal_le_linear hM) hbatch
+
+/-- The no-wraparound bound stated directly for the *masked* (non-dummy) total —
+    what the in-circuit accumulator actually sums. This is the exact form the
+    Phase-2 field hypothesis needs for `inputExitTotal`, so callers get it
+    ready-made instead of chaining `inputExitTotal_le_rawOutputTotal` with
+    `rawOutputTotal_lt_modulus` by hand. -/
+theorem inputExitTotal_lt_modulus {leaves : List LeafPublic} {M : Felt}
+    (hM : ∀ p ∈ leaves, p.outputAmount1 ≤ M ∧ p.outputAmount2 ≤ M)
+    (hbatch : leaves.length * (2 * M) < goldilocks) :
+    inputExitTotal leaves < goldilocks :=
+  Nat.lt_of_le_of_lt (inputExitTotal_le_rawOutputTotal leaves)
+    (rawOutputTotal_lt_modulus hM hbatch)
 
 /-- Under the leaf↔private-batch compatibility guarantee (a private-batch dummy carries zero
     outputs), the raw total coincides with the non-dummy total. No longer needed for

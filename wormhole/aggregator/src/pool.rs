@@ -22,8 +22,9 @@
 //! times), submit the result, and let the on-chain settlement retire the
 //! proved inputs through the regular [`ProofPool::evict_settled`] cadence. A
 //! failed or crashed proving attempt needs no recovery protocol: the pool
-//! never changed. The only paths that remove a proof are settlement eviction
-//! and the explicit operator override [`ProofPool::remove_bucket`].
+//! never changed. The paths that remove a proof are settlement eviction,
+//! expiry ([`ProofPool::evict_older_than`]), and the explicit operator
+//! override [`ProofPool::remove_bucket`].
 //!
 //! Buckets queue arbitrarily deep (bounded only by [`PoolLimits`]), so a hot
 //! (block, asset, fee) stream keeps admitting while earlier batches are being
@@ -36,8 +37,19 @@
 //! nullifiers on every imported block — both before proving (don't aggregate
 //! dead weight) and before submitting a finished public batch (don't submit
 //! stale segments). Until a submitted batch settles, its bucket remains
-//! snapshot-able; whether to re-prove it meanwhile is the operator's policy
-//! call (track your own in-flight submissions).
+//! snapshot-able; use [`BucketStats::last_snapshot_age`] to skip buckets with
+//! a submission plausibly still in flight instead of re-proving them every
+//! policy cycle (a full public-batch prove is tens of seconds of CPU).
+//!
+//! Expiry: settlement is the only AUTOMATIC drain, and it only ever sees
+//! nullifiers that reach the chain. A proof that never settles — its miner
+//! lost the inclusion race and the referenced block fell out of the pallet's
+//! acceptance window — would otherwise stay resident forever, permanently
+//! consuming [`PoolLimits::max_proofs`] (which is the whole memory bound).
+//! Operators MUST therefore run an expiry policy: either call
+//! [`ProofPool::evict_older_than`] on a cadence with an age comfortably past
+//! the chain's acceptance window, or implement their own via
+//! [`ProofPool::remove_bucket`].
 //!
 //! Note on nullifier checks: the pool-wide duplicate-nullifier rejection at
 //! admission and `evict_settled` are OPERATIONAL, not security-critical. They
@@ -50,10 +62,10 @@
 //!
 //! Note on dummies: an all-dummy private-batch proof (all-zero block hash) is
 //! REJECTED at admission even though it can be cryptographically valid. It
-//! settles nothing, and none of the automatic drain paths could ever remove it
-//! (aggregating it is refused, and `evict_settled` never sees its random
-//! nullifiers on-chain), so pooling it would let an attacker fill the global
-//! capacity with permanently undrainable entries. Public-batch padding does
+//! settles nothing and only expiry could ever reclaim it (aggregating it is
+//! refused, and `evict_settled` never sees its random nullifiers on-chain),
+//! so pooling it would let an attacker occupy global capacity with dead
+//! entries for a full expiry window at a time. Public-batch padding does
 //! not need pooled dummies either: the prover pads from its own pinned dummy
 //! template.
 
@@ -148,9 +160,24 @@ pub struct BucketStats {
     /// padding.
     pub batch_size: usize,
     /// Time since the oldest queued proof in this bucket was admitted.
+    ///
+    /// This is also the expiry signal: a bucket whose oldest proof predates
+    /// the chain's acceptance window for its block can never settle and only
+    /// [`ProofPool::evict_older_than`] / [`ProofPool::remove_bucket`] will
+    /// reclaim its capacity.
     pub oldest_age: Duration,
     /// Sum of all exit-slot amounts across queued proofs (settled volume proxy).
     pub total_volume: u64,
+    /// Time since this bucket was last snapshot via
+    /// [`ProofPool::snapshot_batch`], or `None` if it never was.
+    ///
+    /// Proving is non-consuming, so a bucket whose batch is submitted but not
+    /// yet settled looks exactly like an untouched one — except for this
+    /// field. A policy loop should treat a recent snapshot as "submission in
+    /// flight" and skip the bucket until it settles (evicting the proofs) or
+    /// the operator's re-prove timeout passes, rather than re-proving the
+    /// same batch every cycle.
+    pub last_snapshot_age: Option<Duration>,
 }
 
 impl BucketStats {
@@ -175,6 +202,14 @@ struct PooledProof {
     admitted_at: Instant,
 }
 
+#[derive(Debug, Default)]
+struct Bucket {
+    proofs: Vec<PooledProof>,
+    /// When this bucket was last snapshot for proving (surfaced as
+    /// [`BucketStats::last_snapshot_age`], the policy layer's in-flight signal).
+    last_snapshot_at: Option<Instant>,
+}
+
 /// A bounded pool of admission-verified private-batch proofs, bucketed by
 /// [`BatchKey`].
 #[derive(Debug)]
@@ -186,7 +221,7 @@ pub struct ProofPool {
     /// Proofs per bucket (= public-batch size).
     batch_size: usize,
     limits: PoolLimits,
-    buckets: BTreeMap<BatchKey, Vec<PooledProof>>,
+    buckets: BTreeMap<BatchKey, Bucket>,
     /// Global index of every pooled nullifier to the bucket holding its proof.
     ///
     /// Duplicates are rejected pool-wide, not just per bucket: the merkle tree
@@ -262,7 +297,7 @@ impl ProofPool {
     /// Total number of proofs across all buckets (proving is non-consuming,
     /// so this includes proofs currently being proved from a snapshot).
     pub fn len(&self) -> usize {
-        self.buckets.values().map(Vec::len).sum()
+        self.buckets.values().map(|b| b.proofs.len()).sum()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -306,14 +341,15 @@ impl ProofPool {
         let metadata = self.parse_metadata(&proof)?;
         let key = metadata.0;
 
-        // Reject the all-dummy sentinel outright: it settles nothing and no
-        // automatic drain path could ever remove it (aggregation refuses the
-        // dummy bucket and its random nullifiers never settle on-chain), so
-        // admitting it would hand attackers a permanent global-capacity sink.
+        // Reject the all-dummy sentinel outright: it settles nothing and only
+        // expiry could ever remove it (aggregation refuses the dummy bucket
+        // and its random nullifiers never settle on-chain), so admitting it
+        // would hand attackers a global-capacity sink lasting a full expiry
+        // window per submission.
         if key.is_dummy() {
             bail!(
                 "refusing to pool an all-dummy private-batch proof (block_hash == 0): \
-                 it settles nothing and can never be drained"
+                 it settles nothing, so settlement eviction can never drain it"
             );
         }
 
@@ -384,12 +420,16 @@ impl ProofPool {
         for nullifier in &nullifiers {
             self.nullifier_index.insert(*nullifier, key);
         }
-        self.buckets.entry(key).or_default().push(PooledProof {
-            proof,
-            nullifiers,
-            volume,
-            admitted_at: Instant::now(),
-        });
+        self.buckets
+            .entry(key)
+            .or_default()
+            .proofs
+            .push(PooledProof {
+                proof,
+                nullifiers,
+                volume,
+                admitted_at: Instant::now(),
+            });
         Ok(key)
     }
 
@@ -417,7 +457,7 @@ impl ProofPool {
             let Some(bucket) = self.buckets.get_mut(&key) else {
                 continue;
             };
-            bucket.retain(|queued| {
+            bucket.proofs.retain(|queued| {
                 let stale = queued.nullifiers.iter().any(|n| settled.contains(n));
                 if stale {
                     evicted += 1;
@@ -427,10 +467,45 @@ impl ProofPool {
                 }
                 !stale
             });
-            if bucket.is_empty() {
+            if bucket.proofs.is_empty() {
                 self.buckets.remove(&key);
             }
         }
+        evicted
+    }
+
+    /// Remove every queued proof admitted more than `max_age` ago, dropping
+    /// buckets that become empty. Returns the number of evicted proofs.
+    ///
+    /// This is the expiry backstop settlement eviction cannot provide: a
+    /// proof whose miner lost the inclusion race for its referenced block
+    /// never has its nullifiers settle on-chain, so nothing else would ever
+    /// reclaim its capacity — and [`PoolLimits::max_proofs`] is the whole
+    /// memory bound. Operators MUST call this on a cadence (or run their own
+    /// expiry via [`Self::remove_bucket`]) with a `max_age` comfortably past
+    /// the chain's acceptance window for proof blocks, so only proofs that
+    /// can no longer settle are dropped.
+    ///
+    /// Custody note: unlike [`Self::remove_bucket`], the expired proofs are
+    /// dropped, not returned — past the acceptance window they are
+    /// unsettleable on ANY chain, so there is no last-copy value to preserve.
+    pub fn evict_older_than(&mut self, max_age: Duration) -> usize {
+        let now = Instant::now();
+        let mut evicted = 0;
+        let nullifier_index = &mut self.nullifier_index;
+        self.buckets.retain(|_, bucket| {
+            bucket.proofs.retain(|queued| {
+                let expired = now.saturating_duration_since(queued.admitted_at) > max_age;
+                if expired {
+                    evicted += 1;
+                    for n in &queued.nullifiers {
+                        nullifier_index.remove(n);
+                    }
+                }
+                !expired
+            });
+            !bucket.proofs.is_empty()
+        });
         evicted
     }
 
@@ -441,16 +516,21 @@ impl ProofPool {
             .iter()
             .map(|(key, bucket)| BucketStats {
                 key: *key,
-                num_proofs: bucket.len(),
+                num_proofs: bucket.proofs.len(),
                 batch_size: self.batch_size,
                 oldest_age: bucket
+                    .proofs
                     .iter()
                     .map(|q| now.saturating_duration_since(q.admitted_at))
                     .max()
                     .unwrap_or_default(),
                 total_volume: bucket
+                    .proofs
                     .iter()
                     .fold(0u64, |acc, q| acc.saturating_add(q.volume)),
+                last_snapshot_age: bucket
+                    .last_snapshot_at
+                    .map(|at| now.saturating_duration_since(at)),
             })
             .collect()
     }
@@ -465,25 +545,34 @@ impl ProofPool {
     /// and let the on-chain settlement retire the proved inputs through
     /// [`Self::evict_settled`]. A failed or crashed proving attempt needs no
     /// cleanup: the pool never changed. Whether to re-prove a bucket whose
-    /// batch is submitted but not yet settled is the caller's policy call.
-    pub fn snapshot_batch(&self, key: &BatchKey) -> Option<Vec<Proof>> {
-        let bucket = self.buckets.get(key)?;
-        let n = bucket.len().min(self.batch_size);
-        Some(bucket[..n].iter().map(|q| q.proof.clone()).collect())
+    /// batch is submitted but not yet settled is the caller's policy call —
+    /// the snapshot time recorded here (surfaced as
+    /// [`BucketStats::last_snapshot_age`]) is that policy's in-flight signal.
+    ///
+    /// Takes `&mut self` (to record the snapshot time), so whatever exclusive
+    /// lock guards the pool also serializes concurrent snapshot attempts:
+    /// two policy workers racing on the same key see each other's snapshot
+    /// mark instead of both launching a duplicate ~tens-of-seconds prove.
+    pub fn snapshot_batch(&mut self, key: &BatchKey) -> Option<Vec<Proof>> {
+        let bucket = self.buckets.get_mut(key)?;
+        let n = bucket.proofs.len().min(self.batch_size);
+        bucket.last_snapshot_at = Some(Instant::now());
+        Some(bucket.proofs[..n].iter().map(|q| q.proof.clone()).collect())
     }
 
     /// Remove one bucket entirely, returning its proofs (empty if absent).
     ///
-    /// This is the operator override — the only removal path besides
-    /// settlement eviction — for buckets that will never be aggregated (e.g.
-    /// expiry policy). The returned proofs are the caller's responsibility;
-    /// if they were claimed from gossip, dropping them here may drop the last
-    /// copy in the network.
+    /// This is the operator override — the manual removal path besides
+    /// settlement eviction and [`Self::evict_older_than`] — for buckets that
+    /// will never be aggregated (e.g. a custom expiry policy). The returned
+    /// proofs are the caller's responsibility; if they were claimed from
+    /// gossip, dropping them here may drop the last copy in the network.
     pub fn remove_bucket(&mut self, key: &BatchKey) -> Vec<Proof> {
         self.buckets
             .remove(key)
             .map(|bucket| {
                 bucket
+                    .proofs
                     .into_iter()
                     .map(|q| {
                         for nullifier in &q.nullifiers {
@@ -1076,6 +1165,72 @@ mod tests {
         // After the window rolls over, admission resumes.
         std::thread::sleep(Duration::from_millis(2100));
         pool.push(good).unwrap();
+    }
+
+    /// Settlement can only reclaim proofs whose nullifiers reach the chain; a
+    /// proof that lost its inclusion race would occupy `max_proofs` forever.
+    /// `evict_older_than` is the expiry backstop: it removes exactly the
+    /// proofs older than the cutoff (per proof, not per bucket), drops
+    /// emptied buckets, and unindexes the evicted nullifiers.
+    #[test]
+    fn evict_older_than_reclaims_expired_proofs() {
+        let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
+
+        // Build all proofs up front: proving is slow enough that doing it
+        // between pushes would blur the admission-age gap asserted below.
+        let old_a = prove_fake(&data, &targets, &fake(1, 11));
+        let old_b = prove_fake(&data, &targets, &fake(2, 12));
+        let young = prove_fake(&data, &targets, &fake(1, 13));
+
+        let key_a = pool.push(old_a).unwrap();
+        let key_b = pool.push(old_b).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        pool.push(young).unwrap();
+
+        // Cutoff between the two admission times: only the old proofs expire.
+        assert_eq!(pool.evict_older_than(Duration::from_millis(100)), 2);
+        assert_eq!(pool.len(), 1);
+
+        // key_b's only proof expired, so its bucket is gone; key_a keeps the
+        // young proof.
+        assert_eq!(pool.num_buckets(), 1);
+        assert!(pool.snapshot_batch(&key_b).is_none());
+        let remaining = pool.snapshot_batch(&key_a).unwrap();
+        assert_eq!(nullifier_felt(&remaining[0]), 13);
+
+        // The evicted nullifiers were unindexed: the same spend can re-pool.
+        pool.push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        assert_eq!(pool.len(), 2);
+
+        // A generous cutoff evicts nothing.
+        assert_eq!(pool.evict_older_than(Duration::from_secs(3600)), 0);
+        assert_eq!(pool.len(), 2);
+    }
+
+    /// `last_snapshot_age` is the policy layer's in-flight signal: `None`
+    /// until a bucket is first snapshot, then the time since the latest
+    /// snapshot — so a policy loop can skip buckets whose submitted batch is
+    /// plausibly still settling instead of re-proving them every cycle.
+    #[test]
+    fn bucket_stats_track_last_snapshot_age() {
+        let (mut pool, data, targets) = make_pool(2, PoolLimits::default());
+
+        let key = pool
+            .push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+        assert_eq!(pool.bucket_stats()[0].last_snapshot_age, None);
+
+        let _snapshot = pool.snapshot_batch(&key).unwrap();
+        let age = pool.bucket_stats()[0]
+            .last_snapshot_age
+            .expect("snapshot must be recorded");
+        assert!(age < Duration::from_secs(5), "age must be fresh: {age:?}");
+
+        // Admissions don't disturb the mark.
+        pool.push(prove_fake(&data, &targets, &fake(1, 12)))
+            .unwrap();
+        assert!(pool.bucket_stats()[0].last_snapshot_age.is_some());
     }
 
     #[test]

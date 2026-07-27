@@ -88,7 +88,7 @@ hermetic. Toolchain is pinned in `lean-toolchain` (Lean `v4.30`).
 | `isDummyPrivateBatch = blockHash=0` (weaker sentinel) | dummy detection at private-batch — `circuit_logic.rs` |
 | `maskedChildPairs` → `groupExits` / `matchSum` (dummy slots masked to `(zero, 0)` at ingress; per-slot group sum + first-occurrence dedup) | dummy-mask selects + exit-account grouping loop — `circuit_logic.rs` |
 | **thm** `RPrivateBatch_value_conservation`: `outputExitTotal = inputExitTotal` (non-dummy total) | derived from the grouping primitive (was an assumed conjunct) |
-| **thm** `rawOutputTotal_lt_modulus`: total `< goldilocks` | explicit no-wraparound bound from 32-bit output range checks; Phase-2 field hypothesis (see note below) |
+| **thm** `rawOutputTotal_lt_modulus`: total `< goldilocks` (+ corollary `inputExitTotal_lt_modulus` for the masked total the circuit sums) | explicit no-wraparound bound from 32-bit output range checks; Phase-2 field hypothesis (see note below) |
 | output layout (`PrivateBatchOutput`) | `aggregated_output` — `private_batch/circuit/constants.rs` |
 | `RPublicBatch` forwarding + consistency | `build_public_batch_constraints` — `public_batch/circuit/circuit_logic.rs` |
 
