@@ -23,8 +23,20 @@ use wormhole_aggregator::{
     CircuitBinsConfig,
 };
 use wormhole_circuit::{block_header::header::HeaderInputs, inputs::CircuitInputs};
+use zk_circuits_common::circuit::{
+    wormhole_leaf_circuit_config, wormhole_private_batch_circuit_config,
+    wormhole_public_batch_circuit_config,
+};
 
 const NUM_LEAF_PROOFS: usize = 7;
+
+fn zk_label(zero_knowledge: bool) -> &'static str {
+    if zero_knowledge {
+        "ZK (row blinding)"
+    } else {
+        "non-ZK"
+    }
+}
 
 fn file_size(path: &Path) -> u64 {
     fs::metadata(path).map(|m| m.len()).unwrap_or(0)
@@ -45,7 +57,17 @@ fn main() -> anyhow::Result<()> {
         std::env::var("BENCH_BINS_DIR").unwrap_or_else(|_| "target/public-batch-bench".into()),
     );
     fs::create_dir_all(&dir)?;
-    println!("Binaries dir: {}\n", dir.display());
+    println!("Binaries dir: {}", dir.display());
+
+    // The bench uses the canonical production configs; print the ZK status of
+    // each layer so the measured hierarchy is explicit (only the private
+    // batch needs blinding: it is the layer whose witnesses are leaf proofs).
+    println!(
+        "Circuit hierarchy: leaf {}, private batch {}, public batch {}\n",
+        zk_label(wormhole_leaf_circuit_config().zero_knowledge),
+        zk_label(wormhole_private_batch_circuit_config().zero_knowledge),
+        zk_label(wormhole_public_batch_circuit_config().zero_knowledge),
+    );
 
     // Leaf + private-batch circuits don't depend on M; build them once.
     println!("== One-time setup: leaf + private-batch circuits (N={NUM_LEAF_PROOFS}) ==");

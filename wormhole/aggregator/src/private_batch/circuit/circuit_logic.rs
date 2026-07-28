@@ -286,6 +286,15 @@ fn build_private_batch_constraints(
     // 3) if this exit already appeared in an earlier slot, zero out the slot
     //
     // This makes duplicates indistinguishable from dummy/unused slots in output.
+    //
+    // Dummy slots are masked to the canonical zero exit account (and zero
+    // amount) at ingress, BEFORE the grouping. The leaf circuit leaves exit
+    // accounts unconstrained and its dummy sentinel does not cover them, so a
+    // valid dummy leaf can carry arbitrary exit bytes; without the mask, a
+    // poisoned padding template would mark every padded slot with a visible
+    // zero-amount attacker-chosen exit, breaking the indistinguishability of
+    // dummy, unused, and duplicate slots (audit finding: incomplete dummy
+    // sentinel).
 
     let num_exit_slots = n_leaf * 2;
 
@@ -307,31 +316,37 @@ fn build_private_batch_constraints(
         (exit, amount)
     };
 
+    // Masked per-slot (exit, amount): dummy slots read as (zero account, 0).
+    // The amount mask is defense in depth — the leaf circuit already forces
+    // dummy amounts to zero, but this gadget should not rely on a
+    // cross-circuit invariant it can enforce locally for one select per slot.
+    let mut slot_exits: Vec<[Target; 4]> = Vec::with_capacity(num_exit_slots);
+    let mut slot_amounts: Vec<Target> = Vec::with_capacity(num_exit_slots);
     for slot in 0..num_exit_slots {
         let proof_idx = slot / 2;
-        let output_idx = slot % 2;
-        let (exit_slot, _amount_slot) = get_exit_and_amount(proof_idx, output_idx);
+        let (exit_raw, amount_raw) = get_exit_and_amount(proof_idx, slot % 2);
+        let is_dummy_i = is_dummy_flags[proof_idx];
+        slot_exits.push(core::array::from_fn(|j| {
+            builder.select(is_dummy_i, zero, exit_raw[j])
+        }));
+        slot_amounts.push(builder.select(is_dummy_i, zero, amount_raw));
+    }
+
+    for slot in 0..num_exit_slots {
+        let exit_slot = slot_exits[slot];
 
         // Check whether this exit appeared earlier (for dedupe)
         let mut is_duplicate = builder._false();
-        for earlier in 0..slot {
-            let earlier_proof_idx = earlier / 2;
-            let earlier_output_idx = earlier % 2;
-            let (exit_earlier, _) = get_exit_and_amount(earlier_proof_idx, earlier_output_idx);
-
-            let matches_earlier = bytes_digest_eq(builder, exit_earlier, exit_slot);
+        for exit_earlier in slot_exits.iter().take(slot) {
+            let matches_earlier = bytes_digest_eq(builder, *exit_earlier, exit_slot);
             is_duplicate = builder.or(is_duplicate, matches_earlier);
         }
 
         // Sum all matching amounts across all 2*N outputs
         let mut acc = zero;
-        for j in 0..num_exit_slots {
-            let j_proof_idx = j / 2;
-            let j_output_idx = j % 2;
-            let (exit_j, amount_j) = get_exit_and_amount(j_proof_idx, j_output_idx);
-
-            let matches = bytes_digest_eq(builder, exit_j, exit_slot);
-            let conditional_amount = builder.select(matches, amount_j, zero);
+        for (exit_j, amount_j) in slot_exits.iter().zip(&slot_amounts) {
+            let matches = bytes_digest_eq(builder, *exit_j, exit_slot);
+            let conditional_amount = builder.select(matches, *amount_j, zero);
             acc = builder.add(acc, conditional_amount);
         }
 
@@ -1220,6 +1235,108 @@ mod tests {
             num_real_proofs,
             8 - num_real_proofs
         );
+    }
+
+    /// The leaf circuit leaves exit accounts unconstrained and its dummy
+    /// sentinel (`block_hash == 0 && amounts == 0`) does not cover them, so a
+    /// valid dummy leaf can carry attacker-chosen exit accounts. The wrapper
+    /// must mask dummy slots' exits to the canonical zero account in the
+    /// aggregated output, or a poisoned padding template marks every padded
+    /// slot as visibly dummy (audit finding: incomplete dummy sentinel).
+    #[test]
+    fn recursive_aggregation_masks_dummy_exit_accounts_to_zero() {
+        const N_LEAF: usize = 4;
+
+        let exits_felts: [[F; 8]; 8] = EXIT_ACCOUNTS.map(limbs8_u64_to_felts);
+        let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs4_u64_to_felts);
+        let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs4_u64_to_felts);
+
+        let asset_id = F::from_canonical_u64(TEST_ASSET_ID_U64);
+        let volume_fee_bps = F::from_canonical_u64(TEST_VOLUME_FEE_BPS);
+        let common_block_hash = block_hashes_felts[0];
+        let real_amount = F::from_canonical_u64(1234);
+
+        let mut pis_list: Vec<[F; LEAF_PI_LEN]> = Vec::with_capacity(N_LEAF);
+        // Slot 0: the one real proof.
+        pis_list.push(make_pi_from_felts(
+            asset_id,
+            real_amount,
+            F::ZERO,
+            volume_fee_bps,
+            nullifiers_felts[0],
+            exits_felts[0],
+            [F::ZERO; 8],
+            common_block_hash,
+            F::from_canonical_u64(42),
+        ));
+        // Slots 1..4: dummies (block_hash = 0, zero amounts) with
+        // ATTACKER-CHOSEN nonzero exit accounts, as a poisoned template
+        // could produce.
+        for i in 1..N_LEAF {
+            pis_list.push(make_pi_from_felts(
+                asset_id,
+                F::ZERO,
+                F::ZERO,
+                volume_fee_bps,
+                nullifiers_felts[i],
+                exits_felts[i],
+                exits_felts[i],
+                [F::ZERO; 4],
+                F::ZERO,
+            ));
+        }
+
+        let leaves = pis_list
+            .clone()
+            .into_iter()
+            .map(prove_fake_leaf_standalone)
+            .collect::<Vec<_>>();
+        let leaf_common = leaves[0].1.common.clone();
+        let leaf_verifier_only = leaves[0].1.verifier_only.clone();
+        let proofs = leaves
+            .into_iter()
+            .map(|(proof, _)| proof)
+            .collect::<Vec<_>>();
+
+        let dummy_nullifier_pre_images = deterministic_dummy_nullifier_pre_images(proofs.len());
+
+        let (root_proof, root_verifier) = aggregate_proofs_private_batch(
+            proofs,
+            leaf_common,
+            leaf_verifier_only,
+            dummy_nullifier_pre_images,
+        )
+        .unwrap();
+        root_verifier.verify(root_proof.clone()).unwrap();
+
+        let pis = &root_proof.public_inputs;
+
+        // Slots 2i / 2i+1 belong to proof i, so slots 2.. are the dummies'.
+        // Every one of them must be fully zero — amount AND exit account —
+        // regardless of the exit bytes the dummy leaves carried.
+        for slot in 2..N_LEAF * 2 {
+            let base = ROOT_HEADER_LEN + slot * aggregated_output::EXIT_SLOT_LEN;
+            assert_eq!(pis[base], F::ZERO, "dummy slot {slot} must have zero sum");
+            for j in 0..4 {
+                assert_eq!(
+                    pis[base + 1 + j],
+                    F::ZERO,
+                    "dummy slot {slot} must expose the canonical zero exit account, \
+                     not the template's exit bytes"
+                );
+            }
+        }
+
+        // The real proof's payout is untouched: slot 0 keeps its exit and sum.
+        let base = ROOT_HEADER_LEN;
+        assert_eq!(pis[base], real_amount, "real slot must keep its payout");
+        for j in 0..4 {
+            assert_eq!(
+                pis[base + 1 + j],
+                exits_felts[0][j],
+                "real slot must keep its exit account"
+            );
+        }
     }
 
     /// Regression test: the circuit must accept the real proof in EVERY slot position. The

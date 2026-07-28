@@ -20,7 +20,9 @@
                               comparators route those already-constrained halves; see
                               `common/src/gadgets.rs`), surfaced here as the
                               `nullsPerm`/`nullsSorted` fields of `PrivateBatchCircuit`
-    * exit grouping/dedup     `select`/`matchSum`/`groupAux`     — `Plonky2Spec.Wrapper.{match_contribution, dedup_select}`
+    * exit grouping/dedup     `select`/`matchSum`/`groupAux` over dummy-masked
+                              ingress (`select(is_dummy, 0, …)`, see `maskedChildPairs`)
+                              — `Plonky2Spec.Wrapper.{match_contribution, dedup_select}`
     * block reference         first-real prefix scan             — `Plonky2Spec.Wrapper.scanFirst_correct`
     * metadata `or`-clause    `or(is_dummy, matches) = 1`        — `Plonky2Spec.Wrapper.{block_consistency, real_block_matches}`
 
@@ -113,7 +115,7 @@ structure PrivateBatchCircuit (ro : RandomOracle) (leaves : List LeafPublic)
       guarantee 2). -/
   nullsSorted : nullifiersSorted out.nullifiers
   /-- The `2N` settled slots are the in-circuit group/dedup of every child's outputs. -/
-  exits : out.exitSlots = groupExits (childPairs leaves)
+  exits : out.exitSlots = groupExits (maskedChildPairs leaves)
   /-- Each non-dummy child agrees with the aggregate header (the `or`-clause, satisfied). -/
   metaOk : metadataConsistent leaves out
   /-- The header is taken from the first non-dummy child (first-real scan result). -/

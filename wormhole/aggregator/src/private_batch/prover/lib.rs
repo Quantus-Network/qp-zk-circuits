@@ -330,7 +330,8 @@ impl PrivateBatchProver {
 
 /// Check that a set of leaf proofs is mutually compatible under the
 /// private-batch circuit's cross-slot constraints, so an incompatible batch is
-/// rejected at commit time instead of failing after minutes of proving:
+/// rejected at commit time instead of failing after a full proving run
+/// (potentially minutes on the phone-class hardware clients prove on):
 ///
 /// - `asset_id` must match across ALL proofs (dummies included),
 /// - `block_hash` and `volume_fee_bps` must match between non-dummy proofs
@@ -419,8 +420,8 @@ fn ensure_leaf_batch_compatible(proofs: &[ProofWithPublicInputs<F, C, D>]) -> Re
 }
 
 /// Verify that the dummy leaf proof template is a valid leaf proof carrying the
-/// strong dummy sentinel: `block_hash == 0`, both output amounts zero, AND
-/// `asset_id == 0`.
+/// strong dummy sentinel: `block_hash == 0`, both output amounts zero,
+/// `asset_id == 0`, AND both exit accounts all-zero.
 ///
 /// The private-batch circuit only treats `block_hash == 0` slots as dummies, and
 /// its exit-dedup gadget sums output amounts across matching exit accounts. If a
@@ -471,6 +472,16 @@ fn verify_dummy_leaf_template(
             pis.asset_id
         );
     }
+    if pis.exit_account_1 != BytesDigest::default() || pis.exit_account_2 != BytesDigest::default()
+    {
+        bail!(
+            "dummy leaf proof template has non-zero exit account(s); padding templates \
+             must use the canonical all-zero exit account: the leaf circuit leaves exit \
+             accounts unconstrained, and marked exits would make padded slots \
+             distinguishable in the aggregated output (the wrapper circuit also masks \
+             dummy exits to zero as defense in depth)"
+        );
+    }
 
     leaf_verifier
         .verify(template.clone())
@@ -497,8 +508,8 @@ mod tests {
     };
     use plonky2::field::types::Field;
     use qp_wormhole_inputs::{
-        BLOCK_HASH_START_INDEX, NULLIFIER_START_INDEX, OUTPUT_AMOUNT_1_INDEX,
-        PUBLIC_INPUTS_FELTS_LEN,
+        BLOCK_HASH_START_INDEX, EXIT_ACCOUNT_1_START_INDEX, EXIT_ACCOUNT_2_START_INDEX,
+        NULLIFIER_START_INDEX, OUTPUT_AMOUNT_1_INDEX, PUBLIC_INPUTS_FELTS_LEN,
     };
     use test_helpers::fake_leaf::{build_fake_leaf_circuit, prove_fake_leaf};
 
@@ -542,6 +553,34 @@ mod tests {
         let err = verify_dummy_leaf_template(&template, &leaf.verifier_data()).unwrap_err();
         assert!(
             err.to_string().contains("non-zero output amounts"),
+            "got: {err}"
+        );
+    }
+
+    /// The leaf circuit leaves exit accounts unconstrained and its dummy
+    /// sentinel does not cover them, so a proof can be fully dummy (zero
+    /// block hash, zero amounts) yet carry attacker-chosen exit accounts
+    /// that mark every padded slot in the aggregated output (audit finding:
+    /// incomplete dummy sentinel).
+    #[test]
+    fn dummy_template_with_nonzero_exit_account_is_rejected() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+
+        let mut pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
+        pis[EXIT_ACCOUNT_1_START_INDEX] = F::ONE;
+        let template = prove_fake_leaf(&leaf, &targets, pis);
+        let err = verify_dummy_leaf_template(&template, &leaf.verifier_data()).unwrap_err();
+        assert!(
+            err.to_string().contains("non-zero exit account"),
+            "got: {err}"
+        );
+
+        let mut pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
+        pis[EXIT_ACCOUNT_2_START_INDEX] = F::ONE;
+        let template = prove_fake_leaf(&leaf, &targets, pis);
+        let err = verify_dummy_leaf_template(&template, &leaf.verifier_data()).unwrap_err();
+        assert!(
+            err.to_string().contains("non-zero exit account"),
             "got: {err}"
         );
     }

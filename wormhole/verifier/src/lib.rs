@@ -111,15 +111,20 @@ const CANONICAL_LEAF_COMMON_KECCAK256: [u8; 32] = [
     0xb1, 0x82, 0x2e, 0xf0, 0x26, 0x37, 0xe8, 0xd8, 0x51, 0x2d, 0x8a, 0xbb, 0x79, 0x74, 0x80, 0xe3,
 ];
 
-/// Maximum size accepted for a serialized verifier artifact file.
+/// Maximum size accepted for a serialized verifier artifact, whether loaded
+/// from a file or passed as bytes.
 ///
-/// The canonical leaf verifier/common artifacts are a few KB; 64 MiB (the same
-/// bound the aggregator applies to its artifacts) gives generous headroom
-/// while bounding the allocation an untrusted artifact path can force. Without
-/// a cap, an oversized or sparse file is read fully into memory BEFORE the
-/// keccak256 canonicality pin gets a chance to reject it.
-#[cfg(feature = "std")]
-pub const MAX_ARTIFACT_FILE_BYTES: u64 = 64 * 1024 * 1024;
+/// The keccak256 canonicality pin already rejects everything but the
+/// byte-exact canonical leaf artifacts, so this cap's only job is to bound
+/// the work done BEFORE the pin can fire: the file read's allocation in
+/// [`WormholeVerifier::new_from_files`] and the keccak pass over
+/// caller-supplied slices in [`WormholeVerifier::new_from_bytes`]. That work
+/// is proportional to the cap, so the cap must be tight for the "rejected in
+/// O(1)" property to mean anything. The canonical artifacts are a few KB;
+/// 1 MiB is ~2–3 orders of magnitude of headroom while keeping the worst
+/// pre-pin allocation and hash trivially cheap. (The aggregator crate keeps
+/// its own, larger bound for its much larger circuit artifacts.)
+pub const MAX_VERIFIER_ARTIFACT_BYTES: u64 = 1024 * 1024;
 
 fn keccak256(input: &[u8]) -> [u8; 32] {
     let mut output = [0u8; 32];
@@ -130,7 +135,7 @@ fn keccak256(input: &[u8]) -> [u8; 32] {
 }
 
 /// Read a verifier-artifact file, refusing anything larger than
-/// [`MAX_ARTIFACT_FILE_BYTES`] before allocating for its contents.
+/// [`MAX_VERIFIER_ARTIFACT_BYTES`] before allocating for its contents.
 ///
 /// Only regular files are accepted. A FIFO, device node, or symlink to one
 /// planted at an artifact path would otherwise block `open` (a FIFO with no
@@ -172,26 +177,26 @@ fn read_artifact_file(path: &Path) -> anyhow::Result<Vec<u8>> {
         ));
     }
     let claimed_len = metadata.len();
-    if claimed_len > MAX_ARTIFACT_FILE_BYTES {
+    if claimed_len > MAX_VERIFIER_ARTIFACT_BYTES {
         return Err(anyhow!(
             "artifact file {} is {} bytes, which exceeds the {} byte limit for \
              verifier artifacts; refusing to load it",
             path.display(),
             claimed_len,
-            MAX_ARTIFACT_FILE_BYTES
+            MAX_VERIFIER_ARTIFACT_BYTES
         ));
     }
 
     let mut bytes = Vec::with_capacity(claimed_len as usize);
-    file.take(MAX_ARTIFACT_FILE_BYTES + 1)
+    file.take(MAX_VERIFIER_ARTIFACT_BYTES + 1)
         .read_to_end(&mut bytes)
         .with_context(|| format!("failed to read artifact file {}", path.display()))?;
-    if bytes.len() as u64 > MAX_ARTIFACT_FILE_BYTES {
+    if bytes.len() as u64 > MAX_VERIFIER_ARTIFACT_BYTES {
         return Err(anyhow!(
             "artifact file {} grew past the {} byte limit for verifier artifacts \
              while being read; refusing to load it",
             path.display(),
-            MAX_ARTIFACT_FILE_BYTES
+            MAX_VERIFIER_ARTIFACT_BYTES
         ));
     }
     Ok(bytes)
@@ -200,10 +205,25 @@ fn read_artifact_file(path: &Path) -> anyhow::Result<Vec<u8>> {
 impl WormholeVerifier {
     /// Creates a new [`WormholeVerifier`] from verifier and common data bytes.
     ///
-    /// Rejects artifacts unless both serialized inputs match the byte-exact
-    /// canonical Wormhole leaf artifacts. The decoded config and public-input
-    /// shape are checked again as defense in depth.
+    /// Inputs larger than [`MAX_VERIFIER_ARTIFACT_BYTES`] are rejected before any
+    /// hashing, so the size bound is a property of the loading contract
+    /// itself, not just of the file-based wrapper. Within that bound, both
+    /// serialized inputs must match the byte-exact canonical Wormhole leaf
+    /// artifacts (keccak256 pin). The decoded config and public-input shape
+    /// are checked again as defense in depth.
     pub fn new_from_bytes(verifier_bytes: &[u8], common_bytes: &[u8]) -> anyhow::Result<Self> {
+        for (label, bytes) in [("verifier-only", verifier_bytes), ("common", common_bytes)] {
+            if bytes.len() as u64 > MAX_VERIFIER_ARTIFACT_BYTES {
+                return Err(anyhow!(
+                    "{} artifact is {} bytes, which exceeds the {} byte limit for \
+                     verifier artifacts; refusing to load it",
+                    label,
+                    bytes.len(),
+                    MAX_VERIFIER_ARTIFACT_BYTES
+                ));
+            }
+        }
+
         let verifier_hash = keccak256(verifier_bytes);
         if verifier_hash != CANONICAL_LEAF_VERIFIER_KECCAK256 {
             return Err(anyhow!(
@@ -272,7 +292,7 @@ impl WormholeVerifier {
     /// Creates a new [`WormholeVerifier`] from a verifier and common data files.
     ///
     /// Both files are read through [`read_artifact_file`], which rejects
-    /// non-regular files and anything larger than [`MAX_ARTIFACT_FILE_BYTES`]
+    /// non-regular files and anything larger than [`MAX_VERIFIER_ARTIFACT_BYTES`]
     /// before buffering, so an untrusted artifact path cannot stall or
     /// memory-starve verifier startup. The keccak256 canonicality pin in
     /// [`Self::new_from_bytes`] then rejects any non-canonical contents.
@@ -323,6 +343,27 @@ mod tests {
         dir
     }
 
+    /// `new_from_bytes` is the public loading contract, so the size bound
+    /// must be enforced there — not only in the file wrapper — otherwise a
+    /// caller-supplied oversized slice is keccak-hashed in full before the
+    /// canonicality pin rejects it.
+    #[test]
+    fn new_from_bytes_rejects_oversized_slices_before_hashing() {
+        let oversized = vec![0u8; MAX_VERIFIER_ARTIFACT_BYTES as usize + 1];
+
+        let err = WormholeVerifier::new_from_bytes(&oversized, b"irrelevant").unwrap_err();
+        assert!(
+            format!("{err:#}").contains("exceeds the"),
+            "oversized verifier bytes must be rejected by the size cap, got: {err:#}"
+        );
+
+        let err = WormholeVerifier::new_from_bytes(b"irrelevant", &oversized).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("exceeds the"),
+            "oversized common bytes must be rejected by the size cap, got: {err:#}"
+        );
+    }
+
     /// An oversized artifact file must be rejected by a size bound BEFORE its
     /// contents are buffered, not after: `std::fs::read` would otherwise
     /// allocate and read the whole file just so the keccak pin can reject it,
@@ -338,7 +379,7 @@ mod tests {
         // exactly like an attacker-planted artifact would.
         std::fs::File::create(&verifier_path)
             .unwrap()
-            .set_len(MAX_ARTIFACT_FILE_BYTES + 1)
+            .set_len(MAX_VERIFIER_ARTIFACT_BYTES + 1)
             .unwrap();
         std::fs::write(&common_path, b"irrelevant").unwrap();
 

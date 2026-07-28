@@ -10,7 +10,11 @@
 //! - `block_hash = [0u8; 32]` AND `output_amount_1 = 0` AND `output_amount_2 = 0`:
 //!   Triggers bypass of all validation. Both conditions must be met to prevent
 //!   an attacker from slipping funds through with a zero block hash.
-//! - `exit_account = [0u8; 32]`: Dummies form their own exit group, contributing 0 to sums
+//! - `exit_account = [0u8; 32]`: Dummies form their own exit group, contributing 0 to sums.
+//!   Enforced by the template validators (`verify_dummy_leaf_template`,
+//!   `verify_dummy_private_batch_template`) and masked in-circuit by the
+//!   private-batch wrapper, since the leaf circuit leaves exit accounts
+//!   unconstrained and its dummy sentinel does not cover them.
 //!
 //! # Usage
 //!

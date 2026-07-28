@@ -216,7 +216,7 @@ fn aggregate_rejects_empty_batch() {
 fn commit_rejects_batch_incompatible_proofs() {
     // Two individually valid proofs whose metadata the private-batch circuit's
     // cross-slot constraints reject (different asset ids) must fail fast at
-    // commit time, not minutes later inside proving.
+    // commit time, not a full proving run later.
     let proof_asset_0 = make_leaf_proof(&CircuitInputs::test_inputs_0());
     let proof_asset_5 = make_leaf_proof(&test_inputs_with_asset(5));
 
@@ -321,9 +321,12 @@ fn private_batch_prover_rejects_poisoned_dummy_template() {
         std::fs::copy(entry.path(), poisoned_dir.join(entry.file_name())).unwrap();
     }
 
-    // Sentinel-neutral tampering: block_hash and outputs stay zero, so only the
-    // cryptographic check can catch it.
-    let mut poisoned = make_leaf_proof(&CircuitInputs::test_inputs_0());
+    // Sentinel-neutral tampering: block_hash, outputs, and exit accounts stay
+    // zero (test_inputs_0 carries a nonzero exit_account_1, which the sentinel
+    // now rejects on its own), so only the cryptographic check can catch it.
+    let mut dummy_inputs = CircuitInputs::test_inputs_0();
+    dummy_inputs.public.exit_account_1 = zk_circuits_common::utils::BytesDigest::default();
+    let mut poisoned = make_leaf_proof(&dummy_inputs);
     poisoned.public_inputs[4] = F::from_canonical_u64(0xdead_beef); // nullifier felt
     std::fs::write(poisoned_dir.join("dummy_proof.bin"), poisoned.to_bytes()).unwrap();
 
@@ -332,6 +335,24 @@ fn private_batch_prover_rejects_poisoned_dummy_template() {
     assert!(
         err.to_string()
             .contains("dummy leaf proof template failed verification"),
+        "got: {err}"
+    );
+
+    // A cryptographically VALID dummy proof (over the real leaf circuit) with a
+    // nonzero exit account is exactly the poisoned-padding shape from the audit
+    // finding (incomplete dummy sentinel): block hash and amounts are zero, yet
+    // its exit bytes would mark every padded slot. The sentinel must reject it.
+    let marked_exits = make_leaf_proof(&CircuitInputs::test_inputs_0());
+    std::fs::write(
+        poisoned_dir.join("dummy_proof.bin"),
+        marked_exits.to_bytes(),
+    )
+    .unwrap();
+
+    let err = PrivateBatchProver::new_from_binaries_dir(&poisoned_dir)
+        .expect_err("dummy template with a nonzero exit account must be rejected at load time");
+    assert!(
+        err.to_string().contains("non-zero exit account"),
         "got: {err}"
     );
 
@@ -481,7 +502,7 @@ fn public_batch_build_rejects_substituted_private_batch_artifacts() {
 // ============================================================================
 
 /// Build (once) a real private-batch proof compatible with the public-batch
-/// test artifacts. Cached because private aggregation costs minutes.
+/// test artifacts. Cached because private aggregation is expensive.
 fn make_private_batch_proof_in_public_dir() -> ProofWithPublicInputs<F, C, D> {
     static PROOF: OnceLock<ProofWithPublicInputs<F, C, D>> = OnceLock::new();
     PROOF
@@ -570,7 +591,8 @@ fn pool_rejects_invalid_proofs_and_aggregates_by_bucket() {
 
     // Cryptographic rejection: valid shape, tampered contents. A proof admitted
     // into the pool despite being invalid would wedge its bucket forever, since
-    // buckets only drain on successful aggregation (#97067).
+    // its nullifiers can never settle on-chain and settlement eviction is the
+    // pool's only automatic drain (#97067).
     let mut tampered = private_batch_proof.clone();
     tampered.public_inputs[1] = F::from_canonical_u64(9); // asset_id felt
     let err = aggregator.push_proof(tampered).unwrap_err();
@@ -579,6 +601,21 @@ fn pool_rejects_invalid_proofs_and_aggregates_by_bucket() {
         "got: {err}"
     );
     assert_eq!(aggregator.pool_len(), 0, "rejected proofs must not pool");
+
+    // The proof's nullifiers, for simulating its on-chain settlement below.
+    let settled: std::collections::HashSet<BytesDigest> = {
+        use plonky2::field::types::PrimeField64;
+        let u64s: Vec<u64> = private_batch_proof
+            .public_inputs
+            .iter()
+            .map(|f| f.to_canonical_u64())
+            .collect();
+        qp_wormhole_inputs::PrivateBatchPublicInputs::try_from_u64_slice(&u64s)
+            .expect("parse private-batch public inputs")
+            .nullifiers
+            .into_iter()
+            .collect()
+    };
 
     // A valid proof is admitted, keyed by its (block, asset, fee) metadata.
     let key = aggregator
@@ -590,19 +627,35 @@ fn pool_rejects_invalid_proofs_and_aggregates_by_bucket() {
     assert_eq!(stats[0].key, key);
     assert!(stats[0].is_full(), "batch_size=1 bucket must be full");
 
-    // Aggregating the bucket produces a verifiable public batch and drains it.
+    // Aggregating the bucket produces a verifiable public batch. Proving is
+    // NON-CONSUMING — a claiming miner's pool may hold the only copy of a
+    // proof in the network — so the bucket does not drain on success.
     let aggregated = aggregator.aggregate(&key).expect("public aggregate");
     aggregator
         .verify(aggregated)
         .expect("public-batch proof must verify");
-    assert_eq!(aggregator.pool_len(), 0, "bucket must drain on success");
+    assert_eq!(
+        aggregator.pool_len(),
+        1,
+        "proofs stay pooled until their segments settle on-chain"
+    );
 
-    // Aggregating a missing bucket is an error, and the pool stays usable.
+    // On-chain settlement is what retires the proved inputs: the block-import
+    // evict_settled cadence sees the batch's nullifiers and drains the bucket.
+    assert_eq!(
+        aggregator.evict_settled(&settled),
+        1,
+        "settlement must retire the proved proof"
+    );
+    assert_eq!(aggregator.pool_len(), 0, "bucket must drain on settlement");
+
+    // Aggregating a now-missing bucket is an error, and the pool stays usable.
     let err = aggregator.aggregate(&key).unwrap_err();
     assert!(err.to_string().contains("no pooled proofs"), "got: {err}");
 
     // The dummy sentinel bucket (block_hash == 0) is refused outright: an
-    // all-dummy public batch settles nothing, so proving it wastes minutes.
+    // all-dummy public batch settles nothing, so proving it wastes a full
+    // proving run.
     let dummy_key = BatchKey {
         block_hash: BytesDigest::default(),
         ..key
