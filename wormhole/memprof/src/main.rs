@@ -60,6 +60,13 @@ struct Args {
     #[arg(long, default_value_t = false)]
     circuit_only: bool,
 
+    /// Stop after leaf-proof generation; never touch the aggregator. Reports
+    /// the memory requirement of the leaf-proving side alone (circuit build +
+    /// proof generation). Conflicts with --skip-leaf-gen (nothing to measure)
+    /// and --circuit-only (which measures the aggregation circuit instead).
+    #[arg(long, default_value_t = false, conflicts_with_all = ["skip_leaf_gen", "circuit_only"])]
+    leaf_only: bool,
+
     /// Call malloc_zone_pressure_relief between phases (Apple only).
     #[arg(long, default_value_t = false)]
     release_after_each: bool,
@@ -186,6 +193,11 @@ fn main() -> Result<()> {
         }
     }
 
+    if args.leaf_only {
+        report.finish_and_print(args.peak_target_mb)?;
+        return Ok(());
+    }
+
     let _agg = workload::aggregate_fresh(
         &leaf_ctx,
         leaf_proofs,
@@ -251,6 +263,21 @@ mod tests {
             assert!(
                 Args::try_parse_from(["wormhole-memprof", "--sample-period-ms", value]).is_ok(),
                 "--sample-period-ms {value} must be accepted"
+            );
+        }
+    }
+
+    /// `--leaf-only` measures leaf proving, so combining it with flags that
+    /// skip leaf proving (`--skip-leaf-gen`) or measure the aggregation
+    /// circuit instead (`--circuit-only`) is contradictory and must be
+    /// rejected at parse time.
+    #[test]
+    fn leaf_only_conflicting_flags_are_rejected_at_parse_time() {
+        assert!(Args::try_parse_from(["wormhole-memprof", "--leaf-only"]).is_ok());
+        for conflicting in ["--skip-leaf-gen", "--circuit-only"] {
+            assert!(
+                Args::try_parse_from(["wormhole-memprof", "--leaf-only", conflicting]).is_err(),
+                "--leaf-only combined with {conflicting} must be rejected"
             );
         }
     }

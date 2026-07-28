@@ -34,6 +34,10 @@ cargo run -p wormhole-memprof --release -- \
 # Just the aggregation circuit data structure (no proving)
 cargo run -p wormhole-memprof --release -- --circuit-only
 
+# Just the leaf side: build leaf circuit + generate proofs, no aggregation.
+# Reports the max memory a leaf-proving-only client needs.
+cargo run -p wormhole-memprof --release -- --leaf-only --real-proofs 1
+
 # Skip leaf-proof generation; clones a dummy proof instead.
 # Useful to isolate aggregation cost from leaf proving cost.
 cargo run -p wormhole-memprof --release -- \
@@ -75,6 +79,7 @@ overall peak rss:      1498.3 MB
 | `--rayon-threads T` | Limit plonky2's parallel FFT pool. `0` = system default. |
 | `--skip-leaf-gen` | Use cloned dummy proofs; isolates aggregation cost. |
 | `--circuit-only` | Build agg circuit only, don't prove. |
+| `--leaf-only` | Stop after leaf-proof generation; measures the leaf side alone. |
 | `--release-after-each` | Call `malloc_zone_pressure_relief` between phases (Apple only). |
 | `--sample-period-ms P` | Memory sampler poll period in ms (default 25). |
 | `--peak-target-mb T` | Exit non-zero if overall peak > T MB (CI guard). |
