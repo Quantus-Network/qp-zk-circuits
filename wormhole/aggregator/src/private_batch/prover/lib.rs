@@ -454,7 +454,7 @@ fn ensure_leaf_batch_compatible(proofs: &[ProofWithPublicInputs<F, C, D>]) -> Re
 /// make every padded batch unprovable: partial native-asset batches fail the
 /// in-circuit asset-equality constraint, and nonzero-asset batches are already
 /// rejected by the padding preflight — denying the partial-batch path entirely.
-fn verify_dummy_leaf_template(
+pub(crate) fn verify_dummy_leaf_template(
     template: &ProofWithPublicInputs<F, C, D>,
     leaf_verifier: &VerifierCircuitData<F, C, D>,
 ) -> Result<()> {

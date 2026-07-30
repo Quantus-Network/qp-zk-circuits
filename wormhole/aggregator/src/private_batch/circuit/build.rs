@@ -11,7 +11,7 @@
 //! Expects `common.bin` and `verifier.bin` to already exist in the output directory.
 
 use anyhow::{anyhow, Context, Result};
-use plonky2::{plonk::circuit_data::CommonCircuitData, util::serialization::DefaultGateSerializer};
+use plonky2::util::serialization::DefaultGateSerializer;
 use qp_wormhole_inputs::validate_proof_count;
 use std::{fs::create_dir_all, path::Path};
 use zk_circuits_common::circuit::{wormhole_private_batch_circuit_config, C, D, F};
@@ -64,6 +64,19 @@ pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
         .with_context(|| format!("Failed to read {}/verifier.bin", output_path.display()))?;
     let leaf = load_canonical_leaf_verifier_data(&leaf_common_bytes, &leaf_verifier_bytes)?;
 
+    // Load AND validate the leaf dummy template before the expensive
+    // aggregation-circuit build. Every other consumer of dummy_proof.bin
+    // (the private/public batch prover constructors) enforces the dummy
+    // sentinel via verify_dummy_leaf_template; the build path must too,
+    // or a valid-but-non-dummy leaf planted at dummy_proof.bin gets baked
+    // into the published dummy_private_batch_proof.bin as a "dummy"
+    // template that actually settles a real payout (audit finding).
+    let dummy_leaf = if include_prover {
+        Some(load_validated_dummy_leaf_template(output_path, &leaf)?)
+    } else {
+        None
+    };
+
     let agg_circuit = PrivateBatchCircuit::new(
         wormhole_private_batch_circuit_config(),
         &leaf.common,
@@ -80,16 +93,14 @@ pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
     // partial public batches. Must happen BEFORE consuming circuit_data below
     // (prove() borrows, prover_data() moves). Only possible/needed when proving
     // artifacts are requested (requires the leaf dummy proof from the same run).
-    let dummy_batch_proof_bytes = if include_prover {
-        Some(generate_dummy_private_batch_proof(
+    let dummy_batch_proof_bytes = match dummy_leaf {
+        Some(dummy_leaf) => Some(generate_dummy_private_batch_proof(
             &circuit_data,
             &agg_targets,
-            &leaf.common,
-            output_path,
+            dummy_leaf,
             num_leaf_proofs,
-        )?)
-    } else {
-        None
+        )?),
+        None => None,
     };
 
     let verifier_data = circuit_data.verifier_data();
@@ -128,28 +139,50 @@ pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
     Ok(())
 }
 
+/// Load `dummy_proof.bin` and verify it is a genuine all-dummy leaf template
+/// (dummy sentinel: zero block hash, zero outputs, zero asset_id, zero exit
+/// accounts, AND a passing cryptographic verify against the pinned leaf
+/// verifier) before it gets replayed into every slot of the published
+/// `dummy_private_batch_proof.bin`. This mirrors the check the prover
+/// constructors apply to the very same artifact; without it, a re-run over a
+/// pre-existing or attacker-populated bins dir would label a REAL proof as
+/// the all-dummy padding template and report success (#97026 family).
+fn load_validated_dummy_leaf_template(
+    bins_dir: &Path,
+    leaf: &plonky2::plonk::circuit_data::VerifierCircuitData<F, C, D>,
+) -> Result<plonky2::plonk::proof::ProofWithPublicInputs<F, C, D>> {
+    let dummy_leaf_bytes = read_artifact_file(&bins_dir.join("dummy_proof.bin"))
+        .with_context(|| format!("Failed to read {}/dummy_proof.bin", bins_dir.display()))?;
+    let dummy_leaf = crate::dummy_proof::load_dummy_proof(dummy_leaf_bytes, &leaf.common)
+        .map_err(|e| anyhow!("Failed to deserialize dummy leaf proof: {}", e))?;
+    crate::private_batch::prover::verify_dummy_leaf_template(&dummy_leaf, leaf).with_context(
+        || {
+            format!(
+                "{}/dummy_proof.bin is not a genuine all-dummy leaf template; refusing to bake \
+                 it into dummy_private_batch_proof.bin",
+                bins_dir.display()
+            )
+        },
+    )?;
+    Ok(dummy_leaf)
+}
+
 /// Prove a private batch consisting entirely of dummy leaf proofs.
 ///
 /// The resulting proof has `block_hash == 0` (the public-batch dummy sentinel),
 /// zeroed exit slots, and dummy-replaced nullifiers, and is used by the
-/// public-batch prover to pad partial batches. Requires `dummy_proof.bin`
-/// (the leaf dummy proof) from the same generation run.
+/// public-batch prover to pad partial batches. `dummy_leaf` must come from
+/// [`load_validated_dummy_leaf_template`].
 fn generate_dummy_private_batch_proof(
     circuit_data: &plonky2::plonk::circuit_data::CircuitData<F, C, D>,
     targets: &crate::private_batch::circuit::circuit_logic::PrivateBatchCircuitTargets,
-    leaf_common: &CommonCircuitData<F, D>,
-    bins_dir: &Path,
+    dummy_leaf: plonky2::plonk::proof::ProofWithPublicInputs<F, C, D>,
     num_leaf_proofs: usize,
 ) -> Result<Vec<u8>> {
     use plonky2::iop::witness::PartialWitness;
     use zk_circuits_common::utils::bytes_to_digest;
 
     println!("Generating dummy private-batch proof for public-batch padding...");
-
-    let dummy_leaf_bytes = read_artifact_file(&bins_dir.join("dummy_proof.bin"))
-        .with_context(|| format!("Failed to read {}/dummy_proof.bin", bins_dir.display()))?;
-    let dummy_leaf = crate::dummy_proof::load_dummy_proof(dummy_leaf_bytes, leaf_common)
-        .map_err(|e| anyhow!("Failed to deserialize dummy leaf proof: {}", e))?;
 
     let proofs = vec![dummy_leaf; num_leaf_proofs];
     let dummy_nullifier_pre_images: Vec<[F; 4]> = (0..num_leaf_proofs)
@@ -347,6 +380,55 @@ mod tests {
         assert!(
             innocent.exists(),
             "the sweep must not touch unrelated dotfiles"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A valid-but-non-dummy leaf proof planted at `dummy_proof.bin` must not
+    /// be baked into the published `dummy_private_batch_proof.bin`. The
+    /// recursive circuit only forces the leaf to be cryptographically valid;
+    /// a REAL leaf (nonzero block_hash) replayed into every slot passes all
+    /// cross-slot consistency checks, so without the sentinel check the build
+    /// would emit a real private-batch proof labelled as the all-dummy
+    /// padding template and report success (audit finding).
+    #[test]
+    fn build_rejects_non_dummy_leaf_planted_at_dummy_proof_bin() {
+        use test_helpers::TestInputs as _;
+        use wormhole_circuit::block_header::header::HeaderInputs;
+        use wormhole_circuit::inputs::CircuitInputs;
+
+        let dir = temp_dir("poisoned-dummy");
+        write_canonical_leaf_artifacts(&dir);
+
+        // A REAL leaf proof against the canonical leaf circuit: genuine block
+        // hash, so it deserializes and verifies fine but violates the dummy
+        // sentinel (non-zero block_hash).
+        let mut inputs = CircuitInputs::test_inputs_0();
+        inputs.public.block_hash = HeaderInputs::try_from(&inputs)
+            .expect("header inputs")
+            .block_hash();
+        let real_leaf = wormhole_prover::build_fresh()
+            .commit(&inputs)
+            .unwrap()
+            .prove()
+            .unwrap();
+        std::fs::write(dir.join("dummy_proof.bin"), real_leaf.to_bytes()).unwrap();
+
+        let err = generate_private_batch_circuit_binaries(&dir, 1, true).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("not a genuine all-dummy leaf template"),
+            "poisoned dummy_proof.bin must be rejected with attribution, got: {msg}"
+        );
+        assert!(
+            msg.contains("non-zero block_hash"),
+            "the sentinel violation must be named, got: {msg}"
+        );
+        assert!(
+            !dir.join("dummy_private_batch_proof.bin").exists()
+                && !dir.join("private_batch_common.bin").exists(),
+            "a rejected template must not publish any private-batch artifacts"
         );
 
         std::fs::remove_dir_all(&dir).unwrap();
