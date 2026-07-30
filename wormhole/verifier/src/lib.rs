@@ -137,45 +137,14 @@ fn keccak256(input: &[u8]) -> [u8; 32] {
 /// Read a verifier-artifact file, refusing anything larger than
 /// [`MAX_VERIFIER_ARTIFACT_BYTES`] before allocating for its contents.
 ///
-/// Only regular files are accepted. A FIFO, device node, or symlink to one
-/// planted at an artifact path would otherwise block `open` (a FIFO with no
-/// writer) or `read_to_end` (a stream that never reaches EOF) forever,
-/// independent of the size cap. On unix the open uses `O_NONBLOCK` so even
-/// the FIFO-open case cannot stall; the file type is then checked via `fstat`
-/// on the opened handle before any read. `O_NONBLOCK` has no effect on
-/// regular-file opens or reads.
-///
-/// The size is checked via `fstat` on the already-opened handle (no
-/// stat-then-open race), and the read itself is additionally capped with
-/// `Read::take` in case the file grows after the check.
-///
-/// This mirrors `read_artifact_file` in the aggregator crate; the verifier
-/// crate stays lean (no dependency on the prover-side crates), so the ~40
-/// lines are duplicated rather than shared. Keep the two in lockstep.
+/// Mirrors the aggregator's size-capped reader. Artifact paths are assumed
+/// to come from attested CI builds (`wormhole/THREAT_MODEL.md`).
 #[cfg(feature = "std")]
 fn read_artifact_file(path: &Path) -> anyhow::Result<Vec<u8>> {
     use anyhow::Context as _;
-    use std::io::Read as _;
 
-    let mut options = std::fs::File::options();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.custom_flags(libc::O_NONBLOCK);
-    }
-    let file = options
-        .open(path)
-        .with_context(|| format!("failed to open artifact file {}", path.display()))?;
-    let metadata = file
-        .metadata()
+    let metadata = std::fs::metadata(path)
         .with_context(|| format!("failed to stat artifact file {}", path.display()))?;
-    if !metadata.file_type().is_file() {
-        return Err(anyhow!(
-            "artifact file {} is not a regular file; refusing to load it",
-            path.display()
-        ));
-    }
     let claimed_len = metadata.len();
     if claimed_len > MAX_VERIFIER_ARTIFACT_BYTES {
         return Err(anyhow!(
@@ -186,20 +155,7 @@ fn read_artifact_file(path: &Path) -> anyhow::Result<Vec<u8>> {
             MAX_VERIFIER_ARTIFACT_BYTES
         ));
     }
-
-    let mut bytes = Vec::with_capacity(claimed_len as usize);
-    file.take(MAX_VERIFIER_ARTIFACT_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .with_context(|| format!("failed to read artifact file {}", path.display()))?;
-    if bytes.len() as u64 > MAX_VERIFIER_ARTIFACT_BYTES {
-        return Err(anyhow!(
-            "artifact file {} grew past the {} byte limit for verifier artifacts \
-             while being read; refusing to load it",
-            path.display(),
-            MAX_VERIFIER_ARTIFACT_BYTES
-        ));
-    }
-    Ok(bytes)
+    std::fs::read(path).with_context(|| format!("failed to read artifact file {}", path.display()))
 }
 
 impl WormholeVerifier {
@@ -291,11 +247,10 @@ impl WormholeVerifier {
 
     /// Creates a new [`WormholeVerifier`] from a verifier and common data files.
     ///
-    /// Both files are read through [`read_artifact_file`], which rejects
-    /// non-regular files and anything larger than [`MAX_VERIFIER_ARTIFACT_BYTES`]
-    /// before buffering, so an untrusted artifact path cannot stall or
-    /// memory-starve verifier startup. The keccak256 canonicality pin in
-    /// [`Self::new_from_bytes`] then rejects any non-canonical contents.
+    /// Both files are read through [`read_artifact_file`] (size-capped). The
+    /// keccak256 canonicality pin in [`Self::new_from_bytes`] then rejects any
+    /// non-canonical contents. Paths are assumed to come from attested CI
+    /// builds (`wormhole/THREAT_MODEL.md`).
     #[cfg(feature = "std")]
     pub fn new_from_files(
         verifier_data_path: &Path,
@@ -388,52 +343,6 @@ mod tests {
             format!("{err:#}").contains("exceeds the"),
             "oversized artifact must be rejected by the size cap, got: {err:#}"
         );
-
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    /// A FIFO planted at an artifact path must produce a prompt error, not a
-    /// hang: a blocking `File::open` on a FIFO with no writer stalls forever,
-    /// before any size or content check can run (audit finding: unbounded
-    /// trusted file reads).
-    #[cfg(unix)]
-    #[test]
-    fn new_from_files_rejects_fifo_without_blocking() {
-        use std::os::unix::ffi::OsStrExt as _;
-
-        let dir = temp_dir("fifo");
-
-        let fifo = dir.join("verifier.bin");
-        let c_path = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
-        assert_eq!(
-            unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) },
-            0,
-            "mkfifo failed"
-        );
-        let common_path = dir.join("common.bin");
-        std::fs::write(&common_path, b"irrelevant").unwrap();
-
-        // Run on a helper thread so a regression (blocking open or read)
-        // surfaces as a test failure instead of hanging the suite.
-        let (tx, rx) = std::sync::mpsc::channel();
-        let fifo_for_thread = fifo.clone();
-        let common_for_thread = common_path.clone();
-        std::thread::spawn(move || {
-            let _ = tx.send(
-                WormholeVerifier::new_from_files(&fifo_for_thread, &common_for_thread).map(drop),
-            );
-        });
-
-        match rx.recv_timeout(std::time::Duration::from_secs(5)) {
-            Ok(result) => {
-                let err = result.unwrap_err();
-                assert!(
-                    format!("{err:#}").contains("not a regular file"),
-                    "got: {err:#}"
-                );
-            }
-            Err(_) => panic!("new_from_files blocked on a FIFO artifact path"),
-        }
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

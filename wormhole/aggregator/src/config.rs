@@ -55,10 +55,9 @@ impl CircuitBinsConfig {
 
     /// Load config from a directory containing circuit binaries.
     ///
-    /// Reads through [`crate::common::utils::read_artifact_file`], which
-    /// rejects non-regular files and oversized inputs, so an untrusted bins
-    /// directory cannot stall or memory-starve config loading (this runs
-    /// before any of the `*.bin` artifacts are touched).
+    /// Reads through [`crate::common::utils::read_artifact_file`] (size-capped).
+    /// Artifact directories are assumed to come from attested CI builds; see
+    /// `wormhole/THREAT_MODEL.md`.
     ///
     /// # Errors
     /// Returns an error if the file cannot be read, parsed, or contains invalid values.
@@ -73,12 +72,7 @@ impl CircuitBinsConfig {
         Ok(config)
     }
 
-    /// Save config to a directory.
-    ///
-    /// Published through [`crate::common::utils::commit_artifact_set`]
-    /// (exclusive-create staging plus rename into place), so a symlink
-    /// pre-planted at `config.json` is replaced rather than followed and a
-    /// failed write never leaves a truncated config behind.
+    /// Save config to a directory (overwrites `config.json` in place).
     pub fn save<P: AsRef<Path>>(&self, bins_dir: P) -> Result<()> {
         let bins_dir = bins_dir.as_ref();
         let config_str = serde_json::to_string_pretty(self)

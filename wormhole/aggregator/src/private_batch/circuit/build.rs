@@ -18,24 +18,17 @@ use zk_circuits_common::circuit::{wormhole_private_batch_circuit_config, C, D, F
 
 use crate::common::utils::{
     commit_artifact_set, load_canonical_leaf_verifier_data, read_artifact_file,
-    sweep_stale_artifact_droppings,
 };
 use crate::private_batch::circuit::circuit_logic::PrivateBatchCircuit;
 
 /// Generate prebuilt Private-batch aggregation circuit binaries.
 ///
-/// The private-batch files are published all-or-nothing (see
-/// `commit_artifact_set` in `common::utils`), so a failed re-run over an
-/// existing bins dir never leaves a fresh `private_batch_common.bin` beside a
-/// stale `private_batch_verifier.bin` or `dummy_private_batch_proof.bin`.
-/// When `include_prover` is `false`, any pre-existing
-/// `dummy_private_batch_proof.bin` is removed as part of the same publish: a
-/// stale template would fail verification against the fresh verifier data and
-/// take the whole bins directory offline for public-batch proving.
-/// Whole-directory consistency across all stages (leaf, private-batch,
-/// public-batch, `config.json`) is still only guaranteed by the staging
-/// `generate_all_circuit_binaries` flow in `circuit-builder`; prefer it unless
-/// deliberately regenerating this one stage into an existing set.
+/// Writes private-batch verifier artifacts (and optionally the dummy
+/// private-batch padding template). Prefer
+/// `generate_all_circuit_binaries` for production regenerates so a failed
+/// stage never mixes generations in the live output directory
+/// (`wormhole/THREAT_MODEL.md`). When `include_prover` is `false`, any
+/// pre-existing `dummy_private_batch_proof.bin` is removed.
 pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
     num_leaf_proofs: usize,
@@ -45,9 +38,6 @@ pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
     // Bound the per-layer count before any circuit construction (#97021, #97070).
     validate_proof_count(num_leaf_proofs, "num_leaf_proofs")?;
     create_dir_all(output_path)?;
-    // A previous publish hard-killed mid-swap leaves orphaned temp/backup
-    // entries behind; we are about to replace the set, so sweep them now.
-    sweep_stale_artifact_droppings(output_path)?;
 
     println!(
         "Building prebuilt private-batch aggregation circuit (num_leaf_proofs={}, ZK row blinding)...",
@@ -114,9 +104,8 @@ pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
         .to_bytes()
         .map_err(|e| anyhow!("Failed to serialize aggregated verifier data: {}", e))?;
 
-    // Publish the whole set all-or-nothing. Without prover output, a stale
-    // dummy template from an earlier run is removed as part of the same swap:
-    // it would fail template verification against the fresh verifier data.
+    // Without prover output, drop a stale dummy template from an earlier run
+    // (it would fail template verification against the fresh verifier data).
     let mut files: Vec<(&str, Vec<u8>)> = Vec::new();
     let mut remove_stale: Vec<&str> = Vec::new();
     match dummy_batch_proof_bytes {
@@ -236,153 +225,6 @@ mod tests {
             leaf.verifier_only.to_bytes().unwrap(),
         )
         .unwrap();
-    }
-
-    /// The private-batch files are consumed as a matched set (public-batch
-    /// constructors pin them against a canonical rebuild and verify the dummy
-    /// template against them), so a directory holding a fresh file from one
-    /// generation beside a stale file from another is rejected until
-    /// regenerated. A publish that fails partway must therefore either leave
-    /// the previous set fully intact or replace it wholesale — never mix
-    /// (audit finding: non-atomic artifact-set publication).
-    #[test]
-    fn failed_artifact_publish_never_leaves_mixed_private_batch_set() {
-        let dir = temp_dir("mixed-set");
-        write_canonical_leaf_artifacts(&dir);
-        std::fs::write(dir.join("private_batch_common.bin"), b"old common").unwrap();
-        // A directory squatting on the verifier path makes a naive in-place
-        // write of the second file fail after the first was already clobbered.
-        create_dir_all(dir.join("private_batch_verifier.bin")).unwrap();
-
-        let result = generate_private_batch_circuit_binaries(&dir, 1, false);
-
-        let common_now = std::fs::read(dir.join("private_batch_common.bin")).unwrap();
-        match result {
-            Err(_) => assert_eq!(
-                common_now, b"old common",
-                "a failed publish must leave the previous artifact set untouched, \
-                 not a fresh common beside a stale verifier"
-            ),
-            Ok(()) => {
-                assert_ne!(
-                    common_now, b"old common",
-                    "a successful publish must replace the set wholesale"
-                );
-                assert!(
-                    dir.join("private_batch_verifier.bin").is_file(),
-                    "a successful publish must leave a real verifier artifact"
-                );
-            }
-        }
-
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    /// A symlink pre-planted at an artifact filename must not redirect the
-    /// write onto its target (audit finding: symlink-following artifact
-    /// writes). `commit_artifact_set` stages under exclusive-create temp names
-    /// and renames into place, which replaces the planted entry itself; this
-    /// guards against regressing to direct `std::fs::write` calls.
-    #[cfg(unix)]
-    #[test]
-    fn artifact_writes_do_not_follow_planted_symlinks() {
-        let dir = temp_dir("symlink-clobber");
-        write_canonical_leaf_artifacts(&dir);
-
-        let victim = dir.join("victim.txt");
-        std::fs::write(&victim, b"precious data").unwrap();
-        std::os::unix::fs::symlink(&victim, dir.join("private_batch_verifier.bin")).unwrap();
-
-        let result = generate_private_batch_circuit_binaries(&dir, 1, false);
-
-        assert_eq!(
-            std::fs::read(&victim).unwrap(),
-            b"precious data",
-            "artifact publication must never write through a planted symlink"
-        );
-        if result.is_ok() {
-            let verifier = std::fs::read(dir.join("private_batch_verifier.bin")).unwrap();
-            assert_ne!(
-                verifier, b"precious data",
-                "a successful run must have replaced the planted entry with a real artifact"
-            );
-        }
-
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    /// A verifier-only rerun (`include_prover == false`) over a directory that
-    /// previously held prover output must not leave the old
-    /// `dummy_private_batch_proof.bin` beside freshly regenerated
-    /// common/verifier data: the public-batch prover verifies the template
-    /// against the pinned private-batch verifier at startup, so a stale
-    /// template takes the whole bins directory offline (audit finding:
-    /// non-atomic artifact-set publication).
-    #[test]
-    fn verifier_only_rerun_removes_stale_dummy_template() {
-        let dir = temp_dir("stale-dummy");
-        write_canonical_leaf_artifacts(&dir);
-        std::fs::write(dir.join("dummy_private_batch_proof.bin"), b"stale template").unwrap();
-
-        generate_private_batch_circuit_binaries(&dir, 1, false).unwrap();
-
-        assert!(
-            !dir.join("dummy_private_batch_proof.bin").exists(),
-            "a verifier-only rerun must remove the stale dummy template"
-        );
-        // No staging or moved-aside droppings either.
-        let mut names: Vec<String> = std::fs::read_dir(&dir)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
-        names.sort();
-        assert_eq!(
-            names,
-            vec![
-                "common.bin".to_string(),
-                "private_batch_common.bin".to_string(),
-                "private_batch_verifier.bin".to_string(),
-                "verifier.bin".to_string(),
-            ],
-            "publish must not leave temp/old files behind"
-        );
-
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    /// A publish hard-killed mid-swap (SIGKILL/power loss) leaves orphaned
-    /// `.<name>.tmp-*` / `.<name>.old-*` droppings that no later run adopts
-    /// (the random suffix is fresh per call). The builder path must sweep
-    /// them before regenerating so they do not accumulate forever (audit
-    /// finding: crash-path droppings never cleaned up). Unrelated dotfiles
-    /// must survive the sweep.
-    #[test]
-    fn rebuild_sweeps_droppings_of_interrupted_publish() {
-        let dir = temp_dir("crash-droppings");
-        write_canonical_leaf_artifacts(&dir);
-
-        // Simulate the post-SIGKILL state: originals moved aside, staged
-        // files still present, nothing live.
-        let dropping_old = dir.join(".private_batch_common.bin.old-12345-0123456789abcdef");
-        let dropping_tmp = dir.join(".private_batch_verifier.bin.tmp-12345-0123456789abcdef");
-        std::fs::write(&dropping_old, b"moved-aside original").unwrap();
-        std::fs::write(&dropping_tmp, b"orphaned staged file").unwrap();
-        // An unrelated dotfile must not be swept.
-        let innocent = dir.join(".gitignore");
-        std::fs::write(&innocent, b"*.log").unwrap();
-
-        generate_private_batch_circuit_binaries(&dir, 1, false).unwrap();
-
-        assert!(
-            !dropping_old.exists() && !dropping_tmp.exists(),
-            "regeneration must sweep droppings of an interrupted publish"
-        );
-        assert!(
-            innocent.exists(),
-            "the sweep must not touch unrelated dotfiles"
-        );
-
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A valid-but-non-dummy leaf proof planted at `dummy_proof.bin` must not

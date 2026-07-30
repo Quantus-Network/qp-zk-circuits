@@ -40,10 +40,16 @@ host.”
 - Treating “cleanup of a moved-aside previous output failed” as equivalent to
   “publish failed” for soundness (it is an operational concern only)
 
-Hardening that still exists in the tree for some of the above is
-**defense-in-depth / operator hygiene**, not part of the claimed adversarial
-model. It may be simplified or removed without changing the security story
-described here.
+Those publisher/local-FS defenses have been **removed** from the builder and
+artifact I/O paths to match this model. What remains for operator hygiene:
+
+- Whole-directory staging in `generate_all_circuit_binaries` (avoids mixed
+  leaf / private-batch / public-batch generations on a failed mid-pipeline run)
+- Size caps on artifact reads before canonical pinning
+- Best-effort cleanup warnings after a successful directory swap
+
+Do not reintroduce symlink/FIFO/TOCTOU/basename hardening as “security
+requirements” without first changing this document.
 
 ---
 
