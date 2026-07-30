@@ -227,6 +227,13 @@ fn create_staging_dir(output_dir: &Path) -> Result<PathBuf> {
 /// rolled back into place (and only then is the redundant staged copy
 /// removed); if even the rollback fails, both copies are left on disk and the
 /// error reports their locations.
+///
+/// After the staged directory has been renamed into `output_dir`, the publish
+/// has succeeded: failing to delete the moved-aside previous copy is reported
+/// as a warning, not as command failure. Conflating that cleanup with publish
+/// success made automation treat a live, complete artifact update as a failed
+/// run (false rollback / retry / alert) whenever the old path was not a
+/// recursively-removable directory (audit finding).
 fn commit_staging_dir(staging_dir: &Path, output_dir: &Path) -> Result<()> {
     commit_staging_dir_impl(staging_dir, output_dir, |src, dst| fs::rename(src, dst))
 }
@@ -260,6 +267,26 @@ fn commit_staging_dir_impl(
     let old_path = staging_dir.with_file_name(old_name);
     let previous_exists = output_dir.exists();
     if previous_exists {
+        // Refuse to treat a file or symlink as the previous artifact set:
+        // `--output` is a directory, and moving a non-directory aside would
+        // leave `remove_dir_all` unable to clean it up after a successful
+        // publish (the exact cleanup/success conflation this function avoids).
+        let prev_meta = fs::symlink_metadata(output_dir).with_context(|| {
+            format!(
+                "failed to inspect previous artifact path {}",
+                output_dir.display()
+            )
+        })?;
+        if !prev_meta.is_dir() {
+            let _ = fs::remove_dir_all(staging_dir);
+            bail!(
+                "output path {} exists but is not a plain directory (symlink or file); \
+                 refusing to treat it as the previous artifact set — remove or rename \
+                 it and retry",
+                output_dir.display()
+            );
+        }
+
         if let Err(e) = rename(output_dir, &old_path) {
             // Nothing has moved: the previous set still serves from
             // output_dir, so the staged copy is safe to discard.
@@ -321,14 +348,18 @@ fn commit_staging_dir_impl(
         });
     }
     if previous_exists {
-        // The new set is already committed at output_dir; failing to clean up
-        // the old copy is an error but loses nothing.
-        fs::remove_dir_all(&old_path).with_context(|| {
-            format!(
-                "Failed to remove previous artifact dir {}",
+        // The new set is already live at output_dir. Cleanup of the moved-aside
+        // previous copy must not flip the command to failure: operators and CI
+        // that key off the exit code would otherwise rerun expensive generation
+        // or roll back despite a successful publish (audit finding).
+        if let Err(e) = fs::remove_dir_all(&old_path) {
+            eprintln!(
+                "warning: published artifacts to {}, but failed to remove the previous \
+                 artifact copy at {}: {e}; remove it manually if it is no longer needed",
+                output_dir.display(),
                 old_path.display()
-            )
-        })?;
+            );
+        }
     }
     Ok(())
 }
@@ -344,6 +375,98 @@ mod tests {
             tag,
             std::process::id()
         ))
+    }
+
+    /// `--output` is a directory. A file (or symlink) planted at that path
+    /// must be rejected before the swap, not moved aside and then left as a
+    /// non-directory `.old` that `remove_dir_all` cannot clean (audit finding).
+    #[test]
+    fn commit_rejects_non_directory_previous_output() {
+        let root = unique_tmp_dir("commit-not-dir");
+        let _ = fs::remove_dir_all(&root);
+        create_dir_all(&root).unwrap();
+        let output = root.join("bins");
+        let staging = create_staging_dir(&output).unwrap();
+
+        write(&output, b"i am a file").unwrap();
+        write(staging.join("fresh.bin"), b"new artifact").unwrap();
+
+        let err = commit_staging_dir(&staging, &output).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("not a plain directory"),
+            "got: {err:#}"
+        );
+        assert_eq!(
+            fs::read(&output).unwrap(),
+            b"i am a file",
+            "previous non-directory must be left untouched"
+        );
+        assert!(
+            !staging.exists(),
+            "rejected commit discards the (uncommitted) staged copy"
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// After the staged directory is renamed into place the publish has
+    /// succeeded. An undeletable moved-aside previous copy must not flip the
+    /// result to Err — CI/operators keying off the exit code would otherwise
+    /// treat a live artifact update as a failed run (audit finding).
+    #[cfg(unix)]
+    #[test]
+    fn successful_publish_is_not_failed_by_old_copy_cleanup() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = unique_tmp_dir("commit-cleanup-best-effort");
+        let _ = fs::remove_dir_all(&root);
+        create_dir_all(&root).unwrap();
+        let output = root.join("bins");
+        let staging = create_staging_dir(&output).unwrap();
+
+        create_dir_all(&output).unwrap();
+        write(output.join("stale.bin"), b"old artifact").unwrap();
+        // Nested dir without write permission: remove_dir_all cannot unlink
+        // its children once this tree is the moved-aside `.old` copy.
+        let locked = output.join("locked");
+        create_dir_all(&locked).unwrap();
+        write(locked.join("x.bin"), b"x").unwrap();
+        let mut perms = fs::metadata(&locked).unwrap().permissions();
+        perms.set_mode(0o555);
+        fs::set_permissions(&locked, perms).unwrap();
+
+        write(staging.join("fresh.bin"), b"new artifact").unwrap();
+
+        let result = commit_staging_dir(&staging, &output);
+        assert!(
+            result.is_ok(),
+            "publish must report success even when old-copy cleanup fails: {result:?}"
+        );
+        assert!(
+            output.join("fresh.bin").exists(),
+            "new artifacts must be live at output_dir"
+        );
+        assert!(
+            !output.join("stale.bin").exists(),
+            "stale contents must not remain in the published dir"
+        );
+
+        // Make any leftover `.old` tree deletable so the test cleans up.
+        for entry in fs::read_dir(&root).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if !name.ends_with(".old") {
+                continue;
+            }
+            let locked_old = path.join("locked");
+            if locked_old.exists() {
+                let mut p = fs::metadata(&locked_old).unwrap().permissions();
+                p.set_mode(0o755);
+                fs::set_permissions(&locked_old, p).unwrap();
+            }
+        }
+
+        fs::remove_dir_all(&root).unwrap();
     }
 
     /// The swap must replace stale contents wholesale, not merge into them.
