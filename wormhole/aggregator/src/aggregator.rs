@@ -25,11 +25,9 @@
 //! // other's mark instead of both proving the same key):
 //! let proofs = aggregator.lock().snapshot_batch(&key)?;
 //!
-//! // proving worker, NO lock held (use its own prover instance):
-//! let prover = PublicBatchProver::new_from_binaries_dir(&bins_dir)?;
-//! let proof = prover
-//!     .commit(PublicBatchInputs { proofs, aggregator_address })?
-//!     .prove()?;
+//! // proving worker, NO lock held — prove from the aggregator's pinned
+//! // artifacts (never re-read the mutable bins_dir):
+//! let proof = aggregator.lock().prove_batch(proofs)?;
 //! // submit `proof`; the block-import evict_settled cadence retires the
 //! // proved inputs from the pool once their segments settle on-chain.
 //! ```
@@ -61,15 +59,17 @@ use plonky2::plonk::{
 };
 use qp_wormhole_inputs::{public_batch_pi::AGGREGATOR_ADDRESS_LEN, BytesDigest};
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use zk_circuits_common::{
-    circuit::{C, D, F},
+    circuit::{wormhole_public_batch_circuit_config, C, D, F},
     utils::try_4_felts_to_bytes,
 };
 
 use crate::pool::{BatchKey, BucketStats, PoolLimits, ProofPool};
-use crate::public_batch::prover::{PublicBatchInputs, PublicBatchProver};
+use crate::public_batch::prover::{
+    verify_dummy_private_batch_template, PublicBatchInputs, PublicBatchProver,
+};
 use crate::{
     common::utils::{
         canonical_leaf_verifier_data, canonical_public_batch_verifier_data,
@@ -128,14 +128,18 @@ fn load_public_batch_verifier_from_bins(
 // ============================================================================
 
 pub struct PublicBatchAggregator {
-    bins_dir: PathBuf,
     aggregator_address: BytesDigest,
     pool: ProofPool,
     /// Canonical-pinned public-batch verifier data, loaded once at construction.
     verifier: VerifierCircuitData<F, C, D>,
-    /// Canonical-pinned private-batch (inner) common data, kept for proof
-    /// deserialization by callers.
-    private_batch_common: CommonCircuitData<F, D>,
+    /// Canonical-pinned private-batch verifier, used to build the public-batch
+    /// prover on every [`Self::prove_batch`] without re-reading the artifact
+    /// directory (which is mutable after construction).
+    private_batch_verifier: VerifierCircuitData<F, C, D>,
+    /// Pinned dummy private-batch padding template, validated at construction.
+    dummy_proof_template: Proof,
+    num_leaf_proofs: usize,
+    num_private_batch_proofs: usize,
 }
 
 impl PublicBatchAggregator {
@@ -143,41 +147,57 @@ impl PublicBatchAggregator {
         Self::with_limits(bins_dir, aggregator_address, PoolLimits::default())
     }
 
+    /// Load and pin every artifact needed for pooling and proving.
+    ///
+    /// After construction the aggregator never reads `bins_dir` again: a
+    /// filesystem attacker (or a later artifact publish) cannot change the
+    /// circuit shape or dummy template under a proving call. Callers that
+    /// need to rotate artifacts must construct a new aggregator.
     pub fn with_limits<P: AsRef<Path>>(
         bins_dir: P,
         aggregator_address: BytesDigest,
         limits: PoolLimits,
     ) -> Result<Self> {
-        let bins_dir = bins_dir.as_ref().to_path_buf();
+        let bins_dir = bins_dir.as_ref();
 
-        let config = CircuitBinsConfig::load(&bins_dir)?;
+        let config = CircuitBinsConfig::load(bins_dir)?;
         let num_private_batch_proofs = config
             .num_private_batch_proofs
             .ok_or_else(|| anyhow!("config is missing num_private_batch_proofs. Please regenerate the binaries and set \"num_private_batch_proofs\""))?;
         let num_leaf_proofs = config.num_leaf_proofs;
 
-        let private_batch = load_private_batch_verifier_from_bins(&bins_dir, num_leaf_proofs)?;
+        let private_batch_verifier =
+            load_private_batch_verifier_from_bins(bins_dir, num_leaf_proofs)?;
         let verifier = load_public_batch_verifier_from_bins(
-            &bins_dir,
-            &private_batch,
+            bins_dir,
+            &private_batch_verifier,
             num_leaf_proofs,
             num_private_batch_proofs,
         )?;
 
-        let private_batch_common = private_batch.common.clone();
+        let dummy_proof_template = Proof::from_bytes(
+            read_bin(bins_dir, "dummy_private_batch_proof.bin")?,
+            &private_batch_verifier.common,
+        )
+        .map_err(|e| anyhow!("failed to deserialize dummy private-batch proof: {}", e))?;
+        verify_dummy_private_batch_template(&dummy_proof_template, &private_batch_verifier)
+            .context("dummy private-batch proof template failed validation at aggregator init")?;
+
         let pool = ProofPool::new(
-            private_batch,
+            private_batch_verifier.clone(),
             num_leaf_proofs,
             num_private_batch_proofs,
             limits,
         )?;
 
         Ok(Self {
-            bins_dir,
             aggregator_address,
             pool,
             verifier,
-            private_batch_common,
+            private_batch_verifier,
+            dummy_proof_template,
+            num_leaf_proofs,
+            num_private_batch_proofs,
         })
     }
 
@@ -242,25 +262,44 @@ impl PublicBatchAggregator {
     /// Prove a snapshot of private-batch proofs into a public-batch proof
     /// bound to this aggregator's address. Does not touch the pool.
     ///
+    /// Builds the public-batch prover from artifacts pinned at construction
+    /// (private-batch verifier, dummy template, batch sizes) — never from the
+    /// mutable `bins_dir` path. The returned proof is checked against the
+    /// pinned [`Self::verify`] before being handed back, so a divergent prover
+    /// build cannot silently return an unusable proof.
+    ///
     /// Takes tens of seconds (~16 s for a 53-proof batch on
     /// Apple-Silicon-class hardware, plus prover load). In a concurrent
     /// service, run this on a dedicated proving worker without holding
     /// whatever lock guards the aggregator — the snapshot is already
     /// independent of the pool.
     pub fn prove_batch(&self, proofs: Vec<Proof>) -> Result<Proof> {
-        let prover = PublicBatchProver::new_from_binaries_dir(&self.bins_dir)
-            .context("failed to load prebuilt public-batch prover")?;
+        let prover = PublicBatchProver::new(
+            wormhole_public_batch_circuit_config(),
+            self.private_batch_verifier.common.clone(),
+            &self.private_batch_verifier.verifier_only,
+            self.num_private_batch_proofs,
+            self.num_leaf_proofs,
+            self.dummy_proof_template.clone(),
+        )
+        .context("failed to build public-batch prover from pinned artifacts")?;
 
-        // Partial batches are fine: PublicBatchProver::commit pads with the dummy
-        // private-batch proof template (no shuffle - forwarding stays order-preserving
-        // so the chain can attribute each segment to its inner proof).
-        prover
+        // Partial batches are fine: PublicBatchProver::commit pads with the
+        // pinned dummy private-batch proof template (no shuffle — forwarding
+        // stays order-preserving so the chain can attribute each segment to
+        // its inner proof).
+        let proof = prover
             .commit(PublicBatchInputs {
                 proofs,
                 aggregator_address: self.aggregator_address,
             })
             .context("failed to commit private-batch proofs to public-batch prover")
-            .and_then(|committed| committed.prove().context("public-batch proving failed"))
+            .and_then(|committed| committed.prove().context("public-batch proving failed"))?;
+
+        self.verify(proof.clone()).context(
+            "proved public-batch proof rejected by the aggregator's pinned verifier",
+        )?;
+        Ok(proof)
     }
 
     /// Per-bucket statistics for the operator's "when to aggregate what" policy.
@@ -337,6 +376,6 @@ impl PublicBatchAggregator {
     /// Common circuit data of the private-batch (inner) circuit, e.g. for
     /// deserializing client proof submissions.
     pub fn private_batch_common(&self) -> &CommonCircuitData<F, D> {
-        &self.private_batch_common
+        &self.private_batch_verifier.common
     }
 }

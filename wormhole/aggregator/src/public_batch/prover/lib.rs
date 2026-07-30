@@ -426,7 +426,11 @@ fn ensure_private_batch_compatible(proofs: &[ProofWithPublicInputs<F, C, D>]) ->
 /// private-batch proof carrying the zero block-hash sentinel and zero forwarded
 /// payouts, so poisoned padding cannot inject real exits into partial public
 /// batches (#97026).
-fn verify_dummy_private_batch_template(
+///
+/// `pub(crate)` so [`crate::aggregator::PublicBatchAggregator`] can validate the
+/// template once at construction and pin it for every later `prove_batch`,
+/// instead of re-reading a mutable artifact path.
+pub(crate) fn verify_dummy_private_batch_template(
     template: &ProofWithPublicInputs<F, C, D>,
     private_batch_verifier: &VerifierCircuitData<F, C, D>,
 ) -> Result<()> {

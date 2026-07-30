@@ -573,6 +573,54 @@ fn public_batch_prover_ignores_prover_artifact() {
 }
 
 #[test]
+fn public_batch_aggregator_prove_batch_ignores_bins_dir_after_init() {
+    // Audit finding: prove_batch used to rebuild PublicBatchProver from the
+    // mutable bins_dir on every call. Replacing artifacts after init could
+    // make the aggregator spend a proving window and return a proof its own
+    // pinned verifier rejects. Construction must pin every proving input;
+    // mutating the directory afterwards must be a no-op for prove_batch.
+    setup_public_test_binaries();
+
+    let dir = test_bins_root().join("public-pinned-after-init");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for entry in std::fs::read_dir(public_bins_dir()).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), dir.join(entry.file_name())).unwrap();
+    }
+
+    let private_batch_proof = make_private_batch_proof_in_public_dir();
+    let address = BytesDigest::try_from([1u8; 32]).expect("valid address");
+    let mut aggregator =
+        PublicBatchAggregator::new(&dir, address).expect("aggregator init pins artifacts");
+    let key = aggregator
+        .push_proof(private_batch_proof)
+        .expect("admit private-batch proof");
+
+    // Scrub every artifact prove_batch used to re-read. If it still touches
+    // the path, proving or the pinned-verifier check will fail.
+    for name in [
+        "private_batch_common.bin",
+        "private_batch_verifier.bin",
+        "dummy_private_batch_proof.bin",
+        "public_batch_common.bin",
+        "public_batch_verifier.bin",
+        "config.json",
+    ] {
+        std::fs::write(dir.join(name), b"not a trusted artifact").unwrap();
+    }
+
+    let aggregated = aggregator
+        .aggregate(&key)
+        .expect("prove_batch must use pinned artifacts, not the scrubbed bins_dir");
+    aggregator
+        .verify(aggregated)
+        .expect("proof must verify under the verifier pinned at init");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn pool_rejects_invalid_proofs_and_aggregates_by_bucket() {
     setup_public_test_binaries();
     let dir = public_bins_dir();
