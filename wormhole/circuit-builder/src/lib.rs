@@ -216,6 +216,61 @@ fn create_staging_dir(output_dir: &Path) -> Result<PathBuf> {
     );
 }
 
+/// Identity of a plain directory we intend to publish, captured via
+/// `symlink_metadata` so a symlink-at-that-path never counts as a directory.
+/// On Unix we also pin `(dev, ino)` so a TOCTOU replacement of the staging
+/// path with a different directory (or symlink) between the check and
+/// `rename` is detectable after publication.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PlainDirId {
+    #[cfg(unix)]
+    dev: u64,
+    #[cfg(unix)]
+    ino: u64,
+}
+
+fn plain_dir_id(path: &Path) -> Result<PlainDirId> {
+    let meta = fs::symlink_metadata(path).with_context(|| {
+        format!("failed to inspect artifact path {}", path.display())
+    })?;
+    // `symlink_metadata` + `is_dir` rejects symlinks even when their target
+    // is a directory — that is the whole point of the staging-path check.
+    if !meta.is_dir() {
+        bail!(
+            "artifact path {} is not a plain directory (symlink or file)",
+            path.display()
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Ok(PlainDirId {
+            dev: meta.dev(),
+            ino: meta.ino(),
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        Ok(PlainDirId {})
+    }
+}
+
+/// Remove a just-published path that failed the post-rename identity check.
+/// It may be a symlink (the TOCTOU attack), a file, or a wrong directory.
+fn remove_bad_publish_path(path: &Path) -> std::io::Result<()> {
+    let meta = match fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    if meta.file_type().is_symlink() || meta.is_file() {
+        fs::remove_file(path)
+    } else {
+        fs::remove_dir_all(path)
+    }
+}
+
 /// Replace `output_dir` with the fully staged `staging_dir` via directory
 /// renames. `rename` cannot overwrite a non-empty directory, so a pre-existing
 /// output dir is first moved aside, then removed after the swap. A crash
@@ -234,6 +289,15 @@ fn create_staging_dir(output_dir: &Path) -> Result<PathBuf> {
 /// success made automation treat a live, complete artifact update as a failed
 /// run (false rollback / retry / alert) whenever the old path was not a
 /// recursively-removable directory (audit finding).
+///
+/// Symlink / inode TOCTOU: a single `symlink_metadata` check before `rename`
+/// is not atomic with the rename's pathname lookup. A local attacker who can
+/// write the output parent could replace the staging directory with a symlink
+/// after the check and have that symlink published as `output_dir` while the
+/// previous artifact set is deleted. We pin the staging directory's identity,
+/// re-validate it immediately before the rename, and require the same identity
+/// at `output_dir` afterward — rolling back (and refusing success) on mismatch
+/// (audit finding).
 fn commit_staging_dir(staging_dir: &Path, output_dir: &Path) -> Result<()> {
     commit_staging_dir_impl(staging_dir, output_dir, |src, dst| fs::rename(src, dst))
 }
@@ -245,22 +309,16 @@ fn commit_staging_dir_impl(
     output_dir: &Path,
     rename: impl Fn(&Path, &Path) -> std::io::Result<()>,
 ) -> Result<()> {
-    // Never publish a staging path we did not stage as a real directory:
-    // renaming a symlink into place would hand out an artifact dir whose
-    // contents remain mutable by whoever owns the link target.
-    let staging_meta = fs::symlink_metadata(staging_dir).with_context(|| {
+    // Pin the staging directory's identity up front. Renaming a symlink into
+    // place would hand out an artifact dir whose contents remain mutable by
+    // whoever owns the link target.
+    let staging_id = plain_dir_id(staging_dir).with_context(|| {
         format!(
-            "failed to inspect staged artifact dir {}",
+            "staged artifact path {} is not a plain directory; \
+             refusing to publish it as the artifact dir",
             staging_dir.display()
         )
     })?;
-    if !staging_meta.is_dir() {
-        bail!(
-            "staged artifact path {} is not a plain directory (symlink or file); \
-             refusing to publish it as the artifact dir",
-            staging_dir.display()
-        );
-    }
 
     let mut old_name = staging_dir.file_name().unwrap_or_default().to_os_string();
     old_name.push(".old");
@@ -271,20 +329,14 @@ fn commit_staging_dir_impl(
         // `--output` is a directory, and moving a non-directory aside would
         // leave `remove_dir_all` unable to clean it up after a successful
         // publish (the exact cleanup/success conflation this function avoids).
-        let prev_meta = fs::symlink_metadata(output_dir).with_context(|| {
-            format!(
-                "failed to inspect previous artifact path {}",
-                output_dir.display()
-            )
-        })?;
-        if !prev_meta.is_dir() {
+        if let Err(e) = plain_dir_id(output_dir) {
             let _ = fs::remove_dir_all(staging_dir);
-            bail!(
+            return Err(e).context(format!(
                 "output path {} exists but is not a plain directory (symlink or file); \
                  refusing to treat it as the previous artifact set — remove or rename \
                  it and retry",
                 output_dir.display()
-            );
+            ));
         }
 
         if let Err(e) = rename(output_dir, &old_path) {
@@ -300,6 +352,31 @@ fn commit_staging_dir_impl(
             });
         }
     }
+
+    // Re-validate immediately before the rename's pathname lookup. Still not
+    // fully atomic with the rename, but shrinks the race; the post-rename
+    // identity check below is what makes a won race fail closed.
+    let staging_id_pre_rename = plain_dir_id(staging_dir).with_context(|| {
+        format!(
+            "staged artifact path {} was replaced after the initial check \
+             (no longer a plain directory); refusing to publish",
+            staging_dir.display()
+        )
+    })?;
+    if staging_id_pre_rename != staging_id {
+        // A different directory now sits at the staging path. Do not publish
+        // it; restore any moved-aside previous set first.
+        if previous_exists {
+            let _ = rename(&old_path, output_dir);
+        }
+        let _ = fs::remove_dir_all(staging_dir);
+        bail!(
+            "staged artifact path {} was replaced with a different directory \
+             before publish; refusing to publish attacker-controlled contents",
+            staging_dir.display()
+        );
+    }
+
     if let Err(e) = rename(staging_dir, output_dir) {
         // The previous set (if any) has been moved aside and output_dir is
         // empty, so the staged directory may hold the ONLY copy of the new
@@ -347,6 +424,47 @@ fn commit_staging_dir_impl(
             )
         });
     }
+
+    // Close the check-then-rename TOCTOU: the path published at output_dir
+    // must be the same plain directory inode we staged. If an attacker swapped
+    // in a symlink (or another directory) between the pre-rename check and
+    // rename's lookup, detect it here and roll back before declaring success
+    // or deleting the previous artifact set.
+    match plain_dir_id(output_dir) {
+        Ok(published_id) if published_id == staging_id => {}
+        Ok(_) | Err(_) => {
+            let _ = remove_bad_publish_path(output_dir);
+            if previous_exists {
+                match rename(&old_path, output_dir) {
+                    Ok(()) => {
+                        bail!(
+                            "published path {} was not the staged artifact directory \
+                             (replaced by a symlink or different directory during \
+                             rename); previous artifacts were restored",
+                            output_dir.display()
+                        );
+                    }
+                    Err(rollback_err) => {
+                        bail!(
+                            "published path {} was not the staged artifact directory \
+                             (replaced during rename), and restoring the previous \
+                             artifacts also failed ({}); previous artifacts remain at {}",
+                            output_dir.display(),
+                            rollback_err,
+                            old_path.display()
+                        );
+                    }
+                }
+            }
+            bail!(
+                "published path {} was not the staged artifact directory \
+                 (replaced by a symlink or different directory during rename); \
+                 refusing to treat the publish as successful",
+                output_dir.display()
+            );
+        }
+    }
+
     if previous_exists {
         // The new set is already live at output_dir. Cleanup of the moved-aside
         // previous copy must not flip the command to failure: operators and CI
@@ -605,6 +723,118 @@ mod tests {
         assert!(
             fs::symlink_metadata(&output).is_err(),
             "a symlinked staging path must never be published as the artifact dir"
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// TOCTOU (audit finding): the pre-rename plain-directory check and the
+    /// `rename` pathname lookup are separate. A local attacker who replaces
+    /// the staging directory with a symlink in that window must not get a
+    /// successful publish that leaves `--output` as attacker-mutable storage
+    /// while the previous artifact set is deleted. The post-rename inode /
+    /// type check must fail closed and restore the previous set.
+    #[cfg(unix)]
+    #[test]
+    fn commit_rolls_back_if_staging_replaced_by_symlink_during_rename() {
+        let root = unique_tmp_dir("commit-toctou-symlink");
+        let _ = fs::remove_dir_all(&root);
+        create_dir_all(&root).unwrap();
+        let output = root.join("bins");
+        let staging = create_staging_dir(&output).unwrap();
+
+        create_dir_all(&output).unwrap();
+        write(output.join("previous.bin"), b"previous").unwrap();
+        write(staging.join("fresh.bin"), b"fresh").unwrap();
+
+        let attacker_target = root.join("attacker-target");
+        create_dir_all(&attacker_target).unwrap();
+        write(attacker_target.join("evil.bin"), b"attacker mutable").unwrap();
+
+        let staging_src = staging.clone();
+        let attacker = attacker_target.clone();
+        let err = commit_staging_dir_impl(&staging, &output, |src, dst| {
+            if src == staging_src {
+                // Win the race at rename time: drop our staging dir and plant
+                // a symlink under the same path, then rename that symlink.
+                let _ = fs::remove_dir_all(src);
+                std::os::unix::fs::symlink(&attacker, src)?;
+                fs::rename(src, dst)
+            } else {
+                fs::rename(src, dst)
+            }
+        })
+        .unwrap_err();
+
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("not the staged artifact directory")
+                || msg.contains("previous artifacts were restored"),
+            "got: {msg}"
+        );
+        assert!(
+            output.join("previous.bin").exists(),
+            "previous artifact set must be restored after a TOCTOU publish attempt"
+        );
+        assert!(
+            !output.join("evil.bin").exists(),
+            "attacker-controlled contents must not remain published at output_dir"
+        );
+        let out_meta = fs::symlink_metadata(&output).unwrap();
+        assert!(
+            out_meta.is_dir() && !out_meta.file_type().is_symlink(),
+            "output_dir must be a plain directory again after rollback"
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Same TOCTOU window, but the replacement is a different plain directory
+    /// (different inode). Publishing it would still hand the attacker a
+    /// successful exit with contents they control; the inode pin must reject it.
+    #[cfg(unix)]
+    #[test]
+    fn commit_rolls_back_if_staging_replaced_by_different_directory_during_rename() {
+        let root = unique_tmp_dir("commit-toctou-dir");
+        let _ = fs::remove_dir_all(&root);
+        create_dir_all(&root).unwrap();
+        let output = root.join("bins");
+        let staging = create_staging_dir(&output).unwrap();
+
+        create_dir_all(&output).unwrap();
+        write(output.join("previous.bin"), b"previous").unwrap();
+        write(staging.join("fresh.bin"), b"fresh").unwrap();
+
+        let attacker_dir = root.join("attacker-dir");
+        create_dir_all(&attacker_dir).unwrap();
+        write(attacker_dir.join("evil.bin"), b"attacker mutable").unwrap();
+
+        let staging_src = staging.clone();
+        let attacker = attacker_dir.clone();
+        let err = commit_staging_dir_impl(&staging, &output, |src, dst| {
+            if src == staging_src {
+                let _ = fs::remove_dir_all(src);
+                // Move the attacker's directory onto the staging path (same
+                // parent, so rename is atomic) then publish that inode.
+                fs::rename(&attacker, src)?;
+                fs::rename(src, dst)
+            } else {
+                fs::rename(src, dst)
+            }
+        })
+        .unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("not the staged artifact directory"),
+            "got: {err:#}"
+        );
+        assert!(
+            output.join("previous.bin").exists(),
+            "previous artifact set must be restored"
+        );
+        assert!(
+            !output.join("evil.bin").exists(),
+            "attacker directory must not remain published"
         );
 
         fs::remove_dir_all(&root).unwrap();
