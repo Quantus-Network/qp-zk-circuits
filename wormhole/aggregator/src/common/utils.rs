@@ -83,9 +83,8 @@ pub fn commit_artifact_set(
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => {
-                return Err(e).with_context(|| {
-                    format!("Failed to remove stale artifact {}", path.display())
-                })
+                return Err(e)
+                    .with_context(|| format!("Failed to remove stale artifact {}", path.display()))
             }
         }
     }
@@ -611,9 +610,8 @@ mod tests {
             poisoned[i..i + 8].copy_from_slice(&(usize::MAX / 16).to_le_bytes());
         }
         let leaf = canonical_leaf_verifier_data();
-        let err =
-            load_canonical_private_batch_verifier_data(&poisoned, &poisoned[..128], &leaf, 1)
-                .unwrap_err();
+        let err = load_canonical_private_batch_verifier_data(&poisoned, &poisoned[..128], &leaf, 1)
+            .unwrap_err();
         assert!(
             err.to_string().contains("does not match the canonical"),
             "poisoned common must fail the byte pin, got: {err}"
@@ -622,10 +620,8 @@ mod tests {
 
     #[test]
     fn commit_artifact_set_writes_and_removes_stale() {
-        let dir = std::env::temp_dir().join(format!(
-            "qp-artifact-write-test-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("qp-artifact-write-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
 
         commit_artifact_set(

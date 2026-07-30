@@ -296,9 +296,8 @@ impl PublicBatchAggregator {
             .context("failed to commit private-batch proofs to public-batch prover")
             .and_then(|committed| committed.prove().context("public-batch proving failed"))?;
 
-        self.verify(proof.clone()).context(
-            "proved public-batch proof rejected by the aggregator's pinned verifier",
-        )?;
+        self.verify(proof.clone())
+            .context("proved public-batch proof rejected by the aggregator's pinned verifier")?;
         Ok(proof)
     }
 

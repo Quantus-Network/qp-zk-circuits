@@ -9,5 +9,5 @@ pub mod lib;
 /// all-dummy batches occupy a proving window).
 pub(crate) mod witness;
 
-pub use lib::{PublicBatchInputs, PublicBatchProver};
 pub(crate) use lib::verify_dummy_private_batch_template;
+pub use lib::{PublicBatchInputs, PublicBatchProver};

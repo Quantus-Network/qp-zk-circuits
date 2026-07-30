@@ -350,7 +350,8 @@ mod tests {
         let data = b.build::<C>();
 
         let mut pw = PartialWitness::new();
-        pw.set_target(right_t, F::from_canonical_u64(right)).unwrap();
+        pw.set_target(right_t, F::from_canonical_u64(right))
+            .unwrap();
         let proof = data.prove(pw).unwrap();
         data.verify(proof.clone()).unwrap();
         proof.public_inputs[0].to_canonical_u64() == 1

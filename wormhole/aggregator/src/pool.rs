@@ -1151,8 +1151,7 @@ mod tests {
         // without verifying — confirming the key was not pooled. Post-fix
         // it must fail verification first.
         let mut novel_invalid = prove_fake(&data, &targets, &fake(2, 12));
-        novel_invalid.public_inputs[aggregated_output::ASSET_ID_OFFSET] =
-            F::from_canonical_u64(9);
+        novel_invalid.public_inputs[aggregated_output::ASSET_ID_OFFSET] = F::from_canonical_u64(9);
         let err = pool.push(novel_invalid).unwrap_err();
         assert!(
             err.to_string().contains("verification failed"),
