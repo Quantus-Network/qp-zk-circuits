@@ -1,3 +1,9 @@
+//! CLI entry point for trusted CI artifact generation.
+//!
+//! The build host and `--output` directory are trusted during this run; see
+//! `wormhole/THREAT_MODEL.md` for the full boundary (local FS adversary on the
+//! builder is out of scope).
+
 use anyhow::Result;
 use clap::Parser;
 use qp_wormhole_circuit_builder::generate_all_circuit_binaries;

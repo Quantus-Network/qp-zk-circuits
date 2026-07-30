@@ -99,6 +99,16 @@ wormhole transactions.
    - all of the internal header fields (`parent_hash`, `block_number`, `state_root`, `extrinsics_root`, `digest`) are cryptographically bound to that real header via Poseidon2.
    - Because the same `state_root` is also used in the storage proof, this ties the storage proof, the header, and the public block commitment together.
 
+## Threat model (artifacts & trust boundaries)
+
+Circuit binaries are **CI-generated on a trusted build host**. The adversarial
+model for artifact *generation* and for loading attested bins directories is spelled
+out in [`THREAT_MODEL.md`](./THREAT_MODEL.md): local filesystem races on the
+builder (symlinks, staging TOCTOU, planted FIFOs, etc.) are **out of scope**;
+canonical verifier pinning, dummy-template checks, and untrusted client-proof
+admission remain **in scope**. Read that document before filing or triaging
+findings against `circuit-builder` or artifact I/O.
+
 ## Nullifiers and Double-Spend Prevention (Security Model)
 
 A recurring review question is where nullifier *collisions* (reuse of the same nullifier,

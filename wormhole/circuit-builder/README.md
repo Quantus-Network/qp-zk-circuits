@@ -2,6 +2,14 @@
 
 CLI to generate Wormhole circuit binaries for proving and verification.
 
+**Trust assumption:** this tool is meant to run in **CI (or an equivalently
+controlled builder)**. The build host and the output directory during
+generation are trusted. Local filesystem adversary findings against the
+publisher (symlink TOCTOU, planted FIFOs, concurrent staging replacement,
+etc.) are out of scope under the Wormhole threat model — see
+[`../THREAT_MODEL.md`](../THREAT_MODEL.md). Distribute the resulting directory
+via an attested channel; provers should load only that attested path.
+
 ```sh
 cargo run --release -p qp-wormhole-circuit-builder -- --num-leaf-proofs <N> [--num-private-batch-proofs <M>] --output generated-bins
 ```

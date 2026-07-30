@@ -1,3 +1,15 @@
+//! Wormhole circuit artifact generation (leaf / private-batch / public-batch).
+//!
+//! # Trust boundary
+//!
+//! This crate is intended to run on a **trusted CI build host**. The checkout,
+//! toolchain, and output parent during generation are not modeled as
+//! adversarial. Local filesystem races against the publisher (symlink TOCTOU,
+//! planted FIFOs, concurrent staging replacement, etc.) are **out of scope**;
+//! see `wormhole/THREAT_MODEL.md`. Remaining in-scope obligations when these
+//! artifacts are later loaded: no prover.bin, canonical verifier pinning,
+//! and dummy-template validation.
+
 use anyhow::{anyhow, bail, Context, Result};
 use std::fs;
 use std::fs::create_dir_all;
