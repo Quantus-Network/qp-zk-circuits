@@ -19,8 +19,7 @@ use zk_circuits_common::circuit::{wormhole_public_batch_circuit_config, C, D, F}
 
 use crate::common::utils::{
     canonical_leaf_verifier_data, commit_artifact_set, load_canonical_private_batch_verifier_data,
-    private_batch_num_leaves_from_padded_pi_len, read_artifact_file,
-    sweep_stale_artifact_droppings,
+    read_artifact_file, sweep_stale_artifact_droppings,
 };
 use crate::public_batch::circuit::circuit_logic::PublicBatchCircuit;
 
@@ -34,24 +33,35 @@ use crate::public_batch::circuit::circuit_logic::PublicBatchCircuit;
 /// guaranteed by the staging `generate_all_circuit_binaries` flow in
 /// `circuit-builder`; prefer it unless deliberately regenerating this one
 /// stage into an existing set.
+///
+/// `num_leaf_proofs` is the private-batch leaf count the on-disk
+/// `private_batch_*.bin` artifacts were built for. It is taken from the
+/// caller (who already knows it — typically
+/// [`crate::config::CircuitBinsConfig`]) rather than peeked out of the
+/// untrusted common artifact: reading `num_public_inputs` via a full
+/// `CommonCircuitData::from_bytes` asked the allocator for capacities from
+/// attacker-controlled length fields before canonical pinning could reject
+/// the file (audit finding).
 pub fn generate_public_batch_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
     num_private_batch_proofs: usize,
+    num_leaf_proofs: usize,
 ) -> Result<()> {
     let output_dir = output_dir.as_ref();
-    // Bound the per-layer count before any circuit construction (#97021, #97070).
+    // Bound the per-layer counts before any circuit construction (#97021, #97070).
     validate_proof_count(num_private_batch_proofs, "num_private_batch_proofs")?;
+    validate_proof_count(num_leaf_proofs, "num_leaf_proofs")?;
     create_dir_all(output_dir)
         .with_context(|| format!("Failed to create output dir {}", output_dir.display()))?;
     // A previous publish hard-killed mid-swap leaves orphaned temp/backup
     // entries behind; we are about to replace the set, so sweep them now.
     sweep_stale_artifact_droppings(output_dir)?;
 
-    // Pin the private-batch artifacts to the canonical private-batch circuit BEFORE
-    // baking their verifier key into the public-batch circuit as constants. The leaf
-    // count is derived from the (untrusted) common data first, but the subsequent
-    // byte-exact comparison against a canonically rebuilt circuit for that count
-    // rejects any substituted or stale artifact.
+    // Pin the private-batch artifacts to the canonical private-batch circuit
+    // BEFORE baking their verifier key into the public-batch circuit as
+    // constants. Pinning compares the raw artifact bytes to a canonical
+    // rebuild for `num_leaf_proofs` and never deserializes the untrusted
+    // common data (see `load_canonical_private_batch_verifier_data`).
     let private_batch_common_bytes =
         read_artifact_file(&output_dir.join("private_batch_common.bin")).with_context(|| {
             format!(
@@ -67,14 +77,11 @@ pub fn generate_public_batch_circuit_binaries<P: AsRef<Path>>(
             )
         })?;
 
-    let claimed_pi_len = peek_common_num_public_inputs(&private_batch_common_bytes)?;
-    let private_batch_num_leaves = private_batch_num_leaves_from_padded_pi_len(claimed_pi_len)?;
-
     let private_batch = load_canonical_private_batch_verifier_data(
         &private_batch_common_bytes,
         &private_batch_verifier_bytes,
         &canonical_leaf_verifier_data(),
-        private_batch_num_leaves,
+        num_leaf_proofs,
     )
     .context("Failed to load private-batch verifier data")?;
 
@@ -85,7 +92,7 @@ pub fn generate_public_batch_circuit_binaries<P: AsRef<Path>>(
         private_batch.common,
         &private_batch.verifier_only,
         num_private_batch_proofs,
-        private_batch_num_leaves,
+        num_leaf_proofs,
     )?;
 
     let verifier_data = public_batch_circuit.build_verifier();
@@ -95,25 +102,10 @@ pub fn generate_public_batch_circuit_binaries<P: AsRef<Path>>(
         "Public-batch circuit artifacts written to {} (num_private_batch_proofs={}, private_batch_num_leaves={})",
         output_dir.display(),
         num_private_batch_proofs,
-        private_batch_num_leaves
+        num_leaf_proofs
     );
 
     Ok(())
-}
-
-/// Decode the claimed public-input count from serialized common circuit data.
-///
-/// Used only to derive the leaf count needed to rebuild the canonical
-/// private-batch circuit; the artifact is then pinned byte-exactly against that
-/// canonical rebuild, so a lie here cannot survive the comparison.
-fn peek_common_num_public_inputs(common_bytes: &[u8]) -> Result<usize> {
-    let gate_serializer = DefaultGateSerializer;
-    let common = plonky2::plonk::circuit_data::CommonCircuitData::<F, D>::from_bytes(
-        common_bytes.to_vec(),
-        &gate_serializer,
-    )
-    .map_err(|e| anyhow!("Failed to deserialize private_batch_common.bin: {}", e))?;
-    Ok(common.num_public_inputs)
 }
 
 fn write_verifier_artifacts(
@@ -163,8 +155,7 @@ mod tests {
     }
 
     /// An oversized (sparse) private-batch artifact must be rejected by the
-    /// size cap before its contents are allocated into memory and fed into
-    /// `peek_common_num_public_inputs`'s full deserialization.
+    /// size cap before its contents are allocated into memory.
     #[test]
     fn oversized_private_batch_common_artifact_is_rejected_by_size_cap() {
         let dir = temp_dir("oversized-common");
@@ -174,10 +165,41 @@ mod tests {
             .unwrap();
         std::fs::write(dir.join("private_batch_verifier.bin"), b"irrelevant").unwrap();
 
-        let err = generate_public_batch_circuit_binaries(&dir, 1).unwrap_err();
+        let err = generate_public_batch_circuit_binaries(&dir, 1, 1).unwrap_err();
         assert!(
             format!("{err:#}").contains("exceeds the"),
             "oversized artifact must be rejected by the size cap, got: {err:#}"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A capped-but-poisoned `private_batch_common.bin` whose serialized
+    /// length fields would force huge `try_reserve` calls under a full
+    /// `CommonCircuitData::from_bytes` must be rejected by the byte-exact
+    /// canonical pin — never deserialized for a leaf-count peek (audit
+    /// finding). Sprinkling enormous little-endian usizes through a small
+    /// buffer covers whatever offset the first length-prefixed vector occupies.
+    #[test]
+    fn poisoned_private_batch_common_is_rejected_without_deserialize_peek() {
+        let dir = temp_dir("poisoned-common");
+        let mut poisoned = vec![0u8; 4096];
+        for i in (0..poisoned.len()).step_by(8) {
+            poisoned[i..i + 8].copy_from_slice(&(usize::MAX / 16).to_le_bytes());
+        }
+        std::fs::write(dir.join("private_batch_common.bin"), &poisoned).unwrap();
+        std::fs::write(dir.join("private_batch_verifier.bin"), &poisoned[..128]).unwrap();
+
+        let err = generate_public_batch_circuit_binaries(&dir, 1, 1).unwrap_err();
+        let chain = format!("{err:#}");
+        assert!(
+            chain.contains("does not match the canonical"),
+            "poisoned common must fail the byte pin (not a deserialize OOM/IoError), got: {chain}"
+        );
+        assert!(
+            !dir.join("public_batch_common.bin").exists()
+                && !dir.join("public_batch_verifier.bin").exists(),
+            "a rejected private-batch pin must not publish public-batch artifacts"
         );
 
         std::fs::remove_dir_all(&dir).unwrap();
@@ -217,6 +239,73 @@ mod tests {
                 );
             }
         }
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A symlink pre-planted at an artifact filename must not redirect the
+    /// write onto its target (audit finding: symlink-following artifact
+    /// writes). `commit_artifact_set` stages under exclusive-create temp names
+    /// and renames into place, which replaces the planted entry itself; this
+    /// guards against regressing to direct `std::fs::write` calls.
+    #[cfg(unix)]
+    #[test]
+    fn artifact_writes_do_not_follow_planted_symlinks() {
+        let dir = temp_dir("symlink-clobber");
+
+        let victim = dir.join("victim.txt");
+        std::fs::write(&victim, b"precious data").unwrap();
+        std::os::unix::fs::symlink(&victim, dir.join("public_batch_verifier.bin")).unwrap();
+
+        let verifier_data = build_fake_leaf_circuit().0.verifier_data();
+        let result = write_verifier_artifacts(&dir, &verifier_data);
+
+        assert_eq!(
+            std::fs::read(&victim).unwrap(),
+            b"precious data",
+            "artifact publication must never write through a planted symlink"
+        );
+        if result.is_ok() {
+            let verifier = std::fs::read(dir.join("public_batch_verifier.bin")).unwrap();
+            assert_ne!(
+                verifier, b"precious data",
+                "a successful run must have replaced the planted entry with a real artifact"
+            );
+        }
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A publish hard-killed mid-swap (SIGKILL/power loss) leaves orphaned
+    /// `.<name>.tmp-*` / `.<name>.old-*` droppings that no later run adopts
+    /// (the random suffix is fresh per call). The builder path must sweep
+    /// them before regenerating so they do not accumulate forever (audit
+    /// finding: crash-path droppings never cleaned up). Unrelated dotfiles
+    /// must survive the sweep.
+    #[test]
+    fn rebuild_sweeps_droppings_of_interrupted_publish() {
+        let dir = temp_dir("crash-droppings");
+
+        // Simulate the post-SIGKILL state: originals moved aside, staged
+        // files still present, nothing live. Generation will fail for lack of
+        // private-batch artifacts, but the sweep must still run first.
+        let dropping_old = dir.join(".public_batch_common.bin.old-12345-0123456789abcdef");
+        let dropping_tmp = dir.join(".public_batch_verifier.bin.tmp-12345-0123456789abcdef");
+        std::fs::write(&dropping_old, b"moved-aside original").unwrap();
+        std::fs::write(&dropping_tmp, b"orphaned staged file").unwrap();
+        let innocent = dir.join(".gitignore");
+        std::fs::write(&innocent, b"*.log").unwrap();
+
+        let _ = generate_public_batch_circuit_binaries(&dir, 1, 1);
+
+        assert!(
+            !dropping_old.exists() && !dropping_tmp.exists(),
+            "regeneration must sweep droppings of an interrupted publish"
+        );
+        assert!(
+            innocent.exists(),
+            "the sweep must not touch unrelated dotfiles"
+        );
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

@@ -485,7 +485,7 @@ fn public_batch_build_rejects_substituted_private_batch_artifacts() {
     vk_bytes[last] ^= 0x01;
     std::fs::write(dir.join("private_batch_verifier.bin"), vk_bytes).unwrap();
 
-    let err = generate_public_batch_circuit_binaries(&dir, 1)
+    let err = generate_public_batch_circuit_binaries(&dir, 1, PRIVATE_NUM_LEAVES)
         .expect_err("substituted private-batch artifacts must be rejected before baking");
     // `{err:#}` prints the whole context chain; the canonical mismatch is the cause.
     let chain = format!("{err:#}");

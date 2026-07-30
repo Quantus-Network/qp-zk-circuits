@@ -359,6 +359,11 @@ pub fn sweep_stale_artifact_droppings(bins_dir: &std::path::Path) -> Result<usiz
 }
 
 /// Load verifier circuit data (common + verifier-only) from serialized bytes.
+///
+/// Prefer [`load_canonical_leaf_verifier_data`] /
+/// [`load_canonical_private_batch_verifier_data`] for untrusted artifacts: those
+/// pin by raw byte equality against a canonical rebuild and never ask Plonky2
+/// to deserialize attacker-controlled length fields.
 pub fn load_verifier_data_from_bytes(
     common_bytes: &[u8],
     verifier_only_bytes: &[u8],
@@ -379,28 +384,75 @@ pub fn load_verifier_data_from_bytes(
     })
 }
 
+/// Pin untrusted common/verifier-only artifact bytes to a canonical rebuild by
+/// raw equality. Never deserializes the untrusted side: Plonky2's
+/// `CommonCircuitData::from_bytes` reserves vector capacities from length
+/// fields in the artifact before those lengths are proven consistent with the
+/// file, so a capped-but-poisoned buffer can force large transient allocations
+/// (or allocator failure) before any canonical check runs.
+fn ensure_artifact_bytes_match_canonical(
+    common_bytes: &[u8],
+    verifier_only_bytes: &[u8],
+    canonical: &VerifierCircuitData<F, C, D>,
+    label: &str,
+) -> Result<()> {
+    let gate_serializer = DefaultGateSerializer;
+    let canonical_common = canonical
+        .common
+        .to_bytes(&gate_serializer)
+        .map_err(|e| anyhow!("failed to serialize canonical {} common data: {}", label, e))?;
+    if common_bytes != canonical_common.as_slice() {
+        bail!(
+            "loaded {} common circuit data does not match the canonical circuit",
+            label
+        );
+    }
+
+    let canonical_vo = canonical.verifier_only.to_bytes().map_err(|e| {
+        anyhow!(
+            "failed to serialize canonical {} verifier-only data: {}",
+            label,
+            e
+        )
+    })?;
+    if verifier_only_bytes != canonical_vo.as_slice() {
+        bail!(
+            "loaded {} verifier-only data does not match the canonical circuit",
+            label
+        );
+    }
+    Ok(())
+}
+
 /// Load leaf verifier data and reject anything that is not the canonical Wormhole leaf circuit.
 pub fn load_canonical_leaf_verifier_data(
     common_bytes: &[u8],
     verifier_only_bytes: &[u8],
 ) -> Result<VerifierCircuitData<F, C, D>> {
-    let loaded = load_verifier_data_from_bytes(common_bytes, verifier_only_bytes, "leaf")?;
-    ensure_verifier_data_matches_canonical(&loaded, &canonical_leaf_verifier_data(), "leaf")?;
-    Ok(loaded)
+    let canonical = canonical_leaf_verifier_data();
+    ensure_artifact_bytes_match_canonical(common_bytes, verifier_only_bytes, &canonical, "leaf")?;
+    Ok(canonical)
 }
 
 /// Load private-batch verifier data pinned to the canonical private-batch circuit for
 /// `num_leaf_proofs`. `leaf` must be canonical leaf verifier data (loaded pinned or rebuilt).
+///
+/// The untrusted artifact bytes are compared to the canonical serialization
+/// without deserializing them — see [`ensure_artifact_bytes_match_canonical`].
 pub fn load_canonical_private_batch_verifier_data(
     common_bytes: &[u8],
     verifier_only_bytes: &[u8],
     leaf: &VerifierCircuitData<F, C, D>,
     num_leaf_proofs: usize,
 ) -> Result<VerifierCircuitData<F, C, D>> {
-    let loaded = load_verifier_data_from_bytes(common_bytes, verifier_only_bytes, "private_batch")?;
     let canonical = canonical_private_batch_verifier_data(leaf, num_leaf_proofs)?;
-    ensure_verifier_data_matches_canonical(&loaded, &canonical, "private_batch")?;
-    Ok(loaded)
+    ensure_artifact_bytes_match_canonical(
+        common_bytes,
+        verifier_only_bytes,
+        &canonical,
+        "private_batch",
+    )?;
+    Ok(canonical)
 }
 
 pub fn ensure_common_matches_canonical(
@@ -815,6 +867,36 @@ mod tests {
     fn private_batch_num_leaves_from_padded_pi_len_rejects_malformed_lengths() {
         let err = private_batch_num_leaves_from_padded_pi_len(9).unwrap_err();
         assert!(err.to_string().contains("malformed"));
+    }
+
+    /// Pinning must compare raw artifact bytes to a canonical rebuild and never
+    /// feed untrusted common data into `CommonCircuitData::from_bytes`. That
+    /// deserializer reserves vector capacities from length fields in the
+    /// artifact; a small buffer of enormous little-endian usizes would
+    /// previously force large `try_reserve` calls (or allocator failure)
+    /// before the canonical check could reject it (audit finding).
+    #[test]
+    fn load_canonical_private_batch_rejects_poisoned_common_by_byte_pin() {
+        use super::{
+            canonical_leaf_verifier_data, load_canonical_private_batch_verifier_data,
+        };
+
+        let mut poisoned = vec![0u8; 4096];
+        for i in (0..poisoned.len()).step_by(8) {
+            poisoned[i..i + 8].copy_from_slice(&(usize::MAX / 16).to_le_bytes());
+        }
+        let leaf = canonical_leaf_verifier_data();
+        let err = load_canonical_private_batch_verifier_data(
+            &poisoned,
+            &poisoned[..128],
+            &leaf,
+            1,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("does not match the canonical"),
+            "poisoned common must fail the byte pin, got: {err}"
+        );
     }
 
     #[test]
