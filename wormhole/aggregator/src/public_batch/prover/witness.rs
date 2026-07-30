@@ -1,4 +1,9 @@
 //! Witness filling for the public-batch aggregation circuit.
+//!
+//! Crate-private: callers with untrusted proof vectors must go through
+//! [`super::PublicBatchProver::commit`], which verifies each inner proof,
+//! enforces metadata compatibility, pads only after validation, and rejects
+//! all-dummy batches before this helper runs.
 
 use anyhow::{bail, Result};
 use plonky2::iop::witness::{PartialWitness, WitnessWrite};
@@ -11,7 +16,10 @@ use crate::common::utils::ensure_proof_shape_matches_targets;
 use crate::public_batch::circuit::circuit_logic::PublicBatchCircuitTargets;
 
 /// Fill a partial witness for the public-batch aggregation circuit.
-pub fn fill_public_batch_witness(
+///
+/// Structural checks only (proof count + shape). Not safe for untrusted inputs
+/// on its own — see the module docs.
+pub(crate) fn fill_public_batch_witness(
     pw: &mut PartialWitness<F>,
     targets: &PublicBatchCircuitTargets,
     private_batch_proofs: &[ProofWithPublicInputs<F, C, D>],
