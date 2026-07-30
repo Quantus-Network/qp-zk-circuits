@@ -7,16 +7,26 @@ use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_inputs::{BytesDigest, PublicCircuitInputs};
 use std::path::PathBuf;
 use std::sync::{Once, OnceLock};
-use test_helpers::{compute_zk_leaf_hash, TestInputs};
+use test_helpers::block_header::{
+    DEFAULT_BLOCK_NUMBERS, DEFAULT_DIGESTS, DEFAULT_EXTRINSICS_ROOTS, DEFAULT_STATE_ROOTS,
+};
+use test_helpers::{
+    compute_zk_leaf_hash, TestInputs, DEFAULT_EXIT_ACCOUNT, DEFAULT_INPUT_AMOUNTS, DEFAULT_SECRETS,
+    DEFAULT_TRANSFER_COUNTS, DEFAULT_VOLUME_FEE_BPS,
+};
 use wormhole_aggregator::aggregator::PublicBatchAggregator;
 use wormhole_aggregator::common::utils::{
     load_canonical_leaf_verifier_data, load_canonical_private_batch_verifier_data,
 };
 use wormhole_aggregator::pool::BatchKey;
 use wormhole_aggregator::private_batch::prover::PrivateBatchProver;
-use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs};
+use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs, PrivateCircuitInputs};
+use wormhole_circuit::nullifier::Nullifier;
+use wormhole_circuit::unspendable_account::UnspendableAccount;
 use wormhole_prover::WormholeProver;
 use zk_circuits_common::circuit::{C, D, F};
+use zk_circuits_common::utils::digest_to_bytes;
+use zk_circuits_common::zk_merkle::{hash_node, Hash256, SIBLINGS_PER_LEVEL};
 
 use crate::aggregator::circuit_config;
 
@@ -150,6 +160,94 @@ fn test_inputs_with_asset(asset_id: u32) -> CircuitInputs {
     inputs
 }
 
+/// Depth-1 merkle proof for `leaf_index` in a 4-child node (arity 4).
+fn depth1_merkle_proof(
+    leaf_index: usize,
+    leaves: &[Hash256; 4],
+) -> (Vec<[Hash256; SIBLINGS_PER_LEVEL]>, Vec<u8>, Hash256) {
+    let root = hash_node(leaves).expect("test leaves are canonical");
+    let mut children = *leaves;
+    let current = children[leaf_index];
+    children.sort();
+    let sorted_position = children.iter().position(|h| *h == current).unwrap() as u8;
+    let mut siblings = [[0u8; 32]; SIBLINGS_PER_LEVEL];
+    let mut sib_idx = 0;
+    for (i, child) in children.iter().enumerate() {
+        if i as u8 != sorted_position {
+            siblings[sib_idx] = *child;
+            sib_idx += 1;
+        }
+    }
+    (vec![siblings], vec![sorted_position], root)
+}
+
+/// Two distinct real spends under one shared zk-tree root / block_hash.
+///
+/// Depth-0 fixtures cannot do this: `block_hash` commits to `zk_tree_root`, and
+/// a depth-0 root equals the single leaf hash — so two different spends would
+/// get two different blocks. A depth-1 (4-ary) tree lets both leaves share a
+/// root. Required now that the private-batch circuit rejects duplicate real
+/// nullifiers (replaying one leaf across two slots is no longer valid).
+fn two_real_leaves_same_block(asset_id: u32) -> (CircuitInputs, CircuitInputs) {
+    let mut leaf_hashes = [[0u8; 32]; 4];
+    let mut accounts = [BytesDigest::default(); 2];
+    let mut nullifiers = [BytesDigest::default(); 2];
+    let mut secrets = [BytesDigest::default(); 2];
+
+    for i in 0..2 {
+        let secret: BytesDigest = hex::decode(DEFAULT_SECRETS[i].trim()).unwrap()[..32]
+            .try_into()
+            .unwrap();
+        secrets[i] = secret;
+        accounts[i] = digest_to_bytes(UnspendableAccount::from_secret(secret).account_id);
+        nullifiers[i] =
+            digest_to_bytes(Nullifier::from_preimage(secret, DEFAULT_TRANSFER_COUNTS[i]).hash);
+        leaf_hashes[i] = compute_zk_leaf_hash(
+            &accounts[i],
+            DEFAULT_TRANSFER_COUNTS[i],
+            asset_id,
+            DEFAULT_INPUT_AMOUNTS[i],
+        );
+    }
+    // Pad the 4-ary node with zero hashes (canonical empty siblings).
+
+    let exit_account = BytesDigest::try_from(DEFAULT_EXIT_ACCOUNT).unwrap();
+    let mut out = Vec::with_capacity(2);
+    for i in 0..2 {
+        let (siblings, positions, root) = depth1_merkle_proof(i, &leaf_hashes);
+        let inputs = CircuitInputs {
+            public: PublicCircuitInputs {
+                asset_id,
+                output_amount_1: 0,
+                output_amount_2: 0,
+                volume_fee_bps: DEFAULT_VOLUME_FEE_BPS,
+                nullifier: nullifiers[i],
+                exit_account_1: exit_account,
+                exit_account_2: BytesDigest::default(),
+                block_hash: BytesDigest::try_from([0u8; 32]).unwrap(),
+                block_number: DEFAULT_BLOCK_NUMBERS[0],
+            },
+            private: PrivateCircuitInputs {
+                secret: secrets[i].into(),
+                transfer_count: DEFAULT_TRANSFER_COUNTS[i],
+                unspendable_account: accounts[i],
+                parent_hash: BytesDigest::try_from([0u8; 32]).unwrap(),
+                state_root: BytesDigest::try_from(DEFAULT_STATE_ROOTS[0]).unwrap(),
+                extrinsics_root: DEFAULT_EXTRINSICS_ROOTS[0].try_into().unwrap(),
+                digest: DEFAULT_DIGESTS[0],
+                input_amount: DEFAULT_INPUT_AMOUNTS[i],
+                zk_tree_root: root,
+                zk_merkle_siblings: siblings,
+                zk_merkle_positions: positions,
+            },
+        };
+        out.push(with_real_block(inputs));
+    }
+    assert_eq!(out[0].public.block_hash, out[1].public.block_hash);
+    assert_ne!(out[0].public.nullifier, out[1].public.nullifier);
+    (out.remove(0), out.remove(0))
+}
+
 // ============================================================================
 // Client-side (private batch): one-shot aggregation, no queue
 // ============================================================================
@@ -169,17 +267,16 @@ fn aggregate_single_proof() {
 
 #[test]
 fn aggregate_proofs_into_tree() {
-    // All proofs must be from the SAME BLOCK for fixed-structure aggregation.
-    let inputs = test_inputs_with_real_block();
+    // Same block, distinct nullifiers (depth-1 shared zk tree).
+    let (inputs_0, inputs_1) = two_real_leaves_same_block(0);
 
-    let proof_0 = make_leaf_proof(&inputs);
-    let proof_1 = make_leaf_proof(&inputs);
+    let proof_0 = make_leaf_proof(&inputs_0);
+    let proof_1 = make_leaf_proof(&inputs_1);
 
     let pi0 = PublicCircuitInputs::try_from_proof(&proof_0).unwrap();
     let pi1 = PublicCircuitInputs::try_from_proof(&proof_1).unwrap();
-
-    println!("proof_0 public inputs = {:?}", pi0);
-    println!("proof_1 public inputs = {:?}", pi1);
+    assert_eq!(pi0.block_hash, pi1.block_hash);
+    assert_ne!(pi0.nullifier, pi1.nullifier);
 
     let aggregated = make_private_batch_prover()
         .aggregate(vec![proof_0, proof_1])
@@ -191,15 +288,18 @@ fn aggregate_proofs_into_tree() {
 
 #[test]
 fn commit_rejects_nonzero_asset_id_when_dummy_padding_is_needed() {
-    // Tampering with asset_id invalidates the proof cryptographically, but the
-    // prover's commit API does not verify proofs; the asset-id padding
-    // preflight must still reject it before witness filling.
-    let mut proof = make_leaf_proof(&CircuitInputs::test_inputs_0());
-    proof.public_inputs[0] = F::from_canonical_u64(1);
+    // A cryptographically valid non-native-asset leaf in a partial batch needs
+    // dummy padding (asset_id = 0). Commit must reject that mismatch before
+    // proving. (Tampering with asset_id on an existing proof would fail the
+    // leaf-verify-at-commit check first; this exercises the padding preflight.)
+    let proof = make_leaf_proof(&with_real_block(test_inputs_with_asset(5)));
 
     let prover = make_private_batch_prover();
     let err = prover.commit(vec![proof]).unwrap_err();
-    assert!(err.to_string().contains("dummy proofs use asset_id=0"));
+    assert!(
+        err.to_string().contains("dummy proofs use asset_id=0"),
+        "got: {err}"
+    );
 }
 
 #[test]
@@ -231,10 +331,11 @@ fn commit_rejects_batch_incompatible_proofs() {
 fn full_batch_of_same_nonzero_asset_aggregates() {
     // Sanity check for the fail-fast path: a FULL batch of same-asset proofs
     // needs no dummy padding, so a non-native asset is fine and the
-    // compatibility preflight lets it through to real proving.
-    let inputs = with_real_block(test_inputs_with_asset(5));
-    let proof_0 = make_leaf_proof(&inputs);
-    let proof_1 = make_leaf_proof(&inputs);
+    // compatibility preflight lets it through to real proving. Nullifiers
+    // must still be distinct.
+    let (inputs_0, inputs_1) = two_real_leaves_same_block(5);
+    let proof_0 = make_leaf_proof(&inputs_0);
+    let proof_1 = make_leaf_proof(&inputs_1);
 
     let aggregated = make_private_batch_prover()
         .aggregate(vec![proof_0, proof_1])
@@ -253,15 +354,15 @@ fn full_batch_of_same_nonzero_asset_aggregates() {
 fn aggregate_proofs_from_separate_prover_instances_hex_serialized() {
     setup_test_binaries();
 
+    let (inputs_1, inputs_2) = two_real_leaves_same_block(0);
+
     // Proof 1 from prover A
     let prover_a = WormholeProver::new(circuit_config());
-    let inputs_1 = test_inputs_with_real_block();
     let proof_1 = prover_a.commit(&inputs_1).unwrap().prove().unwrap();
     let proof_1_hex = hex::encode(proof_1.to_bytes());
 
-    // Proof 2 from prover B (same block)
+    // Proof 2 from prover B (same block, distinct nullifier)
     let prover_b = WormholeProver::new(circuit_config());
-    let inputs_2 = test_inputs_with_real_block();
     let proof_2 = prover_b.commit(&inputs_2).unwrap().prove().unwrap();
     let proof_2_hex = hex::encode(proof_2.to_bytes());
 
