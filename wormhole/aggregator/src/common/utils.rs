@@ -98,6 +98,39 @@ pub fn read_artifact_file(path: &std::path::Path) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// Reject any artifact name that is not a single basename confined under
+/// `bins_dir`.
+///
+/// `commit_artifact_set` builds staging, backup, and final paths with
+/// `bins_dir.join(name)` (and `bins_dir.join(format!(".{name}.…"))`). A name
+/// carrying directory components, `..`, or an absolute path would therefore
+/// resolve outside `bins_dir`. This is an allowlist — the name must already
+/// be exactly one normal path component — not a scrubber that tries to strip
+/// hostile fragments.
+#[cfg(feature = "std")]
+fn ensure_artifact_basename(name: &str) -> Result<()> {
+    use std::path::Path;
+
+    let path = Path::new(name);
+    let Some(file_name) = path.file_name() else {
+        bail!("artifact name {name:?} is not a valid basename");
+    };
+    // Equality holds iff `name` is a single component: `file_name()` strips
+    // parents / trailing separators, so `../x`, `a/b`, `/abs`, `.`, and `..`
+    // all fail. Platform separators (`\` on Windows) are handled by Path.
+    if path.as_os_str() != file_name {
+        bail!(
+            "artifact name {name:?} must be a single filename with no directory components"
+        );
+    }
+    // NUL can truncate C-style path APIs on some platforms; refuse it even
+    // though it is not a Path separator.
+    if name.contains('\0') {
+        bail!("artifact name must not contain NUL");
+    }
+    Ok(())
+}
+
 /// Publish a matched set of artifact files into `bins_dir` all-or-nothing,
 /// optionally removing stale files that are no longer part of the set.
 ///
@@ -132,7 +165,9 @@ pub fn read_artifact_file(path: &std::path::Path) -> Result<Vec<u8>> {
 /// Because staging opens with create-new semantics and publication renames
 /// over the final name, a symlink pre-planted at an artifact filename is
 /// replaced as an entry rather than followed, so a write can never be
-/// redirected onto the symlink's target. Public so `circuit-builder` can
+/// redirected onto the symlink's target. Artifact names (both published and
+/// `remove_stale`) must be basenames with no directory components, so path
+/// construction cannot escape `bins_dir`. Public so `circuit-builder` can
 /// publish the leaf artifact set through the same path.
 #[cfg(feature = "std")]
 pub fn commit_artifact_set(
@@ -142,6 +177,16 @@ pub fn commit_artifact_set(
 ) -> Result<()> {
     use std::fs;
     use std::io::Write as _;
+
+    // Validate before any filesystem work so a hostile name cannot stage,
+    // move aside, or delete outside `bins_dir`.
+    for name in files
+        .iter()
+        .map(|(name, _)| *name)
+        .chain(remove_stale.iter().copied())
+    {
+        ensure_artifact_basename(name)?;
+    }
 
     let unique = format!("{}-{:016x}", std::process::id(), rand::random::<u64>());
     let tmp_path = |name: &str| bins_dir.join(format!(".{name}.tmp-{unique}"));
@@ -761,12 +806,110 @@ pub fn private_batch_num_leaves_from_padded_pi_len(pi_len: usize) -> Result<usiz
 #[cfg(test)]
 mod tests {
     use super::private_batch_num_leaves_from_padded_pi_len;
-    use super::{read_artifact_file, sweep_stale_artifact_droppings, MAX_ARTIFACT_FILE_BYTES};
+    use super::{
+        commit_artifact_set, ensure_artifact_basename, read_artifact_file,
+        sweep_stale_artifact_droppings, MAX_ARTIFACT_FILE_BYTES,
+    };
 
     #[test]
     fn private_batch_num_leaves_from_padded_pi_len_rejects_malformed_lengths() {
         let err = private_batch_num_leaves_from_padded_pi_len(9).unwrap_err();
         assert!(err.to_string().contains("malformed"));
+    }
+
+    #[test]
+    fn ensure_artifact_basename_accepts_plain_filenames() {
+        for name in ["common.bin", "config.json", "dummy_private_batch_proof.bin", "a"] {
+            ensure_artifact_basename(name).unwrap_or_else(|e| {
+                panic!("expected {name:?} to be accepted, got: {e}");
+            });
+        }
+    }
+
+    /// Audit finding: unvalidated artifact names let `bins_dir.join(name)`
+    /// (and the `.{name}.tmp-…` staging form) escape the artifact directory.
+    /// Only a single normal path component is allowed.
+    #[test]
+    fn ensure_artifact_basename_rejects_directory_components() {
+        for name in [
+            "",
+            ".",
+            "..",
+            "../common.bin",
+            "foo/bar",
+            "foo/../bar",
+            "/etc/passwd",
+            "./common.bin",
+            "common.bin/",
+            "a\0b",
+        ] {
+            let err = ensure_artifact_basename(name).expect_err(&format!(
+                "expected {name:?} to be rejected"
+            ));
+            let msg = err.to_string();
+            assert!(
+                msg.contains("basename")
+                    || msg.contains("directory components")
+                    || msg.contains("NUL"),
+                "unexpected error for {name:?}: {msg}"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ensure_artifact_basename_rejects_windows_separators() {
+        let err = ensure_artifact_basename("foo\\bar").unwrap_err();
+        assert!(
+            err.to_string().contains("directory components"),
+            "got: {err}"
+        );
+    }
+
+    /// A hostile name in either `files` or `remove_stale` must fail before any
+    /// path under / beside `bins_dir` is touched.
+    #[test]
+    fn commit_artifact_set_rejects_non_basename_names_before_touching_disk() {
+        let dir = std::env::temp_dir().join(format!(
+            "qp-artifact-basename-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Outside-target marker: must remain untouched if validation works.
+        let outside = std::env::temp_dir().join(format!(
+            "qp-artifact-basename-victim-{}",
+            std::process::id()
+        ));
+        std::fs::write(&outside, b"untouched").unwrap();
+
+        let err = commit_artifact_set(
+            &dir,
+            &[("../qp-artifact-basename-victim-should-not-exist", b"x".to_vec())],
+            &[],
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("directory components")
+                || err.to_string().contains("basename"),
+            "got: {err}"
+        );
+
+        let err = commit_artifact_set(&dir, &[("ok.bin", b"x".to_vec())], &["../outside"])
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("directory components")
+                || err.to_string().contains("basename"),
+            "got: {err}"
+        );
+
+        assert_eq!(std::fs::read(&outside).unwrap(), b"untouched");
+        // Nothing staged or published inside bins_dir either.
+        assert!(std::fs::read_dir(&dir).unwrap().next().is_none());
+
+        let _ = std::fs::remove_file(&outside);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// The sweep must remove exactly the `.<name>.tmp-<pid>-<rand>` /
