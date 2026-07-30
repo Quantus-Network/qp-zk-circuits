@@ -13,6 +13,7 @@ hex = { workspace = true, features = ["alloc"] }
 qp-plonky2 = { workspace = true }
 qp-wormhole-inputs = { version = "=3.1.0", path = "../inputs", default-features = false }
 zk-circuits-common = { package = "qp-zk-circuits-common", version = "=3.1.0", path = "../../common", default-features = false }
+zeroize = { workspace = true }
 
 [features]
 default = ["std"]

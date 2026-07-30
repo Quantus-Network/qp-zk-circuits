@@ -60,8 +60,9 @@ pub const PREIMAGE_NUM_TARGETS: usize =
 pub const NULLIFIER_SIZE_FELTS: usize =
     POSEIDON2_OUTPUT + SECRET_NUM_TARGETS + TRANSFER_COUNT_NUM_TARGETS;
 
-/// Type alias for the secret as a fixed-size array (4 field elements for 32 bytes)
-pub type Secret = Digest;
+/// The felt-encoded spend secret, zeroized on drop (shared with
+/// `unspendable_account`; see [`crate::sensitive`]).
+pub use crate::sensitive::Secret;
 
 #[derive(PartialEq, Eq, Clone)]
 pub struct Nullifier {
@@ -85,7 +86,7 @@ impl Nullifier {
     pub fn new(digest: BytesDigest, secret: BytesDigest, transfer_count: u64) -> Self {
         let hash = bytes_to_digest(digest);
         // Use 8 bytes/felt encoding.
-        let secret = bytes_to_digest(secret);
+        let secret = bytes_to_digest(secret).into();
         let transfer_count = u64_to_felts(transfer_count);
 
         Self {
@@ -113,7 +114,7 @@ impl Nullifier {
 
         Self {
             hash,
-            secret: secret_felts,
+            secret: secret_felts.into(),
             transfer_count: transfer_count_felts,
         }
     }
@@ -123,7 +124,7 @@ impl ByteCodec for Nullifier {
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend(*digest_to_bytes(self.hash));
-        bytes.extend(*digest_to_bytes(self.secret));
+        bytes.extend(*digest_to_bytes(self.secret.expose_felts()));
         let transfer_count_uint = felts_to_u64(self.transfer_count).unwrap();
         bytes.extend(transfer_count_uint.to_le_bytes());
         bytes
@@ -158,7 +159,7 @@ impl ByteCodec for Nullifier {
                 .map_err(|e| {
                     anyhow::anyhow!("Failed to deserialize nullifier secret with error: {:?}", e)
                 })?;
-        let secret = bytes_to_digest(secret_bytes);
+        let secret = bytes_to_digest(secret_bytes).into();
         offset += secret_size;
 
         // Deserialize transfer_count
@@ -187,7 +188,7 @@ impl FieldElementCodec for Nullifier {
     fn to_field_elements(&self) -> Vec<F> {
         let mut elements = Vec::new();
         elements.extend(self.hash.to_vec());
-        elements.extend(self.secret);
+        elements.extend(self.secret.expose_felts());
         elements.extend(self.transfer_count);
         elements
     }
@@ -209,9 +210,10 @@ impl FieldElementCodec for Nullifier {
         offset += POSEIDON2_OUTPUT;
 
         // Deserialize secret (4 field elements)
-        let secret: Secret = elements[offset..offset + SECRET_NUM_TARGETS]
+        let secret_felts: Digest = elements[offset..offset + SECRET_NUM_TARGETS]
             .try_into()
             .map_err(|_| anyhow::anyhow!("Failed to deserialize nullifier secret"))?;
+        let secret = Secret::from(secret_felts);
         offset += SECRET_NUM_TARGETS;
 
         // Deserialize transfer_count, enforcing the 32-bit limb invariant so a
@@ -232,9 +234,11 @@ impl FieldElementCodec for Nullifier {
 
 impl From<&CircuitInputs> for Nullifier {
     fn from(inputs: &CircuitInputs) -> Self {
+        // Explicit, transient duplication of the secret: it is immediately
+        // felt-encoded into `self.secret`, which scrubs itself on drop.
         Self::new(
             inputs.public.nullifier,
-            inputs.private.secret,
+            inputs.private.secret.expose_digest(),
             inputs.private.transfer_count,
         )
     }
@@ -326,7 +330,7 @@ impl CircuitFragment for Nullifier {
         targets: Self::Targets,
     ) -> anyhow::Result<()> {
         pw.set_hash_target(targets.hash, self.hash.into())?;
-        pw.set_hash_target(targets.secret, self.secret.into())?;
+        pw.set_hash_target(targets.secret, self.secret.expose_felts().into())?;
         pw.set_target_arr(&targets.transfer_count, &self.transfer_count)?;
         Ok(())
     }

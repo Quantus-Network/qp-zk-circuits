@@ -127,7 +127,7 @@ impl TestInputs for CircuitInputs {
                 block_number: DEFAULT_BLOCK_NUMBERS[0],
             },
             private: PrivateCircuitInputs {
-                secret,
+                secret: secret.into(),
                 transfer_count: DEFAULT_TRANSFER_COUNTS[0],
                 unspendable_account,
                 // These values are not validated for dummy proofs but needed for witness
@@ -178,7 +178,7 @@ impl TestInputs for CircuitInputs {
                 block_number: DEFAULT_BLOCK_NUMBERS[1],
             },
             private: PrivateCircuitInputs {
-                secret,
+                secret: secret.into(),
                 transfer_count: DEFAULT_TRANSFER_COUNTS[1],
                 unspendable_account,
                 parent_hash: BytesDigest::try_from([0u8; 32]).unwrap(),
