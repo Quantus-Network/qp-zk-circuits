@@ -20,13 +20,18 @@
 //! sorted order rather than leaf-slot order, so its positions carry no
 //! correlation with the (positionally bound) exit slots — otherwise a nonzero
 //! exit slot would identify its proof's nullifier as real and pair the public
-//! payout with it. It deliberately does NOT check
-//! nullifiers for uniqueness — not against chain state, and not even across
-//! slots in the same batch. Two leaves spending the same deposit aggregate into
-//! a cryptographically valid batch; the wormhole pallet's persistent settled-
-//! nullifier set is the sole double-spend boundary and settles each nullifier
-//! at most once. See "Nullifiers and Double-Spend Prevention" in
-//! `wormhole/README.md`.
+//! payout with it.
+//!
+//! Real nullifiers are constrained to be pairwise DISTINCT across slots (dummy
+//! slots exempt). Because the exit-account grouping sums amounts across leaves,
+//! replaying one leaf proof into several slots would otherwise aggregate into a
+//! single inflated exit while the chain, keying its persistent settled-nullifier
+//! set, marks the one shared nullifier spent only once — minting value backed by
+//! a single spend. The uniqueness constraint makes such a batch unprovable, so
+//! the circuit is a first line of defense; the wormhole pallet's persistent
+//! settled-nullifier set remains the cross-batch double-spend boundary and also
+//! rejects intra-segment duplicates as defense in depth. See "Nullifiers and
+//! Double-Spend Prevention" in `wormhole/README.md`.
 
 use anyhow::{ensure, Result};
 use plonky2::{
@@ -364,6 +369,37 @@ fn build_private_batch_constraints(
 
         output_pis.push(final_sum);
         output_pis.extend_from_slice(&final_exit);
+    }
+
+    // =========================================================================
+    // Real-nullifier uniqueness (anti-replay within the batch)
+    // =========================================================================
+    //
+    // A legitimate private batch spends each leaf exactly once, so every real
+    // slot carries a distinct nullifier. Two real slots sharing a nullifier can
+    // only be the SAME leaf proof replayed across multiple slots. Left
+    // unconstrained, the exit-account grouping above sums that leaf's amount
+    // into a single inflated exit (N copies -> N*amount) while the chain marks
+    // the one shared nullifier spent exactly once — minting value backed by a
+    // single spend. Enforce pairwise distinctness of real nullifiers here so
+    // such a batch is unprovable in the first place.
+    //
+    // Dummy slots are exempt: their nullifiers are replaced below with hashes
+    // of fresh random preimages and never settle on-chain, so a (vanishingly
+    // unlikely) dummy/dummy or dummy/real value match is harmless.
+    let real_nullifiers: Vec<[Target; 4]> = (0..n_leaf)
+        .map(|i| limbs4_at_offset::<LEAF_PI_LEN, NULLIFIER_START>(leaf_pi_targets[i], 0))
+        .collect();
+    for i in 0..n_leaf {
+        let is_real_i = builder.not(is_dummy_flags[i]);
+        for j in (i + 1)..n_leaf {
+            let is_real_j = builder.not(is_dummy_flags[j]);
+            let both_real = builder.and(is_real_i, is_real_j);
+            let nullifiers_equal = bytes_digest_eq(builder, real_nullifiers[i], real_nullifiers[j]);
+            // collision = both_real AND nullifiers_equal must be false.
+            let collision = builder.and(both_real, nullifiers_equal);
+            builder.connect(collision.target, zero);
+        }
     }
 
     // =========================================================================
