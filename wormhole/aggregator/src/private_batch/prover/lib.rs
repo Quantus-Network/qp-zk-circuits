@@ -53,6 +53,11 @@ pub struct PrivateBatchProver {
     targets: Option<PrivateBatchCircuitTargets>,
     num_leaf_proofs: usize,
     dummy_proof_template: ProofWithPublicInputs<F, C, D>,
+    /// Leaf verifier data, kept so [`Self::commit`] can cheaply verify each
+    /// supplied leaf proof before starting the expensive recursive proving run
+    /// (mirrors [`crate::public_batch::prover::PublicBatchProver`]'s pinned
+    /// inner verifier).
+    leaf_verifier: VerifierCircuitData<F, C, D>,
 }
 
 impl PrivateBatchProver {
@@ -84,11 +89,11 @@ impl PrivateBatchProver {
         // `commit` clones this template into every padded slot, and the circuit
         // only exempts slots carrying the dummy sentinel — a caller-supplied
         // REAL proof here would replay its payout in every empty slot (#97026).
-        let leaf_verifier_data = VerifierCircuitData {
+        let leaf_verifier = VerifierCircuitData {
             verifier_only: leaf_verifier_only.clone(),
             common: leaf_common,
         };
-        verify_dummy_leaf_template(&dummy_proof_template, &leaf_verifier_data)?;
+        verify_dummy_leaf_template(&dummy_proof_template, &leaf_verifier)?;
 
         Ok(Self {
             circuit_data,
@@ -96,6 +101,7 @@ impl PrivateBatchProver {
             targets,
             num_leaf_proofs,
             dummy_proof_template,
+            leaf_verifier,
         })
     }
 
@@ -163,6 +169,7 @@ impl PrivateBatchProver {
             targets,
             num_leaf_proofs,
             dummy_proof_template,
+            leaf_verifier: leaf_verifier_data,
         })
     }
 
@@ -227,10 +234,13 @@ impl PrivateBatchProver {
 
     /// Commit leaf proofs to the aggregation circuit witness.
     ///
-    /// Performs padding with dummy proofs, shuffling, and witness filling.
-    /// Rejects batches the private-batch circuit's cross-slot constraints would
-    /// fail (mixed block hashes, asset ids, or fee rates) up front, so callers
-    /// get a precise error in milliseconds instead of a proving failure.
+    /// Fails fast (milliseconds, before the recursive proving run) on inputs
+    /// the private-batch circuit could never prove: each supplied leaf is
+    /// cryptographically verified against the pinned leaf verifier, batches
+    /// that would fail the circuit's cross-slot constraints (mixed block
+    /// hashes, asset ids, or fee rates) are rejected, and an all-dummy batch
+    /// is refused. Then pads with the dummy template, shuffles, and fills the
+    /// witness.
     pub fn commit(mut self, mut proofs: Vec<ProofWithPublicInputs<F, C, D>>) -> Result<Self> {
         let Some(targets) = self.targets.take() else {
             bail!("private-batch aggregation prover has already committed to inputs");
@@ -256,11 +266,19 @@ impl PrivateBatchProver {
         // equality across all proofs.
         let num_dummies_needed = self.num_leaf_proofs.saturating_sub(proofs.len());
 
-        // Validate every real proof's public-input length up front, regardless of
-        // whether padding is needed, so a malformed full batch is rejected at the
-        // API boundary instead of panicking inside witness assignment (#97073).
+        // Validate shape and cryptography up front so a malformed or invalid
+        // leaf is rejected at the API boundary instead of panicking inside
+        // witness assignment (#97073) or failing only after a full recursive
+        // prove (audit finding: leaf validity deferred to the expensive path).
         for (idx, proof) in proofs.iter().enumerate() {
             ensure_proof_public_input_len(proof, LEAF_PI_LEN, "leaf proof")?;
+            self.leaf_verifier.verify(proof.clone()).map_err(|e| {
+                anyhow!(
+                    "leaf proof {} failed verification against the pinned leaf verifier: {}",
+                    idx,
+                    e
+                )
+            })?;
             if num_dummies_needed > 0 {
                 let real_asset_id =
                     leaf_proof_asset_id(proof).map_err(|e| anyhow!("leaf proof {}: {}", idx, e))?;
@@ -315,7 +333,8 @@ impl PrivateBatchProver {
     ///
     /// This is the intended client (CLI / mobile) entry point: a client knows
     /// its complete leaf set up front, so there is no queue — pass everything
-    /// at once. Cross-proof compatibility is checked fail-fast in `commit`.
+    /// at once. Leaf verification and cross-proof compatibility are checked
+    /// fail-fast in `commit`.
     pub fn aggregate(
         self,
         proofs: Vec<ProofWithPublicInputs<F, C, D>>,
@@ -609,6 +628,36 @@ mod tests {
         pis[VOLUME_FEE_BPS_START] = F::from_canonical_u64(volume_fee_bps);
         pis[BLOCK_HASH_START] = F::from_canonical_u64(block);
         pis
+    }
+
+    /// Cryptographically invalid (tampered) leaf proofs must be rejected at
+    /// commit time, before the expensive recursive proving run starts — the
+    /// same fail-fast guard PublicBatchProver applies to its inner proofs.
+    #[test]
+    fn commit_rejects_tampered_leaf_proof_before_proving() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+        let dummy = prove_fake_leaf(&leaf, &targets, [F::ZERO; PUBLIC_INPUTS_FELTS_LEN]);
+        let mut real = prove_fake_leaf(&leaf, &targets, leaf_pis(0, 10, 1));
+        // Right shape, wrong cryptography: mutate one public input so the
+        // proof no longer verifies against the pinned leaf verifier.
+        real.public_inputs[NULLIFIER_START_INDEX] = F::ONE;
+
+        let prover = PrivateBatchProver::new(
+            wormhole_private_batch_circuit_config(),
+            leaf.common.clone(),
+            &leaf.verifier_only,
+            1,
+            dummy,
+        )
+        .unwrap();
+
+        let err = prover
+            .commit(vec![real])
+            .expect_err("tampered leaf proof must be rejected at commit");
+        assert!(
+            err.to_string().contains("failed verification"),
+            "got: {err}"
+        );
     }
 
     #[test]
