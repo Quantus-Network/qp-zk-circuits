@@ -59,12 +59,16 @@ pub struct AggConfigArgs {
     /// FRI blowup factor exponent (`blowup = 2^rate_bits`). Lower = less
     /// prover memory, larger proofs, slower verifier. The companion
     /// `num_query_rounds` is automatically adjusted to preserve the original
-    /// FRI soundness product (~rate_bits * queries). Production: 3.
+    /// FRI soundness product (~rate_bits * queries). Must satisfy
+    /// `rate_bits >= ceil(log2(max_quotient_degree_factor))` (a plonky2
+    /// prover requirement) and `rate_bits <= 8` (each extra bit doubles LDE
+    /// memory). Production: 3.
     #[arg(long)]
     pub rate_bits: Option<usize>,
 
     /// FRI Merkle cap height. Affects proof size only, not security or
-    /// prover memory. Production: 4.
+    /// prover memory. Must be <= 8 (cap sizing is `2^cap_height` per
+    /// oracle and per recursive verifier-data allocation). Production: 4.
     #[arg(long)]
     pub cap_height: Option<usize>,
 
@@ -137,6 +141,32 @@ const MIN_MAX_QUOTIENT_DEGREE_FACTOR: usize = 7;
 /// so none should ever be profiled as a safe memory-saving configuration.
 const MIN_NUM_ROUTED_WIRES: usize = 37;
 
+/// Ceiling for `--rate-bits`. Both FRI exponent knobs drive exponential
+/// allocations deep inside plonky2 (`FriParams::lde_size` is
+/// `1 << (degree_bits + rate_bits)` per committed polynomial), so an
+/// oversized but syntactically valid value passes clap and then either
+/// makes massive allocations or trips asserts only after the expensive
+/// circuit build has started. Production is 3; 8 already means a
+/// 32x-production LDE, which is as far as any memory sweep meaningfully
+/// goes. Reject anything larger at the CLI boundary.
+const MAX_RATE_BITS: usize = 8;
+
+/// Ceiling for `--cap-height`. The Merkle cap is `1 << cap_height` hashes
+/// per oracle, and the recursive verifier allocates `1 << cap_height` hash
+/// targets for the verifier data (`add_virtual_cap`), all registered as
+/// public inputs — so this knob blows up circuit size exponentially, not
+/// just proof size. `MerkleTree::new` additionally asserts
+/// `cap_height <= degree_bits + rate_bits` only mid-build; with the cap
+/// bounded at 8 (16x the production cap of 4) that assert is unreachable
+/// for any real aggregation circuit (`degree_bits` >= 12), so the bound
+/// also serves as the cap/degree consistency guard.
+const MAX_CAP_HEIGHT: usize = 8;
+
+/// `ceil(log2(n))` for `n >= 1`, mirroring plonky2's `log2_ceil`.
+fn log2_ceil(n: usize) -> usize {
+    (usize::BITS - (n - 1).leading_zeros()) as usize
+}
+
 impl AggConfigArgs {
     /// Validate the override knobs:
     ///   1. Numeric knobs must be > 0 (zero would silently break the
@@ -147,7 +177,18 @@ impl AggConfigArgs {
     ///      sweeps fail at the CLI boundary instead of panicking after the
     ///      leaf context is already built (or, worse, instantiating
     ///      zero-op-slot gates — see [`MIN_NUM_ROUTED_WIRES`]).
-    ///   3. Security-affecting knobs must be gated by
+    ///   3. FRI exponent ceilings (`rate_bits <= 8`, `cap_height <= 8`) —
+    ///      both knobs drive `1 << x` work in plonky2, so oversized values
+    ///      reach deep into circuit construction before causing massive
+    ///      allocations or asserts (see [`MAX_RATE_BITS`] /
+    ///      [`MAX_CAP_HEIGHT`]).
+    ///   4. Rate/quotient consistency: plonky2's prover asserts
+    ///      `ceil(log2(quotient_degree_factor)) <= rate_bits` only at
+    ///      proving time, after the full circuit build. Enforce it here on
+    ///      the EFFECTIVE values (override or production baseline) so e.g.
+    ///      `--rate-bits 2` fails immediately instead of after minutes of
+    ///      setup.
+    ///   5. Security-affecting knobs must be gated by
     ///      `--allow-weakening-security`.
     pub fn validate(&self) -> Result<(), String> {
         for (name, v) in [
@@ -166,6 +207,43 @@ impl AggConfigArgs {
             if v == Some(0) {
                 return Err(format!("{name} must be greater than 0"));
             }
+        }
+
+        if let Some(v) = self.rate_bits {
+            if v > MAX_RATE_BITS {
+                return Err(format!(
+                    "--rate-bits must be <= {MAX_RATE_BITS} (LDE memory doubles per bit: \
+                     lde_size = 2^(degree_bits + rate_bits) per committed polynomial), got {v}"
+                ));
+            }
+        }
+        if let Some(v) = self.cap_height {
+            if v > MAX_CAP_HEIGHT {
+                return Err(format!(
+                    "--cap-height must be <= {MAX_CAP_HEIGHT} (Merkle caps and recursive \
+                     verifier-data allocations scale as 2^cap_height), got {v}"
+                ));
+            }
+        }
+
+        // Plonky2's prover asserts `ceil(log2(quotient_degree_factor)) <=
+        // rate_bits` only at proving time; check the effective pair here so a
+        // doomed sweep fails before the circuit build. With the quotient
+        // floor of 7 (bits = 3) this also means --rate-bits below 3 can
+        // never prove, regardless of other flags.
+        let baseline = wormhole_private_batch_circuit_config();
+        let effective_rate = self.rate_bits.unwrap_or(baseline.fri_config.rate_bits);
+        let effective_quotient = self
+            .max_quotient_degree_factor
+            .unwrap_or(baseline.max_quotient_degree_factor);
+        let quotient_degree_bits = log2_ceil(effective_quotient.max(1));
+        if effective_rate < quotient_degree_bits {
+            return Err(format!(
+                "--rate-bits ({effective_rate}) must be >= ceil(log2(max_quotient_degree_factor \
+                 = {effective_quotient})) = {quotient_degree_bits}; plonky2's prover cannot \
+                 compute quotient chunks of degree higher than the FRI rate and asserts this \
+                 only at proving time, after the full circuit build"
+            ));
         }
 
         if let Some(v) = self.num_wires {
@@ -426,5 +504,57 @@ mod tests {
     fn zero_knobs_are_still_rejected() {
         let err = args_with(|a| a.rate_bits = Some(0)).validate().unwrap_err();
         assert!(err.contains("greater than 0"), "got: {err}");
+    }
+
+    /// Both FRI exponents drive `1 << x` allocations inside plonky2
+    /// (`lde_size = 2^(degree_bits + rate_bits)`, caps of `2^cap_height`
+    /// hashes per oracle), so syntactically valid but oversized values
+    /// previously sailed through validation and only failed deep inside
+    /// circuit construction — after massive allocations or setup time.
+    #[test]
+    fn oversized_fri_exponents_are_rejected() {
+        for bits in [9, 20, 63, usize::MAX] {
+            let err = args_with(|a| a.rate_bits = Some(bits))
+                .validate()
+                .expect_err(&format!("--rate-bits {bits} must be rejected"));
+            assert!(err.contains("<= 8"), "got: {err}");
+
+            let err = args_with(|a| a.cap_height = Some(bits))
+                .validate()
+                .expect_err(&format!("--cap-height {bits} must be rejected"));
+            assert!(err.contains("<= 8"), "got: {err}");
+        }
+    }
+
+    #[test]
+    fn fri_exponent_ceilings_are_accepted() {
+        args_with(|a| a.rate_bits = Some(8)).validate().unwrap();
+        args_with(|a| a.cap_height = Some(8)).validate().unwrap();
+    }
+
+    /// Plonky2's prover asserts `ceil(log2(quotient_degree_factor)) <=
+    /// rate_bits` only at proving time. With the quotient floor of 7
+    /// (bits = 3), any --rate-bits below 3 builds the entire aggregation
+    /// circuit and then dies in the prover; validation must reject it at
+    /// the CLI boundary instead.
+    #[test]
+    fn rate_bits_below_quotient_degree_are_rejected() {
+        for bits in [1, 2] {
+            let err = args_with(|a| a.rate_bits = Some(bits))
+                .validate()
+                .expect_err(&format!("--rate-bits {bits} cannot prove"));
+            assert!(err.contains("proving time"), "got: {err}");
+        }
+        // Lowering the quotient factor to its floor (7 -> bits = 3) does not
+        // relax the rate floor below 3 either.
+        let err = args_with(|a| {
+            a.rate_bits = Some(2);
+            a.max_quotient_degree_factor = Some(7);
+        })
+        .validate()
+        .unwrap_err();
+        assert!(err.contains("ceil(log2("), "got: {err}");
+        // Production pair (rate 3, factor 8) stays valid.
+        args_with(|a| a.rate_bits = Some(3)).validate().unwrap();
     }
 }
