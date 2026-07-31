@@ -355,6 +355,11 @@ impl PrivateBatchProver {
 /// - `asset_id` must match across ALL proofs (dummies included),
 /// - `block_hash` and `volume_fee_bps` must match between non-dummy proofs
 ///   (`block_hash == 0` slots are exempt),
+/// - non-dummy nullifiers must be pairwise DISTINCT, mirroring the circuit's
+///   real-nullifier uniqueness constraint (dummy slots are exempt: the circuit
+///   replaces their nullifiers with hashes of fresh random preimages). Without
+///   this, replaying the same valid leaf proof twice passes per-proof
+///   verification and only fails inside the recursive proving run,
 /// - at least one proof must be non-dummy: an all-dummy batch settles nothing,
 ///   so proving it only burns the proving window. The intentional all-dummy
 ///   padding template is built on the circuit-build path, which fills the
@@ -366,13 +371,15 @@ impl PrivateBatchProver {
 /// this only improves failure latency and error quality.
 fn ensure_leaf_batch_compatible(proofs: &[ProofWithPublicInputs<F, C, D>]) -> Result<()> {
     use crate::private_batch::circuit::constants::{
-        ASSET_ID_START, BLOCK_HASH_START, VOLUME_FEE_BPS_START,
+        ASSET_ID_START, BLOCK_HASH_START, NULLIFIER_START, VOLUME_FEE_BPS_START,
     };
+    use std::collections::HashMap;
 
     struct LeafMeta {
         asset_id: u64,
         volume_fee_bps: u64,
         block_hash: [u64; 4],
+        nullifier: [u64; 4],
     }
     // PI lengths were validated by the caller.
     let metas: Vec<LeafMeta> = proofs
@@ -382,6 +389,9 @@ fn ensure_leaf_batch_compatible(proofs: &[ProofWithPublicInputs<F, C, D>]) -> Re
             volume_fee_bps: proof.public_inputs[VOLUME_FEE_BPS_START].to_canonical_u64(),
             block_hash: core::array::from_fn(|i| {
                 proof.public_inputs[BLOCK_HASH_START + i].to_canonical_u64()
+            }),
+            nullifier: core::array::from_fn(|i| {
+                proof.public_inputs[NULLIFIER_START + i].to_canonical_u64()
             }),
         })
         .collect();
@@ -401,9 +411,10 @@ fn ensure_leaf_batch_compatible(proofs: &[ProofWithPublicInputs<F, C, D>]) -> Re
     }
 
     let mut reference: Option<(usize, &LeafMeta)> = None;
+    let mut seen_nullifiers: HashMap<[u64; 4], usize> = HashMap::new();
     for (idx, meta) in metas.iter().enumerate() {
         if meta.block_hash == [0u64; 4] {
-            continue; // dummy sentinel: exempt from block/fee consistency
+            continue; // dummy sentinel: exempt from block/fee/nullifier consistency
         }
         match reference {
             None => reference = Some((idx, meta)),
@@ -427,6 +438,16 @@ fn ensure_leaf_batch_compatible(proofs: &[ProofWithPublicInputs<F, C, D>]) -> Re
                     );
                 }
             }
+        }
+        if let Some(prev_idx) = seen_nullifiers.insert(meta.nullifier, idx) {
+            bail!(
+                "leaf proof {} carries the same nullifier as proof {}; the private-batch \
+                 circuit enforces pairwise-distinct real nullifiers, so this batch (e.g. \
+                 the same leaf proof supplied twice) would only fail after the expensive \
+                 recursive proving run",
+                idx,
+                prev_idx
+            );
         }
     }
     if reference.is_none() {
@@ -523,7 +544,8 @@ fn generate_dummy_nullifier_pre_images_for_slots(n_slots: usize) -> Vec<[F; 4]> 
 mod tests {
     use super::*;
     use crate::private_batch::circuit::constants::{
-        ASSET_ID_START, BLOCK_HASH_START, VOLUME_FEE_BPS_START,
+        ASSET_ID_START, BLOCK_HASH_START, NULLIFIER_START as LEAF_NULLIFIER_START,
+        VOLUME_FEE_BPS_START,
     };
     use plonky2::field::types::Field;
     use qp_wormhole_inputs::{
@@ -630,6 +652,14 @@ mod tests {
         pis
     }
 
+    fn with_nullifier(
+        mut pis: [F; PUBLIC_INPUTS_FELTS_LEN],
+        nullifier: u64,
+    ) -> [F; PUBLIC_INPUTS_FELTS_LEN] {
+        pis[LEAF_NULLIFIER_START] = F::from_canonical_u64(nullifier);
+        pis
+    }
+
     /// Cryptographically invalid (tampered) leaf proofs must be rejected at
     /// commit time, before the expensive recursive proving run starts — the
     /// same fail-fast guard PublicBatchProver applies to its inner proofs.
@@ -664,12 +694,70 @@ mod tests {
     fn compatible_leaf_batch_is_accepted() {
         let (leaf, targets) = build_fake_leaf_circuit();
         let proofs = vec![
-            prove_fake_leaf(&leaf, &targets, leaf_pis(0, 10, 1)),
-            prove_fake_leaf(&leaf, &targets, leaf_pis(0, 10, 1)),
+            prove_fake_leaf(&leaf, &targets, with_nullifier(leaf_pis(0, 10, 1), 1)),
+            prove_fake_leaf(&leaf, &targets, with_nullifier(leaf_pis(0, 10, 1), 2)),
             // Dummy slot: exempt from block/fee consistency.
             prove_fake_leaf(&leaf, &targets, leaf_pis(0, 99, 0)),
         ];
         ensure_leaf_batch_compatible(&proofs).expect("compatible batch must be accepted");
+    }
+
+    /// The circuit rejects pairwise-equal real nullifiers (two real slots
+    /// sharing a nullifier would merge into one inflated exit while the chain
+    /// marks the shared nullifier spent once). The commit-boundary preflight
+    /// must mirror that rule, otherwise replaying the same valid leaf proof
+    /// twice passes per-proof verification and only fails after entering the
+    /// expensive recursive proving path — violating commit's fail-fast
+    /// contract.
+    #[test]
+    fn duplicate_real_nullifier_leaf_batch_is_rejected() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+        // The same valid leaf proof supplied twice: identical nullifiers.
+        let replayed = prove_fake_leaf(&leaf, &targets, with_nullifier(leaf_pis(0, 10, 1), 7));
+        let proofs = vec![replayed.clone(), replayed];
+        let err = ensure_leaf_batch_compatible(&proofs).unwrap_err();
+        assert!(err.to_string().contains("same nullifier"), "got: {err}");
+    }
+
+    /// Dummy slots are exempt from nullifier uniqueness: the circuit replaces
+    /// their nullifiers with hashes of fresh random preimages, so equal
+    /// nullifier fields in supplied dummy proofs never collide on-chain.
+    #[test]
+    fn duplicate_dummy_nullifiers_are_exempt() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+        let proofs = vec![
+            prove_fake_leaf(&leaf, &targets, with_nullifier(leaf_pis(0, 10, 1), 7)),
+            // Two dummy slots (block 0) sharing nullifier 7 with each other
+            // AND with the real proof above.
+            prove_fake_leaf(&leaf, &targets, with_nullifier(leaf_pis(0, 10, 0), 7)),
+            prove_fake_leaf(&leaf, &targets, with_nullifier(leaf_pis(0, 10, 0), 7)),
+        ];
+        ensure_leaf_batch_compatible(&proofs)
+            .expect("dummy slots must be exempt from nullifier uniqueness");
+    }
+
+    /// End-to-end guard at the commit boundary: the same valid leaf proof
+    /// supplied twice must be rejected by `commit` (fail-fast, milliseconds),
+    /// not by the recursive proving run it precedes.
+    #[test]
+    fn commit_rejects_duplicate_real_nullifiers_before_proving() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+        let dummy = prove_fake_leaf(&leaf, &targets, [F::ZERO; PUBLIC_INPUTS_FELTS_LEN]);
+        let replayed = prove_fake_leaf(&leaf, &targets, with_nullifier(leaf_pis(0, 10, 1), 7));
+
+        let prover = PrivateBatchProver::new(
+            wormhole_private_batch_circuit_config(),
+            leaf.common.clone(),
+            &leaf.verifier_only,
+            2,
+            dummy,
+        )
+        .unwrap();
+
+        let err = prover
+            .commit(vec![replayed.clone(), replayed])
+            .expect_err("replayed leaf proof must be rejected at commit");
+        assert!(err.to_string().contains("same nullifier"), "got: {err}");
     }
 
     #[test]

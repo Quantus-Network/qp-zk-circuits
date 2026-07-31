@@ -679,7 +679,15 @@ fn public_batch_aggregator_prove_batch_ignores_bins_dir_after_init() {
     // mutable bins_dir on every call. Replacing artifacts after init could
     // make the aggregator spend a proving window and return a proof its own
     // pinned verifier rejects. Construction must pin every proving input;
-    // mutating the directory afterwards must be a no-op for prove_batch.
+    // mutating the directory afterwards must be a no-op for proving.
+    //
+    // This test proves through the split API's OWNED ProvingContext (review
+    // finding: the previous split API borrowed &self, so a mutex caller kept
+    // the aggregator locked for the whole proving run). The context is
+    // captured as the short-lock phase would, the aggregator is dropped
+    // entirely, and proving runs on a separate worker thread — pinning down
+    // that the context is self-sufficient, movable (Send), and never reads
+    // the scrubbed bins_dir.
     setup_public_test_binaries();
 
     let dir = test_bins_root().join("public-pinned-after-init");
@@ -698,8 +706,16 @@ fn public_batch_aggregator_prove_batch_ignores_bins_dir_after_init() {
         .push_proof(private_batch_proof)
         .expect("admit private-batch proof");
 
-    // Scrub every artifact prove_batch used to re-read. If it still touches
-    // the path, proving or the pinned-verifier check will fail.
+    // Short-lock phase of the split API: snapshot the batch and clone the
+    // owned proving context, then release the aggregator (a service would
+    // drop its mutex guard here; dropping the aggregator outright is the
+    // stronger form of the same claim).
+    let proofs = aggregator.snapshot_batch(&key).expect("snapshot batch");
+    let prover = aggregator.proving_context();
+    drop(aggregator);
+
+    // Scrub every artifact proving used to re-read. If the context still
+    // touches the path, proving or the pinned-verifier check will fail.
     for name in [
         "private_batch_common.bin",
         "private_batch_verifier.bin",
@@ -711,10 +727,14 @@ fn public_batch_aggregator_prove_batch_ignores_bins_dir_after_init() {
         std::fs::write(dir.join(name), b"not a trusted artifact").unwrap();
     }
 
-    let aggregated = aggregator
-        .aggregate(&key)
+    // Proving worker: the context and snapshot move to the thread; nothing
+    // of the aggregator survives on this side.
+    let verifier = prover.clone();
+    let aggregated = std::thread::spawn(move || prover.prove_batch(proofs))
+        .join()
+        .expect("proving worker must not panic")
         .expect("prove_batch must use pinned artifacts, not the scrubbed bins_dir");
-    aggregator
+    verifier
         .verify(aggregated)
         .expect("proof must verify under the verifier pinned at init");
 

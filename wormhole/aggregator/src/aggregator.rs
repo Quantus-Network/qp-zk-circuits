@@ -22,15 +22,25 @@
 //! ```text
 //! // policy loop, short exclusive lock (snapshot_batch takes &mut self —
 //! // it records the snapshot time, so racing policy workers see each
-//! // other's mark instead of both proving the same key):
-//! let proofs = aggregator.lock().snapshot_batch(&key)?;
+//! // other's mark instead of both proving the same key). Capture the OWNED
+//! // proving context under the same short lock, then drop the guard:
+//! let (proofs, prover) = {
+//!     let mut guard = aggregator.lock();
+//!     (guard.snapshot_batch(&key)?, guard.proving_context())
+//! }; // guard dropped HERE — admission, eviction, and policy keep running
 //!
-//! // proving worker, NO lock held — prove from the aggregator's pinned
-//! // artifacts (never re-read the mutable bins_dir):
-//! let proof = aggregator.lock().prove_batch(proofs)?;
+//! // proving worker, NO lock held — the context owns clones of the
+//! // artifacts pinned at construction (never re-reads the mutable
+//! // bins_dir), so it can be moved to the worker outright:
+//! let proof = prover.prove_batch(proofs)?;
 //! // submit `proof`; the block-import evict_settled cadence retires the
 //! // proved inputs from the pool once their segments settle on-chain.
 //! ```
+//!
+//! Do NOT call [`PublicBatchAggregator::prove_batch`] through the lock
+//! (`aggregator.lock().prove_batch(proofs)`): it borrows the aggregator, so
+//! the temporary guard lives until proving returns, blocking every other
+//! aggregator user for the full proving window.
 //!
 //! Proving is NON-CONSUMING: the snapshot is a clone and the pooled originals
 //! stay put, because a claiming miner's pool may hold the only copy of a
@@ -128,8 +138,24 @@ fn load_public_batch_verifier_from_bins(
 // ============================================================================
 
 pub struct PublicBatchAggregator {
-    aggregator_address: BytesDigest,
     pool: ProofPool,
+    /// Everything proving needs, pinned at construction. Cloned out through
+    /// [`Self::proving_context`] so proving workers never hold the lock that
+    /// guards this aggregator.
+    proving: ProvingContext,
+}
+
+/// Owned proving context: every artifact [`prove_batch`](Self::prove_batch)
+/// needs, pinned at aggregator construction and detached from the pool.
+///
+/// Capture it under the same short lock as
+/// [`PublicBatchAggregator::snapshot_batch`], drop the guard, then move the
+/// context to a proving worker (see the module docs for the pattern). Cloning
+/// is cheap next to a proving run: two verifier keys and one dummy proof
+/// template, no pool data.
+#[derive(Clone)]
+pub struct ProvingContext {
+    aggregator_address: BytesDigest,
     /// Canonical-pinned public-batch verifier data, loaded once at construction.
     verifier: VerifierCircuitData<F, C, D>,
     /// Canonical-pinned private-batch verifier, used to build the public-batch
@@ -140,6 +166,77 @@ pub struct PublicBatchAggregator {
     dummy_proof_template: Proof,
     num_leaf_proofs: usize,
     num_private_batch_proofs: usize,
+}
+
+impl ProvingContext {
+    /// Prove a snapshot of private-batch proofs into a public-batch proof
+    /// bound to this aggregator's address. Independent of the pool and of the
+    /// aggregator it was cloned from.
+    ///
+    /// Builds the public-batch prover from artifacts pinned at aggregator
+    /// construction (private-batch verifier, dummy template, batch sizes) —
+    /// never from the mutable `bins_dir` path. The returned proof is checked
+    /// against the pinned [`Self::verify`] before being handed back, so a
+    /// divergent prover build cannot silently return an unusable proof.
+    ///
+    /// Takes tens of seconds (~16 s for a 53-proof batch on
+    /// Apple-Silicon-class hardware, plus prover load). Run it on a dedicated
+    /// proving worker without holding whatever lock guards the aggregator —
+    /// this context is owned, so nothing here needs the lock.
+    pub fn prove_batch(&self, proofs: Vec<Proof>) -> Result<Proof> {
+        let prover = PublicBatchProver::new(
+            wormhole_public_batch_circuit_config(),
+            self.private_batch_verifier.common.clone(),
+            &self.private_batch_verifier.verifier_only,
+            self.num_private_batch_proofs,
+            self.num_leaf_proofs,
+            self.dummy_proof_template.clone(),
+        )
+        .context("failed to build public-batch prover from pinned artifacts")?;
+
+        // Partial batches are fine: PublicBatchProver::commit pads with the
+        // pinned dummy private-batch proof template (no shuffle — forwarding
+        // stays order-preserving so the chain can attribute each segment to
+        // its inner proof).
+        let proof = prover
+            .commit(PublicBatchInputs {
+                proofs,
+                aggregator_address: self.aggregator_address,
+            })
+            .context("failed to commit private-batch proofs to public-batch prover")
+            .and_then(|committed| committed.prove().context("public-batch proving failed"))?;
+
+        self.verify(proof.clone())
+            .context("proved public-batch proof rejected by the aggregator's pinned verifier")?;
+        Ok(proof)
+    }
+
+    /// Verify an aggregated public-batch proof produced under this aggregator's
+    /// address.
+    pub fn verify(&self, proof: Proof) -> Result<()> {
+        // Bind the proof's exposed aggregator address to the configured one before
+        // accepting it: the public-batch circuit exposes the address as a public
+        // input, so without this check a valid proof produced under a different
+        // aggregator identity would be accepted here (#96981).
+        ensure_proof_public_input_len(
+            &proof,
+            self.verifier.common.num_public_inputs,
+            "public-batch proof",
+        )?;
+        let proof_aggregator_address =
+            try_4_felts_to_bytes(&proof.public_inputs[..AGGREGATOR_ADDRESS_LEN])
+                .context("failed to parse public-batch aggregator address from proof")?;
+        if proof_aggregator_address != self.aggregator_address {
+            bail!(
+                "public-batch proof aggregator address {:?} does not match configured aggregator address {:?}",
+                proof_aggregator_address,
+                self.aggregator_address
+            );
+        }
+        self.verifier
+            .verify(proof)
+            .map_err(|e| anyhow!("public-batch aggregated proof verification failed: {}", e))
+    }
 }
 
 impl PublicBatchAggregator {
@@ -191,13 +288,15 @@ impl PublicBatchAggregator {
         )?;
 
         Ok(Self {
-            aggregator_address,
             pool,
-            verifier,
-            private_batch_verifier,
-            dummy_proof_template,
-            num_leaf_proofs,
-            num_private_batch_proofs,
+            proving: ProvingContext {
+                aggregator_address,
+                verifier,
+                private_batch_verifier,
+                dummy_proof_template,
+                num_leaf_proofs,
+                num_private_batch_proofs,
+            },
         })
     }
 
@@ -259,46 +358,25 @@ impl PublicBatchAggregator {
         })
     }
 
+    /// Clone the owned proving context for a proving worker. Capture it under
+    /// the same short lock as [`Self::snapshot_batch`], drop the guard, then
+    /// call [`ProvingContext::prove_batch`] on the worker WITHOUT the lock
+    /// (see the module docs for the full pattern).
+    pub fn proving_context(&self) -> ProvingContext {
+        self.proving.clone()
+    }
+
     /// Prove a snapshot of private-batch proofs into a public-batch proof
     /// bound to this aggregator's address. Does not touch the pool.
     ///
-    /// Builds the public-batch prover from artifacts pinned at construction
-    /// (private-batch verifier, dummy template, batch sizes) — never from the
-    /// mutable `bins_dir` path. The returned proof is checked against the
-    /// pinned [`Self::verify`] before being handed back, so a divergent prover
-    /// build cannot silently return an unusable proof.
-    ///
-    /// Takes tens of seconds (~16 s for a 53-proof batch on
-    /// Apple-Silicon-class hardware, plus prover load). In a concurrent
-    /// service, run this on a dedicated proving worker without holding
-    /// whatever lock guards the aggregator — the snapshot is already
-    /// independent of the pool.
+    /// Blocking convenience that delegates to [`ProvingContext::prove_batch`]
+    /// on the pinned context. Because it borrows `&self`, a caller guarding
+    /// the aggregator with a mutex would keep the guard alive for the whole
+    /// tens-of-seconds proving run — a concurrent service must instead
+    /// capture [`Self::proving_context`] under the short lock and prove from
+    /// the owned context with the guard dropped.
     pub fn prove_batch(&self, proofs: Vec<Proof>) -> Result<Proof> {
-        let prover = PublicBatchProver::new(
-            wormhole_public_batch_circuit_config(),
-            self.private_batch_verifier.common.clone(),
-            &self.private_batch_verifier.verifier_only,
-            self.num_private_batch_proofs,
-            self.num_leaf_proofs,
-            self.dummy_proof_template.clone(),
-        )
-        .context("failed to build public-batch prover from pinned artifacts")?;
-
-        // Partial batches are fine: PublicBatchProver::commit pads with the
-        // pinned dummy private-batch proof template (no shuffle — forwarding
-        // stays order-preserving so the chain can attribute each segment to
-        // its inner proof).
-        let proof = prover
-            .commit(PublicBatchInputs {
-                proofs,
-                aggregator_address: self.aggregator_address,
-            })
-            .context("failed to commit private-batch proofs to public-batch prover")
-            .and_then(|committed| committed.prove().context("public-batch proving failed"))?;
-
-        self.verify(proof.clone())
-            .context("proved public-batch proof rejected by the aggregator's pinned verifier")?;
-        Ok(proof)
+        self.proving.prove_batch(proofs)
     }
 
     /// Per-bucket statistics for the operator's "when to aggregate what" policy.
@@ -341,40 +419,19 @@ impl PublicBatchAggregator {
     }
 
     /// Verify an aggregated public-batch proof produced under this aggregator's
-    /// address.
+    /// address. See [`ProvingContext::verify`].
     pub fn verify(&self, proof: Proof) -> Result<()> {
-        // Bind the proof's exposed aggregator address to the configured one before
-        // accepting it: the public-batch circuit exposes the address as a public
-        // input, so without this check a valid proof produced under a different
-        // aggregator identity would be accepted here (#96981).
-        ensure_proof_public_input_len(
-            &proof,
-            self.verifier.common.num_public_inputs,
-            "public-batch proof",
-        )?;
-        let proof_aggregator_address =
-            try_4_felts_to_bytes(&proof.public_inputs[..AGGREGATOR_ADDRESS_LEN])
-                .context("failed to parse public-batch aggregator address from proof")?;
-        if proof_aggregator_address != self.aggregator_address {
-            bail!(
-                "public-batch proof aggregator address {:?} does not match configured aggregator address {:?}",
-                proof_aggregator_address,
-                self.aggregator_address
-            );
-        }
-        self.verifier
-            .verify(proof)
-            .map_err(|e| anyhow!("public-batch aggregated proof verification failed: {}", e))
+        self.proving.verify(proof)
     }
 
     /// Common circuit data of the public-batch (output) circuit.
     pub fn public_batch_common(&self) -> &CommonCircuitData<F, D> {
-        &self.verifier.common
+        &self.proving.verifier.common
     }
 
     /// Common circuit data of the private-batch (inner) circuit, e.g. for
     /// deserializing client proof submissions.
     pub fn private_batch_common(&self) -> &CommonCircuitData<F, D> {
-        &self.private_batch_verifier.common
+        &self.proving.private_batch_verifier.common
     }
 }
