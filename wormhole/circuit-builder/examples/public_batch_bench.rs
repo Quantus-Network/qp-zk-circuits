@@ -110,7 +110,7 @@ fn main() -> anyhow::Result<()> {
 
         // 1) Build + serialize the public-batch verifier artifacts.
         let build_start = Instant::now();
-        generate_public_batch_circuit_binaries(&dir, m)?;
+        generate_public_batch_circuit_binaries(&dir, m, NUM_LEAF_PROOFS)?;
         let build_time = build_start.elapsed();
         CircuitBinsConfig::new(NUM_LEAF_PROOFS, Some(m))?.save(&dir)?;
         let verifier_bins_size = file_size(&dir.join("public_batch_common.bin"))

@@ -22,6 +22,7 @@ qp-plonky2 = { version = "=1.5.4", default-features = false, features = ["std"] 
 qp-poseidon-core = { version = "=3.0.2", default-features = false }
 serde = { version = "=1.0.228", default-features = false, features = ["derive"] }
 tiny-keccak = { version = "=2.0.2", default-features = false, features = ["keccak"] }
+zeroize = { version = "=1.8.2", default-features = false }
 
 [workspace.package]
 authors = ["Quantus Network"]

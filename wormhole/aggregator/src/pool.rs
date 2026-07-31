@@ -314,16 +314,17 @@ impl ProofPool {
 
     /// Validate and admit a proof, returning the bucket key it landed in.
     ///
-    /// Checks run cheapest-first EXCEPT the duplicate-nullifier check:
-    /// capacity limits, public-input shape, dummy sentinel, bucket cap, the
-    /// verification budget ([`PoolLimits::max_verifies_per_window`]),
-    /// cryptographic verification, and only THEN duplicate-nullifier
-    /// rejection. The dedup check is deliberately gated behind verification so
-    /// its rejection cannot be used as a free, unlimited membership/status
-    /// oracle over the pool's not-yet-settled spends (see the check site). A
-    /// proof admitted here is individually valid and, by bucketing,
-    /// batch-compatible with every other proof in its bucket, so aggregation
-    /// over a bucket cannot fail deterministically on admitted inputs (#97067).
+    /// Checks run cheapest-first EXCEPT the pool-state membership tests:
+    /// capacity limits, public-input shape, dummy sentinel, the verification
+    /// budget ([`PoolLimits::max_verifies_per_window`]), cryptographic
+    /// verification, and only THEN the bucket-cap and duplicate-nullifier
+    /// checks. Both are deliberately gated behind verification so their
+    /// rejections cannot be used as a free, unlimited membership/status
+    /// oracle over the pool's not-yet-settled buckets or spends (see each
+    /// check site). A proof admitted here is individually valid and, by
+    /// bucketing, batch-compatible with every other proof in its bucket, so
+    /// aggregation over a bucket cannot fail deterministically on admitted
+    /// inputs (#97067).
     ///
     /// Buckets are NOT capped at one batch: a hot key keeps admitting (up to
     /// the global limits) while earlier batches for it are being proved;
@@ -353,15 +354,6 @@ impl ProofPool {
             );
         }
 
-        if !self.buckets.contains_key(&key) && self.buckets.len() >= self.limits.max_buckets {
-            bail!(
-                "proof pool bucket limit reached ({} buckets); \
-                 proof for block {:?} rejected",
-                self.limits.max_buckets,
-                key.block_hash
-            );
-        }
-
         // Verification budget: size caps only count ADMITTED proofs, and
         // invalid submissions never consume a slot, so without this an
         // attacker streaming well-formed-but-invalid proofs would buy a full
@@ -388,6 +380,29 @@ impl ProofPool {
                 e
             )
         })?;
+
+        // Bucket cap. Checked AFTER cryptographic verification and the verify
+        // budget for the same reason as the duplicate-nullifier check below:
+        // `buckets.contains_key(&key)` is a membership test over pool state
+        // keyed by ATTACKER-CONTROLLED public inputs of the submitted proof.
+        // Placed before verification (as a "cheapest-first" guard), a full
+        // pool answered it for free — at max_buckets, a well-formed-but-
+        // invalid probe carrying a candidate key was rejected instantly with
+        // this distinct error when the key was novel, but fell through to
+        // verification when the key was pooled, letting anyone enumerate
+        // which (block, asset, fee) tuples the miner is aggregating without
+        // holding a single valid proof (audit finding). Gated behind verify,
+        // the probe requires a cryptographically valid private-batch proof
+        // for the candidate key, and its cost is charged to the verify
+        // budget like any other admission attempt. The cap itself is
+        // operational (bounds bucket-map growth), not a CPU guard, so
+        // nothing is lost by paying verification first.
+        if !self.buckets.contains_key(&key) && self.buckets.len() >= self.limits.max_buckets {
+            bail!(
+                "proof pool bucket limit reached ({} buckets); proof rejected",
+                self.limits.max_buckets
+            );
+        }
 
         // A duplicate nullifier anywhere in the pool means the same leaf
         // spend is already staged; only one copy can ever settle. This is
@@ -1097,7 +1112,67 @@ mod tests {
         let err = pool
             .push(prove_fake(&data, &targets, &fake(2, 12)))
             .unwrap_err();
-        assert!(err.to_string().contains("bucket limit"), "got: {err}");
+        let msg = err.to_string();
+        assert!(msg.contains("bucket limit"), "got: {msg}");
+        // Must not echo the rejected (or any pooled) block hash: the
+        // submitter already knows their own key, and naming it (or a
+        // staged one) would make the distinct "bucket limit" error a
+        // confirmation channel for which keys are pooled.
+        assert!(
+            !msg.contains(&format!("{:?}", nullifier_digest(1)))
+                && !msg.contains(&format!("{:?}", nullifier_digest(2))),
+            "bucket-cap rejection must not echo block hashes: {msg}"
+        );
+    }
+
+    /// The bucket-cap membership test (`buckets.contains_key`) must run AFTER
+    /// cryptographic verification and the verify budget. Otherwise, once the
+    /// pool is at `max_buckets`, a well-formed-but-invalid probe carrying a
+    /// candidate key is rejected instantly with "bucket limit" when the key
+    /// is novel, but falls through to ~10-20ms verification when the key is
+    /// already pooled — a free membership oracle over which
+    /// (block, asset, fee) tuples the miner is aggregating (audit finding).
+    #[test]
+    fn bucket_cap_check_runs_after_verification() {
+        let (mut pool, data, targets) = make_pool(
+            1,
+            PoolLimits {
+                max_proofs: 16,
+                max_buckets: 1,
+                ..PoolLimits::default()
+            },
+        );
+
+        pool.push(prove_fake(&data, &targets, &fake(1, 11)))
+            .unwrap();
+
+        // Novel key (block 2), tampered so verification fails. Pre-fix this
+        // short-circuited on the bucket cap and returned "bucket limit"
+        // without verifying — confirming the key was not pooled. Post-fix
+        // it must fail verification first.
+        let mut novel_invalid = prove_fake(&data, &targets, &fake(2, 12));
+        novel_invalid.public_inputs[aggregated_output::ASSET_ID_OFFSET] = F::from_canonical_u64(9);
+        let err = pool.push(novel_invalid).unwrap_err();
+        assert!(
+            err.to_string().contains("verification failed"),
+            "bucket-cap check must not short-circuit ahead of verification for a \
+             novel key, got: {err}"
+        );
+
+        // Existing key (block 1), also tampered. Same path: verify first,
+        // never a bucket-cap answer that would confirm membership.
+        let mut existing_invalid = prove_fake(&data, &targets, &fake(1, 13));
+        existing_invalid.public_inputs[aggregated_output::ASSET_ID_OFFSET] =
+            F::from_canonical_u64(9);
+        let err = pool.push(existing_invalid).unwrap_err();
+        assert!(
+            err.to_string().contains("verification failed"),
+            "got: {err}"
+        );
+        assert!(
+            !err.to_string().contains("bucket limit"),
+            "invalid proofs must not observe the bucket-cap branch: {err}"
+        );
     }
 
     /// Verification CPU must be bounded even though invalid proofs never

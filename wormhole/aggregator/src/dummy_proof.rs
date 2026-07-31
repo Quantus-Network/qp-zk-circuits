@@ -153,7 +153,7 @@ pub fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
             block_number: DEFAULT_BLOCK_NUMBER,
         },
         private: PrivateCircuitInputs {
-            secret,
+            secret: secret.into(),
             transfer_count: DEFAULT_TRANSFER_COUNT,
             unspendable_account,
             parent_hash: BytesDigest::try_from(DEFAULT_PARENT_HASH)?,

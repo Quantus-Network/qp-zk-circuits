@@ -119,7 +119,8 @@ fn unspendable_account_codec() {
             F::from_noncanonical_u64(6),
             F::from_noncanonical_u64(7),
             F::from_noncanonical_u64(8),
-        ],
+        ]
+        .into(),
     };
 
     // Encode the account as field elements and compare.

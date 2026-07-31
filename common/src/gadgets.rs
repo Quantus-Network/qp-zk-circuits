@@ -8,6 +8,12 @@ use plonky2::{
 
 fn assert_comparison_width(left: usize, n_log: usize) {
     assert!(n_log > 0, "comparison bit width must be greater than zero");
+    // Goldilocks elements are < 2^64. Widths above 64 have no unique meaning as
+    // integer comparisons over field targets; reject them up front.
+    assert!(
+        n_log <= 64,
+        "comparison bit width {n_log} exceeds 64 bits (Goldilocks field elements)"
+    );
 
     let exclusive_upper_bound = if n_log >= usize::BITS as usize {
         usize::MAX
@@ -25,7 +31,9 @@ fn assert_comparison_width(left: usize, n_log: usize) {
 /// or not `left < right`.
 ///
 /// `n_log` must be wide enough to represent `left`, and it also range-constrains `right` to
-/// `n_log` bits via `split_le`.
+/// `n_log` bits. Widths up to 63 use `split_le` (unique: `2^n_log < p`). Width 64 goes through
+/// [`split_canonical_u32_halves`] so the Goldilocks wraparound alias `x + p` cannot flip the
+/// comparison — a plain `split_le(right, 64)` would admit both decompositions.
 ///
 /// # Returns
 /// - `BoolTarget`: True if `left < right`, false otherwise.
@@ -36,6 +44,14 @@ pub fn is_const_less_than<F: RichField + Extendable<D>, const D: usize>(
     n_log: usize,
 ) -> BoolTarget {
     assert_comparison_width(left, n_log);
+
+    // 64-bit splits over Goldilocks are not unique: for small `x`, both `x` and
+    // `x + p` are valid 64-bit bit-patterns of the same field element. Compare
+    // via the canonical half-split so a malicious prover cannot witness the
+    // alias (e.g. decompose `right = 0` as `p`) and flip `left < right`.
+    if n_log == 64 {
+        return is_const_less_than_canonical_u64(builder, left as u64, right);
+    }
 
     let right_bits = builder.split_le(right, n_log);
     let left_bits: Vec<bool> = (0..n_log).map(|i| ((left >> i) & 1) != 0).collect();
@@ -58,6 +74,25 @@ pub fn is_const_less_than<F: RichField + Extendable<D>, const D: usize>(
     }
 
     lt
+}
+
+/// `left < right` for a 64-bit comparison, with `right` forced into its unique
+/// canonical 32-bit half decomposition (see [`split_canonical_u32_halves`]).
+fn is_const_less_than_canonical_u64<F: RichField + Extendable<D>, const D: usize>(
+    builder: &mut CircuitBuilder<F, D>,
+    left: u64,
+    right: Target,
+) -> BoolTarget {
+    let (right_lo, right_hi) = split_canonical_u32_halves(builder, right);
+    let left_lo = builder.constant(F::from_canonical_u64(left & 0xFFFF_FFFF));
+    let left_hi = builder.constant(F::from_canonical_u64(left >> 32));
+
+    // left < right ⇔ left_hi < right_hi ∨ (left_hi = right_hi ∧ left_lo < right_lo)
+    let hi_lt = u32_lt(builder, left_hi, right_hi);
+    let lo_lt = u32_lt(builder, left_lo, right_lo);
+    let hi_eq = builder.is_equal(left_hi, right_hi);
+    let lo_lt_and_hi_eq = builder.and(hi_eq, lo_lt);
+    builder.or(hi_lt, lo_lt_and_hi_eq)
 }
 
 /// Enforce `target < upper_bound_exclusive`.
@@ -302,6 +337,87 @@ mod tests {
     use alloc::vec;
     use plonky2::field::types::{Field, PrimeField64};
     use plonky2::iop::witness::{PartialWitness, WitnessWrite};
+    use plonky2::plonk::circuit_data::CircuitConfig;
+
+    /// Build `is_const_less_than(left, right, n_log)` as a public bool and prove it
+    /// for the given `right` value; return the proved boolean.
+    fn prove_const_lt(left: usize, right: u64, n_log: usize) -> bool {
+        let config = CircuitConfig::standard_recursion_config();
+        let mut b = CircuitBuilder::<F, D>::new(config);
+        let right_t = b.add_virtual_target();
+        let lt = is_const_less_than(&mut b, left, right_t, n_log);
+        b.register_public_input(lt.target);
+        let data = b.build::<C>();
+
+        let mut pw = PartialWitness::new();
+        pw.set_target(right_t, F::from_canonical_u64(right))
+            .unwrap();
+        let proof = data.prove(pw).unwrap();
+        data.verify(proof.clone()).unwrap();
+        proof.public_inputs[0].to_canonical_u64() == 1
+    }
+
+    /// Narrow widths (`n_log < 64`) keep the `split_le` bit-comparator path;
+    /// uniqueness is free because `2^n_log < p`.
+    #[test]
+    fn is_const_less_than_narrow_width_matches_native() {
+        assert!(!prove_const_lt(3, 3, 8));
+        assert!(prove_const_lt(3, 4, 8));
+        assert!(!prove_const_lt(0, 0, 1));
+        assert!(prove_const_lt(0, 1, 1));
+    }
+
+    /// The 64-bit path must go through the canonical half-split: a plain
+    /// `split_le(right, 64)` would let a prover decompose `right = 0` as the
+    /// 64-bit integer `p` and flip `0 < right` to true. These cases pin the
+    /// honest comparison, including against the wraparound-adjacent values
+    /// (`1`, `2^32 - 2`, `p - 1`) that sit next to the excluded alias region.
+    #[test]
+    fn is_const_less_than_u64_matches_native_and_rejects_zero_alias() {
+        const P: u64 = 0xFFFF_FFFF_0000_0001;
+        assert!(
+            !prove_const_lt(0, 0, 64),
+            "0 < 0 must be false; accepting bits-of-p for right=0 would flip this"
+        );
+        assert!(prove_const_lt(0, 1, 64));
+        assert!(!prove_const_lt(1, 1, 64));
+        assert!(prove_const_lt(1, 2, 64));
+        // Largest canonical field element (hi = 2^32 - 1, lo = 0 — the edge of
+        // the excluded wraparound region `hi == 2^32 - 1 && lo >= 1`).
+        assert!(prove_const_lt(0, P - 1, 64));
+        assert!(prove_const_lt((P - 2) as usize, P - 1, 64));
+        assert!(!prove_const_lt((P - 1) as usize, P - 1, 64));
+    }
+
+    /// Forcing `0 < right` while witnessing `right = 0` must be unsatisfiable.
+    /// Without the wraparound exclusion a malicious prover could satisfy this
+    /// by decomposing 0 as the 64-bit integer `p`.
+    #[test]
+    fn is_const_less_than_u64_cannot_prove_zero_less_than_zero() {
+        let config = CircuitConfig::standard_recursion_config();
+        let mut b = CircuitBuilder::<F, D>::new(config);
+        let right_t = b.add_virtual_target();
+        let lt = is_const_less_than(&mut b, 0, right_t, 64);
+        let tru = b._true();
+        b.connect(lt.target, tru.target);
+        let data = b.build::<C>();
+
+        let mut pw = PartialWitness::new();
+        pw.set_target(right_t, F::ZERO).unwrap();
+        assert!(
+            data.prove(pw).is_err(),
+            "proving 0 < 0 via a 64-bit alias of zero must fail"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds 64 bits")]
+    fn is_const_less_than_rejects_width_above_64() {
+        let config = CircuitConfig::standard_recursion_config();
+        let mut b = CircuitBuilder::<F, D>::new(config);
+        let right_t = b.add_virtual_target();
+        let _ = is_const_less_than(&mut b, 0, right_t, 65);
+    }
 
     /// Gates added by `sort_digests4` over `n` virtual digests under the
     /// production private-batch circuit config.

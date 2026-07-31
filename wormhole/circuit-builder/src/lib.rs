@@ -1,3 +1,15 @@
+//! Wormhole circuit artifact generation (leaf / private-batch / public-batch).
+//!
+//! # Trust boundary
+//!
+//! This crate is intended to run on a **trusted CI build host**. The checkout,
+//! toolchain, and output parent during generation are not modeled as
+//! adversarial. Local filesystem races against the publisher (symlink TOCTOU,
+//! planted FIFOs, concurrent staging replacement, etc.) are **out of scope**;
+//! see `wormhole/THREAT_MODEL.md`. Remaining in-scope obligations when these
+//! artifacts are later loaded: no prover.bin, canonical verifier pinning,
+//! and dummy-template validation.
+
 use anyhow::{anyhow, bail, Context, Result};
 use std::fs;
 use std::fs::create_dir_all;
@@ -15,21 +27,13 @@ pub use wormhole_aggregator::CircuitBinsConfig;
 
 /// Generate only the leaf wormhole circuit binaries.
 ///
-/// This is a low-level helper for partial artifact generation. For the full flow that also
-/// emits `config.json`, use [`generate_all_circuit_binaries`].
+/// Low-level helper for partial regenerates. Prefer
+/// [`generate_all_circuit_binaries`] for production builds (whole-directory
+/// staging; see `wormhole/THREAT_MODEL.md`).
 ///
-/// The three leaf files are published all-or-nothing through the aggregator's
-/// `commit_artifact_set` (exclusive-create staging plus rename into place), so
-/// a failed re-run never leaves a mixed leaf set and a symlink pre-planted at
-/// an artifact filename is replaced rather than followed. Whole-directory
-/// consistency across all stages is still only guaranteed by
-/// [`generate_all_circuit_binaries`]; prefer it unless you are deliberately
-/// regenerating one stage into an existing set.
-///
-/// Note: no `prover.bin` is emitted for the leaf circuit. `WormholeProver` always builds
-/// the (small, fast-to-build) leaf circuit from source; loading prover-only artifacts was
-/// removed because a poisoned artifact could exfiltrate private witness data through the
-/// proof's public-input list.
+/// Note: no `prover.bin` is emitted. `WormholeProver` always builds the leaf
+/// circuit from source so a poisoned prover artifact cannot exfiltrate
+/// witness data through the proof's public-input list.
 pub fn generate_circuit_binaries<P: AsRef<Path>>(output_dir: P) -> Result<()> {
     println!(
         "Building wormhole leaf circuit (non-ZK by design; ZK lives at the private-batch layer)..."
@@ -44,9 +48,6 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(output_dir: P) -> Result<()> {
 
     let output_path = output_dir.as_ref();
     create_dir_all(output_path)?;
-    // A previous publish hard-killed mid-swap leaves orphaned temp/backup
-    // entries behind; we are about to replace the set, so sweep them now.
-    wormhole_aggregator::common::utils::sweep_stale_artifact_droppings(output_path)?;
 
     // Generate dummy proof BEFORE consuming circuit_data (prove() borrows, prover_data() moves)
     println!("Generating dummy proof for aggregation padding...");
@@ -136,7 +137,11 @@ pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
 
         // If num_private_batch_proofs is specified, generate public-batch aggregation circuit binaries
         if let Some(num_private_batch_proofs) = config.num_private_batch_proofs {
-            generate_public_batch_circuit_binaries(&staging_path, num_private_batch_proofs)?;
+            generate_public_batch_circuit_binaries(
+                &staging_path,
+                num_private_batch_proofs,
+                config.num_leaf_proofs,
+            )?;
         }
 
         // Save config file alongside binaries. Written last: its presence marks
@@ -156,18 +161,9 @@ pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
     commit_staging_dir(&staging_path, output_path)
 }
 
-/// Create the private staging directory that artifact generation writes into:
-/// a sibling of `output_dir` (same filesystem, so the final `rename` is
-/// atomic), created exclusively under an unpredictable name.
-///
-/// Exclusive `create_dir` (create-new semantics) is the symlink-safety
-/// guarantee: `mkdir` refuses to follow a symlink at the final component and
-/// fails if anything already exists at the path, so a local attacker with
-/// write access to the output parent can never get a pre-planted symlink (or
-/// a directory seeded with artifact-name symlinks) adopted as the staging
-/// dir and redirect the builder's `std::fs::write` calls onto arbitrary
-/// files. The random suffix makes the path unpredictable, so a planted entry
-/// cannot even force an error, and the pid keeps stale leftovers attributable.
+/// Create a private staging directory next to `output_dir` (same filesystem
+/// so the final `rename` is atomic), under an unpredictable name to avoid
+/// colliding with a concurrent builder or leftover from a crashed run.
 fn create_staging_dir(output_dir: &Path) -> Result<PathBuf> {
     let Some(name) = output_dir.file_name().and_then(|n| n.to_str()) else {
         bail!(
@@ -185,8 +181,6 @@ fn create_staging_dir(output_dir: &Path) -> Result<PathBuf> {
             })?;
         }
     }
-    // A few attempts are plenty: a collision requires an identical 64-bit
-    // random suffix to appear in the same parent under the same pid.
     for _ in 0..8 {
         let candidate = output_dir.with_file_name(format!(
             ".{}.staging-{}-{:016x}",
@@ -213,40 +207,26 @@ fn create_staging_dir(output_dir: &Path) -> Result<PathBuf> {
 }
 
 /// Replace `output_dir` with the fully staged `staging_dir` via directory
-/// renames. `rename` cannot overwrite a non-empty directory, so a pre-existing
-/// output dir is first moved aside, then removed after the swap. A crash
-/// between the renames leaves the old set aside and the new set staged — never
-/// a directory mixing files from both generations.
+/// renames. A pre-existing output dir is moved aside, then removed after the
+/// swap. Whole-directory staging is operator hygiene against mixed leaf /
+/// private-batch / public-batch generations — not a local-FS adversary
+/// defense (see `wormhole/THREAT_MODEL.md`).
 ///
-/// Failure cleanup never deletes the only surviving artifact copy: if the
-/// swap-in fails after the previous set was moved aside, the previous set is
-/// rolled back into place (and only then is the redundant staged copy
-/// removed); if even the rollback fails, both copies are left on disk and the
-/// error reports their locations.
+/// After a successful swap-in, failing to delete the moved-aside previous
+/// copy is reported as a warning, not as command failure.
 fn commit_staging_dir(staging_dir: &Path, output_dir: &Path) -> Result<()> {
     commit_staging_dir_impl(staging_dir, output_dir, |src, dst| fs::rename(src, dst))
 }
 
-/// [`commit_staging_dir`] with an injectable rename, so tests can force a
-/// failure at each step of the swap and assert the cleanup guarantees.
+/// [`commit_staging_dir`] with an injectable rename for rollback tests.
 fn commit_staging_dir_impl(
     staging_dir: &Path,
     output_dir: &Path,
     rename: impl Fn(&Path, &Path) -> std::io::Result<()>,
 ) -> Result<()> {
-    // Never publish a staging path we did not stage as a real directory:
-    // renaming a symlink into place would hand out an artifact dir whose
-    // contents remain mutable by whoever owns the link target.
-    let staging_meta = fs::symlink_metadata(staging_dir).with_context(|| {
-        format!(
-            "failed to inspect staged artifact dir {}",
-            staging_dir.display()
-        )
-    })?;
-    if !staging_meta.is_dir() {
+    if !staging_dir.is_dir() {
         bail!(
-            "staged artifact path {} is not a plain directory (symlink or file); \
-             refusing to publish it as the artifact dir",
+            "staged artifact path {} is not a directory; refusing to publish",
             staging_dir.display()
         );
     }
@@ -256,9 +236,14 @@ fn commit_staging_dir_impl(
     let old_path = staging_dir.with_file_name(old_name);
     let previous_exists = output_dir.exists();
     if previous_exists {
+        if !output_dir.is_dir() {
+            let _ = fs::remove_dir_all(staging_dir);
+            bail!(
+                "output path {} exists but is not a directory; remove or rename it and retry",
+                output_dir.display()
+            );
+        }
         if let Err(e) = rename(output_dir, &old_path) {
-            // Nothing has moved: the previous set still serves from
-            // output_dir, so the staged copy is safe to discard.
             let _ = fs::remove_dir_all(staging_dir);
             return Err(e).with_context(|| {
                 format!(
@@ -269,15 +254,11 @@ fn commit_staging_dir_impl(
             });
         }
     }
+
     if let Err(e) = rename(staging_dir, output_dir) {
-        // The previous set (if any) has been moved aside and output_dir is
-        // empty, so the staged directory may hold the ONLY copy of the new
-        // artifacts — never delete it before restoring something to
-        // output_dir.
         if previous_exists {
             match rename(&old_path, output_dir) {
                 Ok(()) => {
-                    // Previous set restored; the staged copy is redundant.
                     let _ = fs::remove_dir_all(staging_dir);
                     return Err(e).with_context(|| {
                         format!(
@@ -304,8 +285,6 @@ fn commit_staging_dir_impl(
                 }
             }
         }
-        // No previous set existed: the staged directory is the only copy of
-        // the artifacts at all; leave it for the operator.
         return Err(e).with_context(|| {
             format!(
                 "Failed to move staged artifacts {} into place at {}; \
@@ -316,15 +295,16 @@ fn commit_staging_dir_impl(
             )
         });
     }
+
     if previous_exists {
-        // The new set is already committed at output_dir; failing to clean up
-        // the old copy is an error but loses nothing.
-        fs::remove_dir_all(&old_path).with_context(|| {
-            format!(
-                "Failed to remove previous artifact dir {}",
+        if let Err(e) = fs::remove_dir_all(&old_path) {
+            eprintln!(
+                "warning: published artifacts to {}, but failed to remove the previous \
+                 artifact copy at {}: {e}; remove it manually if it is no longer needed",
+                output_dir.display(),
                 old_path.display()
-            )
-        })?;
+            );
+        }
     }
     Ok(())
 }
@@ -340,6 +320,97 @@ mod tests {
             tag,
             std::process::id()
         ))
+    }
+
+    /// `--output` must be a directory; a file at that path is rejected before
+    /// the swap (operator hygiene, not local-FS adversary defense).
+    #[test]
+    fn commit_rejects_non_directory_previous_output() {
+        let root = unique_tmp_dir("commit-not-dir");
+        let _ = fs::remove_dir_all(&root);
+        create_dir_all(&root).unwrap();
+        let output = root.join("bins");
+        let staging = create_staging_dir(&output).unwrap();
+
+        write(&output, b"i am a file").unwrap();
+        write(staging.join("fresh.bin"), b"new artifact").unwrap();
+
+        let err = commit_staging_dir(&staging, &output).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("not a directory"),
+            "got: {err:#}"
+        );
+        assert_eq!(
+            fs::read(&output).unwrap(),
+            b"i am a file",
+            "previous non-directory must be left untouched"
+        );
+        assert!(
+            !staging.exists(),
+            "rejected commit discards the (uncommitted) staged copy"
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// After the staged directory is renamed into place the publish has
+    /// succeeded. An undeletable moved-aside previous copy must not flip the
+    /// result to Err — CI/operators keying off the exit code would otherwise
+    /// treat a live artifact update as a failed run (audit finding).
+    #[cfg(unix)]
+    #[test]
+    fn successful_publish_is_not_failed_by_old_copy_cleanup() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = unique_tmp_dir("commit-cleanup-best-effort");
+        let _ = fs::remove_dir_all(&root);
+        create_dir_all(&root).unwrap();
+        let output = root.join("bins");
+        let staging = create_staging_dir(&output).unwrap();
+
+        create_dir_all(&output).unwrap();
+        write(output.join("stale.bin"), b"old artifact").unwrap();
+        // Nested dir without write permission: remove_dir_all cannot unlink
+        // its children once this tree is the moved-aside `.old` copy.
+        let locked = output.join("locked");
+        create_dir_all(&locked).unwrap();
+        write(locked.join("x.bin"), b"x").unwrap();
+        let mut perms = fs::metadata(&locked).unwrap().permissions();
+        perms.set_mode(0o555);
+        fs::set_permissions(&locked, perms).unwrap();
+
+        write(staging.join("fresh.bin"), b"new artifact").unwrap();
+
+        let result = commit_staging_dir(&staging, &output);
+        assert!(
+            result.is_ok(),
+            "publish must report success even when old-copy cleanup fails: {result:?}"
+        );
+        assert!(
+            output.join("fresh.bin").exists(),
+            "new artifacts must be live at output_dir"
+        );
+        assert!(
+            !output.join("stale.bin").exists(),
+            "stale contents must not remain in the published dir"
+        );
+
+        // Make any leftover `.old` tree deletable so the test cleans up.
+        for entry in fs::read_dir(&root).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if !name.ends_with(".old") {
+                continue;
+            }
+            let locked_old = path.join("locked");
+            if locked_old.exists() {
+                let mut p = fs::metadata(&locked_old).unwrap().permissions();
+                p.set_mode(0o755);
+                fs::set_permissions(&locked_old, p).unwrap();
+            }
+        }
+
+        fs::remove_dir_all(&root).unwrap();
     }
 
     /// The swap must replace stale contents wholesale, not merge into them.
@@ -380,105 +451,6 @@ mod tests {
         commit_staging_dir(&staging, &output).unwrap();
         assert!(output.join("fresh.bin").exists());
         assert!(!staging.exists());
-
-        fs::remove_dir_all(&root).unwrap();
-    }
-
-    /// Staging paths must be minted fresh on every call (exclusive creation
-    /// under an unpredictable name), never re-derived from the pid alone: a
-    /// predictable path is what lets a local attacker pre-create it.
-    #[test]
-    fn create_staging_dir_mints_a_fresh_unique_directory_per_call() {
-        let root = unique_tmp_dir("staging-fresh");
-        let _ = fs::remove_dir_all(&root);
-        create_dir_all(&root).unwrap();
-        let output = root.join("bins");
-
-        let a = create_staging_dir(&output).unwrap();
-        let b = create_staging_dir(&output).unwrap();
-        assert_ne!(
-            a, b,
-            "staging paths must be unique per call, not a pid-only derivation"
-        );
-        for dir in [&a, &b] {
-            let meta = fs::symlink_metadata(dir).unwrap();
-            assert!(
-                meta.is_dir() && !meta.file_type().is_symlink(),
-                "staging path must be a freshly created real directory"
-            );
-            assert_eq!(
-                dir.parent(),
-                Some(root.as_path()),
-                "staging dir must stay a sibling of the output dir"
-            );
-            assert!(dir
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .starts_with(".bins.staging-"));
-        }
-
-        fs::remove_dir_all(&root).unwrap();
-    }
-
-    /// A local attacker with write access to the output parent plants a
-    /// symlink at the predictable staging path. The builder must not adopt it:
-    /// artifact writes would land in attacker-controlled storage.
-    #[cfg(unix)]
-    #[test]
-    fn create_staging_dir_does_not_adopt_a_planted_symlink() {
-        let root = unique_tmp_dir("staging-symlink");
-        let _ = fs::remove_dir_all(&root);
-        create_dir_all(&root).unwrap();
-        let output = root.join("bins");
-        let attacker_target = root.join("attacker-target");
-        create_dir_all(&attacker_target).unwrap();
-
-        // The historical (predictable) staging name: .<name>.staging-<pid>.
-        let planted = output.with_file_name(format!(".bins.staging-{}", std::process::id()));
-        std::os::unix::fs::symlink(&attacker_target, &planted).unwrap();
-
-        let staging = create_staging_dir(&output).unwrap();
-        let meta = fs::symlink_metadata(&staging).unwrap();
-        assert!(
-            meta.is_dir() && !meta.file_type().is_symlink(),
-            "staging dir must be a freshly created real directory, not the planted symlink"
-        );
-        write(staging.join("probe.bin"), b"artifact").unwrap();
-        assert!(
-            !attacker_target.join("probe.bin").exists(),
-            "artifact writes must not land in attacker-controlled storage"
-        );
-
-        fs::remove_dir_all(&root).unwrap();
-    }
-
-    /// The commit phase must refuse to publish a staging path that is not a
-    /// plain directory: renaming a symlink into place would hand out an
-    /// artifact dir whose contents remain attacker-mutable.
-    #[cfg(unix)]
-    #[test]
-    fn commit_refuses_to_publish_a_symlinked_staging_dir() {
-        let root = unique_tmp_dir("commit-symlink");
-        let _ = fs::remove_dir_all(&root);
-        create_dir_all(&root).unwrap();
-        let output = root.join("bins");
-        let attacker_target = root.join("attacker-target");
-        create_dir_all(&attacker_target).unwrap();
-        write(attacker_target.join("fresh.bin"), b"attacker mutable").unwrap();
-        let staging = root.join(".bins.staging-evil");
-        std::os::unix::fs::symlink(&attacker_target, &staging).unwrap();
-
-        let err = commit_staging_dir(&staging, &output).unwrap_err();
-        assert!(
-            format!("{err:#}").contains("not a plain directory"),
-            "got: {err:#}"
-        );
-        assert!(
-            fs::symlink_metadata(&output).is_err(),
-            "a symlinked staging path must never be published as the artifact dir"
-        );
 
         fs::remove_dir_all(&root).unwrap();
     }
@@ -610,42 +582,6 @@ mod tests {
         assert!(format!("{err:#}").contains("move previous"), "got: {err:#}");
         assert!(output.join("previous.bin").exists());
         assert!(!staging.exists());
-
-        fs::remove_dir_all(&root).unwrap();
-    }
-
-    /// A symlink pre-planted at an artifact filename must not redirect the
-    /// write onto its target: `std::fs::write` follows symlinks and truncates,
-    /// so an attacker with write access to the output directory could make the
-    /// builder clobber any file writable by the invoking account (audit
-    /// finding: symlink-following artifact writes). Publishing must replace
-    /// the planted entry itself and leave the victim untouched.
-    #[cfg(unix)]
-    #[test]
-    fn leaf_artifact_writes_do_not_follow_planted_symlinks() {
-        let root = unique_tmp_dir("symlink-clobber");
-        let _ = fs::remove_dir_all(&root);
-        let output = root.join("bins");
-        create_dir_all(&output).unwrap();
-
-        let victim = root.join("victim.txt");
-        write(&victim, b"precious data").unwrap();
-        std::os::unix::fs::symlink(&victim, output.join("common.bin")).unwrap();
-
-        let result = generate_circuit_binaries(&output);
-
-        assert_eq!(
-            fs::read(&victim).unwrap(),
-            b"precious data",
-            "artifact publication must never write through a planted symlink"
-        );
-        if result.is_ok() {
-            let common = fs::read(output.join("common.bin")).unwrap();
-            assert_ne!(
-                common, b"precious data",
-                "a successful run must have replaced the planted entry with a real artifact"
-            );
-        }
 
         fs::remove_dir_all(&root).unwrap();
     }

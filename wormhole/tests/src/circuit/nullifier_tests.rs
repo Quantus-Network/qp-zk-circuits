@@ -66,7 +66,7 @@ fn invalid_secret_fails_proof() {
     let mut invalid_bytes = hex::decode(DEFAULT_SECRETS[0]).unwrap();
     invalid_bytes[0] ^= 0xFF;
     let invalid_bytes: [u8; 32] = invalid_bytes[..32].try_into().unwrap();
-    valid_nullifier.secret = bytes_to_digest(BytesDigest::try_from(invalid_bytes).unwrap());
+    valid_nullifier.secret = bytes_to_digest(BytesDigest::try_from(invalid_bytes).unwrap()).into();
 
     let res = run_test(&valid_nullifier);
     assert!(res.is_err());

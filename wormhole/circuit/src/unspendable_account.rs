@@ -21,8 +21,9 @@ pub const ACCOUNT_ID_NUM_TARGETS: usize = POSEIDON2_OUTPUT; // 4
 pub const PREIMAGE_NUM_TARGETS: usize = 7;
 pub const UNSPENDABLE_SALT: &str = "wormhole";
 
-/// Type alias for the secret as a fixed-size array (4 felts, 8 bytes/felt)
-pub type Secret = [F; SECRET_NUM_TARGETS];
+/// The felt-encoded spend secret, zeroized on drop (shared with `nullifier`;
+/// see [`crate::sensitive`]).
+pub use crate::sensitive::Secret;
 
 #[derive(PartialEq, Eq, Clone)]
 pub struct UnspendableAccount {
@@ -50,7 +51,7 @@ impl UnspendableAccount {
         // Account ID uses 8 bytes/felt encoding (hash output)
         let account_id = bytes_to_digest(account_id);
         // Secret uses 8 bytes/felt encoding.
-        let secret = bytes_to_digest(secret);
+        let secret = bytes_to_digest(secret).into();
         Self { account_id, secret }
     }
 
@@ -79,7 +80,7 @@ impl UnspendableAccount {
 
         Self {
             account_id: outer_hash,
-            secret: secret_felts,
+            secret: secret_felts.into(),
         }
     }
 }
@@ -88,7 +89,7 @@ impl ByteCodec for UnspendableAccount {
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend(*digest_to_bytes(self.account_id));
-        bytes.extend(*digest_to_bytes(self.secret));
+        bytes.extend(*digest_to_bytes(self.secret.expose_felts()));
         bytes
     }
 
@@ -115,7 +116,7 @@ impl ByteCodec for UnspendableAccount {
         let secret_bytes: BytesDigest = slice[account_id_size..total_size]
             .try_into()
             .map_err(|_| anyhow::anyhow!("Failed to deserialize unspendable account secret"))?;
-        let secret = bytes_to_digest(secret_bytes);
+        let secret = bytes_to_digest(secret_bytes).into();
 
         Ok(Self { account_id, secret })
     }
@@ -125,7 +126,7 @@ impl FieldElementCodec for UnspendableAccount {
     fn to_field_elements(&self) -> Vec<F> {
         let mut elements = Vec::new();
         elements.extend(self.account_id.to_vec());
-        elements.extend(self.secret);
+        elements.extend(self.secret.expose_felts());
         elements
     }
 
@@ -149,9 +150,10 @@ impl FieldElementCodec for UnspendableAccount {
             .map_err(|_| anyhow::anyhow!("Failed to deserialize unspendable account id"))?;
 
         // Deserialize secret (4 field elements)
-        let secret: Secret = elements[account_id_size..total_size]
+        let secret_felts: Digest = elements[account_id_size..total_size]
             .try_into()
             .map_err(|_| anyhow::anyhow!("Failed to deserialize unspendable account secret"))?;
+        let secret = Secret::from(secret_felts);
 
         Ok(Self { account_id, secret })
     }
@@ -159,7 +161,12 @@ impl FieldElementCodec for UnspendableAccount {
 
 impl From<&CircuitInputs> for UnspendableAccount {
     fn from(inputs: &CircuitInputs) -> Self {
-        Self::new(inputs.private.unspendable_account, inputs.private.secret)
+        // Explicit, transient duplication of the secret: it is immediately
+        // felt-encoded into `self.secret`, which scrubs itself on drop.
+        Self::new(
+            inputs.private.unspendable_account,
+            inputs.private.secret.expose_digest(),
+        )
     }
 }
 
@@ -216,7 +223,7 @@ impl CircuitFragment for UnspendableAccount {
         targets: Self::Targets,
     ) -> anyhow::Result<()> {
         pw.set_hash_target(targets.account_id, self.account_id.into())?;
-        pw.set_hash_target(targets.secret, self.secret.into())?;
+        pw.set_hash_target(targets.secret, self.secret.expose_felts().into())?;
 
         Ok(())
     }

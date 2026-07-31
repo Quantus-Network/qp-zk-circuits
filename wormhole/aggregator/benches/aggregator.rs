@@ -145,9 +145,12 @@ macro_rules! prove_public_batch_benchmark {
                 );
 
             let proof = generate_real_private_batch_proof();
-            generate_public_batch_circuit_binaries(BINS_DIR, $num_private_batch_proofs).expect(
-                "Failed to generate public_batch circuit binaries for public_batch benchmark",
-            );
+            generate_public_batch_circuit_binaries(
+                BINS_DIR,
+                $num_private_batch_proofs,
+                PUBLIC_BATCH_INNER_NUM_LEAVES,
+            )
+            .expect("Failed to generate public_batch circuit binaries for public_batch benchmark");
 
             let config = CircuitBinsConfig::new(
                 PUBLIC_BATCH_INNER_NUM_LEAVES,
@@ -207,9 +210,12 @@ macro_rules! verify_public_batch_benchmark {
 
             let proof = generate_real_private_batch_proof();
 
-            generate_public_batch_circuit_binaries(BINS_DIR, $num_private_batch_proofs).expect(
-                "Failed to generate public_batch circuit binaries for public_batch benchmark",
-            );
+            generate_public_batch_circuit_binaries(
+                BINS_DIR,
+                $num_private_batch_proofs,
+                PUBLIC_BATCH_INNER_NUM_LEAVES,
+            )
+            .expect("Failed to generate public_batch circuit binaries for public_batch benchmark");
 
             let config = CircuitBinsConfig::new(
                 PUBLIC_BATCH_INNER_NUM_LEAVES,

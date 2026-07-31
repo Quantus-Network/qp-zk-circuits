@@ -1092,7 +1092,6 @@ dependencies = [
  "criterion",
  "env_logger",
  "hex",
- "libc",
  "qp-plonky2",
  "qp-wormhole-circuit",
  "qp-wormhole-inputs",
@@ -1115,6 +1114,7 @@ dependencies = [
  "qp-plonky2",
  "qp-wormhole-inputs",
  "qp-zk-circuits-common",
+ "zeroize",
 ]
 
 [[package]]
@@ -1157,7 +1157,6 @@ version = "3.1.0"
 dependencies = [
  "anyhow",
  "criterion",
- "libc",
  "qp-plonky2-verifier",
  "qp-wormhole-inputs",
  "tiny-keccak",
@@ -1489,7 +1488,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.2",
  "once_cell",
  "rustix",
  "windows-sys",
@@ -1918,6 +1917,12 @@ dependencies = [
  "quote",
  "syn 2.0.117",
 ]
+
+[[package]]
+name = "zeroize"
+version = "1.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
 
 [[package]]
 name = "zmij"

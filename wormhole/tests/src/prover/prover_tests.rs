@@ -369,7 +369,7 @@ fn test_random_tree_circuit_verification() {
             block_number: DEFAULT_BLOCK_NUMBERS[0],
         },
         private: PrivateCircuitInputs {
-            secret: secret_digest,
+            secret: secret_digest.into(),
             transfer_count,
             unspendable_account,
             parent_hash: BytesDigest::try_from([0u8; 32]).unwrap(),
@@ -475,7 +475,7 @@ fn test_depth_2_tree_circuit_verification() {
                 block_number: DEFAULT_BLOCK_NUMBERS[0],
             },
             private: PrivateCircuitInputs {
-                secret: secret_digest,
+                secret: secret_digest.into(),
                 transfer_count,
                 unspendable_account,
                 parent_hash: BytesDigest::try_from([0u8; 32]).unwrap(),
@@ -592,7 +592,7 @@ fn test_depth_3_tree_circuit_verification() {
                 block_number: DEFAULT_BLOCK_NUMBERS[0],
             },
             private: PrivateCircuitInputs {
-                secret: secret_digest,
+                secret: secret_digest.into(),
                 transfer_count,
                 unspendable_account,
                 parent_hash: BytesDigest::try_from([0u8; 32]).unwrap(),
