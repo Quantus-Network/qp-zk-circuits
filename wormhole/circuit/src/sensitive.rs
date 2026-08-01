@@ -36,12 +36,15 @@
 //! These wrappers cover the copies *we* own. Transient stack copies made
 //! while encoding the secret into field elements, and the copies plonky2
 //! keeps inside `PartialWitness`/`ProverCircuitData` during proving, are out
-//! of scope here (the latter requires upstream support to scrub).
+//! of scope here (the latter requires upstream support to scrub). One known
+//! heap instance: qp-plonky2's `hash_no_pad` (`pad10_to_rate`) copies its
+//! input — including the secret preimage — into an internal rate-aligned
+//! `Vec` and frees it unscrubbed; see `tests/heap_zeroization.rs`, which
+//! exempts exactly that block and catches every leak on our side.
 
 use alloc::vec::Vec;
 use core::ops::{Deref, DerefMut};
 
-use plonky2::field::types::{Field, PrimeField64};
 use zeroize::Zeroize;
 use zk_circuits_common::circuit::F;
 use zk_circuits_common::utils::{
@@ -144,10 +147,17 @@ impl Drop for Secret {
 
 /// Heap buffer of field elements that may contain an exposed spend secret.
 ///
-/// `F` has no [`Zeroize`] impl (foreign type), so drop scrubs each limb via
-/// its canonical `u64` representation and overwrites the slot with `F::ZERO`.
+/// `F` has no [`Zeroize`] impl (foreign type), but its inner `u64` limb is
+/// public, so drop applies the vetted `zeroize` primitives (volatile write
+/// plus compiler fence) directly to each heap slot. A plain `*felt = F::ZERO`
+/// store would not survive: the buffer is deallocated right after, so the
+/// optimizer may treat the store as dead and elide it.
+///
 /// Prefer this (or [`zeroize::Zeroizing`] for bytes) over returning a bare
-/// `Vec` from any API that serializes [`Secret`].
+/// `Vec` from any API that serializes [`Secret`]. Callers must build the
+/// inner `Vec` with its full capacity reserved up front: a `Vec` that grows
+/// after secret material is written reallocates and frees the old block
+/// unscrubbed, which no drop-time scrub can repair.
 pub struct SensitiveFelts(Vec<F>);
 
 impl SensitiveFelts {
@@ -182,18 +192,20 @@ impl AsRef<[F]> for SensitiveFelts {
 
 impl Drop for SensitiveFelts {
     fn drop(&mut self) {
+        // In-place volatile scrub of each heap limb through the public inner
+        // `u64`. Scrubbing a `to_canonical_u64()` temporary or assigning
+        // `F::ZERO` with a plain store would leave the heap bytes intact
+        // (the temporary is a stack copy; the dead store may be elided).
         for felt in &mut self.0 {
-            let mut limb = felt.to_canonical_u64();
-            limb.zeroize();
-            *felt = F::ZERO;
+            felt.0.zeroize();
         }
-        self.0.clear();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use plonky2::field::types::Field;
 
     #[test]
     fn new_validates_and_zeroizes_source() {

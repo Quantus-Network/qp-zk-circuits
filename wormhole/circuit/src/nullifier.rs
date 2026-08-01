@@ -101,16 +101,20 @@ impl Nullifier {
     }
 
     pub fn from_preimage(secret: BytesDigest, transfer_count: u64) -> Self {
-        let mut preimage = Vec::new();
-
         let salt =
             string_to_felts(NULLIFIER_SALT).expect("NULLIFIER_SALT within serialization cap");
         let secret_felts = bytes_to_digest(secret);
         let transfer_count_felts = u64_to_felts(transfer_count);
 
+        // Full capacity up front: growing after the secret is written would
+        // reallocate and free the old block unscrubbed. The scrubbing wrapper
+        // then zeroizes the buffer once hashing is done.
+        let mut preimage =
+            Vec::with_capacity(SALT_NUM_TARGETS + SECRET_NUM_TARGETS + TRANSFER_COUNT_NUM_TARGETS);
         preimage.extend(salt);
         preimage.extend(secret_felts);
         preimage.extend(transfer_count_felts);
+        let preimage = SensitiveFelts::new(preimage);
 
         let inner_hash = Poseidon2Hash::hash_no_pad(&preimage).elements;
         let outer_hash = Poseidon2Hash::hash_no_pad(&inner_hash).elements;
@@ -129,7 +133,9 @@ impl Nullifier {
     /// the caller drops it. Do not copy the contents into logs, error
     /// contexts, or persistent storage.
     pub fn to_bytes(&self) -> Zeroizing<Vec<u8>> {
-        let mut bytes = Vec::new();
+        // Full capacity up front: growing after the secret is written would
+        // reallocate and free the old block unscrubbed.
+        let mut bytes = Vec::with_capacity(DIGEST_BYTES_LEN + SECRET_BYTES_LEN + size_of::<u64>());
         bytes.extend(*digest_to_bytes(self.hash));
         bytes.extend(*digest_to_bytes(self.secret.expose_felts()));
         let transfer_count_uint = felts_to_u64(self.transfer_count).unwrap();
@@ -196,8 +202,10 @@ impl Nullifier {
     /// caller drops it. Do not copy the contents into logs, error contexts,
     /// or persistent storage.
     pub fn to_field_elements(&self) -> SensitiveFelts {
-        let mut elements = Vec::new();
-        elements.extend(self.hash.to_vec());
+        // Full capacity up front: growing after the secret is written would
+        // reallocate and free the old block unscrubbed.
+        let mut elements = Vec::with_capacity(NULLIFIER_SIZE_FELTS);
+        elements.extend(self.hash);
         elements.extend(self.secret.expose_felts());
         elements.extend(self.transfer_count);
         SensitiveFelts::new(elements)

@@ -12,7 +12,8 @@ use crate::inputs::CircuitInputs;
 use crate::sensitive::SensitiveFelts;
 use zk_circuits_common::circuit::{CircuitFragment, D, F};
 use zk_circuits_common::utils::{
-    bytes_to_digest, digest_to_bytes, string_to_felts, BytesDigest, Digest, POSEIDON2_OUTPUT,
+    bytes_to_digest, digest_to_bytes, string_to_felts, BytesDigest, Digest, DIGEST_BYTES_LEN,
+    POSEIDON2_OUTPUT,
 };
 
 /// Number of field elements for the secret (32 bytes with 8 bytes/felt encoding)
@@ -63,12 +64,16 @@ impl UnspendableAccount {
         // Use 8 bytes/felt encoding for secrets.
         let secret_felts = bytes_to_digest(secret);
 
-        // Build preimage: salt + secret
-        let mut preimage = Vec::new();
+        // Build preimage: salt + secret. Full capacity up front: growing
+        // after the secret is written would reallocate and free the old block
+        // unscrubbed. The scrubbing wrapper then zeroizes the buffer once
+        // hashing is done.
+        let mut preimage = Vec::with_capacity(PREIMAGE_NUM_TARGETS);
         preimage.extend(
             string_to_felts(UNSPENDABLE_SALT).expect("UNSPENDABLE_SALT within serialization cap"),
         );
         preimage.extend(&secret_felts);
+        let preimage = SensitiveFelts::new(preimage);
 
         if preimage.len() != PREIMAGE_NUM_TARGETS {
             panic!(
@@ -94,7 +99,9 @@ impl UnspendableAccount {
     /// the caller drops it. Do not copy the contents into logs, error
     /// contexts, or persistent storage.
     pub fn to_bytes(&self) -> Zeroizing<Vec<u8>> {
-        let mut bytes = Vec::new();
+        // Full capacity up front: growing after the secret is written would
+        // reallocate and free the old block unscrubbed.
+        let mut bytes = Vec::with_capacity(2 * DIGEST_BYTES_LEN);
         bytes.extend(*digest_to_bytes(self.account_id));
         bytes.extend(*digest_to_bytes(self.secret.expose_felts()));
         Zeroizing::new(bytes)
@@ -134,8 +141,10 @@ impl UnspendableAccount {
     /// caller drops it. Do not copy the contents into logs, error contexts,
     /// or persistent storage.
     pub fn to_field_elements(&self) -> SensitiveFelts {
-        let mut elements = Vec::new();
-        elements.extend(self.account_id.to_vec());
+        // Full capacity up front: growing after the secret is written would
+        // reallocate and free the old block unscrubbed.
+        let mut elements = Vec::with_capacity(ACCOUNT_ID_NUM_TARGETS + SECRET_NUM_TARGETS);
+        elements.extend(self.account_id);
         elements.extend(self.secret.expose_felts());
         SensitiveFelts::new(elements)
     }
