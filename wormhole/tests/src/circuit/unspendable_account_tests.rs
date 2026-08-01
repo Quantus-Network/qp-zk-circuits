@@ -2,7 +2,6 @@ use plonky2::{field::types::Field, plonk::proof::ProofWithPublicInputs};
 use wormhole_circuit::unspendable_account::{UnspendableAccount, UnspendableAccountTargets};
 use zk_circuits_common::{
     circuit::{CircuitFragment, C, D, F},
-    codec::FieldElementCodec,
     utils::{bytes_to_digest, digest_to_bytes, BytesDigest},
 };
 

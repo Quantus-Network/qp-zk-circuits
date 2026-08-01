@@ -1,6 +1,6 @@
 #![allow(clippy::new_without_default)]
 use crate::block_header::header::DIGEST_LOGS_SIZE;
-use crate::sensitive::SensitiveDigest;
+use crate::sensitive::Secret;
 use alloc::vec::Vec;
 use anyhow::{bail, Context};
 use plonky2::field::goldilocks_field::GoldilocksField;
@@ -24,8 +24,9 @@ pub use qp_wormhole_inputs::{
 
 /// Inputs required to commit to the wormhole circuit.
 ///
-/// Deliberately not `Clone`: `private.secret` is a move-only
-/// [`SensitiveDigest`], so the spend credential cannot be silently duplicated.
+/// Deliberately not `Clone`: `private.secret` is a zeroize-on-drop
+/// [`Secret`], so the spend credential cannot be silently duplicated via
+/// this container.
 pub struct CircuitInputs {
     pub public: PublicCircuitInputs,
     pub private: PrivateCircuitInputs,
@@ -42,13 +43,13 @@ impl core::fmt::Debug for CircuitInputs {
 
 /// All of the private inputs required for the circuit.
 ///
-/// Deliberately not `Clone`: `secret` is a move-only [`SensitiveDigest`]
-/// (zeroized on drop), so the spend credential cannot be silently duplicated.
+/// Deliberately not `Clone`: `secret` is a zeroize-on-drop [`Secret`], so
+/// the spend credential cannot be silently duplicated via this container.
 pub struct PrivateCircuitInputs {
-    /// The secret of the nullifier and the unspendable account. Move-only and
-    /// zeroized on drop; duplication requires an explicit
-    /// [`SensitiveDigest::expose_digest`] call at the use site.
-    pub secret: SensitiveDigest,
+    /// The secret of the nullifier and the unspendable account. Zeroized on
+    /// drop; duplication requires an explicit [`Secret::expose_digest`] (or
+    /// `expose_felts`) call at the use site.
+    pub secret: Secret,
     /// Transfer count for this recipient
     pub transfer_count: u64,
     /// The unspendable account hash (recipient of the transfer).
@@ -392,7 +393,7 @@ mod tests {
 
     #[test]
     fn private_circuit_inputs_debug_redacts_private_fields() {
-        let secret = SensitiveDigest::try_from([0xab; 32]).unwrap();
+        let secret = Secret::try_from([0xab; 32]).unwrap();
         let unspendable_account = BytesDigest::try_from([0xcd; 32].as_slice()).unwrap();
         let inputs = PrivateCircuitInputs {
             secret,

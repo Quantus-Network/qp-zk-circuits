@@ -6,9 +6,11 @@ use plonky2::{
     plonk::{circuit_builder::CircuitBuilder, config::Hasher},
 };
 
+use zeroize::Zeroizing;
+
 use crate::inputs::CircuitInputs;
+use crate::sensitive::SensitiveFelts;
 use zk_circuits_common::circuit::{CircuitFragment, D, F};
-use zk_circuits_common::codec::{ByteCodec, FieldElementCodec};
 use zk_circuits_common::utils::{
     bytes_to_digest, digest_to_bytes, string_to_felts, BytesDigest, Digest, POSEIDON2_OUTPUT,
 };
@@ -21,11 +23,13 @@ pub const ACCOUNT_ID_NUM_TARGETS: usize = POSEIDON2_OUTPUT; // 4
 pub const PREIMAGE_NUM_TARGETS: usize = 7;
 pub const UNSPENDABLE_SALT: &str = "wormhole";
 
-/// The felt-encoded spend secret, zeroized on drop (shared with `nullifier`;
-/// see [`crate::sensitive`]).
+/// The spend secret, zeroized on drop (shared with `nullifier` and
+/// `PrivateCircuitInputs`; see [`crate::sensitive`]).
 pub use crate::sensitive::Secret;
 
-#[derive(PartialEq, Eq, Clone)]
+/// Move-only (no `Clone`): holds the spend [`Secret`], which cannot be
+/// silently duplicated.
+#[derive(PartialEq, Eq)]
 pub struct UnspendableAccount {
     /// Account ID as 4 field elements (8 bytes/felt for hash output)
     pub account_id: Digest,
@@ -83,17 +87,20 @@ impl UnspendableAccount {
             secret: secret_felts.into(),
         }
     }
-}
 
-impl ByteCodec for UnspendableAccount {
-    fn to_bytes(&self) -> Vec<u8> {
+    /// Serialize including the spend secret.
+    ///
+    /// Returns a [`Zeroizing`] buffer so the exposed secret is scrubbed when
+    /// the caller drops it. Do not copy the contents into logs, error
+    /// contexts, or persistent storage.
+    pub fn to_bytes(&self) -> Zeroizing<Vec<u8>> {
         let mut bytes = Vec::new();
         bytes.extend(*digest_to_bytes(self.account_id));
         bytes.extend(*digest_to_bytes(self.secret.expose_felts()));
-        bytes
+        Zeroizing::new(bytes)
     }
 
-    fn from_bytes(slice: &[u8]) -> anyhow::Result<Self> {
+    pub fn from_bytes(slice: &[u8]) -> anyhow::Result<Self> {
         let account_id_size = 32; // 32 bytes for account ID
         let secret_size = 32; // 32 bytes for secret
         let total_size = account_id_size + secret_size;
@@ -120,17 +127,20 @@ impl ByteCodec for UnspendableAccount {
 
         Ok(Self { account_id, secret })
     }
-}
 
-impl FieldElementCodec for UnspendableAccount {
-    fn to_field_elements(&self) -> Vec<F> {
+    /// Serialize including the spend secret.
+    ///
+    /// Returns [`SensitiveFelts`] so the exposed secret is scrubbed when the
+    /// caller drops it. Do not copy the contents into logs, error contexts,
+    /// or persistent storage.
+    pub fn to_field_elements(&self) -> SensitiveFelts {
         let mut elements = Vec::new();
         elements.extend(self.account_id.to_vec());
         elements.extend(self.secret.expose_felts());
-        elements
+        SensitiveFelts::new(elements)
     }
 
-    fn from_field_elements(elements: &[F]) -> anyhow::Result<Self> {
+    pub fn from_field_elements(elements: &[F]) -> anyhow::Result<Self> {
         // Expected sizes
         let account_id_size = ACCOUNT_ID_NUM_TARGETS; // 4
         let secret_size = SECRET_NUM_TARGETS; // 4

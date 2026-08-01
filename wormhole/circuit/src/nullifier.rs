@@ -35,9 +35,11 @@ use plonky2::{
     },
     plonk::{circuit_builder::CircuitBuilder, config::Hasher},
 };
+use zeroize::Zeroizing;
 use zk_circuits_common::circuit::{CircuitFragment, D, F};
-use zk_circuits_common::codec::{ByteCodec, FieldElementCodec};
 use zk_circuits_common::utils::{string_to_felts, u64_to_felts, BytesDigest, Digest};
+
+use crate::sensitive::SensitiveFelts;
 
 pub const SALT_BYTES_LEN: usize = 8;
 pub const NULLIFIER_SALT: &str = "~nullif~";
@@ -60,11 +62,13 @@ pub const PREIMAGE_NUM_TARGETS: usize =
 pub const NULLIFIER_SIZE_FELTS: usize =
     POSEIDON2_OUTPUT + SECRET_NUM_TARGETS + TRANSFER_COUNT_NUM_TARGETS;
 
-/// The felt-encoded spend secret, zeroized on drop (shared with
-/// `unspendable_account`; see [`crate::sensitive`]).
+/// The spend secret, zeroized on drop (shared with `unspendable_account`
+/// and `PrivateCircuitInputs`; see [`crate::sensitive`]).
 pub use crate::sensitive::Secret;
 
-#[derive(PartialEq, Eq, Clone)]
+/// Move-only (no `Clone`): holds the spend [`Secret`], which cannot be
+/// silently duplicated.
+#[derive(PartialEq, Eq)]
 pub struct Nullifier {
     pub hash: Digest,
     /// Secret encoded with 8 bytes/felt (4 field elements for 32 bytes)
@@ -118,19 +122,22 @@ impl Nullifier {
             transfer_count: transfer_count_felts,
         }
     }
-}
 
-impl ByteCodec for Nullifier {
-    fn to_bytes(&self) -> Vec<u8> {
+    /// Serialize including the spend secret.
+    ///
+    /// Returns a [`Zeroizing`] buffer so the exposed secret is scrubbed when
+    /// the caller drops it. Do not copy the contents into logs, error
+    /// contexts, or persistent storage.
+    pub fn to_bytes(&self) -> Zeroizing<Vec<u8>> {
         let mut bytes = Vec::new();
         bytes.extend(*digest_to_bytes(self.hash));
         bytes.extend(*digest_to_bytes(self.secret.expose_felts()));
         let transfer_count_uint = felts_to_u64(self.transfer_count).unwrap();
         bytes.extend(transfer_count_uint.to_le_bytes());
-        bytes
+        Zeroizing::new(bytes)
     }
 
-    fn from_bytes(slice: &[u8]) -> anyhow::Result<Self> {
+    pub fn from_bytes(slice: &[u8]) -> anyhow::Result<Self> {
         let hash_size = DIGEST_BYTES_LEN;
         let secret_size = SECRET_BYTES_LEN;
         let transfer_count_size = size_of::<u64>();
@@ -182,18 +189,21 @@ impl ByteCodec for Nullifier {
             transfer_count,
         })
     }
-}
 
-impl FieldElementCodec for Nullifier {
-    fn to_field_elements(&self) -> Vec<F> {
+    /// Serialize including the spend secret.
+    ///
+    /// Returns [`SensitiveFelts`] so the exposed secret is scrubbed when the
+    /// caller drops it. Do not copy the contents into logs, error contexts,
+    /// or persistent storage.
+    pub fn to_field_elements(&self) -> SensitiveFelts {
         let mut elements = Vec::new();
         elements.extend(self.hash.to_vec());
         elements.extend(self.secret.expose_felts());
         elements.extend(self.transfer_count);
-        elements
+        SensitiveFelts::new(elements)
     }
 
-    fn from_field_elements(elements: &[F]) -> anyhow::Result<Self> {
+    pub fn from_field_elements(elements: &[F]) -> anyhow::Result<Self> {
         if elements.len() != NULLIFIER_SIZE_FELTS {
             return Err(anyhow::anyhow!(
                 "Expected {} field elements for Nullifier, got: {}",
@@ -340,7 +350,7 @@ mod tests {
     use super::Nullifier;
     use plonky2::field::types::Field;
     use qp_wormhole_inputs::BytesDigest;
-    use zk_circuits_common::{circuit::F, codec::FieldElementCodec};
+    use zk_circuits_common::circuit::F;
 
     #[test]
     fn from_field_elements_rejects_oversized_transfer_count_limbs() {
