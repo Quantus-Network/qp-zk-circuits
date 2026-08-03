@@ -3,7 +3,6 @@ use test_helpers::{DEFAULT_SECRETS, DEFAULT_TRANSFER_COUNTS};
 use wormhole_circuit::nullifier::{Nullifier, NullifierTargets};
 use zk_circuits_common::{
     circuit::{CircuitFragment, C, D, F},
-    codec::FieldElementCodec,
     utils::{bytes_to_digest, BytesDigest},
 };
 
