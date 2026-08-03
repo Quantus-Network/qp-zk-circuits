@@ -68,8 +68,28 @@ use zk_circuits_common::utils::{
 /// `Debug` impl, so containers must redact the field manually. Call sites
 /// that must return the secret in a heap buffer (e.g. serialization) must
 /// wrap that buffer in [`zeroize::Zeroizing`] or [`SensitiveFelts`].
-#[derive(PartialEq, Eq)]
+///
+/// Equality is constant-time rather than derived, so comparing against an
+/// attacker-controlled candidate cannot leak the secret's bytes through
+/// timing.
 pub struct Secret([u8; DIGEST_BYTES_LEN]);
+
+/// Constant-time equality: accumulate XOR differences over every byte with
+/// no data-dependent branch. [`core::hint::black_box`] on the accumulator
+/// each iteration keeps the optimizer from reasoning about its value and
+/// rewriting the loop into an early-exit compare (the same hardening the
+/// `subtle` crate uses, without taking the dependency).
+impl PartialEq for Secret {
+    fn eq(&self, other: &Self) -> bool {
+        let mut diff = 0u8;
+        for (a, b) in self.0.iter().zip(other.0.iter()) {
+            diff = core::hint::black_box(diff | (a ^ b));
+        }
+        diff == 0
+    }
+}
+
+impl Eq for Secret {}
 
 impl Secret {
     /// Takes practical ownership of the secret: validates it, moves it into
@@ -242,5 +262,20 @@ mod tests {
     #[test]
     fn sensitive_felts_have_drop_glue() {
         assert!(core::mem::needs_drop::<SensitiveFelts>());
+    }
+
+    #[test]
+    fn secret_equality_semantics() {
+        let a = Secret::try_from([0x11u8; 32]).unwrap();
+        let b = Secret::try_from([0x11u8; 32]).unwrap();
+        assert!(a == b);
+
+        // Differ only in the last byte: an early-exit compare would still
+        // return the right answer, so this only checks semantics — the
+        // constant-time property lives in the branch-free implementation.
+        let mut last_byte_differs = [0x11u8; 32];
+        last_byte_differs[31] = 0x12;
+        let c = Secret::try_from(last_byte_differs).unwrap();
+        assert!(a != c);
     }
 }
