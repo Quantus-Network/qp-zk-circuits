@@ -50,7 +50,7 @@ use plonky2::{
 use qp_wormhole_inputs::validate_proof_count;
 
 use zk_circuits_common::{
-    circuit::{C, D, F},
+    circuit::{validate_circuit_config, C, D, F},
     gadgets::{bytes_digest_eq, limb1_at_offset, limbs4_at_offset, sort_digests4},
 };
 
@@ -80,13 +80,18 @@ impl PrivateBatchCircuit {
     /// Build a monolithic private-batch aggregation circuit that verifies `n_leaf` wormhole leaf proofs.
     ///
     /// The `leaf_verifier_only` is baked in as constants to prevent verifier key substitution.
-    /// Returns an error when `n_leaf` is outside the supported range.
+    /// Returns an error when `n_leaf` is outside the supported range or when
+    /// `config` fails the shared structural policy
+    /// ([`validate_circuit_config`]) — an unchecked config would otherwise
+    /// panic deep inside plonky2 mid-construction or drive exponential
+    /// allocations during the expensive build phase (audit finding).
     pub fn new(
         config: CircuitConfig,
         leaf_common: &CommonCircuitData<F, D>,
         leaf_verifier_only: &VerifierOnlyCircuitData<C, D>,
         n_leaf: usize,
     ) -> Result<Self> {
+        validate_circuit_config(&config)?;
         validate_proof_count(n_leaf, "n_leaf")?;
 
         // Runtime (not debug-only) shape check: the wrapper constraints index
@@ -1996,6 +2001,39 @@ mod tests {
         private_batch_data
             .verify(private_batch_proof)
             .expect("private-batch verify should succeed");
+    }
+
+    /// Audit finding: the constructor forwarded the caller-supplied
+    /// `CircuitConfig` to `CircuitBuilder::new` unchecked. Structurally
+    /// impossible configs (e.g. `num_wires` below the Poseidon gate floor)
+    /// panicked deep inside plonky2 mid-construction, and resource-pathological
+    /// configs (e.g. an oversized FRI rate driving `2^(degree_bits+rate_bits)`
+    /// LDE allocations) sailed through construction and only exploded during
+    /// the expensive build/prove phase. Both classes must be rejected with a
+    /// controlled error before any builder work.
+    #[test]
+    fn new_rejects_pathological_circuit_configs() {
+        let (leaf, _) = build_fake_leaf_circuit();
+
+        // Structurally impossible: below the Poseidon gate wire floor.
+        let mut narrow = wormhole_private_batch_circuit_config();
+        narrow.num_wires = 134;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            PrivateBatchCircuit::new(narrow, &leaf.common, &leaf.verifier_only, 1)
+        }));
+        let err = result
+            .expect("pathological num_wires must yield a controlled error, not a panic")
+            .err()
+            .expect("num_wires below the Poseidon gate floor must be rejected");
+        assert!(err.to_string().contains("num_wires"), "got: {err}");
+
+        // Resource-pathological: oversized FRI rate (exponential LDE size).
+        let mut huge_rate = wormhole_private_batch_circuit_config();
+        huge_rate.fri_config.rate_bits = 63;
+        let err = PrivateBatchCircuit::new(huge_rate, &leaf.common, &leaf.verifier_only, 1)
+            .err()
+            .expect("oversized rate_bits must be rejected before construction");
+        assert!(err.to_string().contains("rate_bits"), "got: {err}");
     }
 
     /// The constructor must reject inner circuits whose public-input length

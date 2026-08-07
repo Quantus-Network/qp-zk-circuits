@@ -14,7 +14,7 @@ const CIRCUIT_CONFIG: CircuitConfig = CircuitConfig::standard_recursion_config()
 
 #[test]
 fn commit_and_prove() {
-    let prover = WormholeProver::new(CIRCUIT_CONFIG);
+    let prover = WormholeProver::new(CIRCUIT_CONFIG).expect("valid circuit config");
     let inputs = CircuitInputs::test_inputs_0();
     prover.commit(&inputs).unwrap().prove().unwrap();
 }
@@ -23,7 +23,7 @@ fn commit_and_prove() {
 fn commit_rejects_zk_merkle_proof_exceeding_max_depth() {
     use zk_circuits_common::zk_merkle::SIBLINGS_PER_LEVEL;
 
-    let prover = WormholeProver::new(CIRCUIT_CONFIG);
+    let prover = WormholeProver::new(CIRCUIT_CONFIG).expect("valid circuit config");
     let mut inputs = CircuitInputs::test_inputs_0();
 
     // Add siblings beyond the max depth (MAX_DEPTH = 16)
@@ -38,7 +38,7 @@ fn commit_rejects_zk_merkle_proof_exceeding_max_depth() {
 
 #[test]
 fn proof_can_be_deserialized() {
-    let prover = WormholeProver::new(CIRCUIT_CONFIG);
+    let prover = WormholeProver::new(CIRCUIT_CONFIG).expect("valid circuit config");
     let inputs = CircuitInputs::test_inputs_0();
     let proof = prover.commit(&inputs).unwrap().prove().unwrap();
 
@@ -52,7 +52,7 @@ fn proof_can_be_deserialized() {
 
 #[test]
 fn get_public_inputs() {
-    let prover = WormholeProver::new(CIRCUIT_CONFIG);
+    let prover = WormholeProver::new(CIRCUIT_CONFIG).expect("valid circuit config");
     let inputs = CircuitInputs::test_inputs_0();
     let proof = prover.commit(&inputs).unwrap().prove().unwrap();
     let public_inputs = proof.public_inputs;
@@ -66,7 +66,7 @@ fn export_test_proof() {
 
     let circuit_config = CircuitConfig::standard_recursion_config();
 
-    let prover = WormholeProver::new(circuit_config);
+    let prover = WormholeProver::new(circuit_config).expect("valid circuit config");
     let inputs = CircuitInputs::test_inputs_0();
     let proof = prover.commit(&inputs).unwrap().prove().unwrap();
     let proof_bytes = proof.to_bytes();
@@ -80,7 +80,7 @@ fn export_test_proof_zk() {
 
     let circuit_config = wormhole_private_batch_circuit_config();
 
-    let prover = WormholeProver::new(circuit_config);
+    let prover = WormholeProver::new(circuit_config).expect("valid circuit config");
     let inputs = CircuitInputs::test_inputs_0();
     let proof = prover.commit(&inputs).unwrap().prove().unwrap();
     let proof_bytes = proof.to_bytes();
@@ -94,7 +94,7 @@ fn export_hex_proof_for_pallet() {
 
     let circuit_config = CircuitConfig::standard_recursion_config();
 
-    let prover = WormholeProver::new(circuit_config);
+    let prover = WormholeProver::new(circuit_config).expect("valid circuit config");
     let inputs = CircuitInputs::test_inputs_0();
     let proof = prover.commit(&inputs).unwrap().prove().unwrap();
     let proof_bytes = proof.to_bytes();
@@ -384,7 +384,7 @@ fn test_random_tree_circuit_verification() {
     };
 
     // Run the circuit prover
-    let prover = WormholeProver::new(CIRCUIT_CONFIG);
+    let prover = WormholeProver::new(CIRCUIT_CONFIG).expect("valid circuit config");
     let result = prover.commit(&inputs);
     assert!(result.is_ok(), "Commit failed: {:?}", result.err());
 
@@ -489,7 +489,7 @@ fn test_depth_2_tree_circuit_verification() {
             },
         };
 
-        let prover = WormholeProver::new(CIRCUIT_CONFIG);
+        let prover = WormholeProver::new(CIRCUIT_CONFIG).expect("valid circuit config");
         let _proof = prover.commit(&inputs).unwrap().prove().unwrap();
         println!("Leaf {} verified successfully!", leaf_index);
     }
@@ -606,7 +606,7 @@ fn test_depth_3_tree_circuit_verification() {
             },
         };
 
-        let prover = WormholeProver::new(CIRCUIT_CONFIG);
+        let prover = WormholeProver::new(CIRCUIT_CONFIG).expect("valid circuit config");
         let _proof = prover.commit(&inputs).unwrap().prove().unwrap();
         println!("Leaf {} verified successfully!", leaf_index);
     }

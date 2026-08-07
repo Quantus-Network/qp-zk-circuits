@@ -21,7 +21,8 @@
 use clap::{ArgGroup, Args, ValueEnum};
 use plonky2::plonk::circuit_data::CircuitConfig;
 use zk_circuits_common::circuit::{
-    wormhole_leaf_circuit_config, wormhole_private_batch_circuit_config,
+    wormhole_leaf_circuit_config, wormhole_private_batch_circuit_config, MAX_CAP_HEIGHT,
+    MAX_RATE_BITS, MIN_MAX_QUOTIENT_DEGREE_FACTOR, MIN_NUM_ROUTED_WIRES, MIN_NUM_WIRES,
 };
 
 #[derive(Copy, Clone, Debug, ValueEnum, PartialEq, Eq)]
@@ -114,53 +115,13 @@ pub struct AggConfigArgs {
     pub allow_weakening_security: bool,
 }
 
-/// The Poseidon gate needs 135 wire columns; a smaller `num_wires` panics
-/// deep inside plonky2's `check_gate_compatibility` mid-build instead of
-/// failing at the CLI boundary.
-const MIN_NUM_WIRES: usize = 135;
-
-/// Poseidon constraints have degree 7; a smaller quotient degree factor
-/// cannot express them and fails during circuit construction.
-const MIN_MAX_QUOTIENT_DEGREE_FACTOR: usize = 7;
-
-/// Structural routed-wire floor for the pinned plonky2 recursion stack.
-///
-/// Gates pack operations into the routed-wire prefix, and several derive
-/// their op count from `num_routed_wires`: base arithmetic uses 4 routed
-/// wires per op, extension arithmetic `4*D = 8`, and the FRI verifier's
-/// random-access gate `2 + 2^4 = 18` per copy (arity/cap lists are 16
-/// entries under the production `ConstantArityBits(4, 5)` / `cap_height=4`
-/// FRI shape). Below a gate's width it instantiates with ZERO operation
-/// slots: `find_slot`'s `num_ops - 1` underflows (debug panic; in release an
-/// under-constraining zero-op gate is added and the build only dies later on
-/// a routability assert). The binding floor is the 16-point
-/// coset-interpolation gate, which routes `1 + 16*D + D + D = 37` wires
-/// outright; plonky2's own `check_recursion_config` assert for it fires only
-/// mid-build, after the expensive leaf context already exists. Reject all of
-/// these at the CLI boundary — none is a sound or profitable circuit shape,
-/// so none should ever be profiled as a safe memory-saving configuration.
-const MIN_NUM_ROUTED_WIRES: usize = 37;
-
-/// Ceiling for `--rate-bits`. Both FRI exponent knobs drive exponential
-/// allocations deep inside plonky2 (`FriParams::lde_size` is
-/// `1 << (degree_bits + rate_bits)` per committed polynomial), so an
-/// oversized but syntactically valid value passes clap and then either
-/// makes massive allocations or trips asserts only after the expensive
-/// circuit build has started. Production is 3; 8 already means a
-/// 32x-production LDE, which is as far as any memory sweep meaningfully
-/// goes. Reject anything larger at the CLI boundary.
-const MAX_RATE_BITS: usize = 8;
-
-/// Ceiling for `--cap-height`. The Merkle cap is `1 << cap_height` hashes
-/// per oracle, and the recursive verifier allocates `1 << cap_height` hash
-/// targets for the verifier data (`add_virtual_cap`), all registered as
-/// public inputs — so this knob blows up circuit size exponentially, not
-/// just proof size. `MerkleTree::new` additionally asserts
-/// `cap_height <= degree_bits + rate_bits` only mid-build; with the cap
-/// bounded at 8 (16x the production cap of 4) that assert is unreachable
-/// for any real aggregation circuit (`degree_bits` >= 12), so the bound
-/// also serves as the cap/degree consistency guard.
-const MAX_CAP_HEIGHT: usize = 8;
+// The structural floors/ceilings (MIN_NUM_WIRES, MIN_NUM_ROUTED_WIRES,
+// MIN_MAX_QUOTIENT_DEGREE_FACTOR, MAX_RATE_BITS, MAX_CAP_HEIGHT) are imported
+// from `zk_circuits_common::circuit`, where they back the shared
+// `validate_circuit_config` policy that every public circuit constructor now
+// enforces. Sharing the constants keeps this CLI's flag validation in
+// lockstep with the constructor policy; see the constants' docs in
+// zk-circuits-common for the full rationale behind each bound.
 
 /// `ceil(log2(n))` for `n >= 1`, mirroring plonky2's `log2_ceil`.
 fn log2_ceil(n: usize) -> usize {

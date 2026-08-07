@@ -38,7 +38,7 @@ pub fn build_leaf_context(
     report.phase_start("build_leaf_circuit")?;
 
     // Build circuit ONCE - extract all data from this single build
-    let circuit = WormholeCircuit::new(leaf_cfg);
+    let circuit = WormholeCircuit::new(leaf_cfg)?;
     let targets = circuit.targets();
     let circuit_data = circuit.build_circuit();
 

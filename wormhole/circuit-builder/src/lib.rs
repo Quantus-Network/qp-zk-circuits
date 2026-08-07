@@ -39,7 +39,7 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(output_dir: P) -> Result<()> {
         "Building wormhole leaf circuit (non-ZK by design; ZK lives at the private-batch layer)..."
     );
     let config = wormhole_leaf_circuit_config();
-    let circuit = WormholeCircuit::new(config);
+    let circuit = WormholeCircuit::new(config)?;
     let targets = circuit.targets();
     let circuit_data = circuit.build_circuit();
     println!("Circuit built.");

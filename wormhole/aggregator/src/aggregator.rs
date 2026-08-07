@@ -78,7 +78,8 @@ use zk_circuits_common::{
 
 use crate::pool::{BatchKey, BucketStats, PoolLimits, ProofPool};
 use crate::public_batch::prover::{
-    verify_dummy_private_batch_template, PublicBatchInputs, PublicBatchProver,
+    preflight_private_batch_proofs, verify_dummy_private_batch_template, PublicBatchInputs,
+    PublicBatchProver,
 };
 use crate::{
     common::utils::{
@@ -184,6 +185,20 @@ impl ProvingContext {
     /// proving worker without holding whatever lock guards the aggregator —
     /// this context is owned, so nothing here needs the lock.
     pub fn prove_batch(&self, proofs: Vec<Proof>) -> Result<Proof> {
+        // Admission checks BEFORE the expensive circuit construction below:
+        // everything commit rejects that can be derived without circuit
+        // targets (count bounds, public-input shape, cryptographic
+        // verification, batch compatibility) runs here first, so a caller
+        // submitting a known-bad proof vector cannot force a full circuit
+        // build per request (audit finding: empty/oversized vectors were
+        // rejected only after PublicBatchProver::new).
+        preflight_private_batch_proofs(
+            &proofs,
+            self.num_private_batch_proofs,
+            &self.private_batch_verifier,
+        )
+        .context("private-batch proof vector rejected before building the public-batch prover")?;
+
         let prover = PublicBatchProver::new(
             wormhole_public_batch_circuit_config(),
             self.private_batch_verifier.common.clone(),

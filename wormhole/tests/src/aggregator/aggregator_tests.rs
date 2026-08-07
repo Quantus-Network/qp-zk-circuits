@@ -357,17 +357,20 @@ fn aggregate_proofs_from_separate_prover_instances_hex_serialized() {
     let (inputs_1, inputs_2) = two_real_leaves_same_block(0);
 
     // Proof 1 from prover A
-    let prover_a = WormholeProver::new(circuit_config());
+    let prover_a = WormholeProver::new(circuit_config()).expect("valid circuit config");
     let proof_1 = prover_a.commit(&inputs_1).unwrap().prove().unwrap();
     let proof_1_hex = hex::encode(proof_1.to_bytes());
 
     // Proof 2 from prover B (same block, distinct nullifier)
-    let prover_b = WormholeProver::new(circuit_config());
+    let prover_b = WormholeProver::new(circuit_config()).expect("valid circuit config");
     let proof_2 = prover_b.commit(&inputs_2).unwrap().prove().unwrap();
     let proof_2_hex = hex::encode(proof_2.to_bytes());
 
     // Use fresh common_data to deserialize like CLI would
-    let deser_common_data = WormholeProver::new(circuit_config()).circuit_data.common;
+    let deser_common_data = WormholeProver::new(circuit_config())
+        .expect("valid circuit config")
+        .circuit_data
+        .common;
 
     let proof_1_bytes = hex::decode(&proof_1_hex).expect("Failed to decode proof 1 hex");
     let proof_2_bytes = hex::decode(&proof_2_hex).expect("Failed to decode proof 2 hex");
@@ -739,6 +742,67 @@ fn public_batch_aggregator_prove_batch_ignores_bins_dir_after_init() {
         .expect("proof must verify under the verifier pinned at init");
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn prove_batch_rejects_bad_proof_counts_before_building_the_prover() {
+    // Audit finding: ProvingContext::prove_batch built the PublicBatchProver
+    // (a full recursive circuit construction, seconds of CPU) before commit
+    // ran the cheap proof-count admission checks. A caller with access to the
+    // proving endpoint could thus submit empty or oversized proof vectors and
+    // burn a circuit-construction's worth of CPU and memory per request.
+    // Known-bad counts must be rejected in a preflight, before construction.
+    //
+    // Self-calibrating: one real prover construction is timed on this machine,
+    // and each rejection must come back at least an order of magnitude faster
+    // (the preflight is O(len) count checks — microseconds in practice).
+    use std::time::Instant;
+    use wormhole_aggregator::public_batch::prover::PublicBatchProver;
+
+    setup_public_test_binaries();
+    let dir = public_bins_dir();
+    let address = BytesDigest::try_from([1u8; 32]).expect("valid address");
+
+    let aggregator = PublicBatchAggregator::new(&dir, address).expect("public aggregator");
+    let batch_size = aggregator.batch_size();
+    let prover = aggregator.proving_context();
+    drop(aggregator);
+
+    let real_proof = make_private_batch_proof_in_public_dir();
+
+    // Calibrate: the cost prove_batch must NOT pay for a known-bad vector.
+    let build_started = Instant::now();
+    let _built = PublicBatchProver::new_from_binaries_dir(&dir)
+        .expect("baseline prover construction must succeed");
+    let build_time = build_started.elapsed();
+
+    // Empty vector: known-bad without looking at any proof. `{err:#}` prints
+    // the whole context chain; the admission-check message is the cause.
+    let rejected_at = Instant::now();
+    let err = prover.prove_batch(vec![]).unwrap_err();
+    let empty_reject_time = rejected_at.elapsed();
+    let chain = format!("{err:#}");
+    assert!(chain.contains("no private-batch proofs"), "got: {chain}");
+
+    // Oversized vector: known-bad from its length alone.
+    let oversized = vec![real_proof; batch_size + 1];
+    let rejected_at = Instant::now();
+    let err = prover.prove_batch(oversized).unwrap_err();
+    let oversized_reject_time = rejected_at.elapsed();
+    let chain = format!("{err:#}");
+    assert!(chain.contains("at most"), "got: {chain}");
+
+    for (label, reject_time) in [
+        ("empty", empty_reject_time),
+        ("oversized", oversized_reject_time),
+    ] {
+        assert!(
+            reject_time < build_time / 10,
+            "rejecting an {label} proof vector took {reject_time:?}, more than a tenth \
+             of a prover construction ({build_time:?}): prove_batch is paying for \
+             circuit construction before its admission checks"
+        );
+    }
 }
 
 #[test]

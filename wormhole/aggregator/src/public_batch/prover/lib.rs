@@ -275,38 +275,11 @@ impl PublicBatchProver {
 
         let aggregator_address_felts = bytes_to_digest(aggregator_address);
 
-        if proofs.is_empty() {
-            bail!("no private-batch proofs to aggregate");
-        }
-        if proofs.len() > self.num_private_batch_proofs {
-            bail!(
-                "Expected at most {} private-batch proofs, but got {}",
-                self.num_private_batch_proofs,
-                proofs.len()
-            );
-        }
-
-        let expected_pi_len = targets
-            .private_batch_proofs
-            .first()
-            .map(|proof| proof.public_inputs.len())
-            .ok_or_else(|| anyhow!("public-batch circuit has no private-batch proof targets"))?;
-        for (index, proof) in proofs.iter().enumerate() {
-            ensure_proof_public_input_len(proof, expected_pi_len, "private-batch proof")
-                .with_context(|| format!("private-batch proof {} is malformed", index))?;
-            self.private_batch_verifier
-                .verify(proof.clone())
-                .map_err(|e| {
-                    anyhow!(
-                        "private-batch proof {} failed verification against the pinned \
-                         private-batch verifier: {}",
-                        index,
-                        e
-                    )
-                })?;
-        }
-
-        ensure_private_batch_compatible(&proofs)?;
+        preflight_private_batch_proofs(
+            &proofs,
+            self.num_private_batch_proofs,
+            &self.private_batch_verifier,
+        )?;
 
         // Pad partial batches with the dummy template. No shuffle: forwarding is
         // order-preserving by design (per-segment attribution on-chain).
@@ -330,6 +303,54 @@ impl PublicBatchProver {
             .prove(self.partial_witness)
             .map_err(|e| anyhow!("Failed to prove public-batch aggregation circuit: {}", e))
     }
+}
+
+/// Admission checks for a caller-supplied private-batch proof vector: count
+/// bounds (non-empty, at most `num_private_batch_proofs`), public-input
+/// shape, cryptographic verification against the pinned private-batch
+/// verifier, and cross-proof batch compatibility.
+///
+/// Everything here is derived from the verifier data alone — no circuit
+/// targets — so callers that build a [`PublicBatchProver`] per request (e.g.
+/// [`crate::aggregator::ProvingContext::prove_batch`]) can run it BEFORE the
+/// expensive circuit construction, and a known-bad request costs
+/// milliseconds instead of a circuit build (audit finding: commit's
+/// admission checks ran only after `PublicBatchProver::new`).
+/// [`PublicBatchProver::commit`] runs the same checks so direct prover users
+/// remain covered.
+pub(crate) fn preflight_private_batch_proofs(
+    proofs: &[ProofWithPublicInputs<F, C, D>],
+    num_private_batch_proofs: usize,
+    private_batch_verifier: &VerifierCircuitData<F, C, D>,
+) -> Result<()> {
+    if proofs.is_empty() {
+        bail!("no private-batch proofs to aggregate");
+    }
+    if proofs.len() > num_private_batch_proofs {
+        bail!(
+            "Expected at most {} private-batch proofs, but got {}",
+            num_private_batch_proofs,
+            proofs.len()
+        );
+    }
+
+    // The circuit's proof targets are allocated from this same common data,
+    // so this matches the shape commit used to read off the targets.
+    let expected_pi_len = private_batch_verifier.common.num_public_inputs;
+    for (index, proof) in proofs.iter().enumerate() {
+        ensure_proof_public_input_len(proof, expected_pi_len, "private-batch proof")
+            .with_context(|| format!("private-batch proof {} is malformed", index))?;
+        private_batch_verifier.verify(proof.clone()).map_err(|e| {
+            anyhow!(
+                "private-batch proof {} failed verification against the pinned \
+                 private-batch verifier: {}",
+                index,
+                e
+            )
+        })?;
+    }
+
+    ensure_private_batch_compatible(proofs)
 }
 
 /// Check that a set of private-batch proofs is mutually compatible under the

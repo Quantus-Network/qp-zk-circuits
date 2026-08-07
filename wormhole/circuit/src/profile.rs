@@ -99,7 +99,7 @@ mod tests {
         println!("========================================\n");
 
         let config = wormhole_private_batch_circuit_config();
-        let circuit = WormholeCircuit::new(config);
+        let circuit = WormholeCircuit::new(config).expect("valid profile config");
         let data = circuit.build_circuit_profiled();
         print_circuit_metrics(&data.common);
 
@@ -111,7 +111,7 @@ mod tests {
         println!("========================================\n");
 
         let config = CircuitConfig::standard_recursion_config();
-        let circuit = WormholeCircuit::new(config);
+        let circuit = WormholeCircuit::new(config).expect("valid profile config");
         let data = circuit.build_circuit_profiled();
         print_circuit_metrics(&data.common);
 
@@ -175,7 +175,7 @@ mod tests {
                 ..CircuitConfig::standard_recursion_zk_config()
             };
 
-            let circuit = WormholeCircuit::new(config);
+            let circuit = WormholeCircuit::new(config).expect("valid profile config");
             let data = circuit.build_circuit_profiled();
 
             println!(

@@ -60,7 +60,7 @@
 //! };
 //!
 //! let config = CircuitConfig::standard_recursion_config();
-//! let prover = WormholeProver::new(config);
+//! let prover = WormholeProver::new(config)?;
 //! let prover_next = prover.commit(&inputs)?;
 //! let _proof = prover_next.prove()?;
 //! # Ok(())
@@ -122,22 +122,30 @@ impl core::fmt::Debug for WormholeProver {
 /// (not on-chain). This improves proving performance without compromising security.
 pub fn build_fresh() -> WormholeProver {
     WormholeProver::new(zk_circuits_common::circuit::wormhole_leaf_circuit_config())
+        .expect("canonical wormhole leaf circuit config is valid")
 }
 
 impl WormholeProver {
     /// Creates a new [`WormholeProver`].
-    pub fn new(config: CircuitConfig) -> Self {
-        let wormhole_circuit = WormholeCircuit::new(config);
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `config` fails the shared structural policy
+    /// (`zk_circuits_common::circuit::validate_circuit_config`): an unchecked
+    /// config would otherwise panic deep inside plonky2 mid-construction or
+    /// drive exponential allocations during the circuit build.
+    pub fn new(config: CircuitConfig) -> anyhow::Result<Self> {
+        let wormhole_circuit = WormholeCircuit::new(config)?;
         let partial_witness = PartialWitness::new();
 
         let targets = Some(wormhole_circuit.targets());
         let circuit_data = wormhole_circuit.build_prover();
 
-        Self {
+        Ok(Self {
             circuit_data,
             partial_witness,
             targets,
-        }
+        })
     }
 
     /// Commits the provided [`CircuitInputs`] to the circuit by filling relevant targets.
