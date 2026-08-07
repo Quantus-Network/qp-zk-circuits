@@ -39,5 +39,5 @@ pub mod lib;
 pub(crate) mod witness;
 
 pub(crate) use lib::verify_dummy_leaf_template;
-pub(crate) use witness::fill_private_batch_witness;
 pub use lib::PrivateBatchProver;
+pub(crate) use witness::fill_private_batch_witness;
