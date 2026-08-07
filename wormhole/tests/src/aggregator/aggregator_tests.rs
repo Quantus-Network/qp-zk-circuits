@@ -357,17 +357,20 @@ fn aggregate_proofs_from_separate_prover_instances_hex_serialized() {
     let (inputs_1, inputs_2) = two_real_leaves_same_block(0);
 
     // Proof 1 from prover A
-    let prover_a = WormholeProver::new(circuit_config());
+    let prover_a = WormholeProver::new(circuit_config()).expect("valid circuit config");
     let proof_1 = prover_a.commit(&inputs_1).unwrap().prove().unwrap();
     let proof_1_hex = hex::encode(proof_1.to_bytes());
 
     // Proof 2 from prover B (same block, distinct nullifier)
-    let prover_b = WormholeProver::new(circuit_config());
+    let prover_b = WormholeProver::new(circuit_config()).expect("valid circuit config");
     let proof_2 = prover_b.commit(&inputs_2).unwrap().prove().unwrap();
     let proof_2_hex = hex::encode(proof_2.to_bytes());
 
     // Use fresh common_data to deserialize like CLI would
-    let deser_common_data = WormholeProver::new(circuit_config()).circuit_data.common;
+    let deser_common_data = WormholeProver::new(circuit_config())
+        .expect("valid circuit config")
+        .circuit_data
+        .common;
 
     let proof_1_bytes = hex::decode(&proof_1_hex).expect("Failed to decode proof 1 hex");
     let proof_2_bytes = hex::decode(&proof_2_hex).expect("Failed to decode proof 2 hex");

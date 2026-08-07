@@ -16,7 +16,7 @@ fn create_proof_benchmark_zk(c: &mut Criterion) {
     c.bench_function("prover_create_proof_zk", |b| {
         b.iter_batched(
             // Setup: create a new prover for each iteration (not measured)
-            || WormholeProver::new(config.clone()),
+            || WormholeProver::new(config.clone()).expect("valid circuit config"),
             // Measured: commit and prove
             |prover| prover.commit(&inputs).unwrap().prove().unwrap(),
             // Use SmallInput since we're creating a new prover each time
@@ -33,7 +33,7 @@ fn create_proof_benchmark_no_zk(c: &mut Criterion) {
     c.bench_function("prover_create_proof_no_zk", |b| {
         b.iter_batched(
             // Setup: create a new prover for each iteration (not measured)
-            || WormholeProver::new(config.clone()),
+            || WormholeProver::new(config.clone()).expect("valid circuit config"),
             // Measured: commit and prove
             |prover| prover.commit(&inputs).unwrap().prove().unwrap(),
             // Use SmallInput since we're creating a new prover each time

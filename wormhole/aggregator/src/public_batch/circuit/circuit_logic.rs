@@ -27,7 +27,7 @@ use plonky2::{
 use qp_wormhole_inputs::validate_proof_count;
 
 use zk_circuits_common::{
-    circuit::{C, D, F},
+    circuit::{validate_circuit_config, C, D, F},
     gadgets::bytes_digest_eq,
 };
 
@@ -55,7 +55,11 @@ impl PublicBatchCircuit {
     /// Build a monolithic public-batch aggregation circuit that verifies `n_inner` private-batch aggregated proofs.
     ///
     /// The `private_batch_verifier_only` is baked in as constants to prevent verifier key substitution.
-    /// Returns an error for unsupported counts or an inconsistent private-batch PI shape.
+    /// Returns an error for unsupported counts, an inconsistent private-batch
+    /// PI shape, or a `config` failing the shared structural policy
+    /// ([`validate_circuit_config`]) — an unchecked config would otherwise
+    /// panic deep inside plonky2 mid-construction or drive exponential
+    /// allocations during the expensive build phase (audit finding).
     pub fn new(
         config: CircuitConfig,
         private_batch_common: CommonCircuitData<F, D>,
@@ -63,6 +67,7 @@ impl PublicBatchCircuit {
         n_inner: usize,
         private_batch_num_leaves: usize,
     ) -> Result<Self> {
+        validate_circuit_config(&config)?;
         validate_proof_count(n_inner, "n_inner")?;
         validate_proof_count(private_batch_num_leaves, "private_batch_num_leaves")?;
 
@@ -328,6 +333,62 @@ mod tests {
 
     const NUM_LEAVES: usize = 2; // 2 leaf proofs per private-batch batch (fast)
     const N_INNER: usize = 2; // 2 private-batch proofs aggregated into one public-batch proof
+
+    /// Audit finding: the constructor forwarded the caller-supplied
+    /// `CircuitConfig` to `CircuitBuilder::new` unchecked. Structurally
+    /// impossible configs (e.g. `num_wires` below the Poseidon gate floor)
+    /// panicked deep inside plonky2 mid-construction, and resource-pathological
+    /// configs (e.g. an oversized FRI rate driving `2^(degree_bits+rate_bits)`
+    /// LDE allocations) sailed through construction and only exploded during
+    /// the expensive build/prove phase. Both classes must be rejected with a
+    /// controlled error before any builder work. Mirrors the private-batch
+    /// constructor test one layer down.
+    #[test]
+    fn new_rejects_pathological_circuit_configs() {
+        use zk_circuits_common::circuit::wormhole_public_batch_circuit_config;
+
+        let (leaf, _) = build_fake_leaf_circuit();
+        let private_batch = PrivateBatchCircuit::new(
+            CircuitConfig::standard_recursion_config(),
+            &leaf.common,
+            &leaf.verifier_only,
+            1,
+        )
+        .unwrap()
+        .build_verifier();
+
+        // Structurally impossible: below the Poseidon gate wire floor.
+        let mut narrow = wormhole_public_batch_circuit_config();
+        narrow.num_wires = 134;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            PublicBatchCircuit::new(
+                narrow,
+                private_batch.common.clone(),
+                &private_batch.verifier_only,
+                1,
+                1,
+            )
+        }));
+        let err = result
+            .expect("pathological num_wires must yield a controlled error, not a panic")
+            .err()
+            .expect("num_wires below the Poseidon gate floor must be rejected");
+        assert!(err.to_string().contains("num_wires"), "got: {err}");
+
+        // Resource-pathological: oversized FRI rate (exponential LDE size).
+        let mut huge_rate = wormhole_public_batch_circuit_config();
+        huge_rate.fri_config.rate_bits = 63;
+        let err = PublicBatchCircuit::new(
+            huge_rate,
+            private_batch.common.clone(),
+            &private_batch.verifier_only,
+            1,
+            1,
+        )
+        .err()
+        .expect("oversized rate_bits must be rejected before construction");
+        assert!(err.to_string().contains("rate_bits"), "got: {err}");
+    }
 
     /// Build one leaf PI array in the Bitcoin-style 2-output layout.
     ///

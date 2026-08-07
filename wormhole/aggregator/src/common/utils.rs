@@ -263,7 +263,9 @@ pub fn ensure_config_is_canonical(
 }
 
 pub fn canonical_leaf_verifier_data() -> VerifierCircuitData<F, C, D> {
-    WormholeCircuit::new(wormhole_leaf_circuit_config()).build_verifier()
+    WormholeCircuit::new(wormhole_leaf_circuit_config())
+        .expect("canonical wormhole leaf circuit config is valid")
+        .build_verifier()
 }
 
 pub fn canonical_private_batch_verifier_data(

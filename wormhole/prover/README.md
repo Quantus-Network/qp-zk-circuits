@@ -41,7 +41,7 @@ fn main() -> anyhow::Result<()> {
   };
 
   let config = CircuitConfig::standard_recursion_config();
-  let prover = WormholeProver::new(config);
+  let prover = WormholeProver::new(config)?;
   let proof = prover.commit(&inputs)?.prove()?;
   Ok(())
 }

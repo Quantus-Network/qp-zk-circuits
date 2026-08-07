@@ -26,8 +26,44 @@ fn full_circuit_data_loader_is_not_exposed() {
     // `wormhole_circuit::circuit` intentionally only exposes `circuit_logic`.
     // Building from source is the only way to obtain leaf CircuitData.
     let config = CircuitConfig::standard_recursion_config();
-    let circuit_data = WormholeCircuit::new(config).build_circuit();
+    let circuit_data = WormholeCircuit::new(config)
+        .expect("valid circuit config")
+        .build_circuit();
     assert_eq!(circuit_data.common.num_public_inputs, 21);
+}
+
+/// Audit finding: the leaf constructors accepted an arbitrary caller-supplied
+/// `CircuitConfig` and forwarded it to `CircuitBuilder::new` unchecked, so
+/// structurally impossible configs (e.g. `num_wires` below the Poseidon gate
+/// floor) panicked deep inside plonky2 mid-construction and
+/// resource-pathological configs (e.g. oversized FRI exponents driving
+/// `2^(degree_bits + rate_bits)` LDE allocations) only exploded during the
+/// expensive build phase. Both `WormholeCircuit::new` and
+/// `WormholeProver::new` must instead reject them with a controlled error
+/// before any builder work.
+#[test]
+fn leaf_constructors_reject_pathological_circuit_configs() {
+    // Structurally impossible: below the Poseidon gate wire floor.
+    let mut narrow = CircuitConfig::standard_recursion_config();
+    narrow.num_wires = 134;
+    let err = WormholeCircuit::new(narrow.clone())
+        .err()
+        .expect("num_wires below the Poseidon gate floor must be rejected");
+    assert!(err.to_string().contains("num_wires"), "got: {err}");
+    let err = wormhole_prover::WormholeProver::new(narrow)
+        .expect_err("prover must reject the same config");
+    assert!(err.to_string().contains("num_wires"), "got: {err}");
+
+    // Resource-pathological: oversized FRI rate (exponential LDE size).
+    let mut huge_rate = CircuitConfig::standard_recursion_config();
+    huge_rate.fri_config.rate_bits = 63;
+    let err = WormholeCircuit::new(huge_rate.clone())
+        .err()
+        .expect("oversized rate_bits must be rejected before construction");
+    assert!(err.to_string().contains("rate_bits"), "got: {err}");
+    let err = wormhole_prover::WormholeProver::new(huge_rate)
+        .expect_err("prover must reject the same config");
+    assert!(err.to_string().contains("rate_bits"), "got: {err}");
 }
 
 #[test]
@@ -38,7 +74,9 @@ fn test_prover_and_verifier_from_file_e2e() -> Result<()> {
 
     // Generate circuit and write component files to the temporary directory.
     let config = CircuitConfig::standard_recursion_config();
-    let circuit_data = WormholeCircuit::new(config).build_circuit();
+    let circuit_data = WormholeCircuit::new(config)
+        .expect("valid circuit config")
+        .build_circuit();
 
     let gate_serializer = DefaultGateSerializer;
 

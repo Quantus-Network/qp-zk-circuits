@@ -19,11 +19,15 @@ fn build_test_verifier() -> plonky2::plonk::circuit_data::VerifierCircuitData<
     zk_circuits_common::circuit::C,
     { zk_circuits_common::circuit::D },
 > {
-    WormholeCircuit::new(CIRCUIT_CONFIG).build_verifier()
+    WormholeCircuit::new(CIRCUIT_CONFIG)
+        .expect("valid circuit config")
+        .build_verifier()
 }
 
 fn build_verifier_bytes(config: CircuitConfig) -> (Vec<u8>, Vec<u8>) {
-    let verifier_data = WormholeCircuit::new(config).build_verifier();
+    let verifier_data = WormholeCircuit::new(config)
+        .expect("valid circuit config")
+        .build_verifier();
     let common_bytes = verifier_data
         .common
         .to_bytes(&plonky2::util::serialization::DefaultGateSerializer)
@@ -34,7 +38,7 @@ fn build_verifier_bytes(config: CircuitConfig) -> (Vec<u8>, Vec<u8>) {
 
 #[test]
 fn verify_simple_proof() {
-    let prover = WormholeProver::new(CIRCUIT_CONFIG);
+    let prover = WormholeProver::new(CIRCUIT_CONFIG).expect("valid circuit config");
     let inputs = CircuitInputs::test_inputs_0();
     let commitment = prover.commit(&inputs).unwrap();
     let proof = commitment.prove().unwrap();
@@ -45,7 +49,7 @@ fn verify_simple_proof() {
 
 #[test]
 fn borrowed_verify_keeps_proof_available() {
-    let prover = WormholeProver::new(CIRCUIT_CONFIG);
+    let prover = WormholeProver::new(CIRCUIT_CONFIG).expect("valid circuit config");
     let inputs = CircuitInputs::test_inputs_0();
     let proof = prover.commit(&inputs).unwrap().prove().unwrap();
 
@@ -81,7 +85,7 @@ fn verifier_loader_rejects_same_profile_substituted_circuit() {
 
 #[test]
 fn cannot_verify_with_modified_exit_account() {
-    let prover = WormholeProver::new(CIRCUIT_CONFIG);
+    let prover = WormholeProver::new(CIRCUIT_CONFIG).expect("valid circuit config");
     let inputs = CircuitInputs::test_inputs_0();
     let mut proof = prover.commit(&inputs).unwrap().prove().unwrap();
 
@@ -105,7 +109,7 @@ fn cannot_verify_with_modified_exit_account() {
 
 #[test]
 fn cannot_verify_with_any_public_input_modification() {
-    let prover = WormholeProver::new(CIRCUIT_CONFIG);
+    let prover = WormholeProver::new(CIRCUIT_CONFIG).expect("valid circuit config");
     let inputs = CircuitInputs::test_inputs_0();
     let proof = prover.commit(&inputs).unwrap().prove().unwrap();
     let verifier_data = build_test_verifier();
@@ -126,7 +130,7 @@ fn cannot_verify_with_any_public_input_modification() {
 #[ignore]
 #[test]
 fn cannot_verify_with_modified_proof() {
-    let prover = WormholeProver::new(CIRCUIT_CONFIG);
+    let prover = WormholeProver::new(CIRCUIT_CONFIG).expect("valid circuit config");
     let inputs = CircuitInputs::test_inputs_0();
     let proof = prover.commit(&inputs).unwrap().prove().unwrap();
     let verifier_data = build_test_verifier();

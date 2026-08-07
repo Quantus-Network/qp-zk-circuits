@@ -413,6 +413,163 @@ pub fn wormhole_public_batch_circuit_config() -> CircuitConfig {
     CircuitConfig::standard_recursion_config() // zero_knowledge: false
 }
 
+// ============================================================================
+// CircuitConfig structural validation
+// ============================================================================
+//
+// Shared policy enforced by every public Wormhole circuit constructor before
+// the config reaches `CircuitBuilder::new` (audit finding: constructors
+// treated caller-supplied `CircuitConfig` as trusted, so structurally
+// impossible values panicked deep inside plonky2 mid-construction and
+// resource-pathological values caused exponential allocations during the
+// expensive build phase). The same floors/ceilings back the memprof CLI's
+// flag validation; keep them here so the two policies cannot drift.
+
+/// The Poseidon gate needs 135 wire columns; a smaller `num_wires` panics
+/// deep inside plonky2's `check_gate_compatibility` mid-build instead of
+/// failing at the API boundary.
+pub const MIN_NUM_WIRES: usize = 135;
+
+/// Structural routed-wire floor for the pinned plonky2 recursion stack.
+///
+/// Gates pack operations into the routed-wire prefix, and several derive
+/// their op count from `num_routed_wires`: base arithmetic uses 4 routed
+/// wires per op, extension arithmetic `4*D = 8`, and the FRI verifier's
+/// random-access gate `2 + 2^4 = 18` per copy. Below a gate's width it
+/// instantiates with ZERO operation slots: `find_slot`'s `num_ops - 1`
+/// underflows (debug panic; in release an under-constraining zero-op gate is
+/// added and the build only dies later on a routability assert). The binding
+/// floor is the 16-point coset-interpolation gate, which routes
+/// `1 + 16*D + D + D = 37` wires outright; plonky2's own
+/// `check_recursion_config` assert for it fires only mid-build.
+pub const MIN_NUM_ROUTED_WIRES: usize = 37;
+
+/// Poseidon constraints have degree 7; a smaller quotient degree factor
+/// cannot express them and fails during circuit construction.
+pub const MIN_MAX_QUOTIENT_DEGREE_FACTOR: usize = 7;
+
+/// Ceiling for FRI `rate_bits`. The exponent drives exponential allocations
+/// deep inside plonky2 (`FriParams::lde_size` is
+/// `1 << (degree_bits + rate_bits)` per committed polynomial), so an
+/// oversized value passes construction and then makes massive allocations or
+/// trips asserts only after the expensive circuit build has started.
+/// Production is 3; 8 already means a 32x-production LDE.
+pub const MAX_RATE_BITS: usize = 8;
+
+/// Ceiling for FRI `cap_height`. The Merkle cap is `1 << cap_height` hashes
+/// per oracle, and the recursive verifier allocates `1 << cap_height` hash
+/// targets for the verifier data (`add_virtual_cap`), all registered as
+/// public inputs — so this knob blows up circuit size exponentially, not
+/// just proof size. `MerkleTree::new` additionally asserts
+/// `cap_height <= degree_bits + rate_bits` only mid-build; with the cap
+/// bounded at 8 (16x the production cap of 4) that assert is unreachable
+/// for any real Wormhole circuit (`degree_bits >= 12`), so the bound also
+/// serves as the cap/degree consistency guard.
+pub const MAX_CAP_HEIGHT: usize = 8;
+
+/// `ceil(log2(n))` for `n >= 1`, mirroring plonky2's `log2_ceil`.
+fn log2_ceil(n: usize) -> usize {
+    (usize::BITS - (n - 1).leading_zeros()) as usize
+}
+
+/// Structural and resource-bound validation for a caller-supplied
+/// [`CircuitConfig`], enforced by every public Wormhole circuit constructor
+/// BEFORE the config reaches `CircuitBuilder::new`.
+///
+/// Rejects, with a controlled error instead of a mid-build panic or an
+/// exponential allocation:
+/// - zero-valued knobs (`num_challenges`, `security_bits`,
+///   `fri_config.num_query_rounds`) that plonky2 only trips over deep
+///   inside construction or proving;
+/// - structural floors of the pinned recursion stack
+///   (`num_wires >= 135`, `37 <= num_routed_wires <= num_wires`,
+///   `max_quotient_degree_factor >= 7`);
+/// - FRI exponent ceilings (`rate_bits <= 8`, `cap_height <= 8`), both of
+///   which drive `1 << x` work and memory;
+/// - the rate/quotient consistency rule
+///   (`rate_bits >= ceil(log2(max_quotient_degree_factor))`) that plonky2's
+///   prover asserts only at proving time, after the full circuit build.
+///
+/// This is deliberately a STRUCTURAL policy, not a canonicality check:
+/// profiling sweeps and tests legitimately build variant configs, and
+/// canonicality of production artifacts is pinned at the artifact-load
+/// boundaries. Every canonical `wormhole_*_circuit_config()` passes.
+pub fn validate_circuit_config(config: &CircuitConfig) -> anyhow::Result<()> {
+    use anyhow::ensure;
+
+    for (name, value) in [
+        ("num_challenges", config.num_challenges),
+        ("security_bits", config.security_bits),
+        (
+            "fri_config.num_query_rounds",
+            config.fri_config.num_query_rounds,
+        ),
+    ] {
+        ensure!(value > 0, "circuit config {} must be greater than 0", name);
+    }
+
+    ensure!(
+        config.num_wires >= MIN_NUM_WIRES,
+        "circuit config num_wires ({}) must be >= {} (Poseidon gate floor)",
+        config.num_wires,
+        MIN_NUM_WIRES,
+    );
+    ensure!(
+        config.num_routed_wires >= MIN_NUM_ROUTED_WIRES,
+        "circuit config num_routed_wires ({}) must be >= {} (recursion gate floor: the FRI \
+         coset-interpolation gate routes 37 wires, and narrower widths leave slot-packed gates \
+         with zero operation slots)",
+        config.num_routed_wires,
+        MIN_NUM_ROUTED_WIRES,
+    );
+    ensure!(
+        config.num_routed_wires <= config.num_wires,
+        "circuit config num_routed_wires ({}) must be <= num_wires ({}); routed wires are a \
+         prefix of the wire columns",
+        config.num_routed_wires,
+        config.num_wires,
+    );
+    ensure!(
+        config.max_quotient_degree_factor >= MIN_MAX_QUOTIENT_DEGREE_FACTOR,
+        "circuit config max_quotient_degree_factor ({}) must be >= {} (Poseidon constraint \
+         degree)",
+        config.max_quotient_degree_factor,
+        MIN_MAX_QUOTIENT_DEGREE_FACTOR,
+    );
+    ensure!(
+        config.fri_config.rate_bits <= MAX_RATE_BITS,
+        "circuit config fri_config.rate_bits ({}) must be <= {} (LDE memory doubles per bit: \
+         lde_size = 2^(degree_bits + rate_bits) per committed polynomial)",
+        config.fri_config.rate_bits,
+        MAX_RATE_BITS,
+    );
+    ensure!(
+        config.fri_config.cap_height <= MAX_CAP_HEIGHT,
+        "circuit config fri_config.cap_height ({}) must be <= {} (Merkle caps and recursive \
+         verifier-data allocations scale as 2^cap_height)",
+        config.fri_config.cap_height,
+        MAX_CAP_HEIGHT,
+    );
+
+    // Plonky2's prover asserts `ceil(log2(quotient_degree_factor)) <=
+    // rate_bits` only at proving time, after the full circuit build; reject
+    // the doomed pair up front. With the quotient floor of 7 (bits = 3) this
+    // also means rate_bits below 3 can never prove.
+    let quotient_degree_bits = log2_ceil(config.max_quotient_degree_factor);
+    ensure!(
+        config.fri_config.rate_bits >= quotient_degree_bits,
+        "circuit config fri_config.rate_bits ({}) must be >= \
+         ceil(log2(max_quotient_degree_factor = {})) = {}; plonky2's prover cannot compute \
+         quotient chunks of degree higher than the FRI rate and asserts this only at proving \
+         time, after the full circuit build",
+        config.fri_config.rate_bits,
+        config.max_quotient_degree_factor,
+        quotient_degree_bits,
+    );
+
+    Ok(())
+}
+
 pub trait CircuitFragment {
     /// The targets that the circuit operates on. These are constrained in the circuit definition
     /// and filled with [`Self::fill_targets`].
@@ -427,6 +584,94 @@ pub trait CircuitFragment {
         pw: &mut PartialWitness<F>,
         targets: Self::Targets,
     ) -> anyhow::Result<()>;
+}
+
+#[cfg(test)]
+mod validate_circuit_config_tests {
+    use super::*;
+
+    #[test]
+    fn canonical_wormhole_configs_pass() {
+        validate_circuit_config(&wormhole_leaf_circuit_config()).unwrap();
+        validate_circuit_config(&wormhole_private_batch_circuit_config()).unwrap();
+        validate_circuit_config(&wormhole_public_batch_circuit_config()).unwrap();
+        validate_circuit_config(&CircuitConfig::standard_recursion_config()).unwrap();
+        validate_circuit_config(&CircuitConfig::standard_recursion_zk_config()).unwrap();
+    }
+
+    #[test]
+    fn structural_floors_are_enforced() {
+        let mut cfg = wormhole_private_batch_circuit_config();
+        cfg.num_wires = MIN_NUM_WIRES - 1;
+        let err = validate_circuit_config(&cfg).unwrap_err();
+        assert!(err.to_string().contains("num_wires"), "got: {err}");
+
+        let mut cfg = wormhole_private_batch_circuit_config();
+        cfg.num_routed_wires = MIN_NUM_ROUTED_WIRES - 1;
+        let err = validate_circuit_config(&cfg).unwrap_err();
+        assert!(err.to_string().contains("num_routed_wires"), "got: {err}");
+
+        let mut cfg = wormhole_private_batch_circuit_config();
+        cfg.num_routed_wires = cfg.num_wires + 1;
+        let err = validate_circuit_config(&cfg).unwrap_err();
+        assert!(err.to_string().contains("prefix"), "got: {err}");
+
+        let mut cfg = wormhole_private_batch_circuit_config();
+        cfg.max_quotient_degree_factor = MIN_MAX_QUOTIENT_DEGREE_FACTOR - 1;
+        let err = validate_circuit_config(&cfg).unwrap_err();
+        assert!(
+            err.to_string().contains("max_quotient_degree_factor"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn fri_exponent_ceilings_are_enforced() {
+        for bits in [MAX_RATE_BITS + 1, 20, 63, usize::MAX] {
+            let mut cfg = wormhole_private_batch_circuit_config();
+            cfg.fri_config.rate_bits = bits;
+            let err = validate_circuit_config(&cfg).unwrap_err();
+            assert!(err.to_string().contains("rate_bits"), "got: {err}");
+
+            let mut cfg = wormhole_private_batch_circuit_config();
+            cfg.fri_config.cap_height = bits;
+            let err = validate_circuit_config(&cfg).unwrap_err();
+            assert!(err.to_string().contains("cap_height"), "got: {err}");
+        }
+        // The ceilings themselves pass.
+        let mut cfg = wormhole_private_batch_circuit_config();
+        cfg.fri_config.rate_bits = MAX_RATE_BITS;
+        cfg.fri_config.cap_height = MAX_CAP_HEIGHT;
+        validate_circuit_config(&cfg).unwrap();
+    }
+
+    #[test]
+    fn rate_bits_below_quotient_degree_are_rejected() {
+        for bits in [1, 2] {
+            let mut cfg = wormhole_private_batch_circuit_config();
+            cfg.fri_config.rate_bits = bits;
+            let err = validate_circuit_config(&cfg).unwrap_err();
+            assert!(err.to_string().contains("proving time"), "got: {err}");
+        }
+    }
+
+    #[test]
+    fn zero_knobs_are_rejected() {
+        let mut cfg = wormhole_private_batch_circuit_config();
+        cfg.num_challenges = 0;
+        let err = validate_circuit_config(&cfg).unwrap_err();
+        assert!(err.to_string().contains("num_challenges"), "got: {err}");
+
+        let mut cfg = wormhole_private_batch_circuit_config();
+        cfg.fri_config.num_query_rounds = 0;
+        let err = validate_circuit_config(&cfg).unwrap_err();
+        assert!(err.to_string().contains("num_query_rounds"), "got: {err}");
+
+        let mut cfg = wormhole_private_batch_circuit_config();
+        cfg.security_bits = 0;
+        let err = validate_circuit_config(&cfg).unwrap_err();
+        assert!(err.to_string().contains("security_bits"), "got: {err}");
+    }
 }
 
 #[cfg(test)]

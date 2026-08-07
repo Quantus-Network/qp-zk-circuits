@@ -22,11 +22,14 @@ pub mod circuit_logic {
     use crate::substrate_account::{DualExitAccount, DualExitAccountTargets};
     use crate::unspendable_account::{UnspendableAccount, UnspendableAccountTargets};
     use crate::zk_merkle_proof::{ZkMerkleProofData, ZkMerkleProofTargets};
+    use anyhow::Result;
     use plonky2::{
         plonk::circuit_data::{CircuitData, ProverCircuitData, VerifierCircuitData},
         plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig},
     };
-    use zk_circuits_common::circuit::{wormhole_leaf_circuit_config, CircuitFragment, C, D, F};
+    use zk_circuits_common::circuit::{
+        validate_circuit_config, wormhole_leaf_circuit_config, CircuitFragment, C, D, F,
+    };
 
     #[derive(Debug, Clone)]
     pub struct CircuitTargets {
@@ -95,17 +98,28 @@ pub mod circuit_logic {
         /// in a trusted environment), not on-chain. Disabling ZK improves proving performance.
         fn default() -> Self {
             let config = wormhole_leaf_circuit_config();
-            Self::new(config)
+            Self::new(config).expect("canonical wormhole leaf circuit config is valid")
         }
     }
 
     impl WormholeCircuit {
-        pub fn new(config: CircuitConfig) -> Self {
+        /// Build the Wormhole leaf circuit from a caller-supplied config.
+        ///
+        /// The config is checked against the shared structural policy
+        /// ([`validate_circuit_config`]) BEFORE any builder work: an
+        /// unchecked config would otherwise panic deep inside plonky2
+        /// mid-construction (e.g. `num_wires` below the Poseidon gate floor)
+        /// or drive exponential allocations during the expensive build phase
+        /// (e.g. oversized FRI exponents) — see the audit finding on
+        /// unvalidated `CircuitConfig` in public constructors.
+        pub fn new(config: CircuitConfig) -> Result<Self> {
+            validate_circuit_config(&config)?;
+
             #[cfg(feature = "profile")]
-            return Self::new_profiled(config);
+            return Ok(Self::new_profiled(config));
 
             #[cfg(not(feature = "profile"))]
-            Self::new_internal(config)
+            Ok(Self::new_internal(config))
         }
 
         #[cfg(not(feature = "profile"))]
