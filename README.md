@@ -13,7 +13,6 @@ This repository is a Cargo workspace organized to clearly separate different cir
   - [`verifier/`](./wormhole/verifier/): The verifier for the Wormhole circuit.
   - [`aggregator/`](./wormhole/aggregator/): A circuit for recursively aggregating Wormhole proofs.
   - [`tests/`](./wormhole/tests/): Integration tests for the complete Wormhole circuit.
-- [`voting/`](./voting/): A separate circuit implementation for a voting system.
 
 ## Prerequisites
 

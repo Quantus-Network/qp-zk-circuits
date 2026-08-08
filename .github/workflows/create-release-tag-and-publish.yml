@@ -236,6 +236,3 @@ jobs:
           echo "Waiting for qp-wormhole-circuit-builder to become available on crates.io"
           sleep 30
 
-          # Skipping voting-circuit: publish = false
-
-
