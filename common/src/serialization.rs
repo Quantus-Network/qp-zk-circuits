@@ -12,10 +12,10 @@ use alloc::{string::String, vec::Vec};
 use plonky2::field::types::{Field, PrimeField64};
 
 // Re-export constants from qp-poseidon-core
-pub use qp_poseidon_core::POSEIDON2_OUTPUT;
 pub use qp_poseidon_core::serialization::{
     AMOUNT_QUANTIZATION_FACTOR, BYTES_PER_FELT, FELTS_PER_U128, FELTS_PER_U64,
 };
+pub use qp_poseidon_core::POSEIDON2_OUTPUT;
 
 use crate::circuit::F;
 
