@@ -1076,15 +1076,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55e32db7b3a5d70086f82f198ecfc021f17cb7ec70a416512dba3488f4a116c1"
 
 [[package]]
-name = "qp-voting-circuit"
-version = "4.1.0"
-dependencies = [
- "anyhow",
- "qp-plonky2",
- "qp-zk-circuits-common",
-]
-
-[[package]]
 name = "qp-wormhole-aggregator"
 version = "4.1.0"
 dependencies = [

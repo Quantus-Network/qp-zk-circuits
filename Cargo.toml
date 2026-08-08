@@ -1,7 +1,6 @@
 [workspace]
 members = [
 	"common",
-	"voting",
 	"wormhole/aggregator",
 	"wormhole/circuit",
 	"wormhole/circuit-builder",

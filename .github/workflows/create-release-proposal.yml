@@ -187,7 +187,6 @@ jobs:
             wormhole/memprof/Cargo.toml \
             wormhole/tests/Cargo.toml \
             wormhole/tests/test-helpers/Cargo.toml \
-            voting/Cargo.toml \
             Cargo.lock || true
           git commit -m "ci: Automate workspace version bump to $NEW_VERSION"
           git push origin "$branch_name"
