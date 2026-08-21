@@ -60,6 +60,14 @@ pub struct PrivateBatchProver {
     leaf_verifier: VerifierCircuitData<F, C, D>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PrivateBatchBuildMetrics {
+    pub leaf_degree_bits: usize,
+    pub unpadded_gates: usize,
+    pub degree_bits: usize,
+    pub padded_gates: usize,
+}
+
 impl PrivateBatchProver {
     /// Build a fresh private-batch aggregation prover from circuit definitions.
     ///
@@ -82,9 +90,63 @@ impl PrivateBatchProver {
             num_leaf_proofs,
         )?;
 
-        let targets = Some(agg_circuit.targets());
+        let targets = agg_circuit.targets();
         let circuit_data = agg_circuit.build_prover();
+        Self::from_fresh_circuit(
+            circuit_data,
+            targets,
+            leaf_common,
+            leaf_verifier_only,
+            num_leaf_proofs,
+            dummy_proof_template,
+        )
+    }
 
+    /// Build a fresh prover and return its finalized circuit dimensions.
+    pub fn new_with_metrics(
+        agg_circuit_config: CircuitConfig,
+        leaf_common: CommonCircuitData<F, D>,
+        leaf_verifier_only: &VerifierOnlyCircuitData<C, D>,
+        num_leaf_proofs: usize,
+        dummy_proof_template: ProofWithPublicInputs<F, C, D>,
+    ) -> Result<(Self, PrivateBatchBuildMetrics)> {
+        // Proof-count bounds are enforced by PrivateBatchCircuit::new.
+        let agg_circuit = PrivateBatchCircuit::new(
+            agg_circuit_config,
+            &leaf_common,
+            leaf_verifier_only,
+            num_leaf_proofs,
+        )?;
+
+        let unpadded_gates = agg_circuit.num_gates();
+        let targets = agg_circuit.targets();
+        let circuit_data = agg_circuit.build_prover();
+        let metrics = PrivateBatchBuildMetrics {
+            leaf_degree_bits: leaf_common.degree_bits(),
+            unpadded_gates,
+            degree_bits: circuit_data.common.degree_bits(),
+            padded_gates: circuit_data.common.degree(),
+        };
+
+        let prover = Self::from_fresh_circuit(
+            circuit_data,
+            targets,
+            leaf_common,
+            leaf_verifier_only,
+            num_leaf_proofs,
+            dummy_proof_template,
+        )?;
+        Ok((prover, metrics))
+    }
+
+    fn from_fresh_circuit(
+        circuit_data: ProverCircuitData<F, C, D>,
+        targets: PrivateBatchCircuitTargets,
+        leaf_common: CommonCircuitData<F, D>,
+        leaf_verifier_only: &VerifierOnlyCircuitData<C, D>,
+        num_leaf_proofs: usize,
+        dummy_proof_template: ProofWithPublicInputs<F, C, D>,
+    ) -> Result<Self> {
         // Enforce the same template invariant as the byte-loading constructors:
         // `commit` clones this template into every padded slot, and the circuit
         // only exempts slots carrying the dummy sentinel — a caller-supplied
@@ -98,7 +160,7 @@ impl PrivateBatchProver {
         Ok(Self {
             circuit_data,
             partial_witness: PartialWitness::new(),
-            targets,
+            targets: Some(targets),
             num_leaf_proofs,
             dummy_proof_template,
             leaf_verifier,
@@ -560,6 +622,29 @@ mod tests {
         let template = prove_fake_leaf(&leaf, &targets, [F::ZERO; PUBLIC_INPUTS_FELTS_LEN]);
         verify_dummy_leaf_template(&template, &leaf.verifier_data())
             .expect("all-zero sentinel template must be accepted");
+    }
+
+    #[test]
+    fn build_metrics_match_finalized_circuit_data() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+        let template = prove_fake_leaf(&leaf, &targets, [F::ZERO; PUBLIC_INPUTS_FELTS_LEN]);
+        let leaf_degree_bits = leaf.common.degree_bits();
+        let (prover, metrics) = PrivateBatchProver::new_with_metrics(
+            wormhole_private_batch_circuit_config(),
+            leaf.common,
+            &leaf.verifier_only,
+            1,
+            template,
+        )
+        .unwrap();
+
+        assert_eq!(metrics.leaf_degree_bits, leaf_degree_bits);
+        assert_eq!(
+            metrics.degree_bits,
+            prover.circuit_data.common.degree_bits()
+        );
+        assert_eq!(metrics.padded_gates, prover.circuit_data.common.degree());
+        assert!(metrics.unpadded_gates <= metrics.padded_gates);
     }
 
     #[test]
