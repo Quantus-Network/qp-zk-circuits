@@ -103,16 +103,22 @@ fn group_exits(pairs: &[(u64, u64)]) -> Vec<(u64, Option<u64>)> {
         .collect()
 }
 
-fn private_batch_fee_ok(children: &[(u32, u32, bool)], fee_bps: u32) -> bool {
+fn private_batch_fee_ok(children: &[(u32, u32, u32, bool)], fee_bps: u32) -> bool {
     if fee_bps > 10_000 {
         return false;
     }
-    let (total_input, total_output) = children.iter().filter(|(_, _, is_dummy)| !is_dummy).fold(
-        (0u128, 0u128),
-        |(sum_in, sum_out), (input, output, _)| {
-            (sum_in + *input as u128, sum_out + *output as u128)
-        },
-    );
+    let (total_input, total_output) = children
+        .iter()
+        .filter(|(_, _, _, is_dummy)| !is_dummy)
+        .fold(
+            (0u128, 0u128),
+            |(sum_in, sum_out), (input, output_1, output_2, _)| {
+                (
+                    sum_in + *input as u128,
+                    sum_out + *output_1 as u128 + *output_2 as u128,
+                )
+            },
+        );
     total_output * 10_000 <= total_input * (10_000 - fee_bps as u128)
 }
 
@@ -327,18 +333,31 @@ proptest! {
 
     #[test]
     fn aggregate_fee_matches_one_runtime_ceiling(
-        children in prop::collection::vec((any::<u32>(), any::<u32>(), any::<bool>()), 1..65),
-        fee_bps in 0u32..10_000,
+        children in prop::collection::vec(
+            (any::<u32>(), any::<u32>(), any::<u32>(), any::<bool>()),
+            1..65,
+        ),
+        fee_bps in 0u32..=10_000,
     ) {
         let (total_input, total_output) = children
             .iter()
-            .filter(|(_, _, is_dummy)| !is_dummy)
-            .fold((0u128, 0u128), |(sum_in, sum_out), (input, output, _)| {
-                (sum_in + *input as u128, sum_out + *output as u128)
-            });
-        let denominator = 10_000u128 - fee_bps as u128;
-        let fee = (total_output * fee_bps as u128).div_ceil(denominator);
-        let ceiling_rule = total_input >= total_output + fee;
+            .filter(|(_, _, _, is_dummy)| !is_dummy)
+            .fold(
+                (0u128, 0u128),
+                |(sum_in, sum_out), (input, output_1, output_2, _)| {
+                    (
+                        sum_in + *input as u128,
+                        sum_out + *output_1 as u128 + *output_2 as u128,
+                    )
+                },
+            );
+        let ceiling_rule = if fee_bps == 10_000 {
+            total_output == 0
+        } else {
+            let denominator = 10_000u128 - fee_bps as u128;
+            let fee = (total_output * fee_bps as u128).div_ceil(denominator);
+            total_input >= total_output + fee
+        };
 
         prop_assert_eq!(
             private_batch_fee_ok(&children, fee_bps),

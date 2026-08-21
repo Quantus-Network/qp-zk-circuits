@@ -92,9 +92,34 @@ fn make_leaf_pi(
     block_hash: [u64; 4],
     block_number: u32,
 ) -> [F; LEAF_PI_LEN] {
+    make_leaf_pi_with_asset(
+        0,
+        amount1,
+        amount2,
+        volume_fee_bps,
+        exit1,
+        exit2,
+        nullifier,
+        block_hash,
+        block_number,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn make_leaf_pi_with_asset(
+    asset_id: u32,
+    amount1: u32,
+    amount2: u32,
+    volume_fee_bps: u32,
+    exit1: [u64; 4],
+    exit2: [u64; 4],
+    nullifier: [u64; 4],
+    block_hash: [u64; 4],
+    block_number: u32,
+) -> [F; LEAF_PI_LEN] {
     assert!(volume_fee_bps <= 10_000);
     let mut out = [F::ZERO; LEAF_PI_LEN];
-    out[0] = F::ZERO; // asset_id = 0 (native)
+    out[0] = F::from_canonical_u64(asset_id as u64);
     out[1] = F::from_canonical_u64(amount1 as u64);
     out[2] = F::from_canonical_u64(amount2 as u64);
     out[3] = F::from_canonical_u64(volume_fee_bps as u64);
@@ -733,6 +758,104 @@ fn public_batch_mismatched_blocks_fails() {
     assert!(
         res.is_err(),
         "expected public-batch proving to fail for mismatched blocks"
+    );
+}
+
+#[test]
+fn public_batch_enforces_asset_and_fee_consistency() {
+    let block_hash: [u64; 4] = [0xAA01, 0xAA02, 0xAA03, 0xAA04];
+    let block_number = 42u32;
+    let (leaf_data, leaf_targets) = build_fake_leaf_circuit();
+
+    let private_batch_circuit = PrivateBatchCircuit::new(
+        CircuitConfig::standard_recursion_config(),
+        &leaf_data.common,
+        &leaf_data.verifier_only,
+        NUM_LEAVES,
+    )
+    .unwrap();
+    let private_batch_targets = private_batch_circuit.targets();
+    let private_batch_data = private_batch_circuit.build_circuit();
+
+    let public_batch_circuit = PublicBatchCircuit::new(
+        CircuitConfig::standard_recursion_config(),
+        private_batch_data.common.clone(),
+        &private_batch_data.verifier_only,
+        N_INNER,
+        NUM_LEAVES,
+    )
+    .unwrap();
+    let public_batch_targets = public_batch_circuit.targets();
+    let public_batch_data = public_batch_circuit.build_circuit();
+
+    let prove_inner = |asset_id: u32, fee_bps: u32, seed: u64| {
+        let leaves = (0..NUM_LEAVES)
+            .map(|i| {
+                let n = seed + i as u64;
+                prove_fake_leaf(
+                    &leaf_data,
+                    &leaf_targets,
+                    make_leaf_pi_with_asset(
+                        asset_id,
+                        100 + i as u32,
+                        0,
+                        fee_bps,
+                        [n + 1, n + 2, n + 3, n + 4],
+                        [0; 4],
+                        [n + 101, n + 102, n + 103, n + 104],
+                        block_hash,
+                        block_number,
+                    ),
+                )
+            })
+            .collect();
+        prove_private_batch_batch(&private_batch_data, &private_batch_targets, leaves)
+    };
+    let aggregator_address = [
+        F::from_canonical_u64(1),
+        F::from_canonical_u64(2),
+        F::from_canonical_u64(3),
+        F::from_canonical_u64(4),
+    ];
+
+    let base = prove_inner(0, TEST_VOLUME_FEE_BPS, 1_000);
+    let different_asset = prove_inner(1, TEST_VOLUME_FEE_BPS, 2_000);
+    assert!(
+        prove_public_batch(
+            &public_batch_data,
+            &public_batch_targets,
+            vec![base.clone(), different_asset],
+            aggregator_address,
+        )
+        .is_err(),
+        "public-batch proving must reject mismatched asset IDs"
+    );
+
+    let different_fee = prove_inner(0, TEST_VOLUME_FEE_BPS + 1, 3_000);
+    assert!(
+        prove_public_batch(
+            &public_batch_data,
+            &public_batch_targets,
+            vec![base, different_fee],
+            aggregator_address,
+        )
+        .is_err(),
+        "public-batch proving must reject mismatched fee rates"
+    );
+
+    let fee_four_a = prove_inner(0, 4, 4_000);
+    let fee_four_b = prove_inner(0, 4, 5_000);
+    let proof = prove_public_batch(
+        &public_batch_data,
+        &public_batch_targets,
+        vec![fee_four_a, fee_four_b],
+        aggregator_address,
+    )
+    .expect("matching non-default fees must aggregate");
+    assert_eq!(
+        proof.public_inputs[pbc::VOLUME_FEE_BPS_START].to_canonical_u64(),
+        4,
+        "public-batch output must forward the actual segment fee rate"
     );
 }
 

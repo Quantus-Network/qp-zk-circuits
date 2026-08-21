@@ -25,7 +25,7 @@ use zk_circuits_common::circuit::{wormhole_private_batch_circuit_config, C, D, F
 
 use crate::private_batch::{
     circuit::{
-        circuit_logic::PrivateBatchCircuit,
+        circuit_logic::{PrivateBatchCircuit, PrivateBatchCircuitTargets},
         constants::{
             aggregated_output, ASSET_ID_START, BLOCK_HASH_START, BLOCK_NUMBER_START, EXIT_1_START,
             EXIT_2_START, INPUT_AMOUNT_START, LEAF_PI_LEN, NULLIFIER_START, OUTPUT_AMOUNT_1_START,
@@ -108,6 +108,21 @@ fn deterministic_dummy_nullifier_pre_images(n: usize) -> Vec<[F; 4]> {
         .collect()
 }
 
+fn prove_private_batch_with_data(
+    data: &CircuitData<F, C, D>,
+    targets: &PrivateBatchCircuitTargets,
+    proofs: &[ProofWithPublicInputs<F, C, D>],
+) -> Result<ProofWithPublicInputs<F, C, D>> {
+    let mut pw = PartialWitness::new();
+    fill_private_batch_witness(
+        &mut pw,
+        targets,
+        proofs,
+        &deterministic_dummy_nullifier_pre_images(proofs.len()),
+    )?;
+    data.prove(pw)
+}
+
 fn hash_dummy_nullifier_pre_image_native(pre_image: [F; 4]) -> [F; 4] {
     let inner_hash = Poseidon2Hash::hash_no_pad(&pre_image).elements;
     Poseidon2Hash::hash_no_pad(&inner_hash).elements
@@ -185,7 +200,7 @@ fn prove_amount_batch(
     leaf_data: &CircuitData<F, C, D>,
     leaf_targets: &[Target; LEAF_PI_LEN],
     inputs: &[u64],
-    outputs: &[u64],
+    outputs: &[(u64, u64)],
     fee_bps: u64,
 ) -> Vec<ProofWithPublicInputs<F, C, D>> {
     assert_eq!(inputs.len(), outputs.len());
@@ -193,15 +208,20 @@ fn prove_amount_batch(
         .iter()
         .zip(outputs)
         .enumerate()
-        .map(|(i, (&input, &output))| {
+        .map(|(i, (&input, &(output_1, output_2)))| {
+            let exit_2 = if output_2 == 0 {
+                [F::ZERO; 8]
+            } else {
+                core::array::from_fn(|j| F::from_canonical_usize(1_000 + i * 8 + j))
+            };
             let mut pis = make_pi_from_felts(
                 F::ZERO,
-                F::from_canonical_u64(output),
-                F::ZERO,
+                F::from_canonical_u64(output_1),
+                F::from_canonical_u64(output_2),
                 F::from_canonical_u64(fee_bps),
                 limbs4_u64_to_felts(NULLIFIERS[i]),
                 limbs8_u64_to_felts(EXIT_ACCOUNTS[i]),
-                [F::ZERO; 8],
+                exit_2,
                 limbs4_u64_to_felts(BLOCK_HASHES[0]),
                 F::from_canonical_u64(42),
             );
@@ -415,7 +435,7 @@ fn aggregate_fee_regressions() {
     let aggregate_data = aggregate.build_circuit();
 
     let prove_case =
-        |inputs: &[u64], outputs: &[u64], fee_bps: u64, dummy_input: u64| -> Result<_> {
+        |inputs: &[u64], outputs: &[(u64, u64)], fee_bps: u64, dummy_input: u64| -> Result<_> {
             let mut proofs =
                 prove_amount_batch(&leaf_data, &leaf_targets, inputs, outputs, fee_bps);
             for (i, nullifier) in NULLIFIERS
@@ -441,50 +461,251 @@ fn aggregate_fee_regressions() {
                 proofs.push(prove_fake_leaf(&leaf_data, &leaf_targets, pis));
             }
 
-            let mut pw = PartialWitness::new();
-            fill_private_batch_witness(
-                &mut pw,
-                &aggregate_targets,
-                &proofs,
-                &deterministic_dummy_nullifier_pre_images(N_LEAF),
-            )?;
-            aggregate_data.prove(pw)
+            prove_private_batch_with_data(&aggregate_data, &aggregate_targets, &proofs)
         };
 
     assert!(
-        prove_case(&[100, 1, 1, 1, 1], &[20, 20, 20, 20, 23], 4, 0).is_ok(),
+        prove_case(
+            &[100, 1, 1, 1, 1],
+            &[(20, 0), (20, 0), (20, 0), (20, 0), (23, 0)],
+            4,
+            0,
+        )
+        .is_ok(),
         "103q out from 104q in must pay the 1q segment fee"
     );
     assert!(
-        prove_case(&[100, 1, 1, 1, 1], &[20, 20, 20, 20, 24], 4, 0).is_err(),
+        prove_case(
+            &[100, 1, 1, 1, 1],
+            &[(20, 0), (20, 0), (20, 0), (20, 0), (24, 0)],
+            4,
+            0,
+        )
+        .is_err(),
         "104q out from 104q in must not bypass the fee"
     );
     assert!(
-        prove_case(&[2_500], &[2_499], 4, 0).is_ok(),
+        prove_case(&[2_500], &[(2_499, 0)], 4, 0).is_ok(),
         "2499q out requires exactly 2500q in at 4 bps"
     );
     assert!(
-        prove_case(&[2_499], &[2_499], 4, 0).is_err(),
+        prove_case(&[2_499], &[(2_499, 0)], 4, 0).is_err(),
         "a one-real-leaf segment must still pay its ceiling fee"
     );
     assert!(
-        prove_case(&[2, 2, 2, 2, 2, 2, 2], &[2, 2, 2, 2, 2, 2, 1], 4, 0,).is_ok(),
+        prove_case(
+            &[2, 2, 2, 2, 2, 2, 2],
+            &[(2, 0), (2, 0), (2, 0), (2, 0), (2, 0), (2, 0), (1, 0)],
+            4,
+            0,
+        )
+        .is_ok(),
         "13q out from 14q in must be valid with one aggregate fee quantum"
     );
     assert!(
-        prove_case(&[1], &[1], 4, u32::MAX as u64).is_err(),
+        prove_case(&[1], &[(1, 0)], 4, u32::MAX as u64).is_err(),
         "dummy input value must not subsidize a real exit"
+    );
+    assert!(
+        prove_case(&[100], &[(100, 0)], 0, 0).is_ok()
+            && prove_case(&[99], &[(100, 0)], 0, 0).is_err(),
+        "zero-fee batches must enforce total output <= total input"
+    );
+    assert!(
+        prove_case(&[10_000], &[(1, 0)], 9_999, 0).is_ok()
+            && prove_case(&[9_999], &[(1, 0)], 9_999, 0).is_err(),
+        "9999 bps must use a denominator of one"
+    );
+    assert!(
+        prove_case(&[0], &[(0, 0)], 10_000, 0).is_ok()
+            && prove_case(&[u32::MAX as u64], &[(1, 0)], 10_000, 0).is_err(),
+        "10000 bps must allow only zero aggregate output"
+    );
+    assert!(
+        prove_case(&[2_500], &[(1_249, 1_250)], 4, 0).is_ok()
+            && prove_case(&[2_499], &[(1_249, 1_250)], 4, 0).is_err(),
+        "both output slots must contribute to the aggregate fee boundary"
     );
 
     let max = u32::MAX as u64;
     assert!(
-        prove_case(&[max; N_LEAF], &[max - 2_000_000; N_LEAF], 4, 0,).is_ok(),
+        prove_case(&[max; N_LEAF], &[(max - 2_000_000, 0); N_LEAF], 4, 0,).is_ok(),
         "large valid totals must not wrap the field or the 52-bit difference check"
     );
     assert!(
-        prove_case(&[1], &[0], 10_001, 0).is_err(),
+        prove_case(&[0; N_LEAF], &[(max, 0); N_LEAF], 0, 0).is_err(),
+        "a large negative integer fee difference must not pass through field wraparound"
+    );
+    assert!(
+        prove_case(&[1], &[(0, 0)], 10_001, 0).is_err(),
         "the aggregate fee rate must remain bounded by 10000 bps"
     );
+}
+
+#[test]
+fn private_batch_masking_uniqueness_and_privacy_regressions() {
+    const N_LEAF: usize = 2;
+
+    let (leaf_data, leaf_targets) = build_fake_leaf_circuit();
+    let aggregate = PrivateBatchCircuit::new(
+        wormhole_private_batch_circuit_config(),
+        &leaf_data.common,
+        &leaf_data.verifier_only,
+        N_LEAF,
+    )
+    .unwrap();
+    let aggregate_targets = aggregate.targets();
+    let aggregate_data = aggregate.build_circuit();
+    let common_block_hash = limbs4_u64_to_felts(BLOCK_HASHES[0]);
+
+    let prove_pis = |pis_list: Vec<[F; LEAF_PI_LEN]>| {
+        let proofs = pis_list
+            .into_iter()
+            .map(|pis| prove_fake_leaf(&leaf_data, &leaf_targets, pis))
+            .collect::<Vec<_>>();
+        prove_private_batch_with_data(&aggregate_data, &aggregate_targets, &proofs)
+    };
+
+    let make_real_pi = |input: u64, output: u64, fee_bps: u64, nullifier: [F; 4], exit: [F; 8]| {
+        let mut pis = make_pi_from_felts(
+            F::ZERO,
+            F::from_canonical_u64(output),
+            F::ZERO,
+            F::from_canonical_u64(fee_bps),
+            nullifier,
+            exit,
+            [F::ZERO; 8],
+            common_block_hash,
+            F::from_canonical_u64(42),
+        );
+        pis[INPUT_AMOUNT_START] = F::from_canonical_u64(input);
+        pis
+    };
+
+    let duplicate_nullifier = limbs4_u64_to_felts(NULLIFIERS[0]);
+    assert!(
+        prove_pis(vec![
+            make_real_pi(
+                1,
+                1,
+                0,
+                duplicate_nullifier,
+                limbs8_u64_to_felts(EXIT_ACCOUNTS[0]),
+            ),
+            make_real_pi(
+                1,
+                1,
+                0,
+                duplicate_nullifier,
+                limbs8_u64_to_felts(EXIT_ACCOUNTS[1]),
+            ),
+        ])
+        .is_err(),
+        "the circuit must reject duplicate real nullifiers without relying on prover preflight"
+    );
+
+    let mut poisoned_dummy = make_pi_from_felts(
+        F::ZERO,
+        F::from_canonical_u32(u32::MAX),
+        F::from_canonical_u32(u32::MAX),
+        F::from_canonical_u64(9_999),
+        limbs4_u64_to_felts(NULLIFIERS[0]),
+        limbs8_u64_to_felts(EXIT_ACCOUNTS[0]),
+        limbs8_u64_to_felts(EXIT_ACCOUNTS[1]),
+        [F::ZERO; 4],
+        F::ZERO,
+    );
+    poisoned_dummy[INPUT_AMOUNT_START] = F::from_canonical_u32(u32::MAX);
+    let masked = prove_pis(vec![
+        poisoned_dummy,
+        make_real_pi(
+            10_000,
+            9_996,
+            4,
+            limbs4_u64_to_felts(NULLIFIERS[1]),
+            limbs8_u64_to_felts(EXIT_ACCOUNTS[2]),
+        ),
+    ])
+    .expect("leading dummy values must be masked");
+    assert_eq!(
+        masked.public_inputs[ROOT_VOLUME_FEE_BPS_IDX].to_canonical_u64(),
+        4,
+        "the fee reference must come from the first real leaf"
+    );
+    assert!(
+        masked.public_inputs
+            [ROOT_HEADER_LEN..ROOT_HEADER_LEN + 2 * aggregated_output::EXIT_SLOT_LEN]
+            .iter()
+            .all(|value| *value == F::ZERO),
+        "dummy outputs and exit accounts must not reach aggregate public inputs"
+    );
+
+    let public_inputs_for = |inputs: [u64; N_LEAF]| {
+        prove_pis(vec![
+            make_real_pi(
+                inputs[0],
+                20,
+                0,
+                limbs4_u64_to_felts(NULLIFIERS[0]),
+                limbs8_u64_to_felts(EXIT_ACCOUNTS[0]),
+            ),
+            make_real_pi(
+                inputs[1],
+                30,
+                0,
+                limbs4_u64_to_felts(NULLIFIERS[1]),
+                limbs8_u64_to_felts(EXIT_ACCOUNTS[1]),
+            ),
+        ])
+        .unwrap()
+        .public_inputs
+    };
+    assert_eq!(
+        public_inputs_for([20, 30]),
+        public_inputs_for([200, 300]),
+        "leaf input amounts must be consumed by the wrapper without being forwarded"
+    );
+}
+
+#[test]
+#[ignore = "slow: builds and proves the maximum 64-leaf recursive circuit"]
+fn maximum_width_private_batch_fee_does_not_wrap() {
+    const N_LEAF: usize = 64;
+
+    let (leaf_data, leaf_targets) = build_fake_leaf_circuit();
+    let block_hash = limbs4_u64_to_felts(BLOCK_HASHES[0]);
+    let max = u32::MAX as u64;
+    let proofs = (0..N_LEAF)
+        .map(|i| {
+            let nullifier = core::array::from_fn(|j| F::from_canonical_usize(1 + i * 4 + j));
+            let exit = core::array::from_fn(|j| F::from_canonical_usize(1 + i * 8 + j));
+            let mut pis = make_pi_from_felts(
+                F::ZERO,
+                F::from_canonical_u64(max - 2_000_000),
+                F::ZERO,
+                F::from_canonical_u64(4),
+                nullifier,
+                exit,
+                [F::ZERO; 8],
+                block_hash,
+                F::from_canonical_u64(42),
+            );
+            pis[INPUT_AMOUNT_START] = F::from_canonical_u64(max);
+            prove_fake_leaf(&leaf_data, &leaf_targets, pis)
+        })
+        .collect::<Vec<_>>();
+
+    let aggregate = PrivateBatchCircuit::new(
+        wormhole_private_batch_circuit_config(),
+        &leaf_data.common,
+        &leaf_data.verifier_only,
+        N_LEAF,
+    )
+    .unwrap();
+    let targets = aggregate.targets();
+    let data = aggregate.build_circuit();
+    let proof = prove_private_batch_with_data(&data, &targets, &proofs).unwrap();
+    data.verify(proof).unwrap();
 }
 
 #[test]
@@ -1681,7 +1902,7 @@ fn new_rejects_pathological_circuit_configs() {
 /// panic mid-construction (the wrapper indexes fixed PI offsets).
 #[test]
 fn new_rejects_non_leaf_shaped_inner_circuit() {
-    // A valid circuit with the wrong number of public inputs (5, not 21).
+    // A valid circuit with the wrong number of public inputs (5, not 22).
     let config = CircuitConfig::standard_recursion_config();
     let mut builder = CircuitBuilder::<F, D>::new(config.clone());
     let ts = builder.add_virtual_targets(5);
@@ -1730,7 +1951,7 @@ fn witness_fill_rejects_wrong_pi_length_proof() {
 // -------------------------------------------------------------------------
 // Witness-fill proof-shape preflight
 //
-// A proof with the expected 21 public inputs can still carry internally
+// A proof with the expected 22 public inputs can still carry internally
 // inconsistent proof vectors. The pinned qp-plonky2 witness writer assigns
 // those through zip_eq / debug-only length checks, so without a full shape
 // preflight a malformed proof panics inside fill_private_batch_witness

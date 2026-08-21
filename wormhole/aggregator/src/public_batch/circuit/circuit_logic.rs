@@ -317,5 +317,5 @@ fn build_public_batch_constraints(
 }
 
 #[cfg(test)]
-#[path = "circuit_logic_tests.rs"]
+#[path = "tests/circuit_logic.rs"]
 mod tests;

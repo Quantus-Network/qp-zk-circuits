@@ -515,5 +515,5 @@ fn hash_dummy_nullifier_pre_image(
 }
 
 #[cfg(test)]
-#[path = "circuit_logic_tests.rs"]
+#[path = "tests/circuit_logic.rs"]
 mod tests;
