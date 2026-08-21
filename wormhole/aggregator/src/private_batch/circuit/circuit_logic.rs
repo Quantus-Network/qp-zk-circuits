@@ -4,6 +4,7 @@
 //! dynamic merge circuit), then applies the wormhole-specific wrapper logic:
 //! - enforce block consistency across real proofs
 //! - enforce asset_id / volume_fee_bps consistency
+//! - enforce the volume fee once over each private settlement segment
 //! - dedupe exit accounts and sum output amounts (2 outputs per proof)
 //! - replace dummy nullifiers with hashes of externally provided random preimages
 //! - emit fixed-format aggregated public inputs
@@ -58,8 +59,8 @@ use crate::common::recursive::add_recursive_verifiers;
 
 use super::constants::{
     aggregated_output, ASSET_ID_START, BLOCK_HASH_START, BLOCK_NUMBER_START, EXIT_1_START,
-    EXIT_2_START, LEAF_PI_LEN, NULLIFIER_START, OUTPUT_AMOUNT_1_START, OUTPUT_AMOUNT_2_START,
-    VOLUME_FEE_BPS_START,
+    EXIT_2_START, INPUT_AMOUNT_START, LEAF_PI_LEN, NULLIFIER_START, OUTPUT_AMOUNT_1_START,
+    OUTPUT_AMOUNT_2_START, VOLUME_FEE_BPS_START,
 };
 
 /// Runtime targets for the prebuilt private-batch aggregation circuit.
@@ -342,6 +343,31 @@ fn build_private_batch_constraints(
         slot_amounts.push(builder.select(is_dummy_i, zero, amount_raw));
     }
 
+    // Enforce the fee once over the private settlement segment. Inputs are
+    // authenticated by the child leaf proofs and exposed only to this recursive
+    // wrapper; neither aggregate proof layer forwards the total.
+    let mut total_input = zero;
+    for i in 0..n_leaf {
+        let input = limb1_at_offset::<LEAF_PI_LEN, INPUT_AMOUNT_START>(leaf_pi_targets[i], 0);
+        let masked_input = builder.select(is_dummy_flags[i], zero, input);
+        total_input = builder.add(total_input, masked_input);
+    }
+    let mut total_output = zero;
+    for amount in &slot_amounts {
+        total_output = builder.add(total_output, *amount);
+    }
+
+    let ten_thousand = builder.constant(F::from_canonical_u32(10_000));
+    let fee_complement = builder.sub(ten_thousand, volume_fee_bps_ref);
+    builder.range_check(fee_complement, 14);
+    let lhs = builder.mul(total_output, ten_thousand);
+    let rhs = builder.mul(total_input, fee_complement);
+    let diff = builder.sub(rhs, lhs);
+    // With at most 64 leaves, valid rhs and diff are below
+    // 64 * (2^32 - 1) * 10_000 < 2^52. A wrapped negative field
+    // difference is near the Goldilocks modulus and cannot pass this check.
+    builder.range_check(diff, 52);
+
     for slot in 0..num_exit_slots {
         let exit_slot = slot_exits[slot];
 
@@ -520,8 +546,8 @@ mod tests {
             circuit_logic::PrivateBatchCircuit,
             constants::{
                 aggregated_output, ASSET_ID_START, BLOCK_HASH_START, BLOCK_NUMBER_START,
-                EXIT_1_START, EXIT_2_START, LEAF_PI_LEN, NULLIFIER_START, OUTPUT_AMOUNT_1_START,
-                OUTPUT_AMOUNT_2_START, VOLUME_FEE_BPS_START,
+                EXIT_1_START, EXIT_2_START, INPUT_AMOUNT_START, LEAF_PI_LEN, NULLIFIER_START,
+                OUTPUT_AMOUNT_1_START, OUTPUT_AMOUNT_2_START, VOLUME_FEE_BPS_START,
             },
         },
         prover::witness::fill_private_batch_witness,
@@ -541,7 +567,9 @@ mod tests {
 
     // ---------------- Circuit helpers ----------------
 
-    use test_helpers::fake_leaf::{build_fake_leaf_circuit, prove_fake_leaf_standalone};
+    use test_helpers::fake_leaf::{
+        build_fake_leaf_circuit, prove_fake_leaf, prove_fake_leaf_standalone,
+    };
 
     /// Build and prove the private-batch aggregation circuit using the split witness-filler path.
     fn aggregate_proofs_private_batch(
@@ -658,7 +686,47 @@ mod tests {
         out[EXIT_2_START..EXIT_2_START + 8].copy_from_slice(&exit_2);
         out[BLOCK_HASH_START..BLOCK_HASH_START + 4].copy_from_slice(&block_hash);
         out[BLOCK_NUMBER_START] = block_number;
+        let output = output_amount_1
+            .to_canonical_u64()
+            .saturating_add(output_amount_2.to_canonical_u64());
+        let fee = volume_fee_bps.to_canonical_u64();
+        let minimum_input = if output == 0 || fee >= 10_000 {
+            0
+        } else {
+            output.saturating_mul(10_000).div_ceil(10_000 - fee)
+        };
+        out[INPUT_AMOUNT_START] = F::from_canonical_u64(minimum_input);
         out
+    }
+
+    fn prove_amount_batch(
+        leaf_data: &CircuitData<F, C, D>,
+        leaf_targets: &[Target; LEAF_PI_LEN],
+        inputs: &[u64],
+        outputs: &[u64],
+        fee_bps: u64,
+    ) -> Vec<ProofWithPublicInputs<F, C, D>> {
+        assert_eq!(inputs.len(), outputs.len());
+        inputs
+            .iter()
+            .zip(outputs)
+            .enumerate()
+            .map(|(i, (&input, &output))| {
+                let mut pis = make_pi_from_felts(
+                    F::ZERO,
+                    F::from_canonical_u64(output),
+                    F::ZERO,
+                    F::from_canonical_u64(fee_bps),
+                    limbs4_u64_to_felts(NULLIFIERS[i]),
+                    limbs8_u64_to_felts(EXIT_ACCOUNTS[i]),
+                    [F::ZERO; 8],
+                    limbs4_u64_to_felts(BLOCK_HASHES[0]),
+                    F::from_canonical_u64(42),
+                );
+                pis[INPUT_AMOUNT_START] = F::from_canonical_u64(input);
+                prove_fake_leaf(leaf_data, leaf_targets, pis)
+            })
+            .collect()
     }
 
     // ---------------- Hardcoded 64-bit-limb digests ----------------
@@ -848,6 +916,94 @@ mod tests {
             0x20B2_0001_0000_0004,
         ],
     ];
+
+    #[test]
+    fn aggregate_fee_regressions() {
+        const N_LEAF: usize = 7;
+
+        let (leaf_data, leaf_targets) = build_fake_leaf_circuit();
+        let aggregate = PrivateBatchCircuit::new(
+            wormhole_private_batch_circuit_config(),
+            &leaf_data.common,
+            &leaf_data.verifier_only,
+            N_LEAF,
+        )
+        .unwrap();
+        let aggregate_targets = aggregate.targets();
+        let aggregate_data = aggregate.build_circuit();
+
+        let prove_case =
+            |inputs: &[u64], outputs: &[u64], fee_bps: u64, dummy_input: u64| -> Result<_> {
+                let mut proofs =
+                    prove_amount_batch(&leaf_data, &leaf_targets, inputs, outputs, fee_bps);
+                for (i, nullifier) in NULLIFIERS
+                    .iter()
+                    .enumerate()
+                    .take(N_LEAF)
+                    .skip(inputs.len())
+                {
+                    let mut pis = make_pi_from_felts(
+                        F::ZERO,
+                        F::ZERO,
+                        F::ZERO,
+                        F::from_canonical_u64(fee_bps),
+                        limbs4_u64_to_felts(*nullifier),
+                        [F::ZERO; 8],
+                        [F::ZERO; 8],
+                        [F::ZERO; 4],
+                        F::ZERO,
+                    );
+                    if i == inputs.len() {
+                        pis[INPUT_AMOUNT_START] = F::from_canonical_u64(dummy_input);
+                    }
+                    proofs.push(prove_fake_leaf(&leaf_data, &leaf_targets, pis));
+                }
+
+                let mut pw = PartialWitness::new();
+                fill_private_batch_witness(
+                    &mut pw,
+                    &aggregate_targets,
+                    &proofs,
+                    &deterministic_dummy_nullifier_pre_images(N_LEAF),
+                )?;
+                aggregate_data.prove(pw)
+            };
+
+        assert!(
+            prove_case(&[100, 1, 1, 1, 1], &[20, 20, 20, 20, 23], 4, 0).is_ok(),
+            "103q out from 104q in must pay the 1q segment fee"
+        );
+        assert!(
+            prove_case(&[100, 1, 1, 1, 1], &[20, 20, 20, 20, 24], 4, 0).is_err(),
+            "104q out from 104q in must not bypass the fee"
+        );
+        assert!(
+            prove_case(&[2_500], &[2_499], 4, 0).is_ok(),
+            "2499q out requires exactly 2500q in at 4 bps"
+        );
+        assert!(
+            prove_case(&[2_499], &[2_499], 4, 0).is_err(),
+            "a one-real-leaf segment must still pay its ceiling fee"
+        );
+        assert!(
+            prove_case(&[2, 2, 2, 2, 2, 2, 2], &[2, 2, 2, 2, 2, 2, 1], 4, 0,).is_ok(),
+            "13q out from 14q in must be valid with one aggregate fee quantum"
+        );
+        assert!(
+            prove_case(&[1], &[1], 4, u32::MAX as u64).is_err(),
+            "dummy input value must not subsidize a real exit"
+        );
+
+        let max = u32::MAX as u64;
+        assert!(
+            prove_case(&[max; N_LEAF], &[max - 2_000_000; N_LEAF], 4, 0,).is_ok(),
+            "large valid totals must not wrap the field or the 52-bit difference check"
+        );
+        assert!(
+            prove_case(&[1], &[0], 10_001, 0).is_err(),
+            "the aggregate fee rate must remain bounded by 10000 bps"
+        );
+    }
 
     #[test]
     fn recursive_aggregation_tree() {
@@ -1914,6 +2070,7 @@ mod tests {
             0xEEEEEEEE, 0xFFFFFFFF, 0x11111111, 0x22222222, // fake exit_2
             0x33333333, 0x44444444, 0x55555555, 0x66666666, // fake block_hash
             9999999,    // fake block_number
+            0xFFFFFFFF, // fake input_amount
         ];
 
         let mut pw = PartialWitness::new();
@@ -1974,6 +2131,7 @@ mod tests {
             0x55555555, 0x66666666, 0x77777777, 0x88888888, // exit_2
             0x99999999, 0xAAAAAAAA, 0xBBBBBBBB, 0xCCCCCCCC, // block_hash
             12345,      // block_number
+            3031,       // input_amount: ceil(3000 * 10000 / 9900)
         ];
 
         let mut pw = PartialWitness::new();
@@ -2037,7 +2195,7 @@ mod tests {
     }
 
     /// The constructor must reject inner circuits whose public-input length
-    /// doesn't match the fixed 21-felt leaf layout with a normal error, not a
+    /// doesn't match the fixed leaf layout with a normal error, not a
     /// panic mid-construction (the wrapper indexes fixed PI offsets).
     #[test]
     fn new_rejects_non_leaf_shaped_inner_circuit() {

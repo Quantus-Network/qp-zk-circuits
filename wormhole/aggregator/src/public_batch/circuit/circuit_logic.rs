@@ -323,7 +323,9 @@ mod tests {
     use plonky2::iop::witness::{PartialWitness, WitnessWrite};
     use plonky2::plonk::circuit_data::CircuitConfig;
     use plonky2::plonk::proof::ProofWithPublicInputs;
-    use qp_wormhole_inputs::PUBLIC_INPUTS_FELTS_LEN as LEAF_PI_LEN;
+    use qp_wormhole_inputs::{
+        INPUT_AMOUNT_INDEX, PUBLIC_INPUTS_FELTS_LEN as LEAF_PI_LEN, VOLUME_FEE_BPS_INDEX,
+    };
 
     use super::super::constants::AGGREGATOR_ADDRESS_LEN;
     use crate::private_batch::circuit::circuit_logic::{
@@ -333,6 +335,7 @@ mod tests {
 
     const NUM_LEAVES: usize = 2; // 2 leaf proofs per private-batch batch (fast)
     const N_INNER: usize = 2; // 2 private-batch proofs aggregated into one public-batch proof
+    const TEST_VOLUME_FEE_BPS: u32 = 10;
 
     /// Audit finding: the constructor forwarded the caller-supplied
     /// `CircuitConfig` to `CircuitBuilder::new` unchecked. Structurally
@@ -392,26 +395,29 @@ mod tests {
 
     /// Build one leaf PI array in the Bitcoin-style 2-output layout.
     ///
-    /// Layout (21 felts total):
+    /// Layout (22 felts total):
     /// - asset_id(1), output_amount_1(1), output_amount_2(1), volume_fee_bps(1)
     /// - nullifier(4)
     /// - exit_account_1(4) - 4 felts (8 bytes/felt)
     /// - exit_account_2(4) - 4 felts (8 bytes/felt)
-    /// - block_hash(4), block_number(1)
+    /// - block_hash(4), block_number(1), input_amount(1)
+    #[allow(clippy::too_many_arguments)]
     fn make_leaf_pi(
         amount1: u32,
         amount2: u32,
+        volume_fee_bps: u32,
         exit1: [u64; 4],
         exit2: [u64; 4],
         nullifier: [u64; 4],
         block_hash: [u64; 4],
         block_number: u32,
     ) -> [F; LEAF_PI_LEN] {
+        assert!(volume_fee_bps <= 10_000);
         let mut out = [F::ZERO; LEAF_PI_LEN];
         out[0] = F::ZERO; // asset_id = 0 (native)
         out[1] = F::from_canonical_u64(amount1 as u64);
         out[2] = F::from_canonical_u64(amount2 as u64);
-        out[3] = F::from_canonical_u64(10); // volume_fee_bps = 10 bps
+        out[3] = F::from_canonical_u64(volume_fee_bps as u64);
 
         for j in 0..4 {
             out[4 + j] = F::from_canonical_u64(nullifier[j]);
@@ -426,8 +432,30 @@ mod tests {
             out[16 + j] = F::from_canonical_u64(block_hash[j]);
         }
         out[20] = F::from_canonical_u64(block_number as u64);
+        let total_output = amount1 as u64 + amount2 as u64;
+        let minimum_input = if total_output == 0 {
+            0
+        } else {
+            assert!(volume_fee_bps < 10_000);
+            total_output
+                .checked_mul(10_000)
+                .unwrap()
+                .div_ceil(10_000 - volume_fee_bps as u64)
+        };
+        out[21] = F::from_canonical_u64(minimum_input);
 
         out
+    }
+
+    #[test]
+    fn make_leaf_pi_uses_supplied_fee() {
+        let no_fee = make_leaf_pi(23, 0, 0, [0; 4], [0; 4], [0; 4], [0; 4], 0);
+        assert_eq!(no_fee[VOLUME_FEE_BPS_INDEX].to_canonical_u64(), 0);
+        assert_eq!(no_fee[INPUT_AMOUNT_INDEX].to_canonical_u64(), 23);
+
+        let four_bps = make_leaf_pi(23, 0, 4, [0; 4], [0; 4], [0; 4], [0; 4], 0);
+        assert_eq!(four_bps[VOLUME_FEE_BPS_INDEX].to_canonical_u64(), 4);
+        assert_eq!(four_bps[INPUT_AMOUNT_INDEX].to_canonical_u64(), 24);
     }
 
     // ---------------- Private-batch proving helpers ----------------
@@ -524,6 +552,7 @@ mod tests {
             make_leaf_pi(
                 100,
                 0,
+                TEST_VOLUME_FEE_BPS,
                 [1, 2, 3, 4],
                 [0, 0, 0, 0],
                 [0x10, 0x11, 0x12, 0x13],
@@ -537,6 +566,7 @@ mod tests {
             make_leaf_pi(
                 200,
                 50,
+                TEST_VOLUME_FEE_BPS,
                 [5, 6, 7, 8],
                 [9, 10, 11, 12],
                 [0x20, 0x21, 0x22, 0x23],
@@ -552,6 +582,7 @@ mod tests {
             make_leaf_pi(
                 300,
                 0,
+                TEST_VOLUME_FEE_BPS,
                 [13, 14, 15, 16],
                 [0, 0, 0, 0],
                 [0x30, 0x31, 0x32, 0x33],
@@ -565,6 +596,7 @@ mod tests {
             make_leaf_pi(
                 400,
                 100,
+                TEST_VOLUME_FEE_BPS,
                 [17, 18, 19, 20],
                 [21, 22, 23, 24],
                 [0x40, 0x41, 0x42, 0x43],
@@ -668,7 +700,10 @@ mod tests {
 
         // Asset ID and volume fee
         assert_eq!(pis[pbc::ASSET_ID_START].to_canonical_u64(), 0); // asset_id = native
-        assert_eq!(pis[pbc::VOLUME_FEE_BPS_START].to_canonical_u64(), 10); // volume_fee_bps
+        assert_eq!(
+            pis[pbc::VOLUME_FEE_BPS_START].to_canonical_u64(),
+            TEST_VOLUME_FEE_BPS as u64
+        );
 
         // Block hash
         assert_eq!(pis[pbc::BLOCK_HASH_START].to_canonical_u64(), 0xAA01);
@@ -748,6 +783,7 @@ mod tests {
             make_leaf_pi(
                 100,
                 0,
+                TEST_VOLUME_FEE_BPS,
                 [1, 2, 3, 4],
                 [0, 0, 0, 0],
                 [0x10, 0x11, 0x12, 0x13],
@@ -761,6 +797,7 @@ mod tests {
             make_leaf_pi(
                 200,
                 50,
+                TEST_VOLUME_FEE_BPS,
                 [5, 6, 7, 8],
                 [9, 10, 11, 12],
                 [0x20, 0x21, 0x22, 0x23],
@@ -770,7 +807,8 @@ mod tests {
         );
 
         // Dummy batch: 2 dummy leaves (block_hash == 0 sentinel, zero amounts/exits)
-        let dummy_leaf_pi = make_leaf_pi(0, 0, [0; 4], [0; 4], [0; 4], [0; 4], 0);
+        let dummy_leaf_pi =
+            make_leaf_pi(0, 0, TEST_VOLUME_FEE_BPS, [0; 4], [0; 4], [0; 4], [0; 4], 0);
         let dummy_0 = prove_fake_leaf(&leaf_data, &leaf_targets, dummy_leaf_pi);
         let dummy_1 = prove_fake_leaf(&leaf_data, &leaf_targets, dummy_leaf_pi);
 
@@ -850,7 +888,10 @@ mod tests {
 
         // Header references come from the real (first non-dummy) inner
         assert_eq!(pis[pbc::ASSET_ID_START].to_canonical_u64(), 0);
-        assert_eq!(pis[pbc::VOLUME_FEE_BPS_START].to_canonical_u64(), 10);
+        assert_eq!(
+            pis[pbc::VOLUME_FEE_BPS_START].to_canonical_u64(),
+            TEST_VOLUME_FEE_BPS as u64
+        );
         for j in 0..4 {
             assert_eq!(
                 pis[pbc::BLOCK_HASH_START + j].to_canonical_u64(),
@@ -913,6 +954,7 @@ mod tests {
             make_leaf_pi(
                 100,
                 0,
+                TEST_VOLUME_FEE_BPS,
                 [1, 2, 3, 4],
                 [0, 0, 0, 0],
                 [1, 2, 3, 4],
@@ -926,6 +968,7 @@ mod tests {
             make_leaf_pi(
                 200,
                 0,
+                TEST_VOLUME_FEE_BPS,
                 [5, 6, 7, 8],
                 [0, 0, 0, 0],
                 [5, 6, 7, 8],
@@ -941,6 +984,7 @@ mod tests {
             make_leaf_pi(
                 300,
                 0,
+                TEST_VOLUME_FEE_BPS,
                 [9, 10, 11, 12],
                 [0, 0, 0, 0],
                 [9, 10, 11, 12],
@@ -954,6 +998,7 @@ mod tests {
             make_leaf_pi(
                 400,
                 0,
+                TEST_VOLUME_FEE_BPS,
                 [13, 14, 15, 16],
                 [0, 0, 0, 0],
                 [13, 14, 15, 16],
@@ -1016,7 +1061,7 @@ mod tests {
     /// test: the private-batch verifier key is baked into the public-batch
     /// circuit as constants, so a structurally identical private-batch proof
     /// produced by a DIFFERENT circuit — here, a private batch aggregating a
-    /// constraint-free leaf circuit — must be rejected at prove time. Without
+    /// shape-identical leaf circuit with different range-check wiring — must be rejected at prove time. Without
     /// the constant VK, an attacker could launder arbitrary leaf claims (no
     /// fee check, fabricated amounts) through a legit-shaped private batch.
     #[test]
@@ -1047,14 +1092,20 @@ mod tests {
         let public_batch_targets = public_batch_circuit.targets();
         let public_batch_data = public_batch_circuit.build_circuit();
 
-        // ---- Attacker pipeline: constraint-free leaf, same PI shape ----
+        // ---- Attacker pipeline: weaker leaf, same PI and common-data shape ----
         let (malicious_leaf_data, malicious_leaf_targets) = {
             let mut builder =
                 CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
             let pis: Vec<Target> = (0..LEAF_PI_LEN)
                 .map(|_| builder.add_virtual_target())
                 .collect();
-            // NO constraints: any values prove.
+            // Match the legitimate fake leaf's four 32-bit checks, but wire the
+            // fourth check to asset_id instead of input_amount. This preserves
+            // CommonCircuitData while changing the verifier key and leaves the
+            // claimed input amount unconstrained.
+            for index in [0, 1, 2, 3] {
+                builder.range_check(pis[index], 32);
+            }
             builder.register_public_inputs(&pis);
             (builder.build::<C>(), pis)
         };
@@ -1069,13 +1120,14 @@ mod tests {
         let malicious_pb_data = malicious_private_batch.build_circuit();
 
         // "Valid-looking" leaves the legit leaf circuit would never have proved
-        // (no fee/range constraints applied to these values).
+        // (no Merkle binding or aggregate-fee provenance applies to these values).
         let malicious_leaves: Vec<ProofWithPublicInputs<F, C, D>> = (0..NUM_LEAVES)
             .map(|i| {
                 let n = i as u64 + 1;
                 let pi = make_leaf_pi(
                     1_000_000,
                     0,
+                    TEST_VOLUME_FEE_BPS,
                     [90 + n, 91, 92, 93],
                     [0, 0, 0, 0],
                     [70 + n, 71, 72, 73],

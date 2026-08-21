@@ -66,9 +66,9 @@ pub struct ZkLeafTargets {
     pub asset_id: Target,
     /// Amount stored in the leaf (quantized, private input)
     pub input_amount: Target,
-    /// Output amount 1 after fee (public input)
+    /// Output amount 1 (public input)
     pub output_amount_1: Target,
-    /// Output amount 2 after fee (public input, for change)
+    /// Output amount 2 (public input, for change)
     pub output_amount_2: Target,
     /// Volume fee in basis points (public input)
     pub volume_fee_bps: Target,
@@ -202,9 +202,8 @@ pub struct ZkLeafData {
 
 /// Redacting `Debug`: `to_account` (the unspendable deposit account — the
 /// direct deposit/withdrawal link), `transfer_count`, and `input_amount` are
-/// felt-encoded copies of fields redacted on `PrivateCircuitInputs`.
-/// `asset_id`, the output amounts, and `volume_fee_bps` are public inputs and
-/// stay visible.
+/// deposit-identifying even though the input amount is exposed to the local
+/// private-batch wrapper as an intermediate leaf public input.
 impl core::fmt::Debug for ZkLeafData {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("ZkLeafData")
@@ -455,7 +454,7 @@ impl TryFrom<&CircuitInputs> for ZkMerkleProofData {
             *inputs.private.unspendable_account,
             inputs.private.transfer_count,
             inputs.public.asset_id,
-            inputs.private.input_amount,
+            inputs.public.input_amount,
             inputs.public.output_amount_1,
             inputs.public.output_amount_2,
             inputs.public.volume_fee_bps,
@@ -487,16 +486,6 @@ impl CircuitFragment for ZkMerkleProofData {
         for target in targets.leaf.collect_32_bit_targets() {
             builder.range_check(target, 32);
         }
-
-        // Fee constraint: (output_1 + output_2) * 10000 <= input * (10000 - fee_bps)
-        let ten_thousand = builder.constant(F::from_canonical_u32(10000));
-        let total_output = builder.add(targets.leaf.output_amount_1, targets.leaf.output_amount_2);
-        let lhs = builder.mul(total_output, ten_thousand);
-        let fee_complement = builder.sub(ten_thousand, targets.leaf.volume_fee_bps);
-        builder.range_check(fee_complement, 14); // fee_bps <= 10000
-        let rhs = builder.mul(targets.leaf.input_amount, fee_complement);
-        let diff = builder.sub(rhs, lhs);
-        builder.range_check(diff, 48); // ensures lhs <= rhs
 
         // Compute leaf hash using injective Poseidon (matches chain's hash_leaf)
         // The chain uses qp_poseidon_core::hash_bytes which is injective (4 bytes/felt)
@@ -705,10 +694,36 @@ mod tests {
     use super::*;
     use alloc::vec;
 
-    /// The leaf data copies `unspendable_account` (as `to_account`),
-    /// `transfer_count`, and `input_amount` out of the private circuit
-    /// inputs; all three are redacted on `PrivateCircuitInputs` because they
-    /// identify the deposit. They must stay redacted here.
+    #[test]
+    fn leaf_fragment_allows_output_above_its_input_for_batch_pooling() {
+        use plonky2::{
+            hash::poseidon2::Poseidon2Hash,
+            iop::witness::PartialWitness,
+            plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig, config::Hasher},
+        };
+        use zk_circuits_common::{
+            circuit::{C, D},
+            serialization::digest_to_bytes,
+        };
+
+        let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+        let targets = ZkMerkleProofTargets::new(&mut builder);
+        let one = builder.one();
+        builder.connect(targets.is_not_dummy.target, one);
+        ZkMerkleProofData::circuit(&targets, &mut builder);
+        let circuit = builder.build::<C>();
+
+        let leaf = ZkLeafData::new([9u8; 32], 0, 0, 1, 20, 0, 4);
+        let root = Poseidon2Hash::hash_no_pad(&leaf.collect_for_hash()).elements;
+        let data = ZkMerkleProofData::new(digest_to_bytes(&root), vec![], vec![], leaf, true);
+        let mut pw = PartialWitness::new();
+        data.fill_targets(&mut pw, targets).unwrap();
+        let proof = circuit.prove(pw).unwrap();
+        circuit.verify(proof).unwrap();
+    }
+
+    /// The leaf data contains deposit-identifying fields. Keep them out of
+    /// debug output even though `input_amount` is an intermediate leaf PI.
     #[test]
     fn zk_leaf_data_debug_redacts_private_fields() {
         let leaf = ZkLeafData::new(
@@ -796,7 +811,6 @@ mod tests {
                 state_root: [3u8; 32].try_into().unwrap(),
                 extrinsics_root: [4u8; 32].try_into().unwrap(),
                 digest: [0xEE; 110],
-                input_amount: 1000,
                 zk_tree_root: [0u8; 32],
                 zk_merkle_siblings: vec![],
                 zk_merkle_positions: vec![],
@@ -811,6 +825,7 @@ mod tests {
                 exit_account_1: [2u8; 32].try_into().unwrap(),
                 exit_account_2: [3u8; 32].try_into().unwrap(),
                 block_number: 1,
+                input_amount: 1000,
             },
         };
 

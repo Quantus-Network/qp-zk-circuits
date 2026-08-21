@@ -18,6 +18,7 @@ wormhole transactions.
 - `exit_account_2`: The public address where `output_amount_2` is intended to be sent (set to all zeros if unused).
 - `block_hash`: A commitment (Poseidon2 hash) to the block header fields used inside the circuit.
 - `block_number`: The block height corresponding to `block_hash`. This is public so the verifier/aggregator can check that it matches the associated header and enforce the single-block storage proof constraint in aggregation.
+- `input_amount`: The amount authenticated by the spent ZK-tree leaf, quantized with 0.01 units of precision. This final leaf PI is consumed by the local private-batch wrapper and is not forwarded by private- or public-batch proofs.
 
 **Private Inputs:**
 
@@ -25,7 +26,6 @@ wormhole transactions.
 - `storage_proof`: A storage proof of a Merkle Patricia trie proving inclusion of the transaction event.
 - `transfer_count`: A per-recipient-account unique ID for a transfer. Gets incremented with each transfer, ensuring that each transaction is unique.
 - `funding_account`: The account ID associated with the source of the funds (the sender). Used to derive the nullifier and confirm ownership.
-- `input_amount`: The input amount read from storage (quantized with 0.01 units of precision). The circuit enforces `(output_amount_1 + output_amount_2) * 10000 <= input_amount * (10000 - volume_fee_bps)`.
 - `state_root`: The state root of the Substrate block (the Merkle-Patricia trie root for the state).
 - `extrinsics_root`: The extrinsics root of the block header.
 - `digest`: The raw header digest field (110 bytes), encoded injectively into a fixed number of field elements for use inside the circuit.
@@ -54,16 +54,22 @@ wormhole transactions.
    - Computes `H(H(salt || secret))`.
    - Compares the derived value with the provided `unspendable_account`.
 
-4. **Storage Proof Verification + Fee Constraint**
+4. **Storage Proof Verification**
 
    - The circuit verifies the `storage_proof` to confirm that a specific leaf (the transfer event) is part of the Merkle Patricia trie with root `state_root`.
    - To verify that the storage proof is valid, the circuit traverses the tree in root-to-leaf order, and for each node:
      1. Compares the expected hash against the hash of the current node (verifies inclusion).
      2. Updates the expected hash to be equal to the hash of the current node.
      3. If this node is the leaf node: additionally verifies that it includes the hash of the leaf inputs (transfer event).
-   - The circuit enforces the fee constraint using `input_amount`, `output_amount_1`, `output_amount_2`, and `volume_fee_bps`.
+   - The authenticated `input_amount` is appended to the intermediate leaf public inputs. The leaf does not impose a per-input output cap.
 
-5. **Block Header Commitment Verification**
+5. **Private-Batch Fee Constraint**
+
+   - The first aggregation layer masks dummy inputs and outputs, sums every real leaf, and enforces one settlement-segment inequality:
+     `(sum_outputs * 10000) <= (sum_inputs * (10000 - volume_fee_bps))`.
+   - This permits value pooling across leaves while preserving the two output slots per leaf. The input total remains internal to the wrapper.
+
+6. **Block Header Commitment Verification**
 
    The circuit does **not** parse a raw header byte blob; instead, it works over structured header fields and enforces that they are all tied together via a Poseidon2 commitment:
 
@@ -159,6 +165,10 @@ nullifier in the proof's public inputs:
 1. reject (or skip, see below) any nullifier already present in the settled set, and
 2. atomically record the newly settled nullifiers together with executing the corresponding
    exits.
+
+Fee settlement uses the same private-segment boundary as the proof: a public batch must sum
+the independently rounded fee of each accepted private segment, not round once over the
+combined public-batch output.
 
 A duplicated nullifier — whether duplicated within one batch, across two batches in the
 same block, or across blocks — settles **at most once**. Everything upstream (leaf proof,

@@ -44,13 +44,21 @@ pub mod circuit_logic {
         pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
             // zk_merkle_proof must be created first so asset_id is registered as public input at index 0
             let zk_merkle_proof = ZkMerkleProofTargets::new(builder);
+            let nullifier = NullifierTargets::new(builder);
+            let unspendable_account = UnspendableAccountTargets::new(builder);
+            let exit_accounts = DualExitAccountTargets::new(builder);
+            let block_header = BlockHeaderTargets::new(builder);
+
+            // Keep the established 21-felt layout stable and append the authenticated
+            // input amount for consumption by the private-batch wrapper.
+            builder.register_public_input(zk_merkle_proof.leaf.input_amount);
 
             Self {
-                nullifier: NullifierTargets::new(builder),
-                unspendable_account: UnspendableAccountTargets::new(builder),
+                nullifier,
+                unspendable_account,
                 zk_merkle_proof,
-                exit_accounts: DualExitAccountTargets::new(builder),
-                block_header: BlockHeaderTargets::new(builder),
+                exit_accounts,
+                block_header,
             }
         }
 
@@ -75,6 +83,8 @@ pub mod circuit_logic {
 
             let block_header = BlockHeaderTargets::new(builder);
             profiler.checkpoint("BlockHeaderTargets::new", builder.num_gates());
+
+            builder.register_public_input(zk_merkle_proof.leaf.input_amount);
 
             Self {
                 nullifier,

@@ -12,9 +12,10 @@
 /// - exit_account_2(4) - 4 felts (8 bytes/felt) for hash-derived accounts
 /// - block_hash(4)
 /// - block_number(1)
+/// - input_amount(1) - intermediate only, not forwarded by aggregation
 ///
-/// Total = 21 felts
-pub const LEAF_PI_LEN: usize = 21;
+/// Total = 22 felts
+pub const LEAF_PI_LEN: usize = 22;
 
 pub const ASSET_ID_START: usize = 0; // 1 felt
 pub const OUTPUT_AMOUNT_1_START: usize = 1; // 1 felt
@@ -25,6 +26,7 @@ pub const EXIT_1_START: usize = 8; // 4 felts
 pub const EXIT_2_START: usize = 12; // 4 felts
 pub const BLOCK_HASH_START: usize = 16; // 4 felts
 pub const BLOCK_NUMBER_START: usize = 20; // 1 felt
+pub const INPUT_AMOUNT_START: usize = 21; // 1 felt
 
 /// Private-batch aggregated proof output layout constants.
 ///

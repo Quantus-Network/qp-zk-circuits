@@ -155,7 +155,7 @@ fn test_inputs_with_asset(asset_id: u32) -> CircuitInputs {
         &inputs.private.unspendable_account,
         inputs.private.transfer_count,
         asset_id,
-        inputs.private.input_amount,
+        inputs.public.input_amount,
     );
     inputs
 }
@@ -226,6 +226,7 @@ fn two_real_leaves_same_block(asset_id: u32) -> (CircuitInputs, CircuitInputs) {
                 exit_account_2: BytesDigest::default(),
                 block_hash: BytesDigest::try_from([0u8; 32]).unwrap(),
                 block_number: DEFAULT_BLOCK_NUMBERS[0],
+                input_amount: DEFAULT_INPUT_AMOUNTS[i],
             },
             private: PrivateCircuitInputs {
                 secret: secrets[i].into(),
@@ -235,7 +236,6 @@ fn two_real_leaves_same_block(asset_id: u32) -> (CircuitInputs, CircuitInputs) {
                 state_root: BytesDigest::try_from(DEFAULT_STATE_ROOTS[0]).unwrap(),
                 extrinsics_root: DEFAULT_EXTRINSICS_ROOTS[0].try_into().unwrap(),
                 digest: DEFAULT_DIGESTS[0],
-                input_amount: DEFAULT_INPUT_AMOUNTS[i],
                 zk_tree_root: root,
                 zk_merkle_siblings: siblings,
                 zk_merkle_positions: positions,

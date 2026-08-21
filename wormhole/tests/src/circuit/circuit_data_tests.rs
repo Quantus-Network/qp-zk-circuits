@@ -1,6 +1,7 @@
 use anyhow::Result;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::util::serialization::DefaultGateSerializer;
+use qp_wormhole_inputs::PUBLIC_INPUTS_FELTS_LEN;
 use std::fs;
 use std::path::Path;
 use test_helpers::TestInputs;
@@ -29,7 +30,10 @@ fn full_circuit_data_loader_is_not_exposed() {
     let circuit_data = WormholeCircuit::new(config)
         .expect("valid circuit config")
         .build_circuit();
-    assert_eq!(circuit_data.common.num_public_inputs, 21);
+    assert_eq!(
+        circuit_data.common.num_public_inputs,
+        PUBLIC_INPUTS_FELTS_LEN
+    );
 }
 
 /// Audit finding: the leaf constructors accepted an arbitrary caller-supplied

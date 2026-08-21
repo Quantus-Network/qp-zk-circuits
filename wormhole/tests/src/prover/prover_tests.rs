@@ -47,7 +47,6 @@ fn proof_can_be_deserialized() {
     // Build expected values from the canonical test fixtures.
     let expected = inputs.public;
     assert_eq!(public_inputs, expected);
-    println!("{:?}", public_inputs);
 }
 
 #[test]
@@ -56,7 +55,10 @@ fn get_public_inputs() {
     let inputs = CircuitInputs::test_inputs_0();
     let proof = prover.commit(&inputs).unwrap().prove().unwrap();
     let public_inputs = proof.public_inputs;
-    println!("{:?}", public_inputs);
+    assert_eq!(
+        public_inputs.len(),
+        qp_wormhole_inputs::PUBLIC_INPUTS_FELTS_LEN
+    );
 }
 
 #[test]
@@ -367,6 +369,7 @@ fn test_random_tree_circuit_verification() {
             exit_account_2: BytesDigest::default(),
             block_hash: BytesDigest::try_from([0u8; 32]).unwrap(),
             block_number: DEFAULT_BLOCK_NUMBERS[0],
+            input_amount,
         },
         private: PrivateCircuitInputs {
             secret: secret_digest.into(),
@@ -376,7 +379,6 @@ fn test_random_tree_circuit_verification() {
             state_root: BytesDigest::try_from(DEFAULT_STATE_ROOTS[0]).unwrap(),
             extrinsics_root: DEFAULT_EXTRINSICS_ROOTS[0].try_into().unwrap(),
             digest: DEFAULT_DIGESTS[0],
-            input_amount,
             zk_tree_root: root,
             zk_merkle_siblings: siblings,
             zk_merkle_positions: positions,
@@ -473,6 +475,7 @@ fn test_depth_2_tree_circuit_verification() {
                 exit_account_2: BytesDigest::default(),
                 block_hash: BytesDigest::try_from([0u8; 32]).unwrap(),
                 block_number: DEFAULT_BLOCK_NUMBERS[0],
+                input_amount,
             },
             private: PrivateCircuitInputs {
                 secret: secret_digest.into(),
@@ -482,7 +485,6 @@ fn test_depth_2_tree_circuit_verification() {
                 state_root: BytesDigest::try_from(DEFAULT_STATE_ROOTS[0]).unwrap(),
                 extrinsics_root: DEFAULT_EXTRINSICS_ROOTS[0].try_into().unwrap(),
                 digest: DEFAULT_DIGESTS[0],
-                input_amount,
                 zk_tree_root: root,
                 zk_merkle_siblings: siblings,
                 zk_merkle_positions: positions,
@@ -590,6 +592,7 @@ fn test_depth_3_tree_circuit_verification() {
                 exit_account_2: BytesDigest::default(),
                 block_hash: BytesDigest::try_from([0u8; 32]).unwrap(),
                 block_number: DEFAULT_BLOCK_NUMBERS[0],
+                input_amount,
             },
             private: PrivateCircuitInputs {
                 secret: secret_digest.into(),
@@ -599,7 +602,6 @@ fn test_depth_3_tree_circuit_verification() {
                 state_root: BytesDigest::try_from(DEFAULT_STATE_ROOTS[0]).unwrap(),
                 extrinsics_root: DEFAULT_EXTRINSICS_ROOTS[0].try_into().unwrap(),
                 digest: DEFAULT_DIGESTS[0],
-                input_amount,
                 zk_tree_root: root,
                 zk_merkle_siblings: siblings,
                 zk_merkle_positions: positions,
