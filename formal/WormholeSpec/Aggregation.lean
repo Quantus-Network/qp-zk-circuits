@@ -5,6 +5,8 @@
   `build_public_batch_constraints`:
 
     * metadata consistency across non-dummy children (asset_id, fee, block);
+    * one fee inequality over the dummy-masked input/output totals of the whole
+      private segment;
     * the block reference being taken from the first non-dummy slot (the
       position-independent selection from the `illuzen/full-shuffle` fix), with
       an all-dummy batch settling to a zero block hash;
@@ -21,37 +23,39 @@
       attacker-chosen zero-amount exits (audit finding: incomplete dummy
       sentinel).
 
-  Value conservation is no longer asserted: `R_L0` now pins the exact in-circuit
-  grouping over the masked pairs, and conservation
-  (`outputExitTotal = inputExitTotal`, the non-dummy total) is *derived* as a
-  theorem (`RPrivateBatch_value_conservation`).
+  Exit conservation is not separately asserted: `RPrivateBatch` pins the exact
+  in-circuit grouping over the masked pairs, and
+  `outputExitTotal = maskedOutputTotal` is *derived* as
+  `RPrivateBatch_value_conservation`. Economic conservation is the primitive
+  segment-level predicate `privateBatchFeeOk`: unlike the old leaf-local rule,
+  it permits value pooling between real leaves in the same private segment.
 
   NOTE the *weaker* private-batch dummy sentinel: at layer 0 a child is treated as a
   dummy when `block_hash == 0` alone (`isDummyPrivateBatch`), versus the leaf circuit's
   `block_hash == 0 ∧ outputs == 0`. The ingress mask makes the exit region
   independent of that gap (a masked dummy contributes `(0, 0)` regardless of what
   the leaf carried), so conservation no longer needs the leaf↔private-batch
-  compatibility hypothesis; `rawOutputTotal_eq_inputExitTotal` keeps the
+  compatibility hypothesis; `rawOutputTotal_eq_maskedOutputTotal` keeps the
   compatibility statement (dummy ⟹ zero outputs) available for a full
   composition proof.
 
-  CONSERVATION OVER `Nat` VS `ZMod p` (a Phase-2 caveat)
-  ------------------------------------------------------
+  AGGREGATE FEES OVER `Nat` VS `ZMod p` (a Phase-2 caveat)
+  --------------------------------------------------------
   `RPrivateBatch_value_conservation` is an *exact* `Nat` identity, so it is economically
-  meaningful as stated. The in-circuit accumulators, however, live in the field:
-  over `ZMod goldilocks` (Phase 2) "conservation" would only be equality *mod p*,
-  and two distinct totals could be congruent. The result stays meaningful exactly
-  while the total cannot wrap — i.e. under the explicit hypothesis
-  `rawOutputTotal leaves < goldilocks`. That bound is *not* hand-waved: it is
-  discharged below (`rawOutputTotal_lt_modulus`) from the leaf circuit's 32-bit
-  output range checks plus a batch-size bound — with the masked-accumulator form
-  the circuit actually needs stated as `inputExitTotal_lt_modulus` — and it has
-  an enormous margin
-  (`n · 2³³ < p` holds for any `n < 2³¹`, versus realistic batches of a few
-  dozen). Phase 2 must (a) carry `rawOutputTotal leaves < goldilocks` as a
-  hypothesis on the field-level conservation statement, and (b) rework the
-  `omega`-based proofs here, since `omega` reasons over `Nat`/`Int` and does not
-  apply to `ZMod p` arithmetic.
+  meaningful as stated. The fee comparison is also a `Nat` inequality, while the
+  circuit computes both scaled sides and their difference in the Goldilocks
+  field. Merely proving the unscaled totals `< goldilocks` is therefore
+  insufficient: both `maskedOutputTotal * 10000` and
+  `maskedInputTotal * (10000 - fee_bps)` must not wrap.
+
+  The bounds below make that obligation explicit. They first bound raw and
+  masked totals linearly, then prove the two scaled sides are below
+  `goldilocks` for at most 64 children with 32-bit amounts. This has ample margin:
+  the larger output side is below `64 · 2 · (2³² - 1) · 10000 < p`.
+  Phase 2 must retain the circuit's batch-safe range check on `rhs - lhs` and
+  rework the `omega` proofs here, since `omega` reasons over `Nat`/`Int` and does
+  not apply to `ZMod p` arithmetic. The present bridge remains a relation-level
+  seam; it does not claim gadget soundness.
 -/
 import WormholeSpec.Basic
 import WormholeSpec.Hash
@@ -82,20 +86,45 @@ abbrev isDummyPrivateBatch (p : LeafPublic) : Prop := p.blockHash = Digest.zero
 /-- Boolean "is a real (non-dummy) child", for use with `List.find?`. -/
 def isRealB (p : LeafPublic) : Bool := ! decide (isDummyPrivateBatch p)
 
+/-- Total input amount over every child, dummies included. Used to bound the
+    dummy-masked input accumulator. -/
+def rawInputTotal : List LeafPublic → Felt
+  | [] => 0
+  | p :: rest => p.inputAmount + rawInputTotal rest
+
 /-- Total of the two output amounts over *every* child, dummies included
-    (un-masked). Used for the no-wraparound bounds and the leaf-compatibility
-    statement; the circuit's accumulator itself sums the *masked* pairs
-    (`maskedChildPairs`), whose total is `inputExitTotal`. -/
+    (unmasked). Used for no-wraparound bounds and the leaf-compatibility
+    statement. -/
 def rawOutputTotal : List LeafPublic → Felt
   | [] => 0
   | p :: rest => (p.outputAmount1 + p.outputAmount2) + rawOutputTotal rest
 
-/-- Output total restricted to non-dummy children: the value entering the
-    batch, and exactly what the masked accumulator sums. -/
-def inputExitTotal : List LeafPublic → Felt
+/-- Input total restricted to real children, exactly matching the private-batch
+    circuit's dummy-masked input accumulator. -/
+def maskedInputTotal : List LeafPublic → Felt
   | [] => 0
   | p :: rest =>
-      (if isDummyPrivateBatch p then 0 else p.outputAmount1 + p.outputAmount2) + inputExitTotal rest
+      (if isDummyPrivateBatch p then 0 else p.inputAmount) + maskedInputTotal rest
+
+/-- Output total restricted to real children, exactly matching the
+    private-batch circuit's dummy-masked output accumulator and the amount fed
+    to exit grouping. -/
+def maskedOutputTotal : List LeafPublic → Felt
+  | [] => 0
+  | p :: rest =>
+      (if isDummyPrivateBatch p then 0 else p.outputAmount1 + p.outputAmount2) +
+        maskedOutputTotal rest
+
+/-- Basis-point denominator used by the private-batch fee constraint. -/
+def feeDenominator : Felt := 10000
+
+/-- One fee/value-conservation check for an entire private segment. Dummy child
+    inputs and outputs do not contribute. The bound on `volumeFeeBps` makes the
+    `Nat` subtraction agree with the intended nonnegative field complement. -/
+def privateBatchFeeOk (leaves : List LeafPublic) (out : PrivateBatchOutput) : Prop :=
+  out.volumeFeeBps ≤ feeDenominator ∧
+  maskedOutputTotal leaves * feeDenominator ≤
+    maskedInputTotal leaves * (feeDenominator - out.volumeFeeBps)
 
 /-- The flattened `(account, amount)` outputs of all children, two per child,
     with each dummy child's pairs masked to the canonical `(zero, 0)` — exactly
@@ -222,15 +251,16 @@ def RPrivateBatch (ro : RandomOracle) (leaves : List LeafPublic) (us : List (Lis
   (∃ raw, nullifiersReplaced ro leaves us raw ∧ out.nullifiers.Perm raw) ∧
   nullifiersSorted out.nullifiers ∧
   out.nullifiers.length = leaves.length ∧
+  privateBatchFeeOk leaves out ∧
   -- Primitive exit construction: the settled slots are *exactly* the in-circuit
   -- group/dedup of every child's two (account, amount) outputs, with dummy
   -- children masked to `(zero, 0)` at ingress (see `maskedChildPairs`). Value
-  -- conservation is a derived theorem (`RPrivateBatch_value_conservation`), not an
-  -- assumed conjunct.
+  -- exit conservation is a derived theorem (`RPrivateBatch_value_conservation`);
+  -- economic conservation is the segment-level `privateBatchFeeOk` conjunct.
   out.exitSlots = groupExits (maskedChildPairs leaves)
   -- TODO(Phase 3): `numExitSlots = 2 * leaves.length` slot accounting.
 
--- ── Value conservation, derived from the grouping primitive ─────────────────
+-- ── Exit-grouping conservation, derived from the primitive ──────────────────
 
 /-- Re-protecting a key already in `seen` changes nothing. -/
 theorem amtNotIn_cons_mem {k : Digest} {seen : List Digest} (hk : k ∈ seen) :
@@ -313,7 +343,7 @@ theorem groupAux_conserves :
 
 /-- `amtNotIn []` over the masked pairs is the non-dummy output total. -/
 theorem amtNotIn_nil_maskedChildPairs (leaves : List LeafPublic) :
-    amtNotIn [] (maskedChildPairs leaves) = inputExitTotal leaves := by
+    amtNotIn [] (maskedChildPairs leaves) = maskedOutputTotal leaves := by
   induction leaves with
   | nil => rfl
   | cons p rest ih =>
@@ -321,58 +351,134 @@ theorem amtNotIn_nil_maskedChildPairs (leaves : List LeafPublic) :
       · have e : maskedChildPairs (p :: rest)
             = (Digest.zero, 0) :: (Digest.zero, 0) :: maskedChildPairs rest := by
           simp only [maskedChildPairs, if_pos hd]
-        have hR : inputExitTotal (p :: rest) = 0 + inputExitTotal rest := by
-          simp only [inputExitTotal, if_pos hd]
+        have hR : maskedOutputTotal (p :: rest) = 0 + maskedOutputTotal rest := by
+          simp only [maskedOutputTotal, if_pos hd]
         rw [e, hR]
         show (0 : Felt) + ((0 : Felt) + amtNotIn [] (maskedChildPairs rest))
-            = 0 + inputExitTotal rest
+            = 0 + maskedOutputTotal rest
         rw [ih]; simp only [Felt] at *; omega
       · have e : maskedChildPairs (p :: rest)
             = (p.exitAccount1, p.outputAmount1) ::
               (p.exitAccount2, p.outputAmount2) :: maskedChildPairs rest := by
           simp only [maskedChildPairs, if_neg hd]
-        have hR : inputExitTotal (p :: rest)
-            = (p.outputAmount1 + p.outputAmount2) + inputExitTotal rest := by
-          simp only [inputExitTotal, if_neg hd]
+        have hR : maskedOutputTotal (p :: rest)
+            = (p.outputAmount1 + p.outputAmount2) + maskedOutputTotal rest := by
+          simp only [maskedOutputTotal, if_neg hd]
         rw [e, hR]
         show p.outputAmount1 + (p.outputAmount2 + amtNotIn [] (maskedChildPairs rest))
-            = (p.outputAmount1 + p.outputAmount2) + inputExitTotal rest
+            = (p.outputAmount1 + p.outputAmount2) + maskedOutputTotal rest
         rw [ih]; simp only [Felt] at *; omega
 
 /-- Conservation for the top-level grouping of the masked children's outputs. -/
 theorem groupExits_maskedChildPairs (leaves : List LeafPublic) :
-    slotsTotal (groupExits (maskedChildPairs leaves)) = inputExitTotal leaves := by
+    slotsTotal (groupExits (maskedChildPairs leaves)) = maskedOutputTotal leaves := by
   unfold groupExits
   rw [groupAux_conserves [] (maskedChildPairs leaves), amtNotIn_nil_maskedChildPairs]
 
-/-- **Value conservation** (whitepaper §6.1): every private-batch proof settles exactly
-    the value its *non-dummy* children carry. Derived from the grouping primitive in
-    `RPrivateBatch`. The grouping runs over the dummy-masked pairs, so this needs no
-    leaf↔private-batch compatibility hypothesis (dummy ⟹ zero outputs) — the ingress
-    mask discharges it structurally. -/
+/-- **Exit-grouping conservation:** every private-batch output settles exactly
+    the declared output total of its real children. This is distinct from
+    economic input/output conservation, which follows from `privateBatchFeeOk`.
+    The grouping runs over dummy-masked pairs, so no leaf↔private-batch
+    compatibility hypothesis (dummy ⟹ zero outputs) is needed. -/
 theorem RPrivateBatch_value_conservation {ro : RandomOracle} {leaves : List LeafPublic}
     {us : List (List Felt)} {out : PrivateBatchOutput} (h : RPrivateBatch ro leaves us out) :
-    outputExitTotal out = inputExitTotal leaves := by
+    outputExitTotal out = maskedOutputTotal leaves := by
   unfold outputExitTotal
-  rw [h.2.2.2.2.2]
+  rw [h.2.2.2.2.2.2]
   exact groupExits_maskedChildPairs leaves
 
-/-- The masked (non-dummy) total is bounded by the raw total, so the
-    no-wraparound bounds below cover the circuit's masked accumulator too. -/
-theorem inputExitTotal_le_rawOutputTotal (leaves : List LeafPublic) :
-    inputExitTotal leaves ≤ rawOutputTotal leaves := by
+/-- The masked input total is bounded by the raw input total. -/
+theorem maskedInputTotal_le_rawInputTotal (leaves : List LeafPublic) :
+    maskedInputTotal leaves ≤ rawInputTotal leaves := by
   induction leaves with
   | nil => exact Nat.le_refl 0
   | cons p rest ih =>
       by_cases hd : isDummyPrivateBatch p
-      · simp only [inputExitTotal, rawOutputTotal, if_pos hd]
+      · simp only [maskedInputTotal, rawInputTotal, if_pos hd]
         simp only [Felt] at *; omega
-      · simp only [inputExitTotal, rawOutputTotal, if_neg hd]
+      · simp only [maskedInputTotal, rawInputTotal, if_neg hd]
         simp only [Felt] at *; omega
 
--- ── No-wraparound bound (makes the Phase-2 field hypothesis explicit) ────────
+/-- The masked output total is bounded by the raw output total. -/
+theorem maskedOutputTotal_le_rawOutputTotal (leaves : List LeafPublic) :
+    maskedOutputTotal leaves ≤ rawOutputTotal leaves := by
+  induction leaves with
+  | nil => exact Nat.le_refl 0
+  | cons p rest ih =>
+      by_cases hd : isDummyPrivateBatch p
+      · simp only [maskedOutputTotal, rawOutputTotal, if_pos hd]
+        simp only [Felt] at *; omega
+      · simp only [maskedOutputTotal, rawOutputTotal, if_neg hd]
+        simp only [Felt] at *; omega
 
-/-- A per-output bound `M` lifts to a linear bound on the batch total: with each
+-- ── Aggregate-fee consequences and no-wraparound bounds ─────────────────────
+
+/-- The primitive relation exposes the private-segment fee inequality. -/
+theorem RPrivateBatch_fee_conservation {ro : RandomOracle} {leaves : List LeafPublic}
+    {us : List (List Felt)} {out : PrivateBatchOutput} (h : RPrivateBatch ro leaves us out) :
+    maskedOutputTotal leaves * feeDenominator ≤
+      maskedInputTotal leaves * (feeDenominator - out.volumeFeeBps) :=
+  h.2.2.2.2.2.1.2
+
+/-- A valid private segment has a well-formed basis-point rate. -/
+theorem RPrivateBatch_fee_bps_bound {ro : RandomOracle} {leaves : List LeafPublic}
+    {us : List (List Felt)} {out : PrivateBatchOutput} (h : RPrivateBatch ro leaves us out) :
+    out.volumeFeeBps ≤ feeDenominator :=
+  h.2.2.2.2.2.1.1
+
+/-- Aggregate fee conservation implies that real outputs cannot exceed real
+    inputs, independently of how value is pooled among leaves. -/
+theorem privateBatchFeeOk_output_le_input {leaves : List LeafPublic}
+    {out : PrivateBatchOutput} (h : privateBatchFeeOk leaves out) :
+    maskedOutputTotal leaves ≤ maskedInputTotal leaves := by
+  have hcomp : feeDenominator - out.volumeFeeBps ≤ feeDenominator := Nat.sub_le _ _
+  have hrhs :
+      maskedInputTotal leaves * (feeDenominator - out.volumeFeeBps) ≤
+        maskedInputTotal leaves * feeDenominator :=
+    Nat.mul_le_mul_left _ hcomp
+  have hscaled := Nat.le_trans h.2 hrhs
+  exact Nat.le_of_mul_le_mul_right hscaled (by unfold feeDenominator; omega)
+
+/-- Relation-level corollary: total real outputs do not exceed total real
+    inputs. This is weaker than the fee inequality but useful to callers. -/
+theorem RPrivateBatch_output_le_input {ro : RandomOracle} {leaves : List LeafPublic}
+    {us : List (List Felt)} {out : PrivateBatchOutput} (h : RPrivateBatch ro leaves us out) :
+    maskedOutputTotal leaves ≤ maskedInputTotal leaves :=
+  privateBatchFeeOk_output_le_input h.2.2.2.2.2.1
+
+/-- The settled exit total itself satisfies the aggregate fee inequality. This
+    composes the primitive fee check with derived exit-grouping conservation. -/
+theorem RPrivateBatch_settlement_fee_conservation {ro : RandomOracle}
+    {leaves : List LeafPublic} {us : List (List Felt)} {out : PrivateBatchOutput}
+    (h : RPrivateBatch ro leaves us out) :
+    outputExitTotal out * feeDenominator ≤
+      maskedInputTotal leaves * (feeDenominator - out.volumeFeeBps) := by
+  rw [RPrivateBatch_value_conservation h]
+  exact RPrivateBatch_fee_conservation h
+
+/-- Consequently, the amount actually settled by a private segment cannot
+    exceed that segment's total real input. -/
+theorem RPrivateBatch_settlement_le_input {ro : RandomOracle}
+    {leaves : List LeafPublic} {us : List (List Felt)} {out : PrivateBatchOutput}
+    (h : RPrivateBatch ro leaves us out) :
+    outputExitTotal out ≤ maskedInputTotal leaves := by
+  rw [RPrivateBatch_value_conservation h]
+  exact RPrivateBatch_output_le_input h
+
+/-- A per-input bound `M` lifts to a linear bound on the raw input total. -/
+theorem rawInputTotal_le_linear {leaves : List LeafPublic} {M : Felt}
+    (h : ∀ p ∈ leaves, p.inputAmount ≤ M) :
+    rawInputTotal leaves ≤ leaves.length * M := by
+  induction leaves with
+  | nil => simp [rawInputTotal]
+  | cons p rest ih =>
+      have hp := h p List.mem_cons_self
+      have ihrest := ih (fun q hq => h q (List.mem_cons_of_mem _ hq))
+      have hexp : (rest.length + 1) * M = rest.length * M + M := Nat.succ_mul _ _
+      simp only [rawInputTotal, List.length_cons, Felt] at *
+      omega
+
+/-- A per-output bound `M` lifts to a linear bound on the raw output total: with each
     of the two outputs `≤ M`, a batch of `n` children totals `≤ n · 2M`. -/
 theorem rawOutputTotal_le_linear {leaves : List LeafPublic} {M : Felt}
     (h : ∀ p ∈ leaves, p.outputAmount1 ≤ M ∧ p.outputAmount2 ≤ M) :
@@ -388,7 +494,14 @@ theorem rawOutputTotal_le_linear {leaves : List LeafPublic} {M : Felt}
       simp only [rawOutputTotal, List.length_cons, Felt] at *
       omega
 
-/-- The explicit *no-wraparound* bound that the field model (Phase 2) must assume.
+/-- The explicit unscaled input no-wraparound bound for the Phase-2 field model. -/
+theorem rawInputTotal_lt_modulus {leaves : List LeafPublic} {M : Felt}
+    (hM : ∀ p ∈ leaves, p.inputAmount ≤ M)
+    (hbatch : leaves.length * M < goldilocks) :
+    rawInputTotal leaves < goldilocks :=
+  Nat.lt_of_le_of_lt (rawInputTotal_le_linear hM) hbatch
+
+/-- The explicit unscaled output no-wraparound bound that the field model must assume.
     If the linear batch bound stays below the modulus, the `Nat` total does too,
     so reducing mod `goldilocks` is lossless and the `Nat` conservation identity
     transfers verbatim to `ZMod goldilocks`. Under the leaf circuit's 32-bit output
@@ -400,34 +513,106 @@ theorem rawOutputTotal_lt_modulus {leaves : List LeafPublic} {M : Felt}
     rawOutputTotal leaves < goldilocks :=
   Nat.lt_of_le_of_lt (rawOutputTotal_le_linear hM) hbatch
 
-/-- The no-wraparound bound stated directly for the *masked* (non-dummy) total —
-    what the in-circuit accumulator actually sums. This is the exact form the
-    Phase-2 field hypothesis needs for `inputExitTotal`, so callers get it
-    ready-made instead of chaining `inputExitTotal_le_rawOutputTotal` with
-    `rawOutputTotal_lt_modulus` by hand. -/
-theorem inputExitTotal_lt_modulus {leaves : List LeafPublic} {M : Felt}
+/-- Unscaled no-wraparound for the masked input accumulator. -/
+theorem maskedInputTotal_lt_modulus {leaves : List LeafPublic} {M : Felt}
+    (hM : ∀ p ∈ leaves, p.inputAmount ≤ M)
+    (hbatch : leaves.length * M < goldilocks) :
+    maskedInputTotal leaves < goldilocks :=
+  Nat.lt_of_le_of_lt (maskedInputTotal_le_rawInputTotal leaves)
+    (rawInputTotal_lt_modulus hM hbatch)
+
+/-- Unscaled no-wraparound for the masked output accumulator. -/
+theorem maskedOutputTotal_lt_modulus {leaves : List LeafPublic} {M : Felt}
     (hM : ∀ p ∈ leaves, p.outputAmount1 ≤ M ∧ p.outputAmount2 ≤ M)
     (hbatch : leaves.length * (2 * M) < goldilocks) :
-    inputExitTotal leaves < goldilocks :=
-  Nat.lt_of_le_of_lt (inputExitTotal_le_rawOutputTotal leaves)
+    maskedOutputTotal leaves < goldilocks :=
+  Nat.lt_of_le_of_lt (maskedOutputTotal_le_rawOutputTotal leaves)
     (rawOutputTotal_lt_modulus hM hbatch)
+
+/-- For the protocol maximum of 64 children and 32-bit inputs, the scaled
+    aggregate input side cannot wrap in the Goldilocks field. -/
+theorem maskedInputTotal_mul_feeDenominator_lt_modulus {leaves : List LeafPublic}
+    (hlen : leaves.length ≤ 64)
+    (hM : ∀ p ∈ leaves, inRange 32 p.inputAmount) :
+    maskedInputTotal leaves * feeDenominator < goldilocks := by
+  have hM' : ∀ p ∈ leaves, p.inputAmount ≤ 2 ^ 32 := by
+    intro p hp
+    exact Nat.le_of_lt (hM p hp)
+  have hraw := rawInputTotal_le_linear hM'
+  have hmasked := maskedInputTotal_le_rawInputTotal leaves
+  have htotal : maskedInputTotal leaves ≤ leaves.length * (2 ^ 32) :=
+    Nat.le_trans hmasked hraw
+  have hscaled :
+      maskedInputTotal leaves * feeDenominator ≤
+        (leaves.length * (2 ^ 32)) * feeDenominator :=
+    Nat.mul_le_mul_right _ htotal
+  have hcapacity :
+      (leaves.length * (2 ^ 32)) * feeDenominator ≤
+        (64 * (2 ^ 32)) * feeDenominator := by
+    exact Nat.mul_le_mul_right _ (Nat.mul_le_mul_right _ hlen)
+  have hnumeric : (64 * (2 ^ 32)) * feeDenominator < goldilocks := by
+    native_decide
+  exact Nat.lt_of_le_of_lt (Nat.le_trans hscaled hcapacity) hnumeric
+
+/-- For the protocol maximum of 64 children and 32-bit outputs, the scaled
+    aggregate output side cannot wrap in the Goldilocks field. -/
+theorem maskedOutputTotal_mul_feeDenominator_lt_modulus {leaves : List LeafPublic}
+    (hlen : leaves.length ≤ 64)
+    (hM : ∀ p ∈ leaves,
+      inRange 32 p.outputAmount1 ∧ inRange 32 p.outputAmount2) :
+    maskedOutputTotal leaves * feeDenominator < goldilocks := by
+  have hM' : ∀ p ∈ leaves,
+      p.outputAmount1 ≤ 2 ^ 32 ∧ p.outputAmount2 ≤ 2 ^ 32 := by
+    intro p hp
+    obtain ⟨h1, h2⟩ := hM p hp
+    exact ⟨Nat.le_of_lt h1, Nat.le_of_lt h2⟩
+  have hraw := rawOutputTotal_le_linear hM'
+  have hmasked := maskedOutputTotal_le_rawOutputTotal leaves
+  have htotal : maskedOutputTotal leaves ≤ leaves.length * (2 * (2 ^ 32)) :=
+    Nat.le_trans hmasked hraw
+  have hscaled :
+      maskedOutputTotal leaves * feeDenominator ≤
+        (leaves.length * (2 * (2 ^ 32))) * feeDenominator :=
+    Nat.mul_le_mul_right _ htotal
+  have hcapacity :
+      (leaves.length * (2 * (2 ^ 32))) * feeDenominator ≤
+        (64 * (2 * (2 ^ 32))) * feeDenominator := by
+    exact Nat.mul_le_mul_right _ (Nat.mul_le_mul_right _ hlen)
+  have hnumeric : (64 * (2 * (2 ^ 32))) * feeDenominator < goldilocks := by
+    native_decide
+  exact Nat.lt_of_le_of_lt (Nat.le_trans hscaled hcapacity) hnumeric
+
+/-- The actual right-hand side uses a fee complement no larger than 10000, so
+    the scaled-input bound also covers it. -/
+theorem privateBatchFeeRhs_lt_modulus {leaves : List LeafPublic}
+    {out : PrivateBatchOutput}
+    (hlen : leaves.length ≤ 64)
+    (hM : ∀ p ∈ leaves, inRange 32 p.inputAmount) :
+    maskedInputTotal leaves * (feeDenominator - out.volumeFeeBps) < goldilocks := by
+  have hcomp : feeDenominator - out.volumeFeeBps ≤ feeDenominator := Nat.sub_le _ _
+  have hrhs :
+      maskedInputTotal leaves * (feeDenominator - out.volumeFeeBps) ≤
+        maskedInputTotal leaves * feeDenominator :=
+    Nat.mul_le_mul_left _ hcomp
+  exact Nat.lt_of_le_of_lt hrhs
+    (maskedInputTotal_mul_feeDenominator_lt_modulus hlen hM)
 
 /-- Under the leaf↔private-batch compatibility guarantee (a private-batch dummy carries zero
     outputs), the raw total coincides with the non-dummy total. No longer needed for
     conservation (the in-circuit ingress mask discharges it structurally); kept as the
     compatibility obligation a full leaf↔private-batch composition proof discharges. -/
-theorem rawOutputTotal_eq_inputExitTotal {leaves : List LeafPublic}
+theorem rawOutputTotal_eq_maskedOutputTotal {leaves : List LeafPublic}
     (h : ∀ p ∈ leaves, isDummyPrivateBatch p → p.outputAmount1 = 0 ∧ p.outputAmount2 = 0) :
-    rawOutputTotal leaves = inputExitTotal leaves := by
+    rawOutputTotal leaves = maskedOutputTotal leaves := by
   induction leaves with
   | nil => rfl
   | cons p rest ih =>
       have ihrest := ih (fun q hq => h q (List.mem_cons_of_mem _ hq))
       by_cases hd : isDummyPrivateBatch p
       · obtain ⟨h1, h2⟩ := h p List.mem_cons_self hd
-        simp only [rawOutputTotal, inputExitTotal, if_pos hd]
+        simp only [rawOutputTotal, maskedOutputTotal, if_pos hd]
         rw [ihrest]; simp only [Felt] at *; omega
-      · simp only [rawOutputTotal, inputExitTotal, if_neg hd]
+      · simp only [rawOutputTotal, maskedOutputTotal, if_neg hd]
         rw [ihrest]
 
 /-- Public output of a public-batch aggregation proof (see `public_batch` constants). -/
