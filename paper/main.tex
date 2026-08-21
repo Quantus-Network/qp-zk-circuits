@@ -154,13 +154,13 @@ The user chooses up to two exit outputs, computes a nullifier
 \[
 \Null(s,c) = H(H(\mathsf{salt_{null}} \parallel s \parallel c)),
 \]
-and produces a leaf proof. The proof reveals the nullifier, the exits, the output amounts, the asset identifier, the fee basis points, the block hash, and the block number, while keeping the secret and ZK tree inclusion proof private. Leaf proofs are not zero-knowledge. They are only seen by the user who generated them and then included in the first aggregation layer as private inputs.
+and produces a leaf proof. Its intermediate public interface contains the nullifier, the exits, the output amounts, the asset identifier, the fee basis points, the block reference, and the authenticated input amount. This interface is consumed only by the user's local first-layer wrapper; leaf proofs are not submitted to the chain. The wrapper's zero-knowledge proof hides the input amounts, secrets, and ZK tree inclusion proofs.
 
 \paragraph{4. First-Layer Aggregation:}
-The user batches leaf proofs that share the same \texttt{block\_hash}, pads with dummy leaves if needed, shuffles the order, and produces a zero-knowledge wrapper proof that forwards grouped exits and nullifiers. A user may combine multiple deposits from distinct wormhole addresses (each derived from a different secret) into a single aggregated withdrawal. This step should be performed locally to preserve privacy.
+The user batches leaf proofs that share the same \texttt{block\_hash}, asset, and fee rate, pads with dummy leaves if needed, shuffles the order, and produces a zero-knowledge wrapper proof that forwards grouped exits and canonically sorted nullifiers. The wrapper enforces the fee inequality once over the sums of all real inputs and outputs in the batch. Each leaf retains one input and two output slots, but an individual leaf's outputs need not fit within that leaf's input; value may be pooled across leaves as long as the private batch is solvent in aggregate. A user may therefore combine multiple deposits from distinct wormhole addresses into one private settlement segment without exposing the deposit-to-output amount assignment. This step should be performed locally to preserve privacy.
 
 \paragraph{5. Settlement:}
-The blockchain verifies the aggregate proof, checks that the public \texttt{block\_hash} matches the referenced block number, verifies that the fee parameter matches the configured rate, rejects reused nullifiers, and settles the exits.
+The blockchain verifies the aggregate proof, checks that the public \texttt{block\_hash} matches the referenced block number, verifies that the fee parameter matches the configured rate, rejects reused nullifiers, and settles the exits. A public batch preserves the boundaries of its constituent private segments. For each accepted segment with total exit \(S_q\), settlement charges \(\lceil S_q f/(10000-f)\rceil\) quantized units and sums those per-segment ceilings; applying one ceiling to the combined public-batch output would not match the rounding boundaries proved by the private segments.
 
 \section{Formal Specification and Interfaces}
 \label{sec:formal}
@@ -176,6 +176,7 @@ The leaf proof exposes the following public fields:
     \item \texttt{exit\_account\_1}, \texttt{exit\_account\_2}: Destination accounts.
     \item \texttt{block\_hash}: Commitment to block header fields.
     \item \texttt{block\_number}: Height of the referenced block.
+    \item \texttt{input\_amount}: Deposited amount before fee deduction, appended to the intermediate leaf interface and hidden by first-layer aggregation.
 \end{itemize}
 
 \subsection{Leaf private witness}
@@ -186,27 +187,20 @@ The private witness includes:
     \item \texttt{counter}: Per-deposit counter (\texttt{transfer\_count}) used in nullifier derivation.
     \item \texttt{wormhole\_account}: Derived wormhole address \(\WA(s)\).
     \item \texttt{zk\_tree\_proof}: Merkle inclusion proof for the deposit transfer event in the block's ZK tree.
-    \item \texttt{input\_amount}: Deposited amount before fee deduction.
     \item Header fields (\texttt{parent\_hash}, \texttt{state\_root}, \texttt{extrinsics\_root}, \texttt{zk\_tree\_root}, \texttt{digest}) used to recompute and bind the public \texttt{block\_hash}.
 \end{itemize}
 
 \subsection{Leaf relation}
 
-Let \(x = (a, v_1, v_2, f, n, \alpha_1, \alpha_2, h_B, b)\) denote the public input tuple and let \(w\) denote the witness described above. The leaf relation \(\mathcal{R}_{\mathrm{leaf}}\) holds when there exists a witness \(w\) such that:
+Let \(x = (a, v_1, v_2, f, n, \alpha_1, \alpha_2, h_B, b, v_{\mathrm{in}})\) denote the intermediate public input tuple, with \(v_{\mathrm{in}}\) appended after the pre-existing fields, and let \(w\) denote the witness described above. The leaf relation \(\mathcal{R}_{\mathrm{leaf}}\) holds when there exists a witness \(w\) such that:
 \begin{enumerate}[label=(C\arabic*),leftmargin=1.9em]
     \item \textbf{Nullifier Correctness:} \(n = \Null(s,c)\).
     \item \textbf{Wormhole-Address Correctness:} \(\alpha_{\mathrm{wh}} = \WA(s)\).
     \item \textbf{Authenticated Inclusion:} The ZK tree inclusion proof verifies that a transfer event to \(\WA(s)\) with counter \(c\) and amount \(v_{\mathrm{in}}\) exists under the tree root committed in the block header.
     \item \textbf{Block Binding:} The inclusion proof is bound to the public block hash \(h_B\) and block number \(b\) via the header's \texttt{zk\_tree\_root} field and the circuit's block-hash commitment.
-    \item \textbf{Fee Constraint:} The disclosed exits satisfy
-    \[
-    (v_1 + v_2) \cdot 10000 \leq v_{\mathrm{in}} \cdot (10000 - f).
-    \]
 \end{enumerate}
 
-The inequality in (C5) allows users to withdraw less than their full balance. This provides a privacy benefit: by forfeiting some value, a user can choose output amounts that blend with more deposits, enlarging their anonymity set. The difference between the deposit and the sum of outputs (beyond fees) is effectively burned.
-
-In the public input tuple and (C5), \(f\) denotes the fee in basis points. In the security and privacy analysis we overload \(f\) to mean the fractional rate \(f/10^4\), so that (C5) reads \(v_1 + v_2 \leq v_{\mathrm{in}}(1-f)\) and thresholds take the form \(S/(1-f)\).
+The leaf circuit range-checks and authenticates \(v_{\mathrm{in}},v_1,v_2\), but deliberately imposes no per-leaf fee or conservation inequality. The two output slots remain fixed; conservation is enforced over their sums in the locally generated private-batch proof. In formulas that use basis points, \(f\) denotes the integer fee parameter. In the privacy analysis we overload \(f\) to denote the fractional rate \(f/10^4\), so volume thresholds take the form \(S/(1-f)\).
 
 \subsection{On-chain verification}
 
@@ -215,6 +209,7 @@ The proof system does not, by itself, settle a withdrawal. The blockchain must a
     \item verify the referenced block exists in chain history
     \item check the fee parameter matches the configured rate
     \item reject previously-seen nullifiers
+    \item compute and sum the volume-fee ceiling separately for each accepted private segment
     \item credit exit accounts without increasing total supply
 \end{itemize}
 
@@ -230,13 +225,26 @@ The first aggregation layer is privacy-sensitive and should be executed locally.
     \item The leaf order is shuffled before wrapping.
     \item Exits to identical accounts are grouped into a single summed output.
     \item Real nullifiers are forwarded; dummy nullifiers are replaced by \(H(H(u))\) for prover-supplied random preimages \(u\), preventing a malicious prover from choosing a dummy tag that collides with a real one.
+    \item The resulting nullifiers are sorted in canonical digest order, independently of the exit-slot layout.
 \end{itemize}
+
+We call one first-layer output a \emph{private settlement segment}. For its set \(R\) of real leaves, define
+\[
+I_q = \sum_{i\in R} v_{\mathrm{in},i}
+\qquad\text{and}\qquad
+S_q = \sum_{i\in R}(v_{i,1}+v_{i,2}).
+\]
+In addition to recursive verification, metadata consistency, exit grouping, and nullifier handling, the private-batch relation enforces
+\[
+S_q\cdot 10000 \leq I_q\cdot(10000-f).
+\]
+Dummy inputs and outputs are masked to zero before summation. Neither \(I_q\) nor any \(v_{\mathrm{in},i}\) is forwarded to the aggregate proof. The relation preserves the one-input--two-output leaf shape while allowing cross-leaf value pooling: a leaf may carry outputs exceeding its own input if other real inputs in the same segment cover the difference.
 
 A delegated first-layer service would observe raw child proofs before padding and shuffling, collapsing much of the anonymity set quantified in \cref{sec:layer0privacy}.
 
 \subsection{Higher-layer aggregation}
 
-Higher layers aggregate already-wrapped proofs. Since they operate only on public outputs, they can be safely delegated, and zero-knowledge is not required in principle at these layers.
+Higher layers aggregate already-wrapped proofs. Since they operate only on public outputs, they can be safely delegated, and zero-knowledge is not required in principle at these layers. They verify already fee-valid private segments and preserve segment boundaries; they do not introduce a second fee inequality or merge the segments' integer-rounding boundaries.
 
 \section{Security and Privacy Analysis}
 \label{sec:security}
@@ -249,8 +257,8 @@ We formalize security via game-based definitions for the properties a wormhole s
 The \emph{deposit binding game} \(\mathsf{Game}_{\mathrm{bind}}^{\mathcal{B}}\) proceeds as follows:
 \begin{enumerate}
     \item \(\mathcal{B}\) is given access to the blockchain state and may create arbitrary deposits.
-    \item \(\mathcal{B}\) outputs a proof \(\pi\) and public inputs \(x = (a, v_1, v_2, f, n, \alpha_1, \alpha_2, h_B, b)\).
-    \item \(\mathcal{B}\) wins if \(\mathsf{Verify}(\pi, x) = 1\) and there is \emph{no} witness \(w = (s, c, v_{\mathrm{in}}, \ldots)\) satisfying \(\mathcal{R}_{\mathrm{leaf}}(x, w)\) whose authenticated deposit---the ZK tree leaf recording a transfer to \(\WA(s)\) with counter \(c\), asset \(a\), and input amount \(v_{\mathrm{in}}\)---is actually recorded in the ZK tree at block \((h_B, b)\).
+    \item \(\mathcal{B}\) outputs a leaf proof \(\pi\) and its intermediate public input tuple \(x\) as defined in \cref{sec:formal}.
+    \item \(\mathcal{B}\) wins if \(\mathsf{Verify}(\pi, x) = 1\) and there is \emph{no} witness \(w = (s, c, \ldots)\) satisfying \(\mathcal{R}_{\mathrm{leaf}}(x, w)\) whose authenticated deposit---the ZK tree leaf recording a transfer to \(\WA(s)\) with counter \(c\), asset \(a\), and input amount \(v_{\mathrm{in}}\)---is actually recorded in the ZK tree at block \((h_B, b)\).
 \end{enumerate}
 We say the system satisfies \emph{deposit binding} if \(\Pr[\mathsf{Game}_{\mathrm{bind}}^{\mathcal{B}} = 1] \leq \epsilon_{\mathrm{ks}} + \epsilon_{\mathrm{coll}}\) for all PPT \(\mathcal{B}\), where \(\epsilon_{\mathrm{coll}}\) is the collision probability of \(H\).
 \end{definition}
@@ -260,7 +268,7 @@ The wormhole protocol satisfies deposit binding under knowledge soundness of \(\
 \end{theorem}
 
 \begin{proof}
-Suppose \(\mathcal{B}\) wins. By knowledge soundness, the extractor outputs a witness \(w\) satisfying \(\mathcal{R}_{\mathrm{leaf}}(x, w)\)---and hence conditions (C1)--(C5)---except with probability \(\epsilon_{\mathrm{ks}}\). Because \(\mathcal{B}\) wins, no satisfying witness has its deposit recorded in the tree; in particular, the extracted \(w\)'s deposit tuple \((\WA(s), c, a, v_{\mathrm{in}})\) is absent from the ZK tree at block \((h_B, b)\). Yet condition (C3) requires \(w\) to include a ZK tree inclusion path for exactly this tuple that verifies against the root committed in \((h_B, b)\) per (C4). A verifying path for an absent leaf requires a collision in the tree's Poseidon hash (probability \(\epsilon_{\mathrm{coll}}\)). The blockchain's validation that \((h_B, b)\) refers to a real block ensures the committed root is the correct one for that height.
+Suppose \(\mathcal{B}\) wins. By knowledge soundness, the extractor outputs a witness \(w\) satisfying \(\mathcal{R}_{\mathrm{leaf}}(x, w)\)---and hence conditions (C1)--(C4)---except with probability \(\epsilon_{\mathrm{ks}}\). Because \(\mathcal{B}\) wins, no satisfying witness has its deposit recorded in the tree; in particular, the extracted witness's deposit tuple \((\WA(s), c, a, v_{\mathrm{in}})\) is absent from the ZK tree at block \((h_B, b)\). Yet condition (C3) requires \(w\) to include a ZK tree inclusion path for exactly this tuple that verifies against the root committed in \((h_B, b)\) per (C4). A verifying path for an absent leaf requires a collision in the tree's Poseidon hash (probability \(\epsilon_{\mathrm{coll}}\)). The blockchain's validation that \((h_B, b)\) refers to a real block ensures the committed root is the correct one for that height.
 \end{proof}
 
 \subsection{One-time withdrawal}
@@ -317,8 +325,8 @@ Both are preimage attacks on the outer hash. For post-quantum schemes where \(|p
 The \emph{inflation game} \(\mathsf{Game}_{\mathrm{infl}}^{\mathcal{B}}\) proceeds as follows:
 \begin{enumerate}
     \item \(\mathcal{B}\) creates deposits totaling value \(V\).
-    \item \(\mathcal{B}\) submits a sequence of valid proofs resulting in withdrawals totaling value \(W\).
-    \item \(\mathcal{B}\) wins if \(W > V \cdot (1 - f)\), where \(f\) is the fee rate.
+    \item \(\mathcal{B}\) submits a sequence of valid private segments resulting in withdrawals totaling value \(W\).
+    \item \(\mathcal{B}\) wins if \(W\cdot 10000 > V\cdot(10000-f)\), where \(f\) is the common fee rate in basis points.
 \end{enumerate}
 \end{definition}
 
@@ -329,18 +337,31 @@ The wormhole protocol satisfies value conservation: no adversary can win \(\math
 \begin{proof}
 Value conservation follows from three properties:
 \begin{itemize}
-    \item Each leaf proof enforces (C5): outputs satisfy \((v_1 + v_2) \cdot 10000 \leq v_{\mathrm{in}} \cdot (10000 - f)\).
-    \item Aggregation preserves output sums; the wrapper only groups outputs to identical destinations.
-    \item One-time withdrawal (\cref{thm:one-time}) prevents double-counting any deposit.
+    \item Each accepted private segment \(q\) enforces \(S_q\cdot10000 \leq I_q\cdot(10000-f)\) over its real leaves.
+    \item Aggregation preserves output sums; grouping outputs to identical destinations does not change \(S_q\).
+    \item One-time withdrawal (\cref{thm:one-time}) and the blockchain's nullifier check prevent a deposit from contributing to more than one accepted segment.
 \end{itemize}
-Together with the blockchain's nullifier check, total settled value never exceeds total deposited value minus fees.
+Thus the segment input sets are disjoint and \(\sum_q I_q\leq V\). Summing the segment inequalities gives
+\[
+W\cdot10000
+= \sum_q S_q\cdot10000
+\leq \sum_q I_q(10000-f)
+\leq V(10000-f),
+\]
+contradicting the winning condition.
+
+For \(0\leq f<10000\), define the on-chain fee for segment \(q\) as
+\[
+F_q=\left\lceil\frac{S_q f}{10000-f}\right\rceil.
+\]
+The proved inequality implies \(S_q+F_q\leq I_q\), so user exits plus the fee distributed or burned by settlement remain covered by that segment's deposits. A public batch must therefore charge \(\sum_q F_q\) over its accepted private segments. Charging \(\left\lceil(\sum_q S_q)f/(10000-f)\right\rceil\) once can be smaller because of integer rounding and does not preserve the exact fee boundary attested by each private segment.
 \end{proof}
 
 
 \subsection{Anonymity sets}
 \label{sec:layer0privacy}
 
-An adversary observing a first-layer aggregate sees \(N\) nullifiers (some real, some dummies), grouped exits, and the public metadata \((b, a, f)\). Deposit unlinkability is analyzed by enumerating plausible funding subsets in \(\mathcal{D}(b,a)\); nullifier indistinguishability is a separate property that hides padding and batch composition. Throughout this subsection, \(H\) denotes the Poseidon2 hash used in-circuit, modeled as a random oracle with 256-bit outputs.
+An adversary observing a first-layer aggregate sees \(N\) canonically sorted nullifiers (some real, some dummies), grouped exits, and the public metadata \((b, a, f)\). Deposit unlinkability is analyzed by enumerating plausible funding subsets in \(\mathcal{D}(b,a)\); nullifier indistinguishability is a separate property that hides padding and batch composition. Throughout this subsection, \(H\) denotes the Poseidon2 hash used in-circuit, modeled as a random oracle with 256-bit outputs.
 
 \paragraph{Dummy nullifiers.}
 Real nullifiers are \(\Null(s,c) = H(H(\mathsf{salt_{null}} \parallel s \parallel c))\) as in \cref{sec:formal}. Dummy padding replaces each dummy slot with
@@ -380,10 +401,10 @@ Instantiating \(H\) with Poseidon2 is heuristic, as is standard for random-oracl
 
 \begin{definition}[Aggregate view]
 \label{def:aggregate-view}
-A first-layer aggregate \(Y\) exposes block number \(b\), asset identifier \(a\), fee rate \(f\), batch capacity \(N\), a multiset of \(N\) nullifiers, and grouped exits \(\{(\alpha_j, e_j)\}_{j=1}^{E}\) with total \(S = \sum_{j=1}^{E} e_j\).
+A first-layer aggregate \(Y\) exposes block number \(b\), asset identifier \(a\), fee rate \(f\), batch capacity \(N\), a canonically sorted list of \(N\) nullifiers, and grouped exits \(\{(\alpha_j, e_j)\}_{j=1}^{E}\) with total \(S = \sum_{j=1}^{E} e_j\). For candidate-set analysis the sorted nullifier list is equivalently treated as a multiset.
 \end{definition}
 
-\begin{definition}[Plausible and routable deposit subsets]
+\begin{definition}[Plausible deposit subsets]
 \label{def:anonymity-set}
 Let \(\mathcal{D}(b,a)\) be the unspent wormhole deposits recorded in the ZK tree at block \(b\) with asset \(a\), with amounts \(a_1, \ldots, a_M\). A subset \(I \subseteq \{1,\ldots,M\}\) is \emph{plausible} for \(Y\) if:
 \begin{enumerate}[label=(\roman*),leftmargin=2em]
@@ -391,55 +412,52 @@ Let \(\mathcal{D}(b,a)\) be the unspent wormhole deposits recorded in the ZK tre
     \item \textbf{Output slots:} \(E \leq 2|I|\), since each authorization exposes at most two outputs before grouping.
     \item \textbf{Volume:} \(\sum_{i \in I} a_i \geq S/(1-f)\) (equivalently, \(\sum_{i \in I} a_i(1-f) \geq S\)).
 \end{enumerate}
-The \emph{plausible set} is
+The \emph{effective anonymity set} is
 \[
 \mathcal{A}(Y) = \{ I \subseteq \{1,\ldots,M\} \mid I \text{ is plausible for } Y \}.
 \]
-Conditions (i)--(iii) are necessary but not sufficient. Each authorization carries exactly two output slots---by design, a target output and a change output---so a subset must additionally admit a routing that reproduces the published per-account totals. Say \(I\) is \emph{routable} for \(Y\) if there exist contributions \(x_{ij} \geq 0\) of deposit \(i \in I\) to exit account \(j\) such that each deposit funds at most two distinct accounts, \(\sum_{i \in I} x_{ij} = e_j\) for every account \(j\), and \(\sum_{j} x_{ij} \leq a_i(1-f)\) for every \(i \in I\). The \emph{effective anonymity set} is
-\[
-\mathcal{F}(Y) = \{ I \in \mathcal{A}(Y) \mid I \text{ is routable for } Y \},
-\]
-and the true funding subset always lies in \(\mathcal{F}(Y)\). The inclusion \(\mathcal{F}(Y) \subseteq \mathcal{A}(Y)\) can be strict: after-fee caps \(\{100, 2\}\) cannot produce three exit accounts of \(34\) each, although \(E = 3 \leq 2|I| = 4\) and the volume bound holds. An adversary can therefore prune \(\mathcal{A}(Y)\) using the public per-account amounts, and the operative privacy guarantee is stated over \(\mathcal{F}(Y)\). The gap is small when each account total is coverable by a single deposit of the subset---in particular when deposit denominations are large relative to per-account exit amounts, or standardized---and can be large for heterogeneous amounts. The definition depends on exits and metadata only; published nullifiers do not identify deposits without inverting \(\Null(s,c)\).
+These are the amount and cardinality constraints relevant to funding-subset feasibility. There is no longer a cap \(\sum_j x_{ij}\leq a_i(1-f)\) tying the two output slots of leaf \(i\) to that leaf's input: only the segment-wide volume inequality and the \(2|I|\) available slots apply. For example, at zero fee, deposits \(\{100,2\}\) can explain three exits of \(34\) each even though one raw leaf must carry an output larger than its own input; the aggregate totals are both \(102\), and three exits fit in four slots. The true funding subset lies in \(\mathcal{A}(Y)\). The definition depends on exits and metadata only; the aggregate hides the intermediate input amounts, and published nullifiers do not identify deposits without inverting \(\Null(s,c)\).
 \end{definition}
 
 \begin{theorem}[Transaction Unlinkability]
 \label{thm:unlinkability}
-Let \(Y\) be a first-layer aggregate with \(|\mathcal{F}(Y)| = k \geq 1\). Assume the true funding subset is drawn uniformly from \(\mathcal{F}(Y)\). Then no PPT adversary can identify the true subset with probability greater than \(1/k\).
+Let \(Y\) be a first-layer aggregate with \(|\mathcal{A}(Y)| = k \geq 1\). Assume the true funding subset is drawn uniformly from \(\mathcal{A}(Y)\). Then no PPT adversary can identify the true subset with probability greater than \(1/k\).
 \end{theorem}
 
 \begin{proof}
-An adversary attempting to identify the funding deposits observes \(Y\) and the deposit pool \(\mathcal{D}(b,a)\), computes \(\mathcal{F}(Y)\), and guesses which subset was used. Any guess outside \(\mathcal{F}(Y)\) is inconsistent with the public view---it violates the batch cap, the block/asset filter, or admits no routing matching the published per-account amounts---and can be ruled out without guessing.
+An adversary attempting to identify the funding deposits observes \(Y\) and the deposit pool \(\mathcal{D}(b,a)\), computes \(\mathcal{A}(Y)\), and guesses which subset was used. Any guess outside \(\mathcal{A}(Y)\) is inconsistent with the public view---it violates the batch cap, the two-output slot bound, the block/asset filter, or the aggregate volume threshold---and can be ruled out without guessing.
 
-Under the uniform prior over \(\mathcal{F}(Y)\), every routable subset is equally likely, so success probability is at most \(1/k\). Any strategy exceeding \(1/k\) must use information outside this model (e.g., side channels, deposit clustering, or a non-uniform prior over user behavior). Nullifiers are not needed for this attack: each published nullifier is a one-way tag \(\Null(s,c)\) that does not reveal which deposit funded the withdrawal.
+Under the uniform prior over \(\mathcal{A}(Y)\), every plausible subset is equally likely, so success probability is at most \(1/k\). Any strategy exceeding \(1/k\) must use information outside this model (e.g., side channels, deposit clustering, or a non-uniform prior over user behavior). Nullifiers are not needed for this attack: each published nullifier is a one-way tag \(\Null(s,c)\) that does not reveal which deposit funded the withdrawal.
 \end{proof}
 
 \paragraph{Role of nullifier indistinguishability.}
-\Cref{thm:nullifier-indist} addresses a different question: whether an adversary can tell real nullifiers from dummy padding, or infer how many real authorizations appear in a batch. This hides batch composition but does not change the deposit-unlinkability analysis above, which already treats only \(\mathcal{F}(Y)\). Without indistinguishability, an adversary who learns the number of real authorizations could restrict attention to subsets of that exact size, potentially shrinking the effective candidate set below \(k\).
+\Cref{thm:nullifier-indist} addresses a different question: whether an adversary can tell real nullifiers from dummy padding, or infer how many real authorizations appear in a batch. This hides batch composition but does not change the deposit-unlinkability analysis above. Without indistinguishability, an adversary who learns the number of real authorizations could restrict attention to subsets of that exact size, potentially shrinking the effective candidate set below \(k\).
 
-One structural caveat applies in the implemented output layout: exit slots are positionally aligned with nullifier slots (slots \(2i\) and \(2i{+}1\) belong to authorization \(i\)), and each distinct exit account retains its grouped sum at one first-occurrence slot. An observer therefore learns that the authorizations owning non-zero exit slots are real, marking those specific nullifiers as real and yielding a lower bound of up to \(E\) on the real count (versus \(\lceil E/2 \rceil\) from the exits alone). Real authorizations whose outputs were grouped into earlier slots remain indistinguishable from dummies, and no nullifier-to-deposit linkage arises, so the deposit-unlinkability bound of \cref{thm:unlinkability} is unaffected.
+The implemented layout does not expose a positional nullifier-to-exit association. After dummy replacement, the private-batch circuit sorts all nullifier digests into canonical order, while exits are grouped in a separate region. A non-zero exit slot therefore cannot mark any particular sorted nullifier as real. The exits alone reveal the unavoidable lower bound \(\lceil E/2\rceil\) on the number of real leaves, because each leaf has two slots; the nullifier ordering adds no slot-specific leakage.
 
-Because the proof system enforces an inequality rather than exact equality (condition C5), the adversary must consider any subset whose deposits can fund at least \(S\) after fees. Users may also withdraw less than their full balance, enlarging the volume-feasible region at the cost of burned value. Beyond volume, the binding structural constraint is routability: a subset of size \(|I|\) cannot explain more than \(2|I|\) distinct exit accounts, and each account total must decompose across deposits that reach it within their caps and two-account limits.
+Because the private-batch relation enforces an inequality rather than exact equality, the adversary must consider any subset whose aggregate deposits can fund at least \(S\) after fees. A user may voluntarily under-withdraw by choosing \(S\) below the segment maximum, enlarging the volume-feasible candidate set; after the chain charges the fee derived from \(S\), the remaining deposit value stays locked at the unspendable addresses and is effectively burned. Beyond aggregate volume, the binding structural constraint is the unchanged two-output slot count, not a public assignment of output amounts to individual deposits.
 
 \paragraph{Complexity of counting plausible subsets:}
-The decision version of subset sum is NP-complete \cite{subsetsum}. The counting version \textsc{\#SubsetSum} is \#P-complete \cite{valiant1979}: the standard reduction establishing NP-completeness of subset sum is parsimonious, so it transfers to the counting class. In the special case \(E = 1\) and \(N = M\), condition (ii) is vacuous, every volume-satisfying subset is trivially routable (all contributions target the single account), and \(\mathcal{F}(Y) = \mathcal{A}(Y)\) reduces to \textsc{\#SubsetSum} with threshold \(T = S/(1-f)\).
+The decision version of subset sum is NP-complete \cite{subsetsum}. The counting version \textsc{\#SubsetSum} is \#P-complete \cite{valiant1979}: the standard reduction establishing NP-completeness of subset sum is parsimonious, so it transfers to the counting class. In the special case \(E = 1\) and \(N = M\), condition (ii) is vacuous and \(\mathcal{A}(Y)\) reduces to threshold \textsc{\#SubsetSum} with \(T = S/(1-f)\).
 
 \begin{theorem}[Hardness of Anonymity Set Computation]
 \label{thm:hardness}
-Computing \(|\mathcal{F}(Y)|\) (equivalently \(|\mathcal{A}(Y)|\)) is \#P-hard.
+Computing \(|\mathcal{A}(Y)|\) is \#P-hard.
 \end{theorem}
 
 \begin{proof}
-We reduce from \textsc{\#SubsetSum}. Given an instance \((a_1, \ldots, a_M, T)\), construct an aggregate view with fee rate \(f = 0\) (avoiding any quantization of amounts), \(E = 1\), exit \((\alpha_1, e_1)\) where \(e_1 = T\), batch cap \(N = M\), and deposit pool \(\mathcal{D}(b,a)\) containing the same amounts. For any \(I \subseteq \{1,\ldots,M\}\), condition (iii) holds iff \(\sum_{i \in I} a_i \geq T\); condition (ii) holds because \(E = 1 \leq 2|I|\) for every non-empty \(I\); and any such subset is routable, since every deposit sends its entire contribution to the single account. Thus \(|\mathcal{F}(Y)| = |\mathcal{A}(Y)|\) equals the number of subsets summing to at least \(T\). Given oracle access to this count, two calls with thresholds \(T\) and \(T+1\) recover \textsc{\#SubsetSum} exactly as in the standard threshold-to-exact conversion. Hence computing either quantity is \#P-hard.
+We reduce from \textsc{\#SubsetSum}. Given an instance \((a_1, \ldots, a_M, T)\), construct an aggregate view with fee rate \(f = 0\) (avoiding any quantization of amounts), \(E = 1\), exit \((\alpha_1, e_1)\) where \(e_1 = T\), batch cap \(N = M\), and deposit pool \(\mathcal{D}(b,a)\) containing the same amounts. For any \(I \subseteq \{1,\ldots,M\}\), condition (iii) holds iff \(\sum_{i \in I} a_i \geq T\), and condition (ii) holds because \(E = 1 \leq 2|I|\) for every non-empty \(I\). Thus \(|\mathcal{A}(Y)|\) equals the number of subsets summing to at least \(T\). Given oracle access to this count, two calls with thresholds \(T\) and \(T+1\) recover \textsc{\#SubsetSum} exactly as in the standard threshold-to-exact conversion. Hence computing \(|\mathcal{A}(Y)|\) is \#P-hard.
 \end{proof}
 
-Membership in \(\mathcal{F}(Y)\) is itself nontrivial: deciding routability is a transportation problem with a degree constraint (each deposit funds at most two accounts), which is NP-hard in general. We do not rely on this for privacy---batches are small enough that integer-programming solvers decide routability in practice---but it adds to the cost of pruning for an adversary scanning many candidate subsets.
+\paragraph{Amount-linkage improvement.}
+Under per-leaf conservation, an observer could reject candidate subsets whose individual deposit caps could not be routed to the published per-account totals. Aggregate conservation removes that pruning signal: the vector of authenticated inputs is visible only inside the local wrapper, and no output slot is publicly funded by a corresponding input. Candidate subsets are therefore filtered by total volume and slot count rather than a deposit-by-deposit transportation problem. This does not hide deposits or exits themselves, but it removes a deterministic amount-linkage channel between them.
 
 \paragraph{Burn Cost and Bounded Rationality:}
-A rational adversary may assume users are unwilling to burn significant value for privacy. Under bounded rationality, the effective anonymity set shrinks to routable subsets whose total deposit volume is at most \((1 + \delta) \cdot S/(1-f)\) for some small \(\delta\) (e.g., 1\%)---that is, at most slightly above the minimum volume required by condition (iii).
+A rational adversary may assume users are unwilling to leave significant value locked for privacy. Under bounded rationality, the effective anonymity set shrinks to plausible subsets whose total deposit volume is at most \((1 + \delta) \cdot S/(1-f)\) for some small \(\delta\) (e.g., 1\%)---that is, at most slightly above the minimum volume required by condition (iii).
 
 \subsection{Privacy leakage}
 
-Output amounts, exit addresses, nullifiers, and timing are public. The unlinkability bound in \cref{thm:unlinkability} assumes a uniform prior over routable deposit subsets and analyzes the exit-driven candidate set \(\mathcal{F}(Y)\); behavioral amount patterns (e.g., round numbers), address reuse, deposit clustering, and timing correlation can shrink the effective set further. Nullifier indistinguishability (\cref{thm:nullifier-indist}) hides dummy padding but is orthogonal to deposit identification. First-layer padding enlarges the anonymity set, but this is plausible deniability, not full shielding.
+Output amounts, exit addresses, nullifiers, and timing are public. The unlinkability bound in \cref{thm:unlinkability} assumes a uniform prior over the plausible deposit subsets \(\mathcal{A}(Y)\); behavioral amount patterns (e.g., round numbers), address reuse, deposit clustering, and timing correlation can shrink the effective set further. Aggregate enforcement hides the input-amount vector and its assignment to outputs, but the total-volume threshold remains inferable from \(S\) and \(f\). Nullifier indistinguishability (\cref{thm:nullifier-indist}) hides dummy padding but is orthogonal to deposit identification. First-layer padding and cross-leaf pooling enlarge plausible deniability, not full shielding.
 
 \section{Evaluation}
 \label{sec:evaluation}
@@ -500,7 +518,7 @@ Second-layer verification time grows slowly with batch size (2.72\,ms at 16 leav
 
 \subsection{On-chain footprint}
 
-The final aggregate proof is constant-size regardless of the number of authorizations. The marginal cost consists only of the public outputs that must be published. Each authorization contributes two exit slots, each comprising an exit address (32 bytes) and a quantized amount (8 bytes, one field element), plus one nullifier (32 bytes): 112 bytes per authorization, or \textbf{56 bytes per settled output}. For comparison, an ML-DSA-87 signature alone is 4,627 bytes---over 80$\times$ larger---and a full post-quantum transaction with its 2,592-byte public key would exceed 7~KB, a $>$125$\times$ reduction in per-output data, while providing privacy guarantees that signatures cannot offer.
+The final aggregate proof is constant-size regardless of the number of authorizations. The appended leaf \texttt{input\_amount} is consumed inside the private wrapper and does not appear in this chain-facing interface. The marginal cost consists only of the public outputs that must be published. Each authorization contributes two exit slots, each comprising an exit address (32 bytes) and a quantized amount (8 bytes, one field element), plus one nullifier (32 bytes): 112 bytes per authorization, or \textbf{56 bytes per settled output}. For comparison, an ML-DSA-87 signature alone is 4,627 bytes---over 80$\times$ larger---and a full post-quantum transaction with its 2,592-byte public key would exceed 7~KB, a $>$125$\times$ reduction in per-output data, while providing privacy guarantees that signatures cannot offer.
 
 \section{Related Work}
 \label{sec:related}
@@ -523,7 +541,7 @@ Adoption of post-quantum signatures like ML-DSA and SLH-DSA raises questions abo
 \section{Conclusion}
 \label{sec:conclusion}
 
-We presented a hash-based authorization scheme where users commit funds to addresses derived from secret preimages and later claim them by proving knowledge of the preimage in zero knowledge. This approach sidesteps post-quantum signature verification entirely, requiring only hash evaluations and membership proofs inside the circuit. Recursive aggregation via Plonky2/FRI amortizes verification cost, while first-layer dummy padding enlarges anonymity sets against balance-linking attacks. We formalized the withdrawal relation, proved six security properties via game-based definitions, showed that computing anonymity set size is \#P-hard, and demonstrated practical performance on commodity hardware.
+We presented a hash-based authorization scheme where users commit funds to addresses derived from secret preimages and later claim them by proving knowledge of the preimage in zero knowledge. This approach sidesteps post-quantum signature verification entirely, requiring only hash evaluations and membership proofs inside the circuit. Recursive aggregation via Plonky2/FRI amortizes verification cost, while first-layer dummy padding and aggregate value enforcement reduce balance-linking information. We formalized the withdrawal and private-batch relations, proved six security properties via game-based definitions, showed that computing anonymity set size is \#P-hard, and demonstrated practical performance on commodity hardware.
 
 \section*{Acknowledgments}
 
