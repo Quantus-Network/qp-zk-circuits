@@ -121,7 +121,7 @@ A recurring review question is where nullifier *collisions* (reuse of the same n
 i.e. a double spend) are prevented. Short answer: **on-chain, in the wormhole pallet — not
 inside any circuit in this repository**. The layers split the work as follows.
 
-### What the circuits prove (well-formedness, not uniqueness)
+### What the circuits prove
 
 - **Leaf circuit**: proves the public `nullifier` is *well-formed*: it equals
   `H(H(salt || secret || transfer_count))` for the same private `secret` that derives the
@@ -130,18 +130,18 @@ inside any circuit in this repository**. The layers split the work as follows.
   choose the nullifier independently of the deposit it is spending, and one deposit event
   yields exactly one valid nullifier. (Dummy padding proofs — `block_hash == 0` and zero
   outputs — are exempt from this binding; see below.)
-- **Private-batch circuit**: forwards each leaf's nullifier into the aggregated public
-  inputs (one nullifier per leaf slot). For dummy slots it replaces the nullifier with the
-  hash of a fresh random preimage supplied at proving time.
+- **Private-batch circuit**: requires real nullifiers to be pairwise distinct within the
+  private segment. For dummy slots it substitutes the hash of a fresh random preimage, then
+  privately permutes the selected nullifiers into the aggregate public inputs. The switch
+  network proves exact multiset preservation without changing any nullifier contents.
 - **Public-batch circuit**: forwards the private-batch public inputs (including all
   nullifiers) verbatim into its own public inputs.
 
 ### What the circuits deliberately do NOT prove
 
-No circuit checks that a nullifier is *unused* — not against chain history, and not even
-across slots within the same batch. Two leaves spending the same deposit (identical
-nullifiers) can be aggregated into one cryptographically valid batch, and the same
-private-batch proof can appear in two different public batches. This is by design:
+No circuit checks that a nullifier is *unused* against chain history. The same
+private-batch proof can still appear in two different public batches, and two private
+segments in one public batch can overlap. This is by design:
 
 - Uniqueness is a statement about **global, evolving chain state**. A proof is generated at
   some point in time against a snapshot; by the time it settles, other spends may have
@@ -151,10 +151,10 @@ private-batch proof can appear in two different public batches. This is by desig
   aggregation layers cannot know which nullifiers are settled without trusting the operator
   — and aggregators (miners) are explicitly untrusted for soundness.
 
-The circuits' contract is narrower and time-independent: *every non-dummy nullifier that
-appears in an aggregated proof's public inputs is well-formed and bound to a real funded
-deposit at the committed block*. Deduplication is left to the settlement layer, which is the
-only place with authoritative state.
+The circuits' contract is narrower and time-independent: every non-dummy nullifier is
+well-formed and bound to a real funded deposit at the committed block, and no real
+nullifier repeats within one private segment. Global deduplication remains the settlement
+layer's responsibility because only it has authoritative state.
 
 ### What the chain enforces (the actual double-spend boundary)
 
@@ -170,10 +170,10 @@ Fee settlement uses the same private-segment boundary as the proof: a public bat
 the independently rounded fee of each accepted private segment, not round once over the
 combined public-batch output.
 
-A duplicated nullifier — whether duplicated within one batch, across two batches in the
-same block, or across blocks — settles **at most once**. Everything upstream (leaf proof,
-private batch, public batch, proof pool) can contain duplicates without violating safety;
-the worst outcome is wasted proving work or a rejected submission.
+A duplicated nullifier — whether across private segments, across two batches in the same
+block, or across blocks — settles **at most once**. The private-batch circuit rejects
+duplicates within a segment as defense in depth; the pallet remains the consensus boundary
+for every case.
 
 A chain-level refinement (tracked separately): for public batches the pallet can settle the
 *unused* segments of a batch and skip already-settled nullifiers instead of rejecting the
