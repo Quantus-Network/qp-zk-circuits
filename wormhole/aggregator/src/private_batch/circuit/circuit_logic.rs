@@ -7,21 +7,19 @@
 //! - enforce the volume fee once over each private settlement segment
 //! - dedupe exit accounts and sum output amounts (2 outputs per proof)
 //! - replace dummy nullifiers with hashes of externally provided random preimages
-//! - emit fixed-format aggregated public inputs
+//! - privately permute nullifiers and emit fixed-format aggregated public inputs
 //!
 //! The leaf verifier key is baked in as constants at circuit build time to prevent
 //! verifier key substitution attacks.
 //!
-//! # Nullifiers: forwarded, not deduplicated
+//! # Nullifiers: selected and privately permuted
 //!
 //! This circuit forwards one nullifier per leaf slot into the aggregated public
 //! inputs (dummy slots get the hash of a fresh random preimage instead, so
 //! padding never produces on-chain nullifier collisions and stays
-//! indistinguishable from real slots). The region is emitted in canonical
-//! sorted order rather than leaf-slot order, so its positions carry no
-//! correlation with the (positionally bound) exit slots — otherwise a nonzero
-//! exit slot would identify its proof's nullifier as real and pair the public
-//! payout with it.
+//! indistinguishable from real slots). The prover privately chooses a
+//! permutation for the emitted region. The circuit proves exact multiset
+//! preservation without exposing the permutation or comparing digest values.
 //!
 //! Real nullifiers are constrained to be pairwise DISTINCT across slots (dummy
 //! slots exempt). Because the exit-account grouping sums amounts across leaves,
@@ -52,7 +50,7 @@ use qp_wormhole_inputs::validate_proof_count;
 
 use zk_circuits_common::{
     circuit::{validate_circuit_config, C, D, F},
-    gadgets::{bytes_digest_eq, limb1_at_offset, limbs4_at_offset, sort_digests4},
+    gadgets::{bytes_digest_eq, limb1_at_offset, limbs4_at_offset, permute_digests4},
 };
 
 use crate::common::recursive::add_recursive_verifiers;
@@ -70,6 +68,8 @@ pub struct PrivateBatchCircuitTargets {
     pub leaf_proofs: Vec<ProofWithPublicInputsTarget<D>>,
     /// One dummy-nullifier preimage target (4 felts) per leaf slot.
     pub dummy_nullifier_pre_images: Vec<[Target; 4]>,
+    /// Private switch targets for the nullifier permutation network.
+    pub nullifier_permutation_switches: Vec<BoolTarget>,
 }
 
 pub struct PrivateBatchCircuit {
@@ -128,13 +128,15 @@ impl PrivateBatchCircuit {
             ]);
         }
 
-        let targets = PrivateBatchCircuitTargets {
+        let mut targets = PrivateBatchCircuitTargets {
             leaf_proofs,
             dummy_nullifier_pre_images,
+            nullifier_permutation_switches: Vec::new(),
         };
 
         // Build the wormhole-specific wrapper logic directly in this circuit.
-        build_private_batch_constraints(&mut builder, &targets, n_leaf);
+        targets.nullifier_permutation_switches =
+            build_private_batch_constraints(&mut builder, &targets, n_leaf);
 
         Ok(Self { builder, targets })
     }
@@ -173,7 +175,7 @@ fn build_private_batch_constraints(
     builder: &mut CircuitBuilder<F, D>,
     targets: &PrivateBatchCircuitTargets,
     n_leaf: usize,
-) {
+) -> Vec<BoolTarget> {
     let one = builder.one();
     let zero = builder.zero();
 
@@ -437,16 +439,10 @@ fn build_private_batch_constraints(
     // Nullifiers (replace dummies with hashes of provided random preimages)
     // =========================================================================
     //
-    // The selected nullifiers are emitted in CANONICAL SORTED ORDER, not in
-    // leaf-slot order. Exit slots above are positionally bound to proofs
-    // (slots 2i/2i+1 come from proof i, and dummy slots are zero), so if
-    // nullifier i also came from proof i, any nonzero exit slot would mark
-    // its nullifier as real and pair the public payout with it — defeating
-    // the dummy padding and the uniform shuffle (audit finding). Sorting by
-    // value makes the region's order independent of slot position; combined
-    // with value-indistinguishable dummy nullifiers, an observer of the
-    // aggregated public inputs can no longer tell which nullifiers are real.
-    // The chain consumes this region with set semantics, so order is free.
+    // The selected nullifiers are routed through a privately witnessed
+    // permutation. Each network switch either passes through or swaps two
+    // complete four-limb digests, proving that the public region is exactly
+    // the selected multiset without modifying any nullifier contents.
 
     let mut selected_nullifiers: Vec<[Target; 4]> = Vec::with_capacity(n_leaf);
     for i in 0..n_leaf {
@@ -465,13 +461,9 @@ fn build_private_batch_constraints(
         ]);
     }
 
-    // The sorting network emits a permutation of `selected_nullifiers`
-    // unconditionally (multiset integrity is structural, independent of the
-    // comparators). Limbs are split into canonical 32-bit halves once at
-    // ingress, so the comparators only route already-constrained values and
-    // the sorted order also holds against a malicious prover — the public
-    // record is guaranteed decorrelated. See `sort_digests4`.
-    for nullifier in sort_digests4(builder, selected_nullifiers) {
+    let (permuted_nullifiers, nullifier_permutation_switches) =
+        permute_digests4(builder, selected_nullifiers);
+    for nullifier in permuted_nullifiers {
         output_pis.extend_from_slice(&nullifier);
     }
 
@@ -502,6 +494,8 @@ fn build_private_batch_constraints(
     debug_assert_eq!(aggregated_output::VOLUME_FEE_BPS_OFFSET, 2);
     debug_assert_eq!(aggregated_output::BLOCK_HASH_OFFSET, 3);
     debug_assert_eq!(aggregated_output::BLOCK_NUMBER_OFFSET, 7);
+
+    nullifier_permutation_switches
 }
 
 fn hash_dummy_nullifier_pre_image(
