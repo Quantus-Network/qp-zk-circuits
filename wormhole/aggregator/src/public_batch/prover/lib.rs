@@ -592,12 +592,14 @@ mod tests {
         let pre_images = vec![bytes_to_digest(
             crate::dummy_proof::generate_random_nullifier_preimage(),
         )];
+        let nullifier_permutation = vec![0];
         let mut pw = PartialWitness::new();
         crate::private_batch::prover::fill_private_batch_witness(
             &mut pw,
             &targets,
             std::slice::from_ref(fake_leaf_proof),
             &pre_images,
+            &nullifier_permutation,
         )
         .unwrap();
         circuit_data.prove(pw).unwrap()

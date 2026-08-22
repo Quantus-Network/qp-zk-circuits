@@ -2,11 +2,13 @@
 
 use anyhow::{anyhow, bail, Result};
 use plonky2::{
+    field::types::Field,
     iop::witness::{PartialWitness, WitnessWrite},
     plonk::proof::ProofWithPublicInputs,
 };
 
 use zk_circuits_common::circuit::{C, D, F};
+use zk_circuits_common::gadgets::permutation_switches;
 
 use crate::common::utils::ensure_proof_shape_matches_targets;
 use crate::private_batch::circuit::circuit_logic::PrivateBatchCircuitTargets;
@@ -17,6 +19,7 @@ pub fn fill_private_batch_witness(
     targets: &PrivateBatchCircuitTargets,
     proofs: &[ProofWithPublicInputs<F, C, D>],
     dummy_nullifier_pre_images: &[[F; 4]],
+    nullifier_permutation: &[usize],
 ) -> Result<()> {
     let n_targets = targets.leaf_proofs.len();
 
@@ -41,6 +44,27 @@ pub fn fill_private_batch_witness(
             "dummy nullifier preimage count mismatch: got {}, but circuit expects {}",
             dummy_nullifier_pre_images.len(),
             n_targets
+        );
+    }
+
+    if nullifier_permutation.len() != n_targets {
+        bail!(
+            "nullifier permutation length mismatch: got {}, but circuit expects {}",
+            nullifier_permutation.len(),
+            n_targets
+        );
+    }
+    let switch_values = permutation_switches(nullifier_permutation).ok_or_else(|| {
+        anyhow!(
+            "nullifier permutation must contain every input index in 0..{} exactly once",
+            n_targets
+        )
+    })?;
+    if targets.nullifier_permutation_switches.len() != switch_values.len() {
+        bail!(
+            "target layout is inconsistent: nullifier permutation switch target count {} != expected {}",
+            targets.nullifier_permutation_switches.len(),
+            switch_values.len()
         );
     }
 
@@ -71,6 +95,15 @@ pub fn fill_private_batch_witness(
                     )
                 })?;
         }
+    }
+
+    for (target, value) in targets
+        .nullifier_permutation_switches
+        .iter()
+        .zip(switch_values)
+    {
+        pw.set_target(target.target, F::from_bool(value))
+            .map_err(|e| anyhow!("failed to set nullifier permutation switch: {}", e))?;
     }
 
     Ok(())

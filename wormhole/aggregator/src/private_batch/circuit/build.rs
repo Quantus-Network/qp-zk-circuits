@@ -177,6 +177,7 @@ fn generate_dummy_private_batch_proof(
     let dummy_nullifier_pre_images: Vec<[F; 4]> = (0..num_leaf_proofs)
         .map(|_| bytes_to_digest(crate::dummy_proof::generate_random_nullifier_preimage()))
         .collect();
+    let nullifier_permutation: Vec<usize> = (0..num_leaf_proofs).collect();
 
     let mut pw = PartialWitness::new();
     crate::private_batch::prover::fill_private_batch_witness(
@@ -184,6 +185,7 @@ fn generate_dummy_private_batch_proof(
         targets,
         &proofs,
         &dummy_nullifier_pre_images,
+        &nullifier_permutation,
     )?;
 
     let proof = circuit_data

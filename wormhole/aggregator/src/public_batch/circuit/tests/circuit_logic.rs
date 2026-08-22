@@ -198,6 +198,11 @@ fn prove_private_batch_batch(
         }
     }
 
+    // Identity nullifier permutation for deterministic public-batch fixtures.
+    for switch in &private_batch_targets.nullifier_permutation_switches {
+        pw.set_target(switch.target, F::ZERO).unwrap();
+    }
+
     private_batch_data.prove(pw).unwrap()
 }
 

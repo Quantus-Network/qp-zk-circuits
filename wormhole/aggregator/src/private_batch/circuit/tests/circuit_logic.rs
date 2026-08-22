@@ -60,6 +60,23 @@ fn aggregate_proofs_private_batch(
     leaf_verifier_only: VerifierOnlyCircuitData<C, D>,
     dummy_nullifier_pre_images: Vec<[F; 4]>,
 ) -> Result<(ProofWithPublicInputs<F, C, D>, VerifierCircuitData<F, C, D>)> {
+    let nullifier_permutation: Vec<usize> = (0..leaf_proofs.len()).collect();
+    aggregate_proofs_private_batch_with_permutation(
+        leaf_proofs,
+        leaf_common,
+        leaf_verifier_only,
+        dummy_nullifier_pre_images,
+        nullifier_permutation,
+    )
+}
+
+fn aggregate_proofs_private_batch_with_permutation(
+    leaf_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
+    leaf_common: CommonCircuitData<F, D>,
+    leaf_verifier_only: VerifierOnlyCircuitData<C, D>,
+    dummy_nullifier_pre_images: Vec<[F; 4]>,
+    nullifier_permutation: Vec<usize>,
+) -> Result<(ProofWithPublicInputs<F, C, D>, VerifierCircuitData<F, C, D>)> {
     let n_leaf = leaf_proofs.len();
     assert!(n_leaf > 0, "need at least one leaf proof");
     assert_eq!(
@@ -67,6 +84,7 @@ fn aggregate_proofs_private_batch(
         n_leaf,
         "dummy_nullifier_pre_images must have one entry per leaf slot"
     );
+    assert_eq!(nullifier_permutation.len(), n_leaf);
 
     let agg_config = wormhole_private_batch_circuit_config();
     // SECURITY: leaf_verifier_only is now baked in at build time
@@ -81,7 +99,13 @@ fn aggregate_proofs_private_batch(
 
     let mut pw = PartialWitness::new();
     // NOTE: leaf_verifier_only is no longer passed here - it's baked in as constants
-    fill_private_batch_witness(&mut pw, &targets, &leaf_proofs, &dummy_nullifier_pre_images)?;
+    fill_private_batch_witness(
+        &mut pw,
+        &targets,
+        &leaf_proofs,
+        &dummy_nullifier_pre_images,
+        &nullifier_permutation,
+    )?;
 
     let agg_proof = prover_data.prove(pw)?;
 
@@ -119,6 +143,7 @@ fn prove_private_batch_with_data(
         targets,
         proofs,
         &deterministic_dummy_nullifier_pre_images(proofs.len()),
+        &(0..proofs.len()).collect::<Vec<_>>(),
     )?;
     data.prove(pw)
 }
@@ -126,13 +151,6 @@ fn prove_private_batch_with_data(
 fn hash_dummy_nullifier_pre_image_native(pre_image: [F; 4]) -> [F; 4] {
     let inner_hash = Poseidon2Hash::hash_no_pad(&pre_image).elements;
     Poseidon2Hash::hash_no_pad(&inner_hash).elements
-}
-
-/// Native mirror of the circuit's canonical nullifier ordering: ascending
-/// lexicographic over canonical u64 limbs, limb 0 most significant.
-fn sorted_nullifiers(mut nullifiers: Vec<[F; 4]>) -> Vec<[F; 4]> {
-    nullifiers.sort_by_key(|n| core::array::from_fn::<u64, 4, _>(|i| n[i].to_canonical_u64()));
-    nullifiers
 }
 
 /// Read the nullifier region (`n_leaf` entries of 4 felts) from aggregated PIs.
@@ -891,16 +909,15 @@ fn recursive_aggregation_tree() {
         );
     }
 
-    // Nullifiers (real-proof-only test => region is the canonically sorted
-    // multiset of the leaf nullifiers)
-    let expected_nullifiers = sorted_nullifiers(nullifiers_ref);
+    // The test helper witnesses the identity permutation.
+    let expected_nullifiers = nullifiers_ref;
     for (region_idx, nullifier_expected) in expected_nullifiers.iter().enumerate() {
         let got = [pis[idx], pis[idx + 1], pis[idx + 2], pis[idx + 3]];
         idx += 4;
 
         assert_eq!(
             got, *nullifier_expected,
-            "nullifier mismatch at sorted region index {region_idx}"
+            "nullifier mismatch at region index {region_idx}"
         );
     }
 
@@ -1116,7 +1133,7 @@ fn recursive_aggregation_tree_with_dummy_proofs() {
     let block_num_circuit = pis[ROOT_BLOCK_NUMBER_IDX];
     assert_eq!(block_num_circuit, common_block_number);
 
-    // Region = sorted multiset of {real nullifiers} ∪ {dummy replacement hashes}.
+    // The test helper witnesses the identity permutation.
     let mut expected: Vec<[F; 4]> = nullifiers_felts[..num_real_proofs].to_vec();
     expected.extend(
         dummy_nullifier_pre_images
@@ -1126,8 +1143,8 @@ fn recursive_aggregation_tree_with_dummy_proofs() {
     );
     assert_eq!(
         nullifier_region(pis, pis_list.len()),
-        sorted_nullifiers(expected),
-        "nullifier region must be the sorted multiset of real + dummy-replacement nullifiers"
+        expected,
+        "nullifier region must preserve real and dummy-replacement nullifiers"
     );
 
     println!(
@@ -1336,8 +1353,8 @@ fn recursive_aggregation_real_proof_in_every_slot_succeeds() {
         );
         assert_eq!(pis[ROOT_BLOCK_NUMBER_IDX], common_block_number);
 
-        // Region = sorted multiset: the real slot's nullifier forwarded
-        // unchanged, every dummy slot replaced with H(H(pre_image)).
+        // The identity permutation forwards the real slot's nullifier unchanged
+        // and replaces every dummy slot with H(H(pre_image)).
         let expected: Vec<[F; 4]> = (0..N_LEAF)
             .map(|i| {
                 if i == real_slot {
@@ -1349,7 +1366,7 @@ fn recursive_aggregation_real_proof_in_every_slot_succeeds() {
             .collect();
         assert_eq!(
             nullifier_region(pis, N_LEAF),
-            sorted_nullifiers(expected),
+            expected,
             "nullifier region mismatch with real proof in slot {real_slot}"
         );
     }
@@ -1421,16 +1438,15 @@ fn recursive_aggregation_tree_all_dummy_proofs() {
         "all-dummy batch should have zero block hash"
     );
 
-    // All nullifiers should be replaced with hashes of the pre-images
-    // (region is emitted as a sorted multiset).
+    // All nullifiers should be replaced with hashes of the pre-images.
     let expected: Vec<[F; 4]> = dummy_nullifier_pre_images
         .iter()
         .map(|p| hash_dummy_nullifier_pre_image_native(*p))
         .collect();
     assert_eq!(
         nullifier_region(pis, pis_list.len()),
-        sorted_nullifiers(expected),
-        "all-dummy nullifier region must be the sorted replacement hashes"
+        expected,
+        "all-dummy nullifier region must contain the replacement hashes"
     );
 
     println!("Successfully aggregated all-dummy batch of 8 proofs!");
@@ -1622,8 +1638,7 @@ fn recursive_aggregation_dummy_nullifiers_are_replaced() {
     let pis = &root_proof.public_inputs;
     let region = nullifier_region(pis, pis_list.len());
 
-    // Region = sorted multiset of the preserved real nullifier plus the
-    // dummy replacement hashes.
+    // Region = the preserved real nullifier plus the dummy replacement hashes.
     let mut expected: Vec<[F; 4]> = vec![nullifiers_felts[0]];
     expected.extend(
         dummy_nullifier_pre_images
@@ -1632,8 +1647,7 @@ fn recursive_aggregation_dummy_nullifiers_are_replaced() {
             .map(|p| hash_dummy_nullifier_pre_image_native(*p)),
     );
     assert_eq!(
-        region,
-        sorted_nullifiers(expected),
+        region, expected,
         "region must contain the real nullifier and every dummy replacement hash"
     );
 
@@ -1651,24 +1665,14 @@ fn recursive_aggregation_dummy_nullifiers_are_replaced() {
     );
 }
 
-/// Privacy (audit finding): the nullifier region must be emitted in an
-/// order independent of leaf-slot position. Exit slots are positionally
-/// bound to proofs (slot 2i/2i+1 come from proof i), so if nullifier i
-/// also came from proof i, any nonzero exit slot would identify its
-/// nullifier and pair the public payout with it. The circuit therefore
-/// sorts the nullifier region canonically (ascending lexicographic over
-/// canonical limbs), breaking the positional correlation.
-///
-/// The test feeds real proofs whose nullifiers are in strictly DESCENDING
-/// order, so proof-order emission (the vulnerable behavior) produces a
-/// region that is maximally different from the required sorted order.
+/// The private switch witness may route the verified nullifier multiset into
+/// any requested order without changing any digest contents.
 #[test]
-fn nullifier_region_is_canonically_sorted() {
+fn nullifier_region_follows_private_permutation() {
     const N_LEAF: usize = 4;
 
     let exits_felts: [[F; 8]; 8] = EXIT_ACCOUNTS.map(limbs8_u64_to_felts);
     let block_hashes_felts: [[F; 4]; 8] = BLOCK_HASHES.map(limbs4_u64_to_felts);
-    // NULLIFIERS[0..4] have descending leading limbs (0x90.., 0x80.., 0x70.., 0x60..).
     let nullifiers_felts: [[F; 4]; 8] = NULLIFIERS.map(limbs4_u64_to_felts);
 
     let common_block_hash = block_hashes_felts[0];
@@ -1703,20 +1707,22 @@ fn nullifier_region_is_canonically_sorted() {
         .map(|(proof, _)| proof)
         .collect::<Vec<_>>();
 
-    let (root_proof, root_verifier) = aggregate_proofs_private_batch(
+    let permutation = vec![2, 0, 3, 1];
+    let (root_proof, root_verifier) = aggregate_proofs_private_batch_with_permutation(
         proofs,
         leaf_common,
         leaf_verifier_only,
         deterministic_dummy_nullifier_pre_images(N_LEAF),
+        permutation.clone(),
     )
     .unwrap();
     root_verifier.verify(root_proof.clone()).unwrap();
 
     let got = nullifier_region(&root_proof.public_inputs, N_LEAF);
-    let expected = sorted_nullifiers(nullifiers_felts[..N_LEAF].to_vec());
+    let expected: Vec<[F; 4]> = permutation.iter().map(|&i| nullifiers_felts[i]).collect();
     assert_eq!(
         got, expected,
-        "nullifier region must be canonically sorted, not in leaf-slot order"
+        "nullifier region must follow the private permutation exactly"
     );
 }
 
@@ -1943,6 +1949,7 @@ fn witness_fill_rejects_wrong_pi_length_proof() {
         &targets,
         &[proof],
         &deterministic_dummy_nullifier_pre_images(1),
+        &[0],
     )
     .expect_err("truncated proof public inputs must be rejected");
     assert!(err.to_string().contains("public inputs"), "got: {err}");
@@ -1992,6 +1999,7 @@ fn fill_witness_with_proof(
         targets,
         &[proof],
         &deterministic_dummy_nullifier_pre_images(1),
+        &[0],
     )
 }
 
@@ -2001,6 +2009,28 @@ fn witness_fill_accepts_well_shaped_proof() {
     let (proof, targets) = valid_leaf_proof_and_targets();
     fill_witness_with_proof(&targets, proof)
         .expect("a valid, well-shaped proof must fill the witness");
+}
+
+#[test]
+fn witness_fill_rejects_invalid_nullifier_permutation() {
+    let (proof, targets) = valid_leaf_proof_and_targets();
+    let pre_images = deterministic_dummy_nullifier_pre_images(1);
+
+    let mut pw = PartialWitness::new();
+    let err = fill_private_batch_witness(
+        &mut pw,
+        &targets,
+        std::slice::from_ref(&proof),
+        &pre_images,
+        &[],
+    )
+    .expect_err("short nullifier permutation must be rejected");
+    assert!(err.to_string().contains("length mismatch"), "got: {err}");
+
+    let mut pw = PartialWitness::new();
+    let err = fill_private_batch_witness(&mut pw, &targets, &[proof], &pre_images, &[1])
+        .expect_err("out-of-range nullifier permutation index must be rejected");
+    assert!(err.to_string().contains("every input index"), "got: {err}");
 }
 
 /// A shortened FRI query-round list panics in plonky2's zip_eq without a

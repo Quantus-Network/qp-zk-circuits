@@ -362,11 +362,20 @@ impl PrivateBatchProver {
             proofs.push(self.dummy_proof_template.clone());
         }
 
+        let mut rng = rand::thread_rng();
+
         // Uniformly shuffle proofs to hide dummy positions. The circuit selects its block
         // reference from the first non-dummy slot in-circuit, so no position is special.
         if proofs.len() > 1 {
-            let mut rng = rand::thread_rng();
             proofs.shuffle(&mut rng);
+        }
+
+        // Independently permute only the emitted nullifier region. The permutation
+        // network proves exact multiset preservation while keeping the mapping from
+        // leaf/exit slots to public nullifier positions private.
+        let mut nullifier_permutation: Vec<usize> = (0..proofs.len()).collect();
+        if nullifier_permutation.len() > 1 {
+            nullifier_permutation.shuffle(&mut rng);
         }
 
         // Generate one dummy nullifier preimage per slot.
@@ -379,6 +388,7 @@ impl PrivateBatchProver {
             &targets,
             &proofs,
             &dummy_nullifier_pre_images,
+            &nullifier_permutation,
         )?;
 
         Ok(self)

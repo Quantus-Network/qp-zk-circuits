@@ -392,8 +392,8 @@ pub fn wormhole_leaf_circuit_config() -> CircuitConfig {
 ///
 /// Current `wormhole-memprof` measurements with this config:
 /// - 1-2 leaves: degree_bits=14, ~0.8 GB peak
-/// - 3-6 leaves: degree_bits=15, ~1.5 GB peak
-/// - 7-15 leaves: degree_bits=16, ~2.6 GB peak
+/// - 3-7 leaves: degree_bits=15; N=7 full proving peaks at ~1.52 GB
+/// - 8-15 leaves: degree_bits=16
 /// - 16 leaves: degree_bits=17
 pub fn wormhole_private_batch_circuit_config() -> CircuitConfig {
     CircuitConfig {

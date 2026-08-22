@@ -16,9 +16,8 @@
 //!     (`WormholeSpec.Aggregation.privateBatchFeeOk`)
 //!   * the block-reference prefix scan (`referenceFromFirstReal`)
 //!   * dummy-nullifier replacement `DNull(u)=H(H(u))` (`WormholeSpec.Hash.dummyNull`)
-//!   * the nullifier-region sort order (`WormholeSpec.Aggregation.digestLt` /
-//!     `nullifiersSorted` ↔ the native `[u64; 4]` order the circuit tests pin
-//!     `sort_digests4` against)
+//!   * private nullifier permutation preserves the exact selected multiset
+//!     (`WormholeSpec.Aggregation.RPrivateBatch`)
 //!   * the block-header preimage order (`WormholeSpec.Leaf.headerPreimage`)
 //!
 //! The `hh`/`H` model is plonky2's `Poseidon2Hash`, the same hasher the spec's
@@ -446,49 +445,26 @@ proptest! {
         prop_assert_ne!(circuit_dummy, inner);
     }
 
-    /// The nullifier-region sort order the spec models (`digestLt`, strict
-    /// lexicographic with limb 0 most significant) is the order the circuit
-    /// enforces: the circuit tests pin `sort_digests4` output against native
-    /// `<[u64; 4] as Ord>` sorting, and this test pins that native order to the
-    /// spec's `digestLt`, closing the circuit ↔ native ↔ spec chain. Also checks
-    /// the sorted result satisfies the spec's `nullifiersSorted` predicate
-    /// (pairwise `digestLE` on adjacent slots suffices: the order is total and
-    /// transitive).
+    /// The private-batch relation constrains the public nullifier region only as
+    /// a `List.Perm` of the selected real/dummy values. Arbitrary private routing
+    /// therefore preserves multiplicity without imposing a digest order.
     #[test]
-    fn nullifier_sort_order_matches_spec(
-        digests in prop::collection::vec(prop::array::uniform4(0u64..GOLDILOCKS), 0..16),
+    fn nullifier_permutation_preserves_spec_multiset(
+        values in prop::collection::vec(
+            (prop::array::uniform4(0u64..GOLDILOCKS), any::<u64>()),
+            0..16,
+        ),
     ) {
-        /// Mirrors `WormholeSpec.Aggregation.digestLt` clause for clause.
-        fn digest_lt_spec(a: &[u64; 4], b: &[u64; 4]) -> bool {
-            a[0] < b[0]
-                || (a[0] == b[0]
-                    && (a[1] < b[1]
-                        || (a[1] == b[1]
-                            && (a[2] < b[2] || (a[2] == b[2] && a[3] < b[3])))))
-        }
+        let mut routed = values.clone();
+        routed.sort_by_key(|(_, private_rank)| *private_rank);
 
-        // Native reference order (what the circuit tests sort expected regions by).
-        let mut native_sorted = digests.clone();
-        native_sorted.sort();
+        let mut input_multiset: Vec<[u64; 4]> = values.into_iter().map(|(digest, _)| digest).collect();
+        let mut output_multiset: Vec<[u64; 4]> =
+            routed.into_iter().map(|(digest, _)| digest).collect();
+        input_multiset.sort();
+        output_multiset.sort();
 
-        // Spec order.
-        let mut spec_sorted = digests.clone();
-        spec_sorted.sort_by(|a, b| {
-            if digest_lt_spec(a, b) {
-                std::cmp::Ordering::Less
-            } else if a == b {
-                std::cmp::Ordering::Equal
-            } else {
-                std::cmp::Ordering::Greater
-            }
-        });
-
-        prop_assert_eq!(&native_sorted, &spec_sorted);
-
-        // `nullifiersSorted`: adjacent pairs satisfy `digestLE` (lt or eq).
-        for w in native_sorted.windows(2) {
-            prop_assert!(digest_lt_spec(&w[0], &w[1]) || w[0] == w[1]);
-        }
+        prop_assert_eq!(output_multiset, input_multiset);
     }
 
     /// Block-header preimage order (`HeaderInputs::block_hash` ↔ `headerPreimage`):
