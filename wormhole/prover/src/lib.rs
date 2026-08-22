@@ -40,7 +40,6 @@
 //!         state_root: [3u8; 32].try_into().unwrap(),
 //!         extrinsics_root: [4u8; 32].try_into().unwrap(),
 //!         digest: [0u8; 110],
-//!         input_amount: 1000,
 //!         // ZK Merkle proof fields (empty for depth-0 tree where leaf IS root)
 //!         zk_tree_root: [0u8; 32],
 //!         zk_merkle_siblings: vec![],
@@ -56,6 +55,7 @@
 //!         exit_account_1: [2u8; 32].try_into().unwrap(),  // Spend destination
 //!         exit_account_2: [3u8; 32].try_into().unwrap(),  // Change destination
 //!         block_number: 1,
+//!         input_amount: 1000, // Intermediate PI consumed by the private batch
 //!     },
 //! };
 //!
@@ -239,7 +239,6 @@ mod tests {
                 state_root: [3u8; 32].try_into().unwrap(),
                 extrinsics_root: [4u8; 32].try_into().unwrap(),
                 digest: [0xEE; 110],
-                input_amount: 1000,
                 zk_tree_root: [0u8; 32],
                 zk_merkle_siblings: vec![],
                 zk_merkle_positions: vec![],
@@ -254,6 +253,7 @@ mod tests {
                 exit_account_1: [2u8; 32].try_into().unwrap(),
                 exit_account_2: [3u8; 32].try_into().unwrap(),
                 block_number: 1,
+                input_amount: 1000,
             },
         };
 

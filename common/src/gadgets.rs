@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 use plonky2::{
     field::extension::Extendable,
     hash::hash_types::RichField,
@@ -228,106 +228,72 @@ fn split_canonical_u32_halves<F: RichField + Extendable<D>, const D: usize>(
     (lo, hi)
 }
 
-// NOTE: a standalone whole-digest comparator (`digest4_lt` over
-// `felt64_lt_eq`) used to live here; it re-split both operands at every call,
-// and once `sort_digests4` hoisted splitting to ingress it had no callers
-// left, so it was removed. If a one-off digest comparison is needed again,
-// compose [`split_canonical_u32_halves`] + [`halves8_lt`].
-
-/// Lexicographic `lhs < rhs` over 8 range-checked 32-bit half-limbs (most
-/// significant first). Inputs must already be range-constrained to 32 bits;
-/// no splits are performed here (see [`sort_digests4`]).
-fn halves8_lt<F: RichField + Extendable<D>, const D: usize>(
-    b: &mut CircuitBuilder<F, D>,
-    lhs: &[Target; 8],
-    rhs: &[Target; 8],
-) -> BoolTarget {
-    // Fold from the least-significant half up:
-    // lt = lt_0 OR (eq_0 AND (lt_1 OR (eq_1 AND ...)))
-    let mut lt = b._false();
-    for i in (0..8).rev() {
-        let lt_i = u32_lt(b, lhs[i], rhs[i]);
-        let eq_i = b.is_equal(lhs[i], rhs[i]);
-        let carry = b.and(eq_i, lt);
-        lt = b.or(lt_i, carry);
-    }
-    lt
-}
-
-/// Sort 4-limb digests ascending (lexicographic, limb 0 most significant)
-/// with an odd-even transposition network of compare-and-swap stages.
+/// Route 4-limb digests through an odd-even adjacent-swap network.
 ///
-/// Range-check work is hoisted out of the quadratic part: each digest limb is
-/// split into canonical 32-bit halves ONCE at ingress (4 splits per digest),
-/// the 8-half representation is routed through the O(n²) comparator network
-/// (comparators use only [`u32_lt`], no further splits), and the halves are
-/// recombined into limbs at egress. Re-splitting inside every comparator, as
-/// a naive implementation would, costs ~3x more gates.
-///
-/// Two layers of guarantees:
-///
-/// 1. The output is ALWAYS a permutation of the input: `split_low_high`
-///    constrains `limb = lo + hi * 2^32`, each comparator emits
-///    `select(lt, a, b)` / `select(lt, b, a)` — which is `{a, b}` as a
-///    multiset for either value of the (boolean-constrained) flag, moving
-///    each digest's 8 halves under one flag — and egress recombination
-///    computes exactly `hi * 2^32 + lo`. So each output digest equals some
-///    input digest independent of any comparison correctness.
-/// 2. The ascending ORDER is also enforced against malicious provers: the
-///    ingress splits are canonicity-constrained (see
-///    [`split_canonical_u32_halves`], which excludes the `x + p` alias), the
-///    comparators only ever route these constrained halves, so no witness
-///    choice can flip a comparison and mis-order the output.
-///
-/// The recombination here satisfies the packing rules noted above (limbs
-/// range-checked AND wraparound region excluded): both come from the ingress
-/// canonical split.
-pub fn sort_digests4<F: RichField + Extendable<D>, const D: usize>(
+/// Each switch is a private boolean target. Both complete digests are either
+/// passed through or swapped, so every output is structurally an exact
+/// permutation of the inputs for every valid witness. The circuit does not
+/// constrain which permutation is chosen.
+pub fn permute_digests4<F: RichField + Extendable<D>, const D: usize>(
     b: &mut CircuitBuilder<F, D>,
     values: Vec<[Target; 4]>,
-) -> Vec<[Target; 4]> {
+) -> (Vec<[Target; 4]>, Vec<BoolTarget>) {
     let n = values.len();
     if n <= 1 {
-        return values;
+        return (values, Vec::new());
     }
 
-    // Ingress: one canonical split per limb. Halves are ordered most
-    // significant first ([hi0, lo0, hi1, lo1, ...]) so half-wise
-    // lexicographic order equals limb-wise canonical-u64 order.
-    let mut v: Vec<[Target; 8]> = values
-        .into_iter()
-        .map(|d| {
-            let mut halves = [d[0]; 8];
-            for j in 0..4 {
-                let (lo, hi) = split_canonical_u32_halves(b, d[j]);
-                halves[2 * j] = hi;
-                halves[2 * j + 1] = lo;
-            }
-            halves
-        })
-        .collect();
+    let mut routed = values;
+    let mut switches = Vec::with_capacity(n * (n - 1) / 2);
 
     for round in 0..n {
         let mut i = round % 2;
         while i + 1 < n {
-            let lhs = v[i];
-            let rhs = v[i + 1];
-            let lhs_lt = halves8_lt(b, &lhs, &rhs);
-            for j in 0..8 {
-                v[i][j] = b.select(lhs_lt, lhs[j], rhs[j]);
-                v[i + 1][j] = b.select(lhs_lt, rhs[j], lhs[j]);
+            let swap = b.add_virtual_bool_target_safe();
+            let lhs = routed[i];
+            let rhs = routed[i + 1];
+            for j in 0..4 {
+                routed[i][j] = b.select(swap, rhs[j], lhs[j]);
+                routed[i + 1][j] = b.select(swap, lhs[j], rhs[j]);
+            }
+            switches.push(swap);
+            i += 2;
+        }
+    }
+
+    (routed, switches)
+}
+
+/// Compute switch witnesses that route input indices into `permutation`,
+/// where `permutation[output_index]` is the input index for that output.
+///
+/// Returns `None` unless the slice is an exact permutation of `0..len`.
+pub fn permutation_switches(permutation: &[usize]) -> Option<Vec<bool>> {
+    let n = permutation.len();
+    let mut destination = vec![usize::MAX; n];
+    for (output_index, &input_index) in permutation.iter().enumerate() {
+        if input_index >= n || destination[input_index] != usize::MAX {
+            return None;
+        }
+        destination[input_index] = output_index;
+    }
+
+    let mut current: Vec<usize> = (0..n).collect();
+    let mut switches = Vec::with_capacity(n.saturating_mul(n.saturating_sub(1)) / 2);
+    for round in 0..n {
+        let mut i = round % 2;
+        while i + 1 < n {
+            let swap = destination[current[i]] > destination[current[i + 1]];
+            switches.push(swap);
+            if swap {
+                current.swap(i, i + 1);
             }
             i += 2;
         }
     }
 
-    // Egress: recombine each digest's halves back into 64-bit limbs.
-    let two_pow_32 = F::from_canonical_u64(1 << 32);
-    v.into_iter()
-        .map(|halves| {
-            core::array::from_fn(|j| b.mul_const_add(two_pow_32, halves[2 * j], halves[2 * j + 1]))
-        })
-        .collect()
+    debug_assert_eq!(current, permutation);
+    Some(switches)
 }
 
 #[cfg(test)]
@@ -419,31 +385,22 @@ mod tests {
         let _ = is_const_less_than(&mut b, 0, right_t, 65);
     }
 
-    /// Gates added by `sort_digests4` over `n` virtual digests under the
+    /// Gates added by `permute_digests4` over `n` virtual digests under the
     /// production private-batch circuit config.
-    fn sort_gate_cost(n: usize) -> usize {
+    fn permutation_gate_cost(n: usize) -> usize {
         let mut b = CircuitBuilder::<F, D>::new(wormhole_private_batch_circuit_config());
         let values: Vec<[Target; 4]> = (0..n)
             .map(|_| core::array::from_fn(|_| b.add_virtual_target()))
             .collect();
         let before = b.num_gates();
-        let _ = sort_digests4(&mut b, values);
+        let _ = permute_digests4(&mut b, values);
         b.num_gates() - before
     }
 
-    /// The sorting network's cost is quadratic in the batch size (`n_leaf`
-    /// is operator-configurable up to `MAX_PROOF_COUNT = 64`), so its
-    /// per-comparator cost must stay hoisted: limbs are split once at
-    /// ingress, not re-split inside every comparator (which costs ~3x more
-    /// range-check work and at n=64 enough gates to risk crossing a
-    /// power-of-two degree boundary). Budgets are the measured cost of the
-    /// hoisted implementation plus ~15% headroom; the naive re-splitting
-    /// implementation exceeds them by ~60% and must fail.
     #[test]
-    fn sort_digests4_gate_cost_stays_hoisted() {
-        for (n, budget) in [(8usize, 900), (64usize, 57_000)] {
-            let cost = sort_gate_cost(n);
-            std::println!("sort_digests4 n={n}: {cost} gates (budget {budget})");
+    fn permute_digests4_gate_cost_stays_small() {
+        for (n, budget) in [(7usize, 30), (64usize, 2_500)] {
+            let cost = permutation_gate_cost(n);
             assert!(
                 cost <= budget,
                 "n={n}: {cost} gates exceeds budget {budget}"
@@ -451,57 +408,91 @@ mod tests {
         }
     }
 
-    /// Prove a circuit that sorts a fixed set of digests and exposes the
-    /// result as public inputs; the proved order must equal the native
-    /// `[u64; 4]` sort the spec's `digestLt` is pinned against. Exercises
-    /// duplicate digests, shared prefixes that differ only in the last limb,
-    /// half-limb boundary values (2^32 - 1 vs 2^32), and the canonical
-    /// maximum p - 1.
     #[test]
-    fn sort_digests4_proves_native_sort_order() {
-        const P: u64 = 0xFFFF_FFFF_0000_0001;
+    fn permute_digests4_routes_complete_digests() {
         let inputs: Vec<[u64; 4]> = vec![
-            [7, 7, 7, 7],
-            [0, 0, 0, 0],
-            [P - 1, P - 1, P - 1, P - 1],
-            [7, 7, 7, 6],
-            [0, (1 << 32) - 1, 0, 0],
-            [0, 1 << 32, 0, 0],
-            [7, 7, 7, 7], // duplicate
-            [1, 0, 0, P - 1],
+            [10, 11, 12, 13],
+            [20, 21, 22, 23],
+            [30, 31, 32, 33],
+            [40, 41, 42, 43],
         ];
-
-        // Not the production (zk) config: blinding needs plonky2's `rand`
-        // feature, which this crate doesn't enable, and sort order is
-        // independent of blinding.
         let config = plonky2::plonk::circuit_data::CircuitConfig::standard_recursion_config();
         let mut b = CircuitBuilder::<F, D>::new(config);
         let targets: Vec<[Target; 4]> = (0..inputs.len())
             .map(|_| core::array::from_fn(|_| b.add_virtual_target()))
             .collect();
-        for sorted in sort_digests4(&mut b, targets.clone()) {
-            for t in sorted {
+        let (permuted, switches) = permute_digests4(&mut b, targets.clone());
+        for digest in permuted {
+            for t in digest {
                 b.register_public_input(t);
             }
         }
         let data = b.build::<C>();
 
-        let mut pw = PartialWitness::new();
-        for (digest_t, digest_v) in targets.iter().zip(&inputs) {
-            for (t, v) in digest_t.iter().zip(digest_v) {
-                pw.set_target(*t, F::from_canonical_u64(*v)).unwrap();
+        for permutation in [
+            vec![0, 1, 2, 3],
+            vec![3, 2, 1, 0],
+            vec![2, 0, 3, 1],
+            vec![1, 3, 0, 2],
+        ] {
+            let mut pw = PartialWitness::new();
+            for (digest_t, digest_v) in targets.iter().zip(&inputs) {
+                for (t, v) in digest_t.iter().zip(digest_v) {
+                    pw.set_target(*t, F::from_canonical_u64(*v)).unwrap();
+                }
+            }
+            for (target, value) in switches
+                .iter()
+                .zip(permutation_switches(&permutation).unwrap())
+            {
+                pw.set_target(target.target, F::from_bool(value)).unwrap();
+            }
+            let proof = data.prove(pw).unwrap();
+            data.verify(proof.clone()).unwrap();
+
+            let expected: Vec<[u64; 4]> = permutation.iter().map(|&i| inputs[i]).collect();
+            let proved: Vec<[u64; 4]> = proof
+                .public_inputs
+                .chunks_exact(4)
+                .map(|c| core::array::from_fn(|i| c[i].to_canonical_u64()))
+                .collect();
+            assert_eq!(proved, expected);
+        }
+    }
+
+    #[test]
+    fn permutation_switches_rejects_invalid_indices() {
+        assert!(permutation_switches(&[0, 0]).is_none());
+        assert!(permutation_switches(&[0, 2]).is_none());
+    }
+
+    #[test]
+    fn permutation_switches_routes_every_four_element_permutation() {
+        for a in 0..4 {
+            for b in 0..4 {
+                for c in 0..4 {
+                    for d in 0..4 {
+                        let permutation = [a, b, c, d];
+                        let Some(switches) = permutation_switches(&permutation) else {
+                            continue;
+                        };
+
+                        let mut current = vec![0, 1, 2, 3];
+                        let mut switch_index = 0;
+                        for round in 0..4 {
+                            let mut i = round % 2;
+                            while i + 1 < 4 {
+                                if switches[switch_index] {
+                                    current.swap(i, i + 1);
+                                }
+                                switch_index += 1;
+                                i += 2;
+                            }
+                        }
+                        assert_eq!(current, permutation);
+                    }
+                }
             }
         }
-        let proof = data.prove(pw).unwrap();
-        data.verify(proof.clone()).unwrap();
-
-        let mut expected = inputs;
-        expected.sort();
-        let proved: Vec<[u64; 4]> = proof
-            .public_inputs
-            .chunks_exact(4)
-            .map(|c| core::array::from_fn(|i| c[i].to_canonical_u64()))
-            .collect();
-        assert_eq!(proved, expected, "in-circuit sort must match native sort");
     }
 }

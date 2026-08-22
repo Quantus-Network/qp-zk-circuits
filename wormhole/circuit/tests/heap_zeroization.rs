@@ -226,7 +226,6 @@ fn serialization_never_frees_heap_memory_containing_the_secret() {
             state_root: BytesDigest::try_from([3u8; 32]).unwrap(),
             extrinsics_root: BytesDigest::try_from([4u8; 32]).unwrap(),
             digest: [0xEE; DIGEST_LOGS_SIZE],
-            input_amount: 1000,
             zk_tree_root: [0u8; 32],
             zk_merkle_siblings: vec![],
             zk_merkle_positions: vec![],
@@ -241,6 +240,7 @@ fn serialization_never_frees_heap_memory_containing_the_secret() {
             exit_account_1: BytesDigest::try_from([2u8; 32]).unwrap(),
             exit_account_2: BytesDigest::try_from([3u8; 32]).unwrap(),
             block_number: 1,
+            input_amount: 1000,
         },
     };
     let from_inputs = Nullifier::from(&inputs);

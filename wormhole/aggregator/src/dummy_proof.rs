@@ -151,6 +151,7 @@ pub fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
             // Sentinel: block_hash = 0 triggers validation bypass
             block_hash: BytesDigest::try_from(DUMMY_BLOCK_HASH)?,
             block_number: DEFAULT_BLOCK_NUMBER,
+            input_amount: DEFAULT_INPUT_AMOUNT,
         },
         private: PrivateCircuitInputs {
             secret: secret.into(),
@@ -161,7 +162,6 @@ pub fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
             state_root: root_hash.try_into()?,
             extrinsics_root: BytesDigest::try_from(DEFAULT_EXTRINSICS_ROOT)?,
             digest: DEFAULT_DIGEST,
-            input_amount: DEFAULT_INPUT_AMOUNT,
             zk_tree_root,
             zk_merkle_siblings,
             zk_merkle_positions,

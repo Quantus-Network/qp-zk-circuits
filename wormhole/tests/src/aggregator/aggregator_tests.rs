@@ -155,7 +155,7 @@ fn test_inputs_with_asset(asset_id: u32) -> CircuitInputs {
         &inputs.private.unspendable_account,
         inputs.private.transfer_count,
         asset_id,
-        inputs.private.input_amount,
+        inputs.public.input_amount,
     );
     inputs
 }
@@ -189,6 +189,20 @@ fn depth1_merkle_proof(
 /// root. Required now that the private-batch circuit rejects duplicate real
 /// nullifiers (replaying one leaf across two slots is no longer valid).
 fn two_real_leaves_same_block(asset_id: u32) -> (CircuitInputs, CircuitInputs) {
+    two_real_leaves_same_block_with_amounts(
+        asset_id,
+        [DEFAULT_INPUT_AMOUNTS[0], DEFAULT_INPUT_AMOUNTS[1]],
+        [(0, 0), (0, 0)],
+        DEFAULT_VOLUME_FEE_BPS,
+    )
+}
+
+fn two_real_leaves_same_block_with_amounts(
+    asset_id: u32,
+    input_amounts: [u32; 2],
+    output_amounts: [(u32, u32); 2],
+    volume_fee_bps: u32,
+) -> (CircuitInputs, CircuitInputs) {
     let mut leaf_hashes = [[0u8; 32]; 4];
     let mut accounts = [BytesDigest::default(); 2];
     let mut nullifiers = [BytesDigest::default(); 2];
@@ -206,7 +220,7 @@ fn two_real_leaves_same_block(asset_id: u32) -> (CircuitInputs, CircuitInputs) {
             &accounts[i],
             DEFAULT_TRANSFER_COUNTS[i],
             asset_id,
-            DEFAULT_INPUT_AMOUNTS[i],
+            input_amounts[i],
         );
     }
     // Pad the 4-ary node with zero hashes (canonical empty siblings).
@@ -218,14 +232,15 @@ fn two_real_leaves_same_block(asset_id: u32) -> (CircuitInputs, CircuitInputs) {
         let inputs = CircuitInputs {
             public: PublicCircuitInputs {
                 asset_id,
-                output_amount_1: 0,
-                output_amount_2: 0,
-                volume_fee_bps: DEFAULT_VOLUME_FEE_BPS,
+                output_amount_1: output_amounts[i].0,
+                output_amount_2: output_amounts[i].1,
+                volume_fee_bps,
                 nullifier: nullifiers[i],
                 exit_account_1: exit_account,
                 exit_account_2: BytesDigest::default(),
                 block_hash: BytesDigest::try_from([0u8; 32]).unwrap(),
                 block_number: DEFAULT_BLOCK_NUMBERS[0],
+                input_amount: input_amounts[i],
             },
             private: PrivateCircuitInputs {
                 secret: secrets[i].into(),
@@ -235,7 +250,6 @@ fn two_real_leaves_same_block(asset_id: u32) -> (CircuitInputs, CircuitInputs) {
                 state_root: BytesDigest::try_from(DEFAULT_STATE_ROOTS[0]).unwrap(),
                 extrinsics_root: DEFAULT_EXTRINSICS_ROOTS[0].try_into().unwrap(),
                 digest: DEFAULT_DIGESTS[0],
-                input_amount: DEFAULT_INPUT_AMOUNTS[i],
                 zk_tree_root: root,
                 zk_merkle_siblings: siblings,
                 zk_merkle_positions: positions,
@@ -284,6 +298,30 @@ fn aggregate_proofs_into_tree() {
     private_batch_verifier()
         .verify(aggregated)
         .expect("Aggregated proof should verify");
+}
+
+#[test]
+fn real_leaf_aggregate_fee_boundary_is_enforced() {
+    let outputs = [(50, 0), (30, 20)];
+    let (valid_0, valid_1) = two_real_leaves_same_block_with_amounts(0, [100, 1], outputs, 4);
+    let valid = make_private_batch_prover()
+        .aggregate(vec![make_leaf_proof(&valid_0), make_leaf_proof(&valid_1)])
+        .expect("101 input quanta must cover 100 output quanta at 4 bps");
+    private_batch_verifier()
+        .verify(valid)
+        .expect("boundary-valid real-leaf aggregate must verify");
+
+    let (underpaid_0, underpaid_1) =
+        two_real_leaves_same_block_with_amounts(0, [100, 0], outputs, 4);
+    assert!(
+        make_private_batch_prover()
+            .aggregate(vec![
+                make_leaf_proof(&underpaid_0),
+                make_leaf_proof(&underpaid_1),
+            ])
+            .is_err(),
+        "100 input quanta must not cover 100 output quanta at 4 bps"
+    );
 }
 
 #[test]

@@ -513,14 +513,14 @@ mod tests {
     use crate::private_batch::circuit::circuit_logic::PrivateBatchCircuit;
     use crate::private_batch::prover::PrivateBatchProver;
     use plonky2::field::types::Field;
-    use qp_wormhole_inputs::MAX_PROOF_COUNT;
+    use qp_wormhole_inputs::{MAX_PROOF_COUNT, PUBLIC_INPUTS_FELTS_LEN};
     use test_helpers::fake_leaf::{build_fake_leaf_circuit, prove_fake_leaf};
     use zk_circuits_common::circuit::{wormhole_private_batch_circuit_config, F};
 
     #[test]
     fn direct_constructors_reject_oversized_counts() {
         let (leaf, leaf_targets) = build_fake_leaf_circuit();
-        let fake_proof = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; 21]);
+        let fake_proof = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; PUBLIC_INPUTS_FELTS_LEN]);
 
         let err = PrivateBatchProver::new(
             wormhole_private_batch_circuit_config(),
@@ -592,12 +592,14 @@ mod tests {
         let pre_images = vec![bytes_to_digest(
             crate::dummy_proof::generate_random_nullifier_preimage(),
         )];
+        let nullifier_permutation = vec![0];
         let mut pw = PartialWitness::new();
         crate::private_batch::prover::fill_private_batch_witness(
             &mut pw,
             &targets,
             std::slice::from_ref(fake_leaf_proof),
             &pre_images,
+            &nullifier_permutation,
         )
         .unwrap();
         circuit_data.prove(pw).unwrap()
@@ -606,7 +608,7 @@ mod tests {
     #[test]
     fn commit_rejects_malformed_private_batch_pi_without_panicking() {
         let (leaf, leaf_targets) = build_fake_leaf_circuit();
-        let fake_proof = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; 21]);
+        let fake_proof = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; PUBLIC_INPUTS_FELTS_LEN]);
         let private_batch = PrivateBatchCircuit::new(
             wormhole_private_batch_circuit_config(),
             &leaf.common,
@@ -650,8 +652,8 @@ mod tests {
     fn make_private_batch_proof(
         leaf: &plonky2::plonk::circuit_data::CircuitData<F, C, D>,
         dummy_leaf: &ProofWithPublicInputs<F, C, D>,
-        leaf_pis: [F; 21],
-        leaf_targets: &[plonky2::iop::target::Target; 21],
+        leaf_pis: [F; PUBLIC_INPUTS_FELTS_LEN],
+        leaf_targets: &[plonky2::iop::target::Target; PUBLIC_INPUTS_FELTS_LEN],
     ) -> ProofWithPublicInputs<F, C, D> {
         let real_leaf = prove_fake_leaf(leaf, leaf_targets, leaf_pis);
         PrivateBatchProver::new(
@@ -673,7 +675,7 @@ mod tests {
     #[test]
     fn commit_rejects_tampered_private_batch_proof_before_proving() {
         let (leaf, leaf_targets) = build_fake_leaf_circuit();
-        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; 21]);
+        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; PUBLIC_INPUTS_FELTS_LEN]);
         let private_batch = PrivateBatchCircuit::new(
             wormhole_private_batch_circuit_config(),
             &leaf.common,
@@ -725,7 +727,7 @@ mod tests {
         use crate::private_batch::circuit::constants::aggregated_output;
 
         let (leaf, leaf_targets) = build_fake_leaf_circuit();
-        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; 21]);
+        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; PUBLIC_INPUTS_FELTS_LEN]);
         let private_batch = PrivateBatchCircuit::new(
             wormhole_private_batch_circuit_config(),
             &leaf.common,
@@ -762,7 +764,7 @@ mod tests {
     #[test]
     fn commit_rejects_all_dummy_batch() {
         let (leaf, leaf_targets) = build_fake_leaf_circuit();
-        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; 21]);
+        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; PUBLIC_INPUTS_FELTS_LEN]);
         let private_batch = PrivateBatchCircuit::new(
             wormhole_private_batch_circuit_config(),
             &leaf.common,
@@ -800,7 +802,7 @@ mod tests {
     #[test]
     fn commit_rejects_batch_incompatible_private_batch_proofs() {
         let (leaf, leaf_targets) = build_fake_leaf_circuit();
-        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; 21]);
+        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; PUBLIC_INPUTS_FELTS_LEN]);
         let private_batch = PrivateBatchCircuit::new(
             wormhole_private_batch_circuit_config(),
             &leaf.common,
@@ -811,7 +813,7 @@ mod tests {
         .build_verifier();
 
         let block_pis = |block: u64| {
-            let mut pis = [F::ZERO; 21];
+            let mut pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
             pis[crate::private_batch::circuit::constants::BLOCK_HASH_START] =
                 F::from_canonical_u64(block);
             pis
@@ -842,10 +844,10 @@ mod tests {
     #[test]
     fn direct_constructors_reject_non_dummy_padding_templates() {
         let (leaf, leaf_targets) = build_fake_leaf_circuit();
-        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; 21]);
+        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; PUBLIC_INPUTS_FELTS_LEN]);
 
         // A valid leaf proof with a non-zero block hash: real work, not padding.
-        let mut real_pis = [F::ZERO; 21];
+        let mut real_pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
         real_pis[crate::private_batch::circuit::constants::BLOCK_HASH_START] = F::ONE;
         let real_leaf = prove_fake_leaf(&leaf, &leaf_targets, real_pis);
 
@@ -905,7 +907,7 @@ mod tests {
     fn valid_private_batch_proof_and_targets(
     ) -> (ProofWithPublicInputs<F, C, D>, PublicBatchCircuitTargets) {
         let (leaf, leaf_targets) = build_fake_leaf_circuit();
-        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; 21]);
+        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; PUBLIC_INPUTS_FELTS_LEN]);
         let proof = make_all_dummy_private_batch_template(&leaf, &dummy_leaf);
 
         let private_batch = PrivateBatchCircuit::new(

@@ -15,14 +15,14 @@
   over `Felt = ℕ` and does not import the plonky2 spec). Concretely:
 
     * nullifier per slot      `select(is_dummy, H(H u), real)`  — `Plonky2Spec.Wrapper.nullifier_replacement`
-    * nullifier sort          `sort_digests4` comparator network — gadget-level (limbs are split
-                              into canonical 32-bit halves once at ingress; the `halves8_lt`
-                              comparators route those already-constrained halves; see
-                              `common/src/gadgets.rs`), surfaced here as the
-                              `nullsPerm`/`nullsSorted` fields of `PrivateBatchCircuit`
+    * nullifier permutation   private boolean adjacent-swap network — gadget-level,
+                              surfaced here as the `nullsPerm` field of
+                              `PrivateBatchCircuit`
     * exit grouping/dedup     `select`/`matchSum`/`groupAux` over dummy-masked
                               ingress (`select(is_dummy, 0, …)`, see `maskedChildPairs`)
                               — `Plonky2Spec.Wrapper.{match_contribution, dedup_select}`
+    * aggregate fee           dummy-masked input/output sums plus one
+                              batch-safe comparison per private segment
     * block reference         first-real prefix scan             — `Plonky2Spec.Wrapper.scanFirst_correct`
     * metadata `or`-clause    `or(is_dummy, matches) = 1`        — `Plonky2Spec.Wrapper.{block_consistency, real_block_matches}`
 
@@ -35,8 +35,8 @@
 
     * `private_batch_bridge` does one piece of real work — relating the *functional*
       `buildNullifiers` the circuit computes to the *relational* `nullifiersReplaced`
-      (`nullifiersReplaced_build`), witnessing it as the `raw` list the sorted output
-      region permutes; its other conjuncts (`nullsSorted`, `metaOk`, `ref`, `exits`) are
+      (`nullifiersReplaced_build`), witnessing it as the `raw` list the output
+      region permutes; its other conjuncts (`metaOk`, `ref`, `feeOk`, `exits`) are
       shared verbatim with `RPrivateBatch`. So `private_batch_sound` is "the `private_batch_proof_sound` axiom
       + that one modest nullifier lemma".
     * `public_batch_bridge` is the *identity*. The public-batch wrapper conditions are
@@ -96,24 +96,22 @@ theorem buildNullifiers_length (ro : RandomOracle) :
 /-- The private-batch wrapper constraints, as the circuit enforces them on the decoded
     public inputs (`build_private_batch_constraints`). The metadata/reference clauses
     are the satisfied form of the `or(is_dummy, matches)` constraint and the first-real
-    scan; the nullifier clauses are the `select` outputs routed through the
-    `sort_digests4` network; the exit clause is the grouping output.
+    scan; the nullifier clause is the `select` output routed through the private
+    permutation network; the fee clause is the single comparison over
+    dummy-masked totals; the exit clause is the grouping output.
 
-    The two nullifier fields mirror the sorting network's two guarantee layers
-    (`common/src/gadgets.rs::sort_digests4`): the output is structurally a
-    permutation of the per-slot selections (each comparator emits `{a, b}` as a
-    multiset for either flag value), and the ascending order is enforced against
-    malicious provers (canonicity-constrained limb splits). -/
+    The nullifier field mirrors the permutation network's structural guarantee:
+    each private boolean switch emits `{a, b}` as a multiset, so the output is
+    exactly a permutation of the per-slot selections for every witness. -/
 structure PrivateBatchCircuit (ro : RandomOracle) (leaves : List LeafPublic)
     (us : List (List Felt)) (out : PrivateBatchOutput) : Prop where
   /-- One dummy-nullifier preimage per leaf slot. -/
   uslen : us.length = leaves.length
   /-- The output region is a permutation of the per-slot
-      `select(is_dummy, H(H u), real)` selections (sorting-network guarantee 1). -/
+      `select(is_dummy, H(H u), real)` selections. -/
   nullsPerm : out.nullifiers.Perm (buildNullifiers ro leaves us)
-  /-- The output region is in ascending canonical order (sorting-network
-      guarantee 2). -/
-  nullsSorted : nullifiersSorted out.nullifiers
+  /-- One fee inequality over the dummy-masked totals of this private segment. -/
+  feeOk : privateBatchFeeOk leaves out
   /-- The `2N` settled slots are the in-circuit group/dedup of every child's outputs. -/
   exits : out.exitSlots = groupExits (maskedChildPairs leaves)
   /-- Each non-dummy child agrees with the aggregate header (the `or`-clause, satisfied). -/
@@ -128,7 +126,7 @@ theorem private_batch_bridge {ro : RandomOracle} {leaves : List LeafPublic}
   refine ⟨h.metaOk, h.ref,
     ⟨buildNullifiers ro leaves us, nullifiersReplaced_build ro leaves us h.uslen,
       h.nullsPerm⟩,
-    h.nullsSorted, ?_, h.exits⟩
+    ?_, h.feeOk, h.exits⟩
   exact h.nullsPerm.length_eq.trans (buildNullifiers_length ro leaves us h.uslen)
 
 /-- **Private-batch soundness (end to end).** A satisfied private-batch aggregation circuit whose
@@ -137,8 +135,11 @@ theorem private_batch_bridge {ro : RandomOracle} {leaves : List LeafPublic}
     (the latter via the trusted `leaf_proof_sound`).
 
     Honestly scoped, this is "the `leaf_proof_sound` axiom + `private_batch_bridge`", and the
-    only real work inside the bridge is `nullifiersReplaced_build` (the rest of `RPrivateBatch` is
-    shared verbatim with `PrivateBatchCircuit`). -/
+    only real work inside the bridge is `nullifiersReplaced_build`; the aggregate
+    fee predicate and the remaining `RPrivateBatch` clauses are shared verbatim
+    with `PrivateBatchCircuit`. This does not prove that field-level sum and
+    comparison gadgets realize `privateBatchFeeOk`; that remains a Phase-2
+    bridge obligation. -/
 theorem private_batch_sound {ro : RandomOracle} {leaves : List LeafPublic}
     {us : List (List Felt)} {out : PrivateBatchOutput}
     (hacc : ∀ p ∈ leaves, LeafProofAccepted ro p)

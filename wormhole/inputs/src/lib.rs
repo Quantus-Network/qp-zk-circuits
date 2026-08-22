@@ -24,13 +24,18 @@ const GOLDILOCKS_ORDER: u64 = 0xFFFFFFFF00000001;
 
 /// The total size of the public inputs field element vector.
 /// Layout: asset_id(1) + output_amount_1(1) + output_amount_2(1) + volume_fee_bps(1) +
-///         nullifier(4) + exit_account_1(4) + exit_account_2(4) + block_hash(4) + block_number(1)
-/// = 1 + 1 + 1 + 1 + 4 + 4 + 4 + 4 + 1 = 21
+///         nullifier(4) + exit_account_1(4) + exit_account_2(4) + block_hash(4) +
+///         block_number(1) + input_amount(1)
+/// = 1 + 1 + 1 + 1 + 4 + 4 + 4 + 4 + 1 + 1 = 22
 ///
 /// Note: exit accounts use 4 felts (8 bytes/felt) for hash-derived accounts.
 /// parent_hash is a private input to the leaf circuit (used to compute block_hash)
 /// but is not exposed as a public input since block_hash already commits to it.
-pub const PUBLIC_INPUTS_FELTS_LEN: usize = 21;
+///
+/// `input_amount` is exposed only by the intermediate leaf proof so the private
+/// batch can enforce value conservation over the whole segment. Private- and
+/// public-batch proofs do not forward it.
+pub const PUBLIC_INPUTS_FELTS_LEN: usize = 22;
 
 /// Minimum acceptable security level (bits) for the canonical leaf circuit config.
 /// Guards against a qp-plonky2 upgrade silently weakening
@@ -78,6 +83,7 @@ pub const EXIT_ACCOUNT_2_END_INDEX: usize = 16;
 pub const BLOCK_HASH_START_INDEX: usize = 16;
 pub const BLOCK_HASH_END_INDEX: usize = 20;
 pub const BLOCK_NUMBER_INDEX: usize = 20;
+pub const INPUT_AMOUNT_INDEX: usize = 21;
 
 /// A 32-byte digest that can be converted to/from field elements.
 #[derive(Hash, Default, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
@@ -183,7 +189,7 @@ impl AsRef<[u8]> for BytesDigest {
 
 /// All of the public inputs required for a single wormhole proof.
 /// Supports two outputs (spend + change) from a single input.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PublicCircuitInputs {
     /// The asset ID (0 for native token).
     pub asset_id: u32,
@@ -217,6 +223,28 @@ pub struct PublicCircuitInputs {
     pub block_hash: BytesDigest,
     /// The block number, parsed from the block header.
     pub block_number: u32,
+    /// Amount authenticated by the spent ZK-tree leaf, in quantized units.
+    ///
+    /// This is an intermediate leaf-proof public input consumed by the local
+    /// private-batch wrapper. Aggregate proofs do not reveal it.
+    pub input_amount: u32,
+}
+
+impl fmt::Debug for PublicCircuitInputs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PublicCircuitInputs")
+            .field("asset_id", &self.asset_id)
+            .field("output_amount_1", &self.output_amount_1)
+            .field("output_amount_2", &self.output_amount_2)
+            .field("volume_fee_bps", &self.volume_fee_bps)
+            .field("nullifier", &self.nullifier)
+            .field("exit_account_1", &self.exit_account_1)
+            .field("exit_account_2", &self.exit_account_2)
+            .field("block_hash", &self.block_hash)
+            .field("block_number", &self.block_number)
+            .field("input_amount", &"[REDACTED]")
+            .finish()
+    }
 }
 
 /// Exit account data in aggregated proofs.
@@ -399,6 +427,9 @@ impl PublicCircuitInputs {
         let block_number: u32 = pis[BLOCK_NUMBER_INDEX]
             .try_into()
             .context("failed to convert block_number to u32")?;
+        let input_amount: u32 = pis[INPUT_AMOUNT_INDEX]
+            .try_into()
+            .context("failed to convert input_amount to u32")?;
 
         Ok(PublicCircuitInputs {
             asset_id,
@@ -410,6 +441,7 @@ impl PublicCircuitInputs {
             exit_account_2,
             block_hash,
             block_number,
+            input_amount,
         })
     }
 }
@@ -706,9 +738,18 @@ impl PublicBatchPublicInputs {
 mod tests {
     use super::public_batch_pi;
     use super::{
-        validate_proof_count, PrivateBatchPublicInputs, PublicBatchPublicInputs, MAX_PROOF_COUNT,
-        PUBLIC_INPUTS_FELTS_LEN,
+        validate_proof_count, PrivateBatchPublicInputs, PublicBatchPublicInputs,
+        PublicCircuitInputs, INPUT_AMOUNT_INDEX, MAX_PROOF_COUNT, PUBLIC_INPUTS_FELTS_LEN,
     };
+
+    #[test]
+    fn leaf_public_inputs_parse_appended_input_amount() {
+        let mut pis = [0u64; PUBLIC_INPUTS_FELTS_LEN];
+        pis[INPUT_AMOUNT_INDEX] = 42;
+        let parsed = PublicCircuitInputs::try_from_u64_slice(&pis).unwrap();
+        assert_eq!(parsed.input_amount, 42);
+        assert!(!format!("{parsed:?}").contains("42"));
+    }
 
     #[test]
     fn aggregated_public_inputs_reject_malformed_padded_length() {

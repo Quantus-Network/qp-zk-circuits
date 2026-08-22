@@ -11,6 +11,7 @@ use plonky2::{
         proof::ProofWithPublicInputs,
     },
 };
+use qp_wormhole_inputs::INPUT_AMOUNT_INDEX;
 use qp_wormhole_inputs::PUBLIC_INPUTS_FELTS_LEN as LEAF_PI_LEN;
 use zk_circuits_common::circuit::{C, D, F};
 
@@ -31,6 +32,7 @@ pub fn build_fake_leaf_circuit() -> (CircuitData<F, C, D>, [Target; LEAF_PI_LEN]
     builder.range_check(pis[1], 32); // output_amount_1
     builder.range_check(pis[2], 32); // output_amount_2
     builder.range_check(pis[3], 32); // volume_fee_bps
+    builder.range_check(pis[INPUT_AMOUNT_INDEX], 32);
 
     builder.register_public_inputs(&pis_vec);
 

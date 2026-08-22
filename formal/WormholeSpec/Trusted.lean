@@ -40,8 +40,9 @@ satisfaction attests via the soundness *axioms* below), so they stay out of the
 trusted axiom set. Realized in Rust by
 `wormhole/aggregator/src/common/recursive.rs::add_recursive_verifiers`. -/
 
-/-- A private-batch aggregation circuit accepted a recursive **leaf** proof whose 21-felt
-    public inputs decode to `p`. (Constant leaf verifier key; one per leaf slot.)
+/-- A private-batch aggregation circuit accepted a recursive **leaf** proof whose
+    22-felt intermediate public inputs decode to `p`, including the appended
+    `inputAmount`. (Constant leaf verifier key; one per leaf slot.)
 
     `opaque`, not `axiom`: this is an *abstract predicate* (its truth value is never
     assumed), so it should not enlarge the trusted axiom set. Only the soundness facts
@@ -68,7 +69,8 @@ implies the child proof is valid, hence (by the leaf circuit's own
 constraints-⟺-`Rleaf` bridge, T0–T3) `Rleaf` holds on the child's public inputs.
 
 *To discharge:* (i) a verified plonky2 verifier (FRI + Plonk + Fiat–Shamir +
-recursion), and (ii) the leaf circuit ⟺ `Rleaf` bridge. (ii) is the T0–T3 program in
+recursion), and (ii) the leaf circuit ⟺ `Rleaf` bridge, including the 22nd public
+input and excluding the old leaf-local fee check. (ii) is the T0–T3 program in
 `qp-plonky2/formal`; (i) is rung (1), out of scope. -/
 axiom leaf_proof_sound (ro : RandomOracle) (p : LeafPublic) :
     LeafProofAccepted ro p → ∃ w : LeafWitness, Rleaf ro p w
@@ -79,10 +81,13 @@ private-batch circuit: if the public-batch recursion gadget accepts a private-ba
 baked private-batch verifier key), then its public inputs satisfy the private-batch relation
 `RPrivateBatch` for some children and dummy-nullifier preimages.
 
-*Justification & discharge:* as `leaf_proof_sound`, with the private-batch circuit ⟺ `RPrivateBatch`
-bridge (`AggregationBridge.private_batch_bridge`) playing the role of the child-circuit
-bridge — so this axiom's (ii) component is itself a *theorem* here; only the
-proof-system-soundness component (i) remains genuinely trusted. -/
+*Justification & discharge:* as `leaf_proof_sound`, with the private-batch
+circuit ⟺ `RPrivateBatch` bridge (`AggregationBridge.private_batch_bridge`)
+playing the role of the child-circuit bridge. That relation now includes one
+aggregate fee predicate over the 22-felt child interfaces. The theorem in this
+package is only the public-input-level bridge; field-level faithfulness of the
+masked sums/comparison and proof-system soundness remain explicit external
+obligations. -/
 axiom private_batch_proof_sound (ro : RandomOracle) (out : PrivateBatchOutput) :
     PrivateBatchProofAccepted ro out → ∃ leaves us, RPrivateBatch ro leaves us out
 
