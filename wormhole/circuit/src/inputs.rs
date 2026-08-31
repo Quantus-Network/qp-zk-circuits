@@ -14,7 +14,7 @@ use zk_circuits_common::zk_merkle::SIBLINGS_PER_LEVEL;
 use qp_wormhole_inputs::{
     validate_proof_count, ASSET_ID_INDEX, BLOCK_HASH_END_INDEX, BLOCK_HASH_START_INDEX,
     BLOCK_NUMBER_INDEX, EXIT_ACCOUNT_1_END_INDEX, EXIT_ACCOUNT_1_START_INDEX,
-    EXIT_ACCOUNT_2_END_INDEX, EXIT_ACCOUNT_2_START_INDEX, NULLIFIER_END_INDEX,
+    EXIT_ACCOUNT_2_END_INDEX, EXIT_ACCOUNT_2_START_INDEX, INPUT_AMOUNT_INDEX, NULLIFIER_END_INDEX,
     NULLIFIER_START_INDEX, OUTPUT_AMOUNT_1_INDEX, OUTPUT_AMOUNT_2_INDEX, PUBLIC_INPUTS_FELTS_LEN,
     VOLUME_FEE_BPS_INDEX,
 };
@@ -62,10 +62,6 @@ pub struct PrivateCircuitInputs {
     pub extrinsics_root: BytesDigest,
     /// The digest logs of the block header
     pub digest: [u8; DIGEST_LOGS_SIZE],
-    /// The input amount from storage (before fee deduction). This value is quantized with 0.01 units of precision.
-    /// The circuit verifies that output_amount <= input_amount - (input_amount * volume_fee_bps / 10000).
-    pub input_amount: u32,
-
     // === ZK Merkle Proof fields (replaces old MPT storage_proof) ===
     /// Root of the ZK tree (from block header's zk_tree_root field).
     /// This is used for both:
@@ -88,7 +84,7 @@ pub struct PrivateCircuitInputs {
 ///
 /// Redacted: `secret` (spend authority), `unspendable_account` (the deposit
 /// account this proof spends — the direct deposit/withdrawal link),
-/// `transfer_count` and `input_amount` (deposit-identifying metadata), and the
+/// `transfer_count` (deposit-identifying metadata), and the
 /// merkle path material (`digest`, siblings, positions — identifies the leaf).
 ///
 /// Kept visible: the block-header fields (`parent_hash`, `state_root`,
@@ -105,7 +101,6 @@ impl core::fmt::Debug for PrivateCircuitInputs {
             .field("state_root", &self.state_root)
             .field("extrinsics_root", &self.extrinsics_root)
             .field("digest", &"[REDACTED]")
-            .field("input_amount", &"[REDACTED]")
             .field("zk_tree_root", &self.zk_tree_root)
             .field("zk_merkle_siblings", &"[REDACTED]")
             .field("zk_merkle_positions", &"[REDACTED]")
@@ -130,7 +125,7 @@ pub trait ParsePublicInputs {
 
 impl ParsePublicInputs for PublicCircuitInputs {
     fn try_from_felts(pis: &[GoldilocksField]) -> anyhow::Result<PublicCircuitInputs> {
-        // Public inputs are ordered as follows (total 21 felts):
+        // Public inputs are ordered as follows (total 22 felts):
         // asset_id: 1 felt
         // output_amount_1: 1 felt (spend)
         // output_amount_2: 1 felt (change)
@@ -140,6 +135,7 @@ impl ParsePublicInputs for PublicCircuitInputs {
         // ExitAccount2.address: 4 felts (8 bytes/felt for hash-derived accounts)
         // BlockHeader.block_hash: 4 felts
         // BlockHeader.block_number: 1 felt
+        // input_amount: 1 felt (intermediate only; not forwarded by aggregation)
         if pis.len() != PUBLIC_INPUTS_FELTS_LEN {
             bail!(
                 "public inputs should contain: {} field elements, got: {}",
@@ -179,6 +175,10 @@ impl ParsePublicInputs for PublicCircuitInputs {
             .to_canonical_u64()
             .try_into()
             .context("failed to convert block number felt to u32")?;
+        let input_amount = pis[INPUT_AMOUNT_INDEX]
+            .to_canonical_u64()
+            .try_into()
+            .context("failed to convert input_amount felt to u32")?;
 
         Ok(PublicCircuitInputs {
             asset_id,
@@ -190,6 +190,7 @@ impl ParsePublicInputs for PublicCircuitInputs {
             exit_account_1,
             exit_account_2,
             block_number,
+            input_amount,
         })
     }
 
@@ -403,7 +404,6 @@ mod tests {
             state_root: BytesDigest::default(),
             extrinsics_root: BytesDigest::default(),
             digest: [0u8; DIGEST_LOGS_SIZE],
-            input_amount: 313_131,
             zk_tree_root: [0u8; 32],
             zk_merkle_siblings: vec![],
             zk_merkle_positions: vec![],
@@ -413,10 +413,9 @@ mod tests {
         // Spend authority.
         assert!(!dump.contains("abababab"));
         assert!(!dump.contains("secret: BytesDigest"));
-        // Deposit/withdrawal linkability: the deposit account, its transfer
-        // count, and the exact pre-fee amount are private witness data.
+        // Deposit/withdrawal linkability: the deposit account and transfer
+        // count are private witness data.
         assert!(!dump.contains("cdcdcdcd"));
         assert!(!dump.contains("424242"));
-        assert!(!dump.contains("313131"));
     }
 }

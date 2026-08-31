@@ -21,10 +21,7 @@ pub const DEFAULT_SECRETS: [&str; 2] = [
 ];
 pub const DEFAULT_TRANSFER_COUNTS: [u64; 2] = [4, 98];
 pub const DEFAULT_INPUT_AMOUNTS: [u32; 2] = [100, 300];
-/// Output amounts after 10 bps (0.1%) fee deduction: input - (input * 10 / 10000)
-/// 100 - (100 * 10 / 10000) = 100 - 0 = 100 (due to integer division)
-/// 300 - (300 * 10 / 10000) = 300 - 0 = 300 (due to integer division)
-/// For test purposes, we use slightly lower values to ensure the constraint passes
+/// Outputs leave enough value for the private batch's aggregate 10 bps fee.
 pub const DEFAULT_OUTPUT_AMOUNTS: [u32; 2] = [99, 297];
 pub const DEFAULT_VOLUME_FEE_BPS: u32 = 10; // 0.1% = 10 basis points
 
@@ -125,6 +122,7 @@ impl TestInputs for CircuitInputs {
                 // DUMMY: block_hash = 0 (part of dummy sentinel)
                 block_hash: BytesDigest::try_from([0u8; 32]).unwrap(),
                 block_number: DEFAULT_BLOCK_NUMBERS[0],
+                input_amount: DEFAULT_INPUT_AMOUNTS[0],
             },
             private: PrivateCircuitInputs {
                 secret: secret.into(),
@@ -135,7 +133,6 @@ impl TestInputs for CircuitInputs {
                 state_root: BytesDigest::try_from(DEFAULT_STATE_ROOTS[0]).unwrap(),
                 extrinsics_root: DEFAULT_EXTRINSICS_ROOTS[0].try_into().unwrap(),
                 digest: DEFAULT_DIGESTS[0],
-                input_amount: DEFAULT_INPUT_AMOUNTS[0],
                 zk_tree_root,
                 zk_merkle_siblings,
                 zk_merkle_positions,
@@ -176,6 +173,7 @@ impl TestInputs for CircuitInputs {
                 exit_account_2: BytesDigest::default(),
                 block_hash: BytesDigest::try_from([0u8; 32]).unwrap(),
                 block_number: DEFAULT_BLOCK_NUMBERS[1],
+                input_amount: DEFAULT_INPUT_AMOUNTS[1],
             },
             private: PrivateCircuitInputs {
                 secret: secret.into(),
@@ -185,7 +183,6 @@ impl TestInputs for CircuitInputs {
                 state_root: BytesDigest::try_from(DEFAULT_STATE_ROOTS[1]).unwrap(),
                 extrinsics_root: DEFAULT_EXTRINSICS_ROOTS[1].try_into().unwrap(),
                 digest: DEFAULT_DIGESTS[1],
-                input_amount: DEFAULT_INPUT_AMOUNTS[1],
                 zk_tree_root,
                 zk_merkle_siblings,
                 zk_merkle_positions,

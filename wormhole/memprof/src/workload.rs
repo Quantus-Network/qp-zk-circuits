@@ -4,20 +4,28 @@
 //!   3. build the private-batch aggregation circuit
 //!   4. commit + prove the aggregation
 //!
-//! Uses dummy circuit inputs so the workload is self-contained.
+//! Uses deterministic circuit inputs so the workload is self-contained.
 
 use anyhow::Result;
+use plonky2::field::types::Field;
+use plonky2::hash::poseidon2::Poseidon2Hash;
 use plonky2::iop::witness::PartialWitness;
 use plonky2::plonk::circuit_data::{
     CircuitConfig, CommonCircuitData, ProverCircuitData, VerifierOnlyCircuitData,
 };
+use plonky2::plonk::config::Hasher;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use wormhole_aggregator::dummy_proof::load_dummy_proof;
-use wormhole_aggregator::private_batch::prover::PrivateBatchProver;
+use wormhole_aggregator::private_batch::prover::{PrivateBatchBuildMetrics, PrivateBatchProver};
 use wormhole_aggregator::{build_dummy_circuit_inputs, generate_dummy_proof};
+use wormhole_circuit::block_header::header::HeaderInputs;
 use wormhole_circuit::circuit::circuit_logic::{CircuitTargets, WormholeCircuit};
+use wormhole_circuit::inputs::CircuitInputs;
+use wormhole_circuit::nullifier::Nullifier;
 use wormhole_prover::fill_witness;
 use zk_circuits_common::circuit::{C, D, F};
+use zk_circuits_common::serialization::{bytes_to_digest, digest_to_bytes as serialize_digest};
+use zk_circuits_common::utils::{digest_to_bytes, u64_to_felts};
 
 use crate::report::PhaseReport;
 
@@ -31,6 +39,41 @@ pub struct LeafContext {
     pub targets: CircuitTargets,
 }
 
+fn print_private_batch_metrics(num_leaf_proofs: usize, metrics: PrivateBatchBuildMetrics) {
+    eprintln!(
+        "[metrics] private_batch n={} leaf_degree_bits={} unpadded_gates={} \
+         degree_bits={} padded_gates={}",
+        num_leaf_proofs,
+        metrics.leaf_degree_bits,
+        metrics.unpadded_gates,
+        metrics.degree_bits,
+        metrics.padded_gates,
+    );
+}
+
+fn build_profile_circuit_inputs() -> Result<CircuitInputs> {
+    let mut inputs = build_dummy_circuit_inputs()?;
+    let fee_denominator = 10_000u64 - u64::from(inputs.public.volume_fee_bps);
+    inputs.public.output_amount_1 =
+        (u64::from(inputs.public.input_amount) * fee_denominator / 10_000) as u32;
+    inputs.public.nullifier = digest_to_bytes(
+        Nullifier::from_preimage(
+            inputs.private.secret.expose_digest(),
+            inputs.private.transfer_count,
+        )
+        .hash,
+    );
+
+    let account: [u8; 32] = inputs.private.unspendable_account.as_ref().try_into()?;
+    let mut preimage = bytes_to_digest(&account).to_vec();
+    preimage.extend(u64_to_felts(inputs.private.transfer_count));
+    preimage.push(F::from_canonical_u32(inputs.public.asset_id));
+    preimage.push(F::from_canonical_u32(inputs.public.input_amount));
+    inputs.private.zk_tree_root = serialize_digest(&Poseidon2Hash::hash_no_pad(&preimage).elements);
+    inputs.public.block_hash = HeaderInputs::try_from(&inputs)?.block_hash();
+    Ok(inputs)
+}
+
 pub fn build_leaf_context(
     leaf_cfg: CircuitConfig,
     report: &mut PhaseReport,
@@ -39,8 +82,15 @@ pub fn build_leaf_context(
 
     // Build circuit ONCE - extract all data from this single build
     let circuit = WormholeCircuit::new(leaf_cfg)?;
+    let unpadded_gates = circuit.num_gates();
     let targets = circuit.targets();
     let circuit_data = circuit.build_circuit();
+    eprintln!(
+        "[metrics] leaf unpadded_gates={} degree_bits={} padded_gates={}",
+        unpadded_gates,
+        circuit_data.common.degree_bits(),
+        circuit_data.common.degree(),
+    );
 
     // Generate dummy proof before splitting circuit_data
     let dummy_bytes = generate_dummy_proof(&circuit_data, &targets)?;
@@ -75,7 +125,7 @@ pub fn generate_leaf_proof(
 ) -> Result<ProofWithPublicInputs<F, C, D>> {
     report.phase_start(&format!("gen_leaf_proof[{}]", idx))?;
 
-    let inputs = build_dummy_circuit_inputs()?;
+    let inputs = build_profile_circuit_inputs()?;
 
     // Fill witness using targets from the same build as prover_data
     let mut pw = PartialWitness::new();
@@ -102,13 +152,14 @@ pub fn aggregate_fresh(
     report: &mut PhaseReport,
 ) -> Result<ProofWithPublicInputs<F, C, D>> {
     report.phase_start("build_agg_circuit")?;
-    let prover = PrivateBatchProver::new(
+    let (prover, metrics) = PrivateBatchProver::new_with_metrics(
         agg_config,
         leaf.common.clone(),
         &leaf.verifier_only,
         num_leaf_proofs,
         leaf.dummy_proof.clone(),
     )?;
+    print_private_batch_metrics(num_leaf_proofs, metrics);
     report.phase_end()?;
 
     report.phase_start("agg_commit")?;
@@ -132,13 +183,14 @@ pub fn build_agg_circuit_only(
     report: &mut PhaseReport,
 ) -> Result<()> {
     report.phase_start("build_agg_circuit_only")?;
-    let _ = PrivateBatchProver::new(
+    let (_, metrics) = PrivateBatchProver::new_with_metrics(
         agg_config,
         leaf.common.clone(),
         &leaf.verifier_only,
         num_leaf_proofs,
         leaf.dummy_proof.clone(),
     )?;
+    print_private_batch_metrics(num_leaf_proofs, metrics);
     report.phase_end()?;
     Ok(())
 }

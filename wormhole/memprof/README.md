@@ -55,6 +55,17 @@ cargo run -p wormhole-memprof --release -- --peak-target-mb 1600
 
 ## Output
 
+Each run prints the unpadded and finalized power-of-two circuit dimensions:
+
+```text
+[metrics] leaf unpadded_gates=... degree_bits=... padded_gates=...
+[metrics] private_batch n=7 leaf_degree_bits=... unpadded_gates=... degree_bits=... padded_gates=...
+```
+
+These lines make bucket-boundary comparisons reproducible without enabling
+logs or metric collection in production prover constructors. Only the profiler
+calls the opt-in `new_with_metrics` constructor.
+
 ```
 ============================== MEMPROF REPORT ==============================
 phase                        |  wall (ms) |     start (MB) |       end (MB) |      peak (MB)

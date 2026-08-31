@@ -29,19 +29,21 @@
   moves into the reductions; collision resistance is invoked only where a clean
   conclusion is wanted, precisely as a real cryptographic reduction does.
 
-  `Felt` stays `Nat` here, but now for a *different* reason: the `Nat`-level arithmetic
-  and encoding proofs (`Aggregation` conservation via `omega`, `Encoding` byte bounds)
-  need it. Unlike injectivity, collision resistance is consistent over a finite carrier,
-  so the hash interface is no longer what forces the choice.
+  `Felt` stays `Nat` here, but now for a *different* reason: the `Nat`-level
+  arithmetic and encoding proofs (`Aggregation` grouping and aggregate-fee
+  bounds, `Encoding` byte bounds) need it. Unlike injectivity, collision
+  resistance is consistent over a finite carrier, so the hash interface is no
+  longer what forces the choice.
 -/
 import WormholeSpec.Basic
 
 namespace WormholeSpec
 
-/-- Build-time tripwire: this `rfl` pins `Felt` to `Nat`. The `Nat`-level arithmetic
-    and encoding proofs (`Aggregation` conservation, `Encoding` byte bounds) rely on
-    it; if a future change redefines `Felt` (e.g. as `ZMod goldilocks`), THIS line
-    stops compiling, forcing those `omega`/byte proofs to be reworked for the field.
+/-- Build-time tripwire: this `rfl` pins `Felt` to `Nat`. The `Nat`-level
+    arithmetic and encoding proofs (`Aggregation` grouping/aggregate-fee bounds,
+    `Encoding` byte bounds) rely on it; if a future change redefines `Felt`
+    (e.g. as `ZMod goldilocks`), THIS line stops compiling, forcing those
+    `omega`/byte proofs to be reworked for the field.
     (Note: unlike the old injective-RO model, the hash interface is *not* what forces
     `Nat` — collision resistance is finite-field-consistent.) -/
 example : Felt = Nat := rfl

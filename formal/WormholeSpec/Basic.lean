@@ -13,9 +13,10 @@
   WARNING — the field representation is NOT a free global swap.
   -----------------------------------------------------------
   Do **not** redefine `abbrev Felt := ZMod goldilocks` workspace-wide. The reason is
-  now the *arithmetic*, not the hash: `Encoding.lean` and `Aggregation.lean` discharge
-  byte-bound and value-conservation goals with `omega` over `Nat`, and those proofs
-  would have to be reworked for modular field arithmetic.
+  now the *arithmetic*, not the hash: `Encoding.lean` and `Aggregation.lean`
+  discharge byte-bound, grouping-conservation, and aggregate-fee/no-wrap goals
+  over `Nat`, and those proofs would have to be reworked for modular field
+  arithmetic.
 
   The hash interface no longer forces this choice. `Hash.lean` used to bake a *totally
   injective* `H` into `RandomOracle`, which is satisfiable only over an infinite carrier

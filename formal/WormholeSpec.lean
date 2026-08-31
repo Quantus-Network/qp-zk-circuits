@@ -9,8 +9,9 @@
   Module map:
   * `WormholeSpec.Basic`       field/digest model, salts, range predicate
   * `WormholeSpec.Hash`        hash interface (`H`, `CollisionResistant`) and derived hashes
-  * `WormholeSpec.Leaf`        leaf relation R_leaf (C1–C5, conditional dummy path)
-  * `WormholeSpec.Aggregation` private-batch / public-batch aggregation relations
+  * `WormholeSpec.Leaf`        22-felt leaf relation R_leaf (C1–C4, conditional dummy path)
+  * `WormholeSpec.Aggregation` private-batch / public-batch relations, including
+                               one aggregate fee check per private segment
   * `WormholeSpec.Trusted`     the trusted base (T4): explicit `axiom`s for the
                                recursive-verifier (`verify_proof`) soundness
   * `WormholeSpec.AggregationBridge`  the private-batch/public-batch wrapper *circuit constraints* imply

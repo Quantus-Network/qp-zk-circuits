@@ -1,6 +1,8 @@
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
-use qp_wormhole_inputs::{EXIT_ACCOUNT_1_END_INDEX, EXIT_ACCOUNT_1_START_INDEX};
+use qp_wormhole_inputs::{
+    EXIT_ACCOUNT_1_END_INDEX, EXIT_ACCOUNT_1_START_INDEX, PUBLIC_INPUTS_FELTS_LEN,
+};
 use test_helpers::{fake_leaf::build_fake_leaf_circuit, TestInputs};
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use wormhole_circuit::inputs::CircuitInputs;
@@ -62,16 +64,16 @@ fn borrowed_verify_keeps_proof_available() {
     .unwrap();
     verifier.verify_ref(&verifier_proof).unwrap();
 
-    assert_eq!(proof.public_inputs.len(), 21);
+    assert_eq!(proof.public_inputs.len(), PUBLIC_INPUTS_FELTS_LEN);
 }
 
 #[test]
 fn verifier_loader_rejects_same_profile_substituted_circuit() {
     // This fake circuit deliberately uses the same recursion config and the same
-    // 21-public-input shape as Wormhole, but enforces only three range checks.
+    // public-input shape as Wormhole, but enforces only four range checks.
     let (fake, _) = build_fake_leaf_circuit();
     assert_eq!(fake.common.config, CIRCUIT_CONFIG);
-    assert_eq!(fake.common.num_public_inputs, 21);
+    assert_eq!(fake.common.num_public_inputs, PUBLIC_INPUTS_FELTS_LEN);
 
     let verifier_bytes = fake.verifier_only.to_bytes().unwrap();
     let common_bytes = fake
@@ -89,15 +91,9 @@ fn cannot_verify_with_modified_exit_account() {
     let inputs = CircuitInputs::test_inputs_0();
     let mut proof = prover.commit(&inputs).unwrap().prove().unwrap();
 
-    println!("proof before: {:?}", proof.public_inputs);
-    let exit_account = SubstrateAccount::from_field_elements(
-        &proof.public_inputs[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX],
-    );
-    println!("exit_account: {:?}", exit_account);
     let modified_exit_account = SubstrateAccount::new(&[8u8; 32]).unwrap();
     proof.public_inputs[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX]
         .copy_from_slice(&modified_exit_account.to_field_elements());
-    println!("proof after: {:?}", proof.public_inputs);
 
     let verifier_data = build_test_verifier();
     let result = verifier_data.verify(proof);
