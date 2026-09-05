@@ -1,0 +1,20 @@
+[package]
+authors.workspace = true
+description = "Public input types for wormhole-address ownership circuit proofs"
+edition.workspace = true
+license.workspace = true
+name = "qp-ownership-inputs"
+readme = "README.md"
+repository.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow = { workspace = true, default-features = false }
+qp-wormhole-inputs = { version = "=4.3.0", path = "../../wormhole/inputs", default-features = false }
+
+[features]
+default = ["std"]
+std = ["anyhow/std", "qp-wormhole-inputs/std"]
+
+[lints]
+workspace = true

@@ -403,6 +403,14 @@ pub fn wormhole_private_batch_circuit_config() -> CircuitConfig {
     }
 }
 
+/// Circuit config for the wormhole-address ownership circuit (ZK enabled).
+///
+/// This proof is verified on-chain for airdrop claims, so the secret must stay
+/// hidden. Row-blinding ZK is the same mode used by the private-batch layer.
+pub fn ownership_circuit_config() -> CircuitConfig {
+    CircuitConfig::standard_recursion_zk_config()
+}
+
 /// Circuit config for public-batch aggregation circuits (non-ZK).
 ///
 /// Public-batch is the *public* aggregation layer: its witnesses are private-batch proofs, which are
@@ -597,6 +605,7 @@ mod validate_circuit_config_tests {
         validate_circuit_config(&wormhole_leaf_circuit_config()).unwrap();
         validate_circuit_config(&wormhole_private_batch_circuit_config()).unwrap();
         validate_circuit_config(&wormhole_public_batch_circuit_config()).unwrap();
+        validate_circuit_config(&ownership_circuit_config()).unwrap();
         validate_circuit_config(&CircuitConfig::standard_recursion_config()).unwrap();
         validate_circuit_config(&CircuitConfig::standard_recursion_zk_config()).unwrap();
     }

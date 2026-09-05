@@ -1,0 +1,20 @@
+[package]
+authors.workspace = true
+description = "Generate ownership-circuit verifier artifacts"
+edition.workspace = true
+license.workspace = true
+name = "qp-ownership-circuit-builder"
+publish = true
+readme = "README.md"
+repository.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+clap = { version = "=4.6.1", features = ["derive"] }
+ownership-circuit = { package = "qp-ownership-circuit", version = "=4.3.0", path = "../circuit" }
+qp-plonky2 = { workspace = true, features = ["default"] }
+zk-circuits-common = { package = "qp-zk-circuits-common", version = "=4.3.0", path = "../../common" }
+
+[lints]
+workspace = true

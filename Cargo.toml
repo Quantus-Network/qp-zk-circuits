@@ -1,6 +1,12 @@
 [workspace]
 members = [
 	"common",
+	"ownership/circuit",
+	"ownership/circuit-builder",
+	"ownership/inputs",
+	"ownership/prover",
+	"ownership/tests",
+	"ownership/verifier",
 	"wormhole/aggregator",
 	"wormhole/circuit",
 	"wormhole/circuit-builder",
