@@ -176,18 +176,12 @@ jobs:
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
 
-          git add Cargo.toml \
-            common/Cargo.toml \
-            wormhole/inputs/Cargo.toml \
-            wormhole/circuit/Cargo.toml \
-            wormhole/prover/Cargo.toml \
-            wormhole/verifier/Cargo.toml \
-            wormhole/aggregator/Cargo.toml \
-            wormhole/circuit-builder/Cargo.toml \
-            wormhole/memprof/Cargo.toml \
-            wormhole/tests/Cargo.toml \
-            wormhole/tests/test-helpers/Cargo.toml \
-            Cargo.lock || true
+          # Stage every workspace manifest the version rewrite may have
+          # touched, plus the lockfile. An explicit crate allowlist misses
+          # new families (e.g. ownership/) and leaves their path-dep pins
+          # at the previous version while the workspace moves on.
+          git add Cargo.lock
+          find . -name Cargo.toml -not -path './target/*' -exec git add {} +
           git commit -m "ci: Automate workspace version bump to $NEW_VERSION"
           git push origin "$branch_name"
 

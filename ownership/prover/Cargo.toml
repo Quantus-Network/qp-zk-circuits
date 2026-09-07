@@ -1,0 +1,29 @@
+[package]
+authors.workspace = true
+description = "Prover for the wormhole-address ownership circuit"
+edition.workspace = true
+license.workspace = true
+name = "qp-ownership-prover"
+readme = "README.md"
+repository.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+ownership-circuit = { package = "qp-ownership-circuit", version = "=4.3.0", path = "../circuit" }
+qp-plonky2 = { workspace = true }
+wormhole-circuit = { package = "qp-wormhole-circuit", version = "=4.3.0", path = "../../wormhole/circuit" }
+zk-circuits-common = { package = "qp-zk-circuits-common", version = "=4.3.0", path = "../../common" }
+
+[features]
+default = ["std"]
+std = [
+	"anyhow/std",
+	"ownership-circuit/std",
+	"qp-plonky2/std",
+	"wormhole-circuit/std",
+	"zk-circuits-common/std",
+]
+
+[lints]
+workspace = true

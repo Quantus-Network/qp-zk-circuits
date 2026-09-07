@@ -1,0 +1,26 @@
+[package]
+authors.workspace = true
+description = "Verifier for the wormhole-address ownership circuit"
+edition.workspace = true
+license.workspace = true
+name = "qp-ownership-verifier"
+readme = "README.md"
+repository.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+qp-ownership-inputs = { version = "=4.3.0", path = "../inputs", default-features = false }
+qp-plonky2-verifier = { version = "=1.5.5", default-features = false }
+tiny-keccak = { workspace = true }
+
+[features]
+default = ["std"]
+std = [
+	"anyhow/std",
+	"qp-ownership-inputs/std",
+	"qp-plonky2-verifier/std",
+]
+
+[lints]
+workspace = true

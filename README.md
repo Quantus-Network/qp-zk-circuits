@@ -13,6 +13,12 @@ This repository is a Cargo workspace organized to clearly separate different cir
   - [`verifier/`](./wormhole/verifier/): The verifier for the Wormhole circuit.
   - [`aggregator/`](./wormhole/aggregator/): A circuit for recursively aggregating Wormhole proofs.
   - [`tests/`](./wormhole/tests/): Integration tests for the complete Wormhole circuit.
+- [`ownership/`](./ownership/): Circuit that proves knowledge of a wormhole-address secret, without inclusion proofs. Used to claim a mainnet airdrop from a testnet wormhole address.
+  - [`circuit/`](./ownership/circuit/): Plonky2 circuit definition.
+  - [`prover/`](./ownership/prover/): Proof generation.
+  - [`verifier/`](./ownership/verifier/): Artifact-loading verifier.
+  - [`inputs/`](./ownership/inputs/): Public-input types.
+  - [`tests/`](./ownership/tests/): Prove / verify integration tests.
 
 ## Prerequisites
 
@@ -119,6 +125,7 @@ Once the release proposal PR is reviewed and merged, the "Create Release Tag and
   3. `qp-wormhole-circuit-builder` - Circuit builder utilities
   4. `qp-wormhole-prover` - Wormhole proof generation
   5. `qp-wormhole-verifier` - Wormhole proof verification
+  6. `qp-ownership-inputs` / `qp-ownership-circuit` / `qp-ownership-prover` / `qp-ownership-verifier` / `qp-ownership-circuit-builder` - Ownership circuit family
 
 ### Published Crates
 
@@ -129,6 +136,11 @@ All published crates use the `qp-` prefix and are available on crates.io:
 - [`qp-wormhole-prover`](https://crates.io/crates/qp-wormhole-prover) - Wormhole circuit prover
 - [`qp-wormhole-verifier`](https://crates.io/crates/qp-wormhole-verifier) - Wormhole circuit verifier
 - [`qp-wormhole-circuit-builder`](https://crates.io/crates/qp-wormhole-circuit-builder) - Circuit building utilities
+- [`qp-ownership-inputs`](https://crates.io/crates/qp-ownership-inputs) - Ownership circuit public-input types
+- [`qp-ownership-circuit`](https://crates.io/crates/qp-ownership-circuit) - Wormhole-address ownership circuit
+- [`qp-ownership-prover`](https://crates.io/crates/qp-ownership-prover) - Ownership circuit prover
+- [`qp-ownership-verifier`](https://crates.io/crates/qp-ownership-verifier) - Ownership circuit verifier
+- [`qp-ownership-circuit-builder`](https://crates.io/crates/qp-ownership-circuit-builder) - Ownership circuit artifact generation
 
 ### Using Published Crates
 

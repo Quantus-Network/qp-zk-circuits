@@ -743,6 +743,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
+name = "ownership-tests"
+version = "4.3.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "qp-ownership-circuit",
+ "qp-ownership-inputs",
+ "qp-ownership-prover",
+ "qp-ownership-verifier",
+ "qp-plonky2",
+ "qp-wormhole-circuit",
+ "qp-zk-circuits-common",
+ "tiny-keccak",
+]
+
+[[package]]
 name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -833,6 +849,57 @@ dependencies = [
  "rusty-fork",
  "tempfile",
  "unarray",
+]
+
+[[package]]
+name = "qp-ownership-circuit"
+version = "4.3.0"
+dependencies = [
+ "anyhow",
+ "qp-ownership-inputs",
+ "qp-plonky2",
+ "qp-wormhole-circuit",
+ "qp-zk-circuits-common",
+]
+
+[[package]]
+name = "qp-ownership-circuit-builder"
+version = "4.3.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "qp-ownership-circuit",
+ "qp-plonky2",
+ "qp-zk-circuits-common",
+]
+
+[[package]]
+name = "qp-ownership-inputs"
+version = "4.3.0"
+dependencies = [
+ "anyhow",
+ "qp-wormhole-inputs",
+]
+
+[[package]]
+name = "qp-ownership-prover"
+version = "4.3.0"
+dependencies = [
+ "anyhow",
+ "qp-ownership-circuit",
+ "qp-plonky2",
+ "qp-wormhole-circuit",
+ "qp-zk-circuits-common",
+]
+
+[[package]]
+name = "qp-ownership-verifier"
+version = "4.3.0"
+dependencies = [
+ "anyhow",
+ "qp-ownership-inputs",
+ "qp-plonky2-verifier",
+ "tiny-keccak",
 ]
 
 [[package]]
