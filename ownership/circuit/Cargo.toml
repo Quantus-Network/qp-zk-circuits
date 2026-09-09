@@ -10,10 +10,10 @@ version.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-qp-ownership-inputs = { version = "=4.3.0", path = "../inputs", default-features = false }
+qp-ownership-inputs = { version = "=4.4.0", path = "../inputs", default-features = false }
 qp-plonky2 = { workspace = true }
-wormhole-circuit = { package = "qp-wormhole-circuit", version = "=4.3.0", path = "../../wormhole/circuit", default-features = false }
-zk-circuits-common = { package = "qp-zk-circuits-common", version = "=4.3.0", path = "../../common", default-features = false }
+wormhole-circuit = { package = "qp-wormhole-circuit", version = "=4.4.0", path = "../../wormhole/circuit", default-features = false }
+zk-circuits-common = { package = "qp-zk-circuits-common", version = "=4.4.0", path = "../../common", default-features = false }
 
 [features]
 default = ["std"]
