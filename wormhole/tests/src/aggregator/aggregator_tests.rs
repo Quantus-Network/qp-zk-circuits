@@ -333,7 +333,7 @@ fn commit_rejects_nonzero_asset_id_when_dummy_padding_is_needed() {
     let proof = make_leaf_proof(&with_real_block(test_inputs_with_asset(5)));
 
     let prover = make_private_batch_prover();
-    let err = prover.commit(vec![proof]).unwrap_err();
+    let err = prover.aggregate(vec![proof]).unwrap_err();
     assert!(
         err.to_string().contains("dummy proofs use asset_id=0"),
         "got: {err}"
@@ -360,7 +360,7 @@ fn commit_rejects_batch_incompatible_proofs() {
 
     let prover = make_private_batch_prover();
     let err = prover
-        .commit(vec![proof_asset_0, proof_asset_5])
+        .aggregate(vec![proof_asset_0, proof_asset_5])
         .unwrap_err();
     assert!(err.to_string().contains("asset"), "got: {err}");
 }
@@ -440,7 +440,7 @@ fn private_batch_commit_rejects_malformed_full_batch_at_api_boundary() {
     let valid = make_leaf_proof(&CircuitInputs::test_inputs_0());
 
     let prover = make_private_batch_prover();
-    let err = prover.commit(vec![malformed, valid]).unwrap_err();
+    let err = prover.aggregate(vec![malformed, valid]).unwrap_err();
     assert!(
         err.to_string()
             .contains("leaf proof public input length mismatch"),

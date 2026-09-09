@@ -84,9 +84,9 @@ fn main() -> anyhow::Result<()> {
     );
 
     // One real private-batch proof (a single real leaf padded with dummy
-    // leaves), reused for every M: PublicBatchProver::commit rejects all-dummy
-    // batches (they settle nothing on-chain), and the private-batch circuit
-    // doesn't depend on M.
+    // leaves), reused for every M: PublicBatchProver::prove_batch rejects
+    // all-dummy batches (they settle nothing on-chain), and the private-batch
+    // circuit doesn't depend on M.
     println!("== One-time setup: real private-batch proof ==");
     let proof_start = Instant::now();
     CircuitBinsConfig::new(NUM_LEAF_PROOFS, None)?.save(&dir)?;
@@ -133,15 +133,14 @@ fn main() -> anyhow::Result<()> {
 
         // 3) Prove a batch with one real private-batch proof (M-1 dummy pads).
         let prove_start = Instant::now();
-        let prover = prover.commit(PublicBatchInputs {
+        let proof = prover.prove_batch(PublicBatchInputs {
             proofs: vec![real_private_batch.clone()],
             aggregator_address: Default::default(),
         })?;
-        let proof = prover.prove()?;
         let prove_time = prove_start.elapsed();
         let proof_size = proof.to_bytes().len();
         println!(
-            "  commit + prove:            {:.1}s (proof: {:.1} KB, {} PIs)",
+            "  prove:                     {:.1}s (proof: {:.1} KB, {} PIs)",
             prove_time.as_secs_f64(),
             proof_size as f64 / 1e3,
             proof.public_inputs.len()

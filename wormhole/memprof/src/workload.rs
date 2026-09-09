@@ -162,12 +162,8 @@ pub fn aggregate_fresh(
     print_private_batch_metrics(num_leaf_proofs, metrics);
     report.phase_end()?;
 
-    report.phase_start("agg_commit")?;
-    let prover = prover.commit(leaf_proofs)?;
-    report.phase_end()?;
-
     report.phase_start("agg_prove")?;
-    let proof = prover.prove()?;
+    let proof = prover.aggregate(leaf_proofs)?;
     report.phase_end()?;
 
     if release_after {
