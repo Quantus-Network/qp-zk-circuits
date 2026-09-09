@@ -1,8 +1,8 @@
 //! Private-batch aggregation prover (prebuilt-circuit proving API).
 //!
-//! - `new(...)` / `new_from_*` constructors
-//! - `commit(...)` to fill the witness
-//! - `prove()` to generate the aggregated proof
+//! - `new(...)` / `new_from_*` constructors (one expensive circuit build)
+//! - `aggregate(...)` to prove a batch; non-consuming, so one prover instance
+//!   can prove any number of batches without rebuilding the circuit
 //!
 //! The leaf verifier key is baked in as constants at circuit build time to prevent
 //! verifier key substitution attacks.
@@ -49,11 +49,10 @@ use crate::{
 #[derive(Debug)]
 pub struct PrivateBatchProver {
     pub circuit_data: ProverCircuitData<F, C, D>,
-    partial_witness: PartialWitness<F>,
-    targets: Option<PrivateBatchCircuitTargets>,
+    targets: PrivateBatchCircuitTargets,
     num_leaf_proofs: usize,
     dummy_proof_template: ProofWithPublicInputs<F, C, D>,
-    /// Leaf verifier data, kept so [`Self::commit`] can cheaply verify each
+    /// Leaf verifier data, kept so [`Self::aggregate`] can cheaply verify each
     /// supplied leaf proof before starting the expensive recursive proving run
     /// (mirrors [`crate::public_batch::prover::PublicBatchProver`]'s pinned
     /// inner verifier).
@@ -148,7 +147,7 @@ impl PrivateBatchProver {
         dummy_proof_template: ProofWithPublicInputs<F, C, D>,
     ) -> Result<Self> {
         // Enforce the same template invariant as the byte-loading constructors:
-        // `commit` clones this template into every padded slot, and the circuit
+        // `aggregate` clones this template into every padded slot, and the circuit
         // only exempts slots carrying the dummy sentinel — a caller-supplied
         // REAL proof here would replay its payout in every empty slot (#97026).
         let leaf_verifier = VerifierCircuitData {
@@ -159,8 +158,7 @@ impl PrivateBatchProver {
 
         Ok(Self {
             circuit_data,
-            partial_witness: PartialWitness::new(),
-            targets: Some(targets),
+            targets,
             num_leaf_proofs,
             dummy_proof_template,
             leaf_verifier,
@@ -210,7 +208,7 @@ impl PrivateBatchProver {
             &leaf_verifier_data.verifier_only,
             num_leaf_proofs,
         )?;
-        let targets = Some(circuit.targets());
+        let targets = circuit.targets();
         let circuit_data = circuit.build_prover();
 
         // 3) Load dummy proof template compatible with the leaf verifier common data
@@ -227,7 +225,6 @@ impl PrivateBatchProver {
 
         Ok(Self {
             circuit_data,
-            partial_witness: PartialWitness::new(),
             targets,
             num_leaf_proofs,
             dummy_proof_template,
@@ -294,7 +291,7 @@ impl PrivateBatchProver {
         self.num_leaf_proofs
     }
 
-    /// Commit leaf proofs to the aggregation circuit witness.
+    /// Fill a fresh witness with a leaf-proof batch.
     ///
     /// Fails fast (milliseconds, before the recursive proving run) on inputs
     /// the private-batch circuit could never prove: each supplied leaf is
@@ -303,11 +300,10 @@ impl PrivateBatchProver {
     /// hashes, asset ids, or fee rates) are rejected, and an all-dummy batch
     /// is refused. Then pads with the dummy template, shuffles, and fills the
     /// witness.
-    pub fn commit(mut self, mut proofs: Vec<ProofWithPublicInputs<F, C, D>>) -> Result<Self> {
-        let Some(targets) = self.targets.take() else {
-            bail!("private-batch aggregation prover has already committed to inputs");
-        };
-
+    fn build_witness(
+        &self,
+        mut proofs: Vec<ProofWithPublicInputs<F, C, D>>,
+    ) -> Result<PartialWitness<F>> {
         // An empty batch would be padded into an all-dummy proof that settles
         // nothing; a client asking for that is a caller bug. (The intentional
         // all-dummy padding template is built on the circuit-build path, which
@@ -383,35 +379,36 @@ impl PrivateBatchProver {
         let dummy_nullifier_pre_images =
             generate_dummy_nullifier_pre_images_for_slots(proofs.len());
 
+        let mut partial_witness = PartialWitness::new();
         fill_private_batch_witness(
-            &mut self.partial_witness,
-            &targets,
+            &mut partial_witness,
+            &self.targets,
             &proofs,
             &dummy_nullifier_pre_images,
             &nullifier_permutation,
         )?;
 
-        Ok(self)
+        Ok(partial_witness)
     }
 
-    /// Generate the aggregated private-batch proof after `commit(...)`.
-    pub fn prove(self) -> Result<ProofWithPublicInputs<F, C, D>> {
-        self.circuit_data
-            .prove(self.partial_witness)
-            .map_err(|e| anyhow!("Failed to prove private-batch aggregation circuit: {}", e))
-    }
-
-    /// One-shot client aggregation: commit the full leaf-proof set and prove.
+    /// Aggregate a full leaf-proof set into one private-batch proof.
     ///
     /// This is the intended client (CLI / mobile) entry point: a client knows
     /// its complete leaf set up front, so there is no queue — pass everything
     /// at once. Leaf verification and cross-proof compatibility are checked
-    /// fail-fast in `commit`.
+    /// fail-fast before the recursive proving run.
+    ///
+    /// Non-consuming: each call fills a fresh witness against the circuit
+    /// built at construction, so one prover instance can aggregate any number
+    /// of batches without paying the circuit build again.
     pub fn aggregate(
-        self,
+        &self,
         proofs: Vec<ProofWithPublicInputs<F, C, D>>,
     ) -> Result<ProofWithPublicInputs<F, C, D>> {
-        self.commit(proofs)?.prove()
+        let partial_witness = self.build_witness(proofs)?;
+        self.circuit_data
+            .prove(partial_witness)
+            .map_err(|e| anyhow!("Failed to prove private-batch aggregation circuit: {}", e))
     }
 }
 
@@ -777,8 +774,8 @@ mod tests {
         .unwrap();
 
         let err = prover
-            .commit(vec![real])
-            .expect_err("tampered leaf proof must be rejected at commit");
+            .build_witness(vec![real])
+            .expect_err("tampered leaf proof must be rejected at the witness boundary");
         assert!(
             err.to_string().contains("failed verification"),
             "got: {err}"
@@ -850,8 +847,8 @@ mod tests {
         .unwrap();
 
         let err = prover
-            .commit(vec![replayed.clone(), replayed])
-            .expect_err("replayed leaf proof must be rejected at commit");
+            .build_witness(vec![replayed.clone(), replayed])
+            .expect_err("replayed leaf proof must be rejected at the witness boundary");
         assert!(err.to_string().contains("same nullifier"), "got: {err}");
     }
 

@@ -1,7 +1,7 @@
 //! Witness filling for the public-batch aggregation circuit.
 //!
 //! Crate-private: callers with untrusted proof vectors must go through
-//! [`super::PublicBatchProver::commit`], which verifies each inner proof,
+//! [`super::PublicBatchProver::prove_batch`], which verifies each inner proof,
 //! enforces metadata compatibility, pads only after validation, and rejects
 //! all-dummy batches before this helper runs.
 

@@ -12,7 +12,7 @@ use plonky2::{
     iop::witness::PartialWitness,
     plonk::{
         circuit_data::{
-            CircuitConfig, CommonCircuitData, ProverCircuitData, VerifierCircuitData,
+            CircuitConfig, CircuitData, CommonCircuitData, VerifierCircuitData,
             VerifierOnlyCircuitData,
         },
         proof::ProofWithPublicInputs,
@@ -52,16 +52,15 @@ pub struct PublicBatchInputs {
 
 #[derive(Debug)]
 pub struct PublicBatchProver {
-    pub circuit_data: ProverCircuitData<F, C, D>,
-    partial_witness: PartialWitness<F>,
-    targets: Option<PublicBatchCircuitTargets>,
+    pub circuit_data: CircuitData<F, C, D>,
+    targets: PublicBatchCircuitTargets,
     num_private_batch_proofs: usize,
     /// Dummy private-batch proof (over all-dummy leaves, `block_hash == 0`) used to
     /// pad partial public batches. The circuit zeroes dummy inners' exit slots and
     /// nullifiers, so one template can fill several slots without collisions.
     dummy_proof_template: ProofWithPublicInputs<F, C, D>,
-    /// Private-batch verifier data, kept so `commit` can cheaply verify each
-    /// supplied inner proof before starting the expensive proving run.
+    /// Private-batch verifier data, kept so `prove_batch` can cheaply verify
+    /// each supplied inner proof before starting the expensive proving run.
     private_batch_verifier: VerifierCircuitData<F, C, D>,
 }
 
@@ -95,19 +94,18 @@ impl PublicBatchProver {
             private_batch_num_leaves,
         )?;
 
-        let targets = Some(public_batch_circuit.targets());
-        let circuit_data = public_batch_circuit.build_prover();
+        let targets = public_batch_circuit.targets();
+        let circuit_data = public_batch_circuit.build_circuit();
 
         // Enforce the same template invariant as the byte-loading constructors:
-        // `commit` clones this template into every padded slot, and the circuit
-        // only zeroes a slot's exits/nullifiers when its block_hash is the zero
-        // sentinel — a caller-supplied REAL proof here would be forwarded as a
-        // legitimate batch member (#97026).
+        // `prove_batch` clones this template into every padded slot, and the
+        // circuit only zeroes a slot's exits/nullifiers when its block_hash is
+        // the zero sentinel — a caller-supplied REAL proof here would be
+        // forwarded as a legitimate batch member (#97026).
         verify_dummy_private_batch_template(&dummy_proof_template, &private_batch_verifier_data)?;
 
         Ok(Self {
             circuit_data,
-            partial_witness: PartialWitness::new(),
             targets,
             num_private_batch_proofs,
             dummy_proof_template,
@@ -168,8 +166,8 @@ impl PublicBatchProver {
             num_private_batch_proofs,
             num_leaf_proofs,
         )?;
-        let targets = Some(circuit.targets());
-        let circuit_data = circuit.build_prover();
+        let targets = circuit.targets();
+        let circuit_data = circuit.build_circuit();
 
         // 3) Load the dummy private-batch proof template used to pad partial batches
         let dummy_proof_template = ProofWithPublicInputs::<F, C, D>::from_bytes(
@@ -185,7 +183,6 @@ impl PublicBatchProver {
 
         Ok(Self {
             circuit_data,
-            partial_witness: PartialWitness::new(),
             targets,
             num_private_batch_proofs,
             dummy_proof_template,
@@ -249,7 +246,13 @@ impl PublicBatchProver {
         self.num_private_batch_proofs
     }
 
-    /// Commit private-batch aggregated proofs into the public-batch circuit witness.
+    /// Common circuit data of the private-batch (inner) circuit, e.g. for
+    /// deserializing client proof submissions.
+    pub fn private_batch_common(&self) -> &CommonCircuitData<F, D> {
+        &self.private_batch_verifier.common
+    }
+
+    /// Prove one public batch from private-batch aggregated proofs.
     ///
     /// Partial batches are padded with the dummy private-batch proof template.
     /// The circuit exempts dummies (`block_hash == 0`) from metadata consistency
@@ -265,11 +268,11 @@ impl PublicBatchProver {
     /// that settles nothing. Proofs arriving via [`crate::pool::ProofPool`]
     /// already satisfy all of these by construction; this protects services
     /// that feed untrusted proof vectors to the prover directly.
-    pub fn commit(mut self, inputs: PublicBatchInputs) -> Result<Self> {
-        let Some(targets) = self.targets.take() else {
-            bail!("public-batch aggregation prover has already committed to inputs");
-        };
-
+    ///
+    /// Non-consuming: each call fills a fresh witness against the circuit
+    /// built at construction, so one prover instance can prove any number of
+    /// batches without paying the circuit build again.
+    pub fn prove_batch(&self, inputs: PublicBatchInputs) -> Result<ProofWithPublicInputs<F, C, D>> {
         let mut proofs = inputs.proofs;
         let aggregator_address = inputs.aggregator_address;
 
@@ -288,20 +291,23 @@ impl PublicBatchProver {
             proofs.push(self.dummy_proof_template.clone());
         }
 
+        let mut partial_witness = PartialWitness::new();
         fill_public_batch_witness(
-            &mut self.partial_witness,
-            &targets,
+            &mut partial_witness,
+            &self.targets,
             &proofs,
             aggregator_address_felts,
         )?;
 
-        Ok(self)
+        self.circuit_data
+            .prove(partial_witness)
+            .map_err(|e| anyhow!("Failed to prove public-batch aggregation circuit: {}", e))
     }
 
-    pub fn prove(self) -> Result<ProofWithPublicInputs<F, C, D>> {
-        self.circuit_data
-            .prove(self.partial_witness)
-            .map_err(|e| anyhow!("Failed to prove public-batch aggregation circuit: {}", e))
+    /// Verifier data of the circuit built at construction. Built from source,
+    /// so it is canonical by construction — usable for pinning artifact bytes.
+    pub fn verifier_data(&self) -> VerifierCircuitData<F, C, D> {
+        self.circuit_data.verifier_data()
     }
 }
 
@@ -311,13 +317,11 @@ impl PublicBatchProver {
 /// verifier, and cross-proof batch compatibility.
 ///
 /// Everything here is derived from the verifier data alone — no circuit
-/// targets — so callers that build a [`PublicBatchProver`] per request (e.g.
-/// [`crate::aggregator::ProvingContext::prove_batch`]) can run it BEFORE the
-/// expensive circuit construction, and a known-bad request costs
-/// milliseconds instead of a circuit build (audit finding: commit's
-/// admission checks ran only after `PublicBatchProver::new`).
-/// [`PublicBatchProver::commit`] runs the same checks so direct prover users
-/// remain covered.
+/// targets — so it can run before any circuit construction, and a known-bad
+/// request costs milliseconds (audit finding: these admission checks used to
+/// run only after `PublicBatchProver::new`).
+/// [`PublicBatchProver::prove_batch`] runs the same checks so direct prover
+/// users remain covered.
 pub(crate) fn preflight_private_batch_proofs(
     proofs: &[ProofWithPublicInputs<F, C, D>],
     num_private_batch_proofs: usize,
@@ -335,7 +339,7 @@ pub(crate) fn preflight_private_batch_proofs(
     }
 
     // The circuit's proof targets are allocated from this same common data,
-    // so this matches the shape commit used to read off the targets.
+    // so this matches the shape the witness filler reads off the targets.
     let expected_pi_len = private_batch_verifier.common.num_public_inputs;
     for (index, proof) in proofs.iter().enumerate() {
         ensure_proof_public_input_len(proof, expected_pi_len, "private-batch proof")
@@ -355,7 +359,7 @@ pub(crate) fn preflight_private_batch_proofs(
 
 /// Check that a set of private-batch proofs is mutually compatible under the
 /// public-batch circuit's cross-proof constraints, so an incompatible batch is
-/// rejected at commit time instead of failing after a full proving run:
+/// rejected at admission time instead of failing after a full proving run:
 /// non-dummy proofs (`block_hash != 0`) must share one block hash, asset id,
 /// and volume fee; dummy proofs are exempt. At least one proof must be
 /// non-dummy: an all-dummy batch carries zero block references and settles
@@ -570,7 +574,7 @@ mod tests {
     ///
     /// Built the way production builds its padding template (the
     /// circuit-build path): fill the witness with explicit dummy leaves and
-    /// prove directly. It cannot go through `PrivateBatchProver::commit`,
+    /// prove directly. It cannot go through `PrivateBatchProver::aggregate`,
     /// which rejects all-dummy leaf batches.
     fn make_all_dummy_private_batch_template(
         leaf: &plonky2::plonk::circuit_data::CircuitData<F, C, D>,
@@ -632,14 +636,14 @@ mod tests {
         let mut malformed = fake_proof;
         malformed.public_inputs.pop();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prover.commit(PublicBatchInputs {
+            prover.prove_batch(PublicBatchInputs {
                 proofs: vec![malformed],
                 aggregator_address: BytesDigest::default(),
             })
         }));
         assert!(
             result.is_ok(),
-            "commit must not panic on malformed PI length"
+            "prove_batch must not panic on malformed PI length"
         );
         let err = result.unwrap().unwrap_err();
         assert!(err
@@ -664,9 +668,7 @@ mod tests {
             dummy_leaf.clone(),
         )
         .unwrap()
-        .commit(vec![real_leaf])
-        .unwrap()
-        .prove()
+        .aggregate(vec![real_leaf])
         .unwrap()
     }
 
@@ -704,11 +706,11 @@ mod tests {
             F::from_canonical_u64(9);
 
         let err = prover
-            .commit(PublicBatchInputs {
+            .prove_batch(PublicBatchInputs {
                 proofs: vec![tampered],
                 aggregator_address: BytesDigest::default(),
             })
-            .expect_err("tampered private-batch proof must be rejected at commit");
+            .expect_err("tampered private-batch proof must be rejected before proving");
         assert!(
             err.to_string().contains("failed verification"),
             "got: {err}"
@@ -787,11 +789,11 @@ mod tests {
 
         // A cryptographically valid all-dummy proof as the only real input.
         let err = prover
-            .commit(PublicBatchInputs {
+            .prove_batch(PublicBatchInputs {
                 proofs: vec![template],
                 aggregator_address: BytesDigest::default(),
             })
-            .expect_err("an all-dummy public batch must be rejected at commit");
+            .expect_err("an all-dummy public batch must be rejected before proving");
         assert!(err.to_string().contains("all-dummy"), "got: {err}");
     }
 
@@ -833,11 +835,11 @@ mod tests {
         .unwrap();
 
         let err = prover
-            .commit(PublicBatchInputs {
+            .prove_batch(PublicBatchInputs {
                 proofs: vec![inner_a, inner_b],
                 aggregator_address: BytesDigest::default(),
             })
-            .expect_err("cross-block private-batch proofs must be rejected at commit");
+            .expect_err("cross-block private-batch proofs must be rejected before proving");
         assert!(err.to_string().contains("different block"), "got: {err}");
     }
 

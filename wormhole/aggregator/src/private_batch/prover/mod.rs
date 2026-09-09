@@ -2,7 +2,7 @@
 //!
 //! # Admission boundary
 //!
-//! [`PrivateBatchProver::commit`] is the untrusted-input boundary: it
+//! [`PrivateBatchProver::aggregate`] is the untrusted-input boundary: it
 //! cryptographically verifies each leaf proof against the pinned leaf
 //! verifier, enforces batch metadata compatibility, rejects empty and
 //! all-dummy batches, and pads with the validated dummy template — all
@@ -12,8 +12,8 @@
 //! already hold, so it must not be reachable from outside the crate
 //! (audit finding: the exported helper let downstream services feed
 //! invalid, incompatible, or all-dummy proof vectors straight into the
-//! proving path, bypassing commit; mirrors the public-batch prover's
-//! `pub(crate)` stance):
+//! proving path, bypassing the admission checks; mirrors the public-batch
+//! prover's `pub(crate)` stance):
 //!
 //! ```compile_fail
 //! use qp_wormhole_aggregator::private_batch::prover::witness::fill_private_batch_witness;
@@ -32,7 +32,7 @@ pub mod lib;
 /// Low-level witness filler — not an untrusted-input boundary.
 ///
 /// Cryptographic verification, metadata compatibility, dummy-padding, and the
-/// non-all-dummy admission check live in [`PrivateBatchProver::commit`]. This
+/// non-all-dummy admission check live in [`PrivateBatchProver::aggregate`]. This
 /// module is `pub(crate)` so downstream services cannot bypass those checks by
 /// calling [`witness::fill_private_batch_witness`] directly (see the module
 /// docs above and the public-batch analogue).

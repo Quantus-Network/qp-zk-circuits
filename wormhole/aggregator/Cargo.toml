@@ -24,6 +24,9 @@ zk-circuits-common = { package = "qp-zk-circuits-common", version = "=4.3.0", pa
 criterion = { workspace = true }
 env_logger = "=0.11.9"
 test-helpers = { path = "../tests/test-helpers", default-features = false }
+# Regenerates the leaf artifacts the benches pin against (dev-dep cycle is
+# fine: benches only).
+wormhole-circuit-builder = { package = "qp-wormhole-circuit-builder", path = "../circuit-builder" }
 
 [features]
 default = ["multithread", "std"]

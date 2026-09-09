@@ -1008,6 +1008,7 @@ dependencies = [
  "hex",
  "qp-plonky2",
  "qp-wormhole-circuit",
+ "qp-wormhole-circuit-builder",
  "qp-wormhole-inputs",
  "qp-wormhole-prover",
  "qp-zk-circuits-common",
