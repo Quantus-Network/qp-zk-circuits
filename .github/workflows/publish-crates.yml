@@ -1,0 +1,39 @@
+name: Publish crates from tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing git tag to publish remaining crates from"
+        required: true
+        type: string
+        default: "v4.4.0"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: 📦 Publish remaining crates
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      # The tag commit does not contain this script; take it from the
+      # workflow branch the run was dispatched from.
+      - name: Overlay publish script from the workflow ref
+        run: |
+          git fetch origin "${{ github.ref }}"
+          git checkout FETCH_HEAD -- .github/scripts/publish-crates.sh
+
+      - uses: ./.github/actions/ubuntu
+
+      - name: Publish crates to crates.io (skip already uploaded)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: bash .github/scripts/publish-crates.sh
