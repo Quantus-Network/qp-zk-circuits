@@ -67,6 +67,8 @@ jobs:
         run: |
           cargo test --workspace --locked --release --lib --bins -- --skip aggregator_tests --skip circuit_data_tests --skip prover_tests --skip verifier_tests
           cargo test --workspace --locked --release --doc
+          cargo test --release --locked -p tests --test encoding_safety --test spec_differential
+          cargo test --release --locked -p qp-wormhole-circuit --test heap_zeroization
 
   analysis:
     name: 🤖 Analysis (Clippy & Doc)
@@ -131,7 +133,7 @@ jobs:
           cargo test --release --package qp-wormhole-aggregator
 
   security-audit:
-    name: 🔐 Security Audit (non-blocking)
+    name: 🔐 Security Audit
     needs: fast-checks
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -154,9 +156,5 @@ jobs:
           if ! command -v cargo-audit >/dev/null 2>&1; then
             cargo install cargo-audit --locked --version 0.22.1
           fi
-      - name: Run cargo audit (informational only)
-        # Only this step is non-blocking — every other step in this job
-        # (checkout, caches, cargo-audit install) must fail loudly so we
-        # don't silently skip the audit.
-        continue-on-error: true
+      - name: Run cargo audit
         run: cargo audit
