@@ -10,14 +10,14 @@ version.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 hex = { workspace = true }
-ownership-circuit = { package = "qp-ownership-circuit", version = "=4.4.0", path = "../circuit" }
-ownership-prover = { package = "qp-ownership-prover", version = "=4.4.0", path = "../prover" }
-ownership-verifier = { package = "qp-ownership-verifier", version = "=4.4.0", path = "../verifier" }
-qp-ownership-inputs = { version = "=4.4.0", path = "../inputs" }
+ownership-circuit = { package = "qp-ownership-circuit", version = "=4.4.1", path = "../circuit" }
+ownership-prover = { package = "qp-ownership-prover", version = "=4.4.1", path = "../prover" }
+ownership-verifier = { package = "qp-ownership-verifier", version = "=4.4.1", path = "../verifier" }
+qp-ownership-inputs = { version = "=4.4.1", path = "../inputs" }
 qp-plonky2 = { workspace = true, default-features = true }
 tiny-keccak = { workspace = true }
-wormhole-circuit = { package = "qp-wormhole-circuit", version = "=4.4.0", path = "../../wormhole/circuit" }
-zk-circuits-common = { package = "qp-zk-circuits-common", version = "=4.4.0", path = "../../common" }
+wormhole-circuit = { package = "qp-wormhole-circuit", version = "=4.4.1", path = "../../wormhole/circuit" }
+zk-circuits-common = { package = "qp-zk-circuits-common", version = "=4.4.1", path = "../../common" }
 
 [lints]
 workspace = true
