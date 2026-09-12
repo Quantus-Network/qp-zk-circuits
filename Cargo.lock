@@ -776,7 +776,8 @@ dependencies = [
 [[package]]
 name = "plonky2_util"
 version = "1.0.0"
-source = "git+https://github.com/Quantus-Network/qp-plonky2?rev=8343b12b8573f15bda1ee25f62b0245336a5c0af#8343b12b8573f15bda1ee25f62b0245336a5c0af"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c32c137808ca984ab2458b612b7eb0462d853ee041a3136e83d54b96074c7610"
 
 [[package]]
 name = "portable-atomic"
@@ -903,8 +904,9 @@ dependencies = [
 
 [[package]]
 name = "qp-plonky2"
-version = "1.5.5"
-source = "git+https://github.com/Quantus-Network/qp-plonky2?rev=8343b12b8573f15bda1ee25f62b0245336a5c0af#8343b12b8573f15bda1ee25f62b0245336a5c0af"
+version = "1.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6684ffcd61d2aa7d036581a9c824b8cd2ce37db9739a86ecf080430d2a6a727"
 dependencies = [
  "ahash",
  "anyhow",
@@ -930,8 +932,9 @@ dependencies = [
 
 [[package]]
 name = "qp-plonky2-core"
-version = "1.5.5"
-source = "git+https://github.com/Quantus-Network/qp-plonky2?rev=8343b12b8573f15bda1ee25f62b0245336a5c0af#8343b12b8573f15bda1ee25f62b0245336a5c0af"
+version = "1.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d67387f60a7d40106bcd24125c465b498d2c79720fcd1c1a01ba95eda3dfbb6c"
 dependencies = [
  "ahash",
  "anyhow",
@@ -950,8 +953,9 @@ dependencies = [
 
 [[package]]
 name = "qp-plonky2-field"
-version = "1.5.5"
-source = "git+https://github.com/Quantus-Network/qp-plonky2?rev=8343b12b8573f15bda1ee25f62b0245336a5c0af#8343b12b8573f15bda1ee25f62b0245336a5c0af"
+version = "1.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90c29e44067324abadc3b25e28ce6e3a2697415cd352202a36eaf01f6afba1c7"
 dependencies = [
  "anyhow",
  "itertools 0.13.0",
@@ -966,8 +970,9 @@ dependencies = [
 
 [[package]]
 name = "qp-plonky2-verifier"
-version = "1.5.5"
-source = "git+https://github.com/Quantus-Network/qp-plonky2?rev=8343b12b8573f15bda1ee25f62b0245336a5c0af#8343b12b8573f15bda1ee25f62b0245336a5c0af"
+version = "1.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8cb63da405433d8c07aa72aab56d15d41a3f75fa72c5588a2bd1cc6e029af3f9"
 dependencies = [
  "ahash",
  "anyhow",

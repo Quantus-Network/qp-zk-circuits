@@ -23,7 +23,7 @@ resolver = "2"
 anyhow = { version = "=1.0.104", default-features = false }
 criterion = { version = "=0.5.1", default-features = false }
 hex = { version = "=0.4.3", default-features = false, features = ["alloc"] }
-qp-plonky2 = { version = "=1.5.5", default-features = false, features = ["std"] }
+qp-plonky2 = { version = "=1.5.6", default-features = false, features = ["std"] }
 qp-poseidon-core = { version = "=3.1.0", default-features = false }
 serde = { version = "=1.0.228", default-features = false, features = ["derive"] }
 tiny-keccak = { version = "=2.0.2", default-features = false, features = ["keccak"] }
@@ -41,10 +41,3 @@ version = "4.4.0"
 
 [workspace.lints.clippy]
 uninlined_format_args = "allow"
-
-[patch.crates-io]
-qp-plonky2 = { git = "https://github.com/Quantus-Network/qp-plonky2", rev = "8343b12b8573f15bda1ee25f62b0245336a5c0af" }
-qp-plonky2-verifier = { git = "https://github.com/Quantus-Network/qp-plonky2", rev = "8343b12b8573f15bda1ee25f62b0245336a5c0af" }
-
-[patch."https://github.com/Quantus-Network/qp-plonky2"]
-plonky2_maybe_rayon = { version = "=1.0.0" }
