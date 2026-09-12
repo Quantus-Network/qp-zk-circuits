@@ -41,3 +41,10 @@ version = "4.4.0"
 
 [workspace.lints.clippy]
 uninlined_format_args = "allow"
+
+[patch.crates-io]
+qp-plonky2 = { git = "https://github.com/Quantus-Network/qp-plonky2", rev = "8343b12b8573f15bda1ee25f62b0245336a5c0af" }
+qp-plonky2-verifier = { git = "https://github.com/Quantus-Network/qp-plonky2", rev = "8343b12b8573f15bda1ee25f62b0245336a5c0af" }
+
+[patch."https://github.com/Quantus-Network/qp-plonky2"]
+plonky2_maybe_rayon = { version = "=1.0.0" }

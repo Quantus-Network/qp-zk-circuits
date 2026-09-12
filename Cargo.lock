@@ -776,8 +776,7 @@ dependencies = [
 [[package]]
 name = "plonky2_util"
 version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c32c137808ca984ab2458b612b7eb0462d853ee041a3136e83d54b96074c7610"
+source = "git+https://github.com/Quantus-Network/qp-plonky2?rev=8343b12b8573f15bda1ee25f62b0245336a5c0af#8343b12b8573f15bda1ee25f62b0245336a5c0af"
 
 [[package]]
 name = "portable-atomic"
@@ -905,8 +904,7 @@ dependencies = [
 [[package]]
 name = "qp-plonky2"
 version = "1.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fd331d489a309f88e2d0e35a2b996932c7d92038b91ccc656a0a8e6b11b6977"
+source = "git+https://github.com/Quantus-Network/qp-plonky2?rev=8343b12b8573f15bda1ee25f62b0245336a5c0af#8343b12b8573f15bda1ee25f62b0245336a5c0af"
 dependencies = [
  "ahash",
  "anyhow",
@@ -933,8 +931,7 @@ dependencies = [
 [[package]]
 name = "qp-plonky2-core"
 version = "1.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b81a3a9fce99f7bd45b8578f8d9b6a33507d34c2eb2c47c969b464db1ad601d3"
+source = "git+https://github.com/Quantus-Network/qp-plonky2?rev=8343b12b8573f15bda1ee25f62b0245336a5c0af#8343b12b8573f15bda1ee25f62b0245336a5c0af"
 dependencies = [
  "ahash",
  "anyhow",
@@ -954,8 +951,7 @@ dependencies = [
 [[package]]
 name = "qp-plonky2-field"
 version = "1.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1630d418ddce9feba18d3364596711d07074851757301350de313eef0a31af4f"
+source = "git+https://github.com/Quantus-Network/qp-plonky2?rev=8343b12b8573f15bda1ee25f62b0245336a5c0af#8343b12b8573f15bda1ee25f62b0245336a5c0af"
 dependencies = [
  "anyhow",
  "itertools 0.13.0",
@@ -971,8 +967,7 @@ dependencies = [
 [[package]]
 name = "qp-plonky2-verifier"
 version = "1.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "944da5dec21ee476d561f6c38caddf45e829f3cc5fccbc76f6ece03660378dbe"
+source = "git+https://github.com/Quantus-Network/qp-plonky2?rev=8343b12b8573f15bda1ee25f62b0245336a5c0af#8343b12b8573f15bda1ee25f62b0245336a5c0af"
 dependencies = [
  "ahash",
  "anyhow",
