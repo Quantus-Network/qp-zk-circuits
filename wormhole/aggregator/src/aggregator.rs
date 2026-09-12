@@ -6,6 +6,9 @@
 //! bucket at a time into a public-batch proof bound to this aggregator's
 //! address.
 //!
+//! Network transports should use [`PublicBatchAggregator::push_proof_bytes`]
+//! so malformed public-input counts are rejected before allocation.
+//!
 //! Client-side (private-batch) aggregation intentionally has no queue: a client
 //! knows its own full leaf set up front, so it uses
 //! [`PrivateBatchProver::aggregate`](crate::private_batch::prover::PrivateBatchProver::aggregate)
@@ -252,8 +255,8 @@ impl PublicBatchAggregator {
         let private_batch_verifier =
             load_private_batch_verifier_from_bins(bins_dir, num_leaf_proofs)?;
 
-        let dummy_proof_template = Proof::from_bytes(
-            read_bin(bins_dir, "dummy_private_batch_proof.bin")?,
+        let dummy_proof_template = zk_circuits_common::decode_proof(
+            &read_bin(bins_dir, "dummy_private_batch_proof.bin")?,
             &private_batch_verifier.common,
         )
         .map_err(|e| anyhow!("failed to deserialize dummy private-batch proof: {}", e))?;
@@ -297,6 +300,14 @@ impl PublicBatchAggregator {
     /// bucket key it landed in. See [`ProofPool::push`].
     pub fn push_proof(&mut self, proof: Proof) -> Result<BatchKey> {
         self.pool.push(proof)
+    }
+
+    /// Decode untrusted proof bytes and verify them before pool admission.
+    pub fn push_proof_bytes(&mut self, bytes: &[u8]) -> Result<BatchKey> {
+        self.push_proof(zk_circuits_common::decode_proof(
+            bytes,
+            self.private_batch_common(),
+        )?)
     }
 
     /// Aggregate the oldest batch of one bucket into a public-batch proof
@@ -422,8 +433,8 @@ impl PublicBatchAggregator {
         &self.proving.verifier.common
     }
 
-    /// Common circuit data of the private-batch (inner) circuit, e.g. for
-    /// deserializing client proof submissions.
+    /// Common circuit data of the private-batch (inner) circuit.
+    /// Use [`Self::push_proof_bytes`] for untrusted client submissions.
     pub fn private_batch_common(&self) -> &CommonCircuitData<F, D> {
         &self.proving.private_batch_verifier.common
     }

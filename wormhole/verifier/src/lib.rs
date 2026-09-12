@@ -5,22 +5,20 @@
 //!
 //! The typical usage flow involves:
 //! 1. Initializing the verifier from pre-built circuit data via [`WormholeVerifier::new_from_bytes()`].
-//! 2. Deserializing a [`ProofWithPublicInputs`].
-//! 3. Verifying the proof using [`WormholeVerifier::verify`].
+//! 2. Decoding and verifying untrusted bytes using [`WormholeVerifier::verify_bytes`].
+//!
+//! For untrusted bytes, use this API or [`decode_proof`] followed by verification.
+//! The upstream [`ProofWithPublicInputs::from_bytes`] does not bound allocation.
 //!
 //! # Example
 //!
 //! ```ignore
-//! use qp_wormhole_verifier::{WormholeVerifier, ProofWithPublicInputs, C, D, F};
+//! use qp_wormhole_verifier::WormholeVerifier;
 //!
 //! // Load verifier from pre-serialized bytes
 //! let verifier = WormholeVerifier::new_from_bytes(verifier_bytes, common_bytes)?;
 //!
-//! // Deserialize the proof
-//! let proof = ProofWithPublicInputs::<F, C, D>::from_bytes(proof_bytes, &verifier.circuit_data.common)?;
-//!
-//! // Verify
-//! verifier.verify(proof)?;
+//! let proof = verifier.verify_bytes(&proof_bytes)?;
 //! ```
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -33,6 +31,7 @@ use alloc::vec::Vec;
 use std::vec::Vec;
 
 use anyhow::anyhow;
+pub use qp_zk_circuits_proof::verifier::decode_proof;
 #[cfg(feature = "std")]
 use std::path::Path;
 
@@ -159,6 +158,11 @@ fn read_artifact_file(path: &Path) -> anyhow::Result<Vec<u8>> {
 }
 
 impl WormholeVerifier {
+    /// Decode and verify untrusted proof bytes, returning the verified proof.
+    pub fn verify_bytes(&self, bytes: &[u8]) -> anyhow::Result<ProofWithPublicInputs<F, C, D>> {
+        qp_zk_circuits_proof::verifier::verify_proof_bytes(bytes, &self.circuit_data)
+    }
+
     /// Creates a new [`WormholeVerifier`] from verifier and common data bytes.
     ///
     /// Inputs larger than [`MAX_VERIFIER_ARTIFACT_BYTES`] are rejected before any

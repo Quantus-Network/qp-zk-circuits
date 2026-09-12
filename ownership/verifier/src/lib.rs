@@ -2,8 +2,10 @@
 //!
 //! Typical usage:
 //! 1. Load pre-built artifacts via [`OwnershipVerifier::new_from_bytes`].
-//! 2. Deserialize a [`ProofWithPublicInputs`].
-//! 3. [`OwnershipVerifier::verify`].
+//! 2. Decode and verify untrusted bytes via [`OwnershipVerifier::verify_bytes`].
+//!
+//! For untrusted bytes, use this API or [`decode_proof`] followed by verification.
+//! The upstream [`ProofWithPublicInputs::from_bytes`] does not bound allocation.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -16,6 +18,7 @@ use alloc::vec::Vec;
 use std::vec::Vec;
 
 use anyhow::anyhow;
+pub use qp_zk_circuits_proof::verifier::decode_proof;
 #[cfg(feature = "std")]
 use std::path::Path;
 
@@ -99,6 +102,11 @@ fn read_artifact_file(path: &Path) -> anyhow::Result<Vec<u8>> {
 }
 
 impl OwnershipVerifier {
+    /// Decode and verify untrusted proof bytes, returning the verified proof.
+    pub fn verify_bytes(&self, bytes: &[u8]) -> anyhow::Result<ProofWithPublicInputs<F, C, D>> {
+        qp_zk_circuits_proof::verifier::verify_proof_bytes(bytes, &self.circuit_data)
+    }
+
     /// Creates a new [`OwnershipVerifier`] from verifier and common data bytes.
     ///
     /// Inputs larger than [`MAX_VERIFIER_ARTIFACT_BYTES`] are rejected before

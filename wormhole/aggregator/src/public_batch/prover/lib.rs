@@ -170,8 +170,8 @@ impl PublicBatchProver {
         let circuit_data = circuit.build_circuit();
 
         // 3) Load the dummy private-batch proof template used to pad partial batches
-        let dummy_proof_template = ProofWithPublicInputs::<F, C, D>::from_bytes(
-            dummy_private_batch_proof_bytes.to_vec(),
+        let dummy_proof_template = zk_circuits_common::decode_proof(
+            dummy_private_batch_proof_bytes,
             &private_batch_verifier_data.common,
         )
         .map_err(|e| anyhow!("failed to deserialize dummy private-batch proof: {}", e))?;

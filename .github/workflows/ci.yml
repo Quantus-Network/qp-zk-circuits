@@ -43,6 +43,8 @@ jobs:
         run: |
           taplo format --check --config taplo.toml
           cargo +nightly fmt --all -- --check
+      - name: Test release metadata handling
+        run: python3 .github/scripts/test_release_version.py
 
   test-workspace:
     name: 🧪 Test Workspace
@@ -67,6 +69,15 @@ jobs:
         run: |
           cargo test --workspace --locked --release --lib --bins -- --skip aggregator_tests --skip circuit_data_tests --skip prover_tests --skip verifier_tests
           cargo test --workspace --locked --release --doc
+      - name: Test security regressions
+        run: |
+          cargo test --release --locked -p tests --test encoding_safety --test spec_differential
+          cargo test --release --locked -p qp-wormhole-circuit --test heap_zeroization
+          cargo test --release --locked -p ownership-tests --test proof_decoding
+      - name: Check verifier-only builds
+        run: |
+          cargo check --locked -p qp-wormhole-verifier --no-default-features --target wasm32v1-none
+          cargo check --locked -p qp-ownership-verifier --no-default-features --target wasm32v1-none
 
   analysis:
     name: 🤖 Analysis (Clippy & Doc)
@@ -131,7 +142,7 @@ jobs:
           cargo test --release --package qp-wormhole-aggregator
 
   security-audit:
-    name: 🔐 Security Audit (non-blocking)
+    name: 🔐 Security Audit
     needs: fast-checks
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -154,9 +165,5 @@ jobs:
           if ! command -v cargo-audit >/dev/null 2>&1; then
             cargo install cargo-audit --locked --version 0.22.1
           fi
-      - name: Run cargo audit (informational only)
-        # Only this step is non-blocking — every other step in this job
-        # (checkout, caches, cargo-audit install) must fail loudly so we
-        # don't silently skip the audit.
-        continue-on-error: true
+      - name: Run cargo audit
         run: cargo audit

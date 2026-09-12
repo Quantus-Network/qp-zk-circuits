@@ -2,6 +2,8 @@
 
 extern crate alloc;
 
+pub use qp_zk_circuits_proof::prover::decode_proof;
+
 pub mod circuit;
 pub mod codec;
 pub mod gadgets;

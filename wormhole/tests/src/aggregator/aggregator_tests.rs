@@ -414,11 +414,11 @@ fn aggregate_proofs_from_separate_prover_instances_hex_serialized() {
     let proof_2_bytes = hex::decode(&proof_2_hex).expect("Failed to decode proof 2 hex");
 
     let proof_1_deserialized: ProofWithPublicInputs<F, C, D> =
-        ProofWithPublicInputs::from_bytes(proof_1_bytes, &deser_common_data)
+        zk_circuits_common::decode_proof(&proof_1_bytes, &deser_common_data)
             .expect("Failed to deserialize proof 1");
 
     let proof_2_deserialized: ProofWithPublicInputs<F, C, D> =
-        ProofWithPublicInputs::from_bytes(proof_2_bytes, &deser_common_data)
+        zk_circuits_common::decode_proof(&proof_2_bytes, &deser_common_data)
             .expect("Failed to deserialize proof 2");
 
     let aggregated = make_private_batch_prover()
@@ -852,6 +852,13 @@ fn pool_rejects_invalid_proofs_and_aggregates_by_bucket() {
     let private_batch_proof = make_private_batch_proof_in_public_dir();
     let mut aggregator = PublicBatchAggregator::new(&dir, address).expect("public aggregator");
 
+    let mut malformed = private_batch_proof.to_bytes();
+    let count_offset = malformed.len() - (private_batch_proof.public_inputs.len() + 1) * 8;
+    malformed[count_offset..count_offset + 8].copy_from_slice(&(4 * 1024 * 1024u64).to_le_bytes());
+    let err = aggregator.push_proof_bytes(&malformed).unwrap_err();
+    assert!(err.to_string().contains("public-input count"), "got: {err}");
+    assert_eq!(aggregator.pool_len(), 0);
+
     // Shape rejection: a leaf proof is not a private-batch proof.
     let leaf = make_leaf_proof(&CircuitInputs::test_inputs_0());
     let err = aggregator.push_proof(leaf).unwrap_err();
@@ -866,7 +873,9 @@ fn pool_rejects_invalid_proofs_and_aggregates_by_bucket() {
     // pool's only automatic drain (#97067).
     let mut tampered = private_batch_proof.clone();
     tampered.public_inputs[1] = F::from_canonical_u64(9); // asset_id felt
-    let err = aggregator.push_proof(tampered).unwrap_err();
+    let err = aggregator
+        .push_proof_bytes(&tampered.to_bytes())
+        .unwrap_err();
     assert!(
         err.to_string().contains("verification failed"),
         "got: {err}"
@@ -890,7 +899,7 @@ fn pool_rejects_invalid_proofs_and_aggregates_by_bucket() {
 
     // A valid proof is admitted, keyed by its (block, asset, fee) metadata.
     let key = aggregator
-        .push_proof(private_batch_proof)
+        .push_proof_bytes(&private_batch_proof.to_bytes())
         .expect("valid private-batch proof must be admitted");
     assert_eq!(aggregator.pool_len(), 1);
     let stats = aggregator.bucket_stats();

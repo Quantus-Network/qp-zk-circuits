@@ -118,10 +118,8 @@ fn test_prover_and_verifier_from_file_e2e() -> Result<()> {
     // This is necessary because the verifier uses qp-plonky2-verifier which has
     // separate type definitions from the full qp-plonky2 used by the prover.
     let proof_bytes = proof.to_bytes();
-    let verifier_proof = wormhole_verifier::ProofWithPublicInputs::from_bytes(
-        proof_bytes,
-        &verifier.circuit_data.common,
-    )?;
+    let verifier_proof =
+        wormhole_verifier::decode_proof(&proof_bytes, &verifier.circuit_data.common)?;
 
     verifier.verify(verifier_proof)?;
 

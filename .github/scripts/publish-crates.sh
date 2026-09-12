@@ -46,6 +46,8 @@ publish_dir() {
 	return "$rc"
 }
 
+publish_dir proof
+
 prepare_manifest common/Cargo.toml
 publish_dir wormhole/inputs
 publish_dir common

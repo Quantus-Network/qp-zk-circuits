@@ -2,7 +2,7 @@ use std::fs;
 use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use qp_wormhole_verifier::{ProofWithPublicInputs, WormholeVerifier, C, D, F};
+use qp_wormhole_verifier::{decode_proof, WormholeVerifier};
 
 const MEASUREMENT_TIME_S: u64 = 20;
 const DATA_PATH: &str = "../bench-data";
@@ -14,11 +14,7 @@ fn verify_proof_benchmark(c: &mut Criterion) {
         let proof_bytes = fs::read(format!("{DATA_PATH}/proof.bin")).unwrap();
 
         let verifier = WormholeVerifier::new_from_bytes(&verifier_bytes, &common_bytes).unwrap();
-        let proof = ProofWithPublicInputs::<F, C, D>::from_bytes(
-            proof_bytes,
-            &verifier.circuit_data.common,
-        )
-        .unwrap();
+        let proof = decode_proof(&proof_bytes, &verifier.circuit_data.common).unwrap();
 
         b.iter(|| {
             verifier.verify(proof.clone()).unwrap();

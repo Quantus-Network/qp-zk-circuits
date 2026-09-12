@@ -899,6 +899,7 @@ dependencies = [
  "anyhow",
  "qp-ownership-inputs",
  "qp-plonky2-verifier",
+ "qp-zk-circuits-proof",
  "tiny-keccak",
 ]
 
@@ -1074,6 +1075,7 @@ dependencies = [
  "criterion",
  "qp-plonky2-verifier",
  "qp-wormhole-inputs",
+ "qp-zk-circuits-proof",
  "tiny-keccak",
 ]
 
@@ -1085,9 +1087,19 @@ dependencies = [
  "qp-plonky2",
  "qp-poseidon-core",
  "qp-wormhole-inputs",
+ "qp-zk-circuits-proof",
  "rand 0.8.6",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "qp-zk-circuits-proof"
+version = "4.4.0"
+dependencies = [
+ "anyhow",
+ "qp-plonky2",
+ "qp-plonky2-verifier",
 ]
 
 [[package]]

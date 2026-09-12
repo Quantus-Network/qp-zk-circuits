@@ -94,7 +94,7 @@ pub fn load_dummy_proof(
     bytes: Vec<u8>,
     common_data: &CommonCircuitData<F, D>,
 ) -> anyhow::Result<ProofWithPublicInputs<F, C, D>> {
-    ProofWithPublicInputs::<F, C, D>::from_bytes(bytes, common_data)
+    zk_circuits_common::decode_proof(&bytes, common_data)
 }
 
 /// Generate a fresh dummy proof from circuit data and targets.

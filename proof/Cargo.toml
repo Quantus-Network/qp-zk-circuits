@@ -1,0 +1,23 @@
+[package]
+authors.workspace = true
+description = "Bounded proof decoding for Quantus circuit provers and verifiers"
+edition.workspace = true
+license.workspace = true
+name = "qp-zk-circuits-proof"
+readme = "README.md"
+repository.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+qp-plonky2 = { workspace = true, optional = true }
+qp-plonky2-verifier = { version = "=1.5.5", default-features = false, optional = true }
+
+[features]
+default = ["std", "verifier"]
+prover = ["dep:qp-plonky2"]
+std = ["anyhow/std", "qp-plonky2-verifier?/std"]
+verifier = ["dep:qp-plonky2-verifier"]
+
+[lints]
+workspace = true

@@ -2,7 +2,7 @@ use ownership_circuit::circuit::circuit_logic::OwnershipCircuit;
 use ownership_circuit::inputs::CircuitInputs;
 use ownership_circuit::PUBLIC_INPUTS_FELTS_LEN;
 use ownership_prover::OwnershipProver;
-use ownership_verifier::{OwnershipVerifier, ProofWithPublicInputs};
+use ownership_verifier::OwnershipVerifier;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::util::serialization::DefaultGateSerializer;
 use tiny_keccak::{Hasher, Keccak};
@@ -53,9 +53,7 @@ fn loaded_verifier_accepts_fresh_proof() {
 
     let (verifier_bytes, common_bytes) = build_verifier_bytes();
     let verifier = OwnershipVerifier::new_from_bytes(&verifier_bytes, &common_bytes).unwrap();
-    let verifier_proof =
-        ProofWithPublicInputs::from_bytes(proof.to_bytes(), &verifier.circuit_data.common).unwrap();
-    verifier.verify(verifier_proof).unwrap();
+    verifier.verify_bytes(&proof.to_bytes()).unwrap();
     assert_eq!(proof.public_inputs.len(), PUBLIC_INPUTS_FELTS_LEN);
 }
 

@@ -7,6 +7,7 @@ members = [
 	"ownership/prover",
 	"ownership/tests",
 	"ownership/verifier",
+	"proof",
 	"wormhole/aggregator",
 	"wormhole/circuit",
 	"wormhole/circuit-builder",

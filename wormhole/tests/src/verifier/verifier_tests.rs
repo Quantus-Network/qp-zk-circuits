@@ -1,5 +1,4 @@
 use plonky2::plonk::circuit_data::CircuitConfig;
-use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_inputs::{
     EXIT_ACCOUNT_1_END_INDEX, EXIT_ACCOUNT_1_START_INDEX, PUBLIC_INPUTS_FELTS_LEN,
 };
@@ -57,12 +56,10 @@ fn borrowed_verify_keeps_proof_available() {
 
     let (verifier_bytes, common_bytes) = build_verifier_bytes(CIRCUIT_CONFIG);
     let verifier = WormholeVerifier::new_from_bytes(&verifier_bytes, &common_bytes).unwrap();
-    let verifier_proof = wormhole_verifier::ProofWithPublicInputs::from_bytes(
-        proof.to_bytes(),
-        &verifier.circuit_data.common,
-    )
-    .unwrap();
+    let verifier_proof =
+        wormhole_verifier::decode_proof(&proof.to_bytes(), &verifier.circuit_data.common).unwrap();
     verifier.verify_ref(&verifier_proof).unwrap();
+    verifier.verify_bytes(&proof.to_bytes()).unwrap();
 
     assert_eq!(proof.public_inputs.len(), PUBLIC_INPUTS_FELTS_LEN);
 }
@@ -135,7 +132,7 @@ fn cannot_verify_with_modified_proof() {
     for ix in 0..proof_bytes.len() {
         let mut b = proof_bytes.clone();
         b[ix] ^= 255;
-        let result1 = ProofWithPublicInputs::from_bytes(b, &verifier_data.common);
+        let result1 = zk_circuits_common::decode_proof(&b, &verifier_data.common);
         match result1 {
             Ok(p) => {
                 let result2 = verifier_data.verify(p.clone());
