@@ -2070,3 +2070,55 @@ fn witness_fill_rejects_truncated_wires_cap() {
         .expect_err("proof with truncated wires_cap must be rejected");
     assert!(err.to_string().contains("wires_cap"), "got: {err}");
 }
+
+/// Builds only the wrapper logic (no recursive verifiers) on virtual proof / PI
+/// targets, at `n = 2`, and reports the logical circuit size. This is the entry
+/// point a public-input decode exporter would use (qp-plonky2 formal/PLAN.md
+/// Step 8): the wrapper's constraints, copy constraints and PI registration are
+/// all present, while the leaf verifiers (trusted, `leaf_proof_sound`) are not.
+#[test]
+fn wrapper_only_n2_builds_without_verifiers() {
+    let _ = env_logger::builder().is_test(true).try_init();
+    let leaf = build_fake_leaf_circuit().0;
+    let n_leaf = 2;
+    let mut builder = CircuitBuilder::<F, D>::new(wormhole_private_batch_circuit_config());
+
+    let leaf_proofs = (0..n_leaf)
+        .map(|_| builder.add_virtual_proof_with_pis(&leaf.common))
+        .collect();
+    let dummy_nullifier_pre_images = (0..n_leaf)
+        .map(|_| core::array::from_fn(|_| builder.add_virtual_target()))
+        .collect();
+    let mut targets = PrivateBatchCircuitTargets {
+        leaf_proofs,
+        dummy_nullifier_pre_images,
+        nullifier_permutation_switches: Vec::new(),
+    };
+    let gates_before = builder.num_gates();
+    targets.nullifier_permutation_switches =
+        super::build_private_batch_constraints(&mut builder, &targets, n_leaf);
+
+    println!(
+        "wrapper-only n={n_leaf}: gates={} (before wrapper: {gates_before}) pis={} switches={}",
+        builder.num_gates(),
+        builder.num_public_inputs(),
+        targets.nullifier_permutation_switches.len(),
+    );
+    assert_eq!(
+        builder.num_public_inputs(),
+        aggregated_output::pi_len(n_leaf)
+    );
+    assert_eq!(targets.nullifier_permutation_switches.len(), 1);
+
+    let data = builder.build::<C>();
+    println!(
+        "built: degree={} gate types={:?} pis={}",
+        data.common.degree(),
+        data.common
+            .gates
+            .iter()
+            .map(|g| g.0.id())
+            .collect::<Vec<_>>(),
+        data.prover_only.public_inputs.len(),
+    );
+}
