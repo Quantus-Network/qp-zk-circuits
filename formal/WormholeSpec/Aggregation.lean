@@ -20,7 +20,14 @@
       at ingress, because leaf exit accounts are unconstrained public inputs
       and a poisoned padding template could otherwise mark padded slots with
       attacker-chosen zero-amount exits (audit finding: incomplete dummy
-      sentinel).
+      sentinel);
+    * pairwise distinctness of the *real* slots' nullifiers
+      (`realNullifiersDistinct`): the anti-replay constraint. Because the exit
+      grouping sums amounts across slots, one leaf proof replayed into `k` slots
+      would settle `k·amount` against a single on-chain nullifier; the circuit
+      makes such a batch unprovable, and `RPrivateBatch_settles_distinct_spends`
+      is the theorem that constraint exists for;
+    * the slot-count header `numExitSlots = 2·N` (a circuit constant).
 
   Exit conservation is not separately asserted: `RPrivateBatch` pins the exact
   in-circuit grouping over the masked pairs, and
@@ -49,12 +56,18 @@
 
   The bounds below make that obligation explicit. They first bound raw and
   masked totals linearly, then prove the two scaled sides are below
-  `goldilocks` for at most 64 children with 32-bit amounts. This has ample margin:
-  the larger output side is below `64 · 2 · (2³² - 1) · 10000 < p`.
-  Phase 2 must retain the circuit's batch-safe range check on `rhs - lhs` and
-  rework the `omega` proofs here, since `omega` reasons over `Nat`/`Int` and does
-  not apply to `ZMod p` arithmetic. The present bridge remains a relation-level
-  seam; it does not claim gadget soundness.
+  `goldilocks` for at most 64 children with 32-bit amounts.
+
+  The circuit enforces the inequality as `range_check(rhs − lhs, 52)` over the
+  field. That check is sound by a *two-sided* argument, and `lhs < p` alone is
+  not enough for it: (i) an honest `rhs ≥ lhs` gives `rhs − lhs ≤ rhs < 2^52`
+  (`privateBatchFeeRhs_lt_two_pow_52`); (ii) a dishonest `rhs < lhs` wraps to
+  `p − (lhs − rhs) ≥ p − lhs`, which must land *above* `2^52`, i.e. `lhs < p − 2^52`
+  (`privateBatchFeeLhs_add_two_pow_52_lt_modulus`). Note `lhs` itself can exceed
+  `2^52` (`128 · (2³² − 1) · 10⁴ ≈ 5.5·10¹⁵ > 2^52 ≈ 4.5·10¹⁵`), so (ii) really is
+  the "wrapped difference lands near `p`" argument, not "`lhs` fits in 52 bits".
+  The field-level lift of these two bounds through the range-check gadget is the
+  `Plonky2Spec` obligation; the `Nat` bounds here are its side conditions.
 -/
 import WormholeSpec.Basic
 import WormholeSpec.Hash
@@ -204,6 +217,22 @@ def nullifiersReplaced (ro : RandomOracle) :
       nullifiersReplaced ro ps us ns
   | _,       _,       _       => False
 
+/-- **Real-nullifier uniqueness (anti-replay).** No two *real* slots carry the same
+    nullifier. Mirrors the circuit's pairwise loop over `i < j`:
+    `and(and(is_real_i, is_real_j), digest_eq(null_i, null_j)) = 0`. Stated as
+    `List.Pairwise` so that slot order is exactly the circuit's slot order; dummy
+    slots are exempt (their nullifiers are replaced by `DNull(u)` and never settle). -/
+def realNullifiersDistinct (leaves : List LeafPublic) : Prop :=
+  leaves.Pairwise fun p q =>
+    ¬ isDummyPrivateBatch p → ¬ isDummyPrivateBatch q → p.nullifier ≠ q.nullifier
+
+/-- The real (non-dummy) children of a batch, in slot order. -/
+def realLeaves (leaves : List LeafPublic) : List LeafPublic := leaves.filter isRealB
+
+/-- The nullifiers the real children actually spend, in slot order. -/
+def realNullifiers (leaves : List LeafPublic) : List Digest :=
+  (realLeaves leaves).map LeafPublic.nullifier
+
 /--
 `RPrivateBatch ro leaves us out` holds iff the private-batch wrapper accepts children `leaves`
 with dummy-nullifier preimages `us`, producing aggregate output `out`.
@@ -234,8 +263,11 @@ def RPrivateBatch (ro : RandomOracle) (leaves : List LeafPublic) (us : List (Lis
   -- children masked to `(zero, 0)` at ingress (see `maskedChildPairs`). Value
   -- exit conservation is a derived theorem (`RPrivateBatch_value_conservation`);
   -- economic conservation is the segment-level `privateBatchFeeOk` conjunct.
-  out.exitSlots = groupExits (maskedChildPairs leaves)
-  -- TODO(Phase 3): `numExitSlots = 2 * leaves.length` slot accounting.
+  out.exitSlots = groupExits (maskedChildPairs leaves) ∧
+  -- Anti-replay: real slots spend pairwise-distinct nullifiers.
+  realNullifiersDistinct leaves ∧
+  -- Slot-count header (`num_exit_slots_t = constant(2 · n_leaf)`).
+  out.numExitSlots = 2 * leaves.length
 
 -- ── Exit-grouping conservation, derived from the primitive ──────────────────
 
@@ -361,8 +393,126 @@ theorem RPrivateBatch_value_conservation {ro : RandomOracle} {leaves : List Leaf
     {us : List (List Felt)} {out : PrivateBatchOutput} (h : RPrivateBatch ro leaves us out) :
     outputExitTotal out = maskedOutputTotal leaves := by
   unfold outputExitTotal
-  rw [h.2.2.2.2.2]
+  rw [h.2.2.2.2.2.1]
   exact groupExits_maskedChildPairs leaves
+
+-- ── Slot accounting ─────────────────────────────────────────────────────────
+
+/-- Grouping preserves the slot count: one settled slot per `(account, amount)` pair. -/
+theorem groupAux_length (seen : List Digest) :
+    ∀ xs : List (Digest × Felt), (groupAux seen xs).length = xs.length := by
+  intro xs
+  induction xs generalizing seen with
+  | nil => rfl
+  | cons hd tl ih =>
+      obtain ⟨k, a⟩ := hd
+      simp only [groupAux, List.length_cons, ih]
+
+/-- Two masked pairs per child. -/
+theorem maskedChildPairs_length (leaves : List LeafPublic) :
+    (maskedChildPairs leaves).length = 2 * leaves.length := by
+  induction leaves with
+  | nil => rfl
+  | cons p rest ih =>
+      simp only [maskedChildPairs, List.length_cons, ih]
+      omega
+
+/-- The settled exit region has exactly `2·N` slots, so the `numExitSlots` header the
+    circuit emits as a constant is the length of the region it describes. -/
+theorem RPrivateBatch_exitSlots_length {ro : RandomOracle} {leaves : List LeafPublic}
+    {us : List (List Felt)} {out : PrivateBatchOutput} (h : RPrivateBatch ro leaves us out) :
+    out.exitSlots.length = out.numExitSlots := by
+  rw [h.2.2.2.2.2.1, h.2.2.2.2.2.2.2]
+  unfold groupExits
+  rw [groupAux_length, maskedChildPairs_length]
+
+-- ── Real-nullifier uniqueness: one spend per settled leaf ───────────────────
+
+theorem isRealB_true_iff {p : LeafPublic} : isRealB p = true ↔ ¬ isDummyPrivateBatch p := by
+  unfold isRealB
+  by_cases hd : isDummyPrivateBatch p
+  · rw [decide_eq_true hd]; exact ⟨fun h => Bool.noConfusion h, fun h => absurd hd h⟩
+  · rw [decide_eq_false hd]; exact ⟨fun _ => hd, fun _ => rfl⟩
+
+theorem isRealB_false_iff {p : LeafPublic} : isRealB p = false ↔ isDummyPrivateBatch p := by
+  unfold isRealB
+  by_cases hd : isDummyPrivateBatch p
+  · rw [decide_eq_true hd]; exact ⟨fun _ => hd, fun _ => rfl⟩
+  · rw [decide_eq_false hd]; exact ⟨fun h => Bool.noConfusion h, fun h => absurd h hd⟩
+
+/-- `Pairwise` restricted along `filter`: the real children inherit the pairwise
+    property with the dummy guards discharged. -/
+theorem realLeaves_pairwise_ne {leaves : List LeafPublic} (h : realNullifiersDistinct leaves) :
+    (realLeaves leaves).Pairwise fun p q => p.nullifier ≠ q.nullifier := by
+  unfold realLeaves
+  have hsub := List.Pairwise.filter (p := isRealB) h
+  refine hsub.imp_of_mem ?_
+  intro p q hp hq hpq
+  exact hpq (isRealB_true_iff.mp (List.mem_filter.1 hp).2)
+    (isRealB_true_iff.mp (List.mem_filter.1 hq).2)
+
+/-- The nullifiers spent by the real children are pairwise distinct. -/
+theorem realNullifiersDistinct_nodup {leaves : List LeafPublic}
+    (h : realNullifiersDistinct leaves) : (realNullifiers leaves).Nodup := by
+  unfold realNullifiers List.Nodup
+  rw [List.pairwise_map]
+  exact realLeaves_pairwise_ne h
+
+/-- A real child's nullifier is forwarded verbatim into the pre-permutation list. -/
+theorem nullifiersReplaced_real_mem (ro : RandomOracle) :
+    ∀ (leaves : List LeafPublic) (us : List (List Felt)) (raw : List Digest),
+      nullifiersReplaced ro leaves us raw →
+      ∀ p ∈ leaves, ¬ isDummyPrivateBatch p → p.nullifier ∈ raw
+  | [], _, _, _, _, hp, _ => absurd hp List.not_mem_nil
+  | q :: qs, u :: us, n :: ns, ⟨hn, hrest⟩, p, hp, hreal => by
+      rcases List.mem_cons.1 hp with hpq | hpq
+      · subst hpq
+        rw [hn, if_neg hreal]
+        exact List.mem_cons_self
+      · exact List.mem_cons_of_mem _
+          (nullifiersReplaced_real_mem ro qs us ns hrest p hpq hreal)
+  | _ :: _, [], _, h, _, _, _ => nomatch h
+  | _ :: _, _ :: _, [], h, _, _, _ => nomatch h
+
+/-- A real child's nullifier reaches the output region (through the private permutation). -/
+theorem RPrivateBatch_real_nullifier_mem {ro : RandomOracle} {leaves : List LeafPublic}
+    {us : List (List Felt)} {out : PrivateBatchOutput} (h : RPrivateBatch ro leaves us out) :
+    ∀ p ∈ leaves, ¬ isDummyPrivateBatch p → p.nullifier ∈ out.nullifiers := by
+  obtain ⟨raw, hrep, hperm⟩ := h.2.2.1
+  intro p hp hreal
+  exact hperm.symm.mem_iff.mp (nullifiersReplaced_real_mem ro leaves us raw hrep p hp hreal)
+
+/-- The masked output total is the raw output total of the real children alone. -/
+theorem maskedOutputTotal_eq_rawOutputTotal_realLeaves (leaves : List LeafPublic) :
+    maskedOutputTotal leaves = rawOutputTotal (realLeaves leaves) := by
+  induction leaves with
+  | nil => rfl
+  | cons p rest ih =>
+      by_cases hd : isDummyPrivateBatch p
+      · have hf : isRealB p = false := isRealB_false_iff.mpr hd
+        have e1 : maskedOutputTotal (p :: rest) = 0 + maskedOutputTotal rest := by
+          simp only [maskedOutputTotal, if_pos hd]
+        have e2 : realLeaves (p :: rest) = realLeaves rest := by
+          simp only [realLeaves, List.filter_cons, hf, Bool.false_eq_true, if_false]
+        rw [e1, e2, ih, Nat.zero_add]
+      · have ht : isRealB p = true := isRealB_true_iff.mpr hd
+        have e1 : maskedOutputTotal (p :: rest)
+            = (p.outputAmount1 + p.outputAmount2) + maskedOutputTotal rest := by
+          simp only [maskedOutputTotal, if_neg hd]
+        have e2 : realLeaves (p :: rest) = p :: realLeaves rest := by
+          simp only [realLeaves, List.filter_cons, ht, if_true]
+        rw [e1, e2, rawOutputTotal, ih]
+
+/-- **One spend per settled leaf.** The value a private batch settles is the output total
+    of its real children, and those children spend pairwise-distinct nullifiers — so no
+    leaf proof is counted twice against a single on-chain nullifier. This is the property
+    the uniqueness constraint was added to protect (the replay-inflation finding). -/
+theorem RPrivateBatch_settles_distinct_spends {ro : RandomOracle} {leaves : List LeafPublic}
+    {us : List (List Felt)} {out : PrivateBatchOutput} (h : RPrivateBatch ro leaves us out) :
+    outputExitTotal out = rawOutputTotal (realLeaves leaves) ∧ (realNullifiers leaves).Nodup :=
+  ⟨(RPrivateBatch_value_conservation h).trans
+      (maskedOutputTotal_eq_rawOutputTotal_realLeaves leaves),
+    realNullifiersDistinct_nodup h.2.2.2.2.2.2.1⟩
 
 /-- The masked input total is bounded by the raw input total. -/
 theorem maskedInputTotal_le_rawInputTotal (leaves : List LeafPublic) :
@@ -574,10 +724,52 @@ theorem privateBatchFeeRhs_lt_modulus {leaves : List LeafPublic}
   exact Nat.lt_of_le_of_lt hrhs
     (maskedInputTotal_mul_feeDenominator_lt_modulus hlen hM)
 
+/-- **Range-check side condition (i).** The fee right-hand side fits in 52 bits, so an
+    honest difference `rhs − lhs ≤ rhs` passes `range_check(·, 52)`. -/
+theorem privateBatchFeeRhs_lt_two_pow_52 {leaves : List LeafPublic}
+    {out : PrivateBatchOutput}
+    (hlen : leaves.length ≤ 64)
+    (hM : ∀ p ∈ leaves, inRange 32 p.inputAmount) :
+    maskedInputTotal leaves * (feeDenominator - out.volumeFeeBps) < 2 ^ 52 := by
+  have hM' : ∀ p ∈ leaves, p.inputAmount ≤ 2 ^ 32 := fun p hp => Nat.le_of_lt (hM p hp)
+  have htotal : maskedInputTotal leaves ≤ leaves.length * (2 ^ 32) :=
+    Nat.le_trans (maskedInputTotal_le_rawInputTotal leaves) (rawInputTotal_le_linear hM')
+  have hcomp : feeDenominator - out.volumeFeeBps ≤ feeDenominator := Nat.sub_le _ _
+  have hscaled :
+      maskedInputTotal leaves * (feeDenominator - out.volumeFeeBps) ≤
+        (64 * (2 ^ 32)) * feeDenominator :=
+    Nat.mul_le_mul (Nat.le_trans htotal (Nat.mul_le_mul_right _ hlen)) hcomp
+  have hnumeric : (64 * (2 ^ 32)) * feeDenominator < 2 ^ 52 := by decide
+  exact Nat.lt_of_le_of_lt hscaled hnumeric
+
+/-- **Range-check side condition (ii).** The fee left-hand side sits more than `2^52`
+    below the modulus, so a *wrapped* (dishonest, `rhs < lhs`) field difference
+    `p − (lhs − rhs) ≥ p − lhs > 2^52` fails `range_check(·, 52)`. This is the bound
+    the check's soundness actually rests on; `lhs < p` alone would not exclude a wrap
+    landing inside the 52-bit window. -/
+theorem privateBatchFeeLhs_add_two_pow_52_lt_modulus {leaves : List LeafPublic}
+    (hlen : leaves.length ≤ 64)
+    (hM : ∀ p ∈ leaves, inRange 32 p.outputAmount1 ∧ inRange 32 p.outputAmount2) :
+    maskedOutputTotal leaves * feeDenominator + 2 ^ 52 < goldilocks := by
+  have hM' : ∀ p ∈ leaves, p.outputAmount1 ≤ 2 ^ 32 ∧ p.outputAmount2 ≤ 2 ^ 32 := by
+    intro p hp
+    obtain ⟨h1, h2⟩ := hM p hp
+    exact ⟨Nat.le_of_lt h1, Nat.le_of_lt h2⟩
+  have htotal : maskedOutputTotal leaves ≤ leaves.length * (2 * (2 ^ 32)) :=
+    Nat.le_trans (maskedOutputTotal_le_rawOutputTotal leaves) (rawOutputTotal_le_linear hM')
+  have hscaled :
+      maskedOutputTotal leaves * feeDenominator ≤ (64 * (2 * (2 ^ 32))) * feeDenominator :=
+    Nat.mul_le_mul_right _ (Nat.le_trans htotal (Nat.mul_le_mul_right _ hlen))
+  have hnumeric : (64 * (2 * (2 ^ 32))) * feeDenominator + 2 ^ 52 < goldilocks := by decide
+  exact Nat.lt_of_le_of_lt (Nat.add_le_add_right hscaled _) hnumeric
+
+-- ── Dummy-sentinel compatibility (leaf `blockHash = 0 ∧ outs = 0` vs private-batch
+--    `blockHash = 0`) ──────────────────────────────────────────────────────────
+
 /-- Under the leaf↔private-batch compatibility guarantee (a private-batch dummy carries zero
-    outputs), the raw total coincides with the non-dummy total. No longer needed for
-    conservation (the in-circuit ingress mask discharges it structurally); kept as the
-    compatibility obligation a full leaf↔private-batch composition proof discharges. -/
+    outputs), the raw total coincides with the non-dummy total. Not needed for
+    conservation (the in-circuit ingress mask discharges it structurally); the guarantee
+    itself is discharged for valid leaves by `rawOutputTotal_eq_maskedOutputTotal_of_Rleaf`. -/
 theorem rawOutputTotal_eq_maskedOutputTotal {leaves : List LeafPublic}
     (h : ∀ p ∈ leaves, isDummyPrivateBatch p → p.outputAmount1 = 0 ∧ p.outputAmount2 = 0) :
     rawOutputTotal leaves = maskedOutputTotal leaves := by
@@ -591,6 +783,45 @@ theorem rawOutputTotal_eq_maskedOutputTotal {leaves : List LeafPublic}
         rw [ihrest]; simp only [Felt] at *; omega
       · simp only [rawOutputTotal, maskedOutputTotal, if_neg hd]
         rw [ihrest]
+
+/-- A preimage of the all-zero digest under `H`. Exhibiting one is a (first-)preimage
+    break; the compatibility results below reduce to it, in the style of the
+    `*_or_collision` reductions in `Security.lean`. -/
+def HasZeroPreimage (H : List Felt → Digest) : Prop := ∃ x, H x = Digest.zero
+
+/-- **Sentinel gap, reduction form.** A valid leaf that the private batch treats as a
+    dummy (`blockHash = 0`) but that is *not* a leaf dummy (some output is non-zero) has
+    a real block-header preimage hashing to zero — i.e. it exhibits `HasZeroPreimage`.
+    So the only way the two sentinels can disagree on a valid leaf is a preimage break. -/
+theorem sentinel_gap_or_zero_preimage {ro : RandomOracle} {p : LeafPublic} {w : LeafWitness}
+    (h : Rleaf ro p w) (hpb : isDummyPrivateBatch p) (hleaf : ¬ p.isDummy) :
+    HasZeroPreimage ro.H := by
+  obtain ⟨-, -, -, -, -, -, -, -, -, -, -, -, hgated⟩ := h
+  obtain ⟨-, hblock, -, -⟩ := hgated hleaf
+  exact ⟨headerPreimage w p.blockNumber, hblock.symm.trans hpb⟩
+
+/-- Under explicit zero-preimage resistance the two sentinels *coincide* on every valid
+    leaf: a private-batch dummy is exactly a leaf dummy. (`←` is unconditional.) -/
+theorem sentinels_agree {ro : RandomOracle} (hpre : ¬ HasZeroPreimage ro.H)
+    {p : LeafPublic} {w : LeafWitness} (h : Rleaf ro p w) :
+    isDummyPrivateBatch p ↔ p.isDummy := by
+  constructor
+  · intro hpb
+    exact Classical.byContradiction fun hleaf =>
+      hpre (sentinel_gap_or_zero_preimage h hpb hleaf)
+  · intro hd; exact hd.1
+
+/-- Consequently a private-batch dummy that is a valid leaf carries zero outputs — the
+    hypothesis of `rawOutputTotal_eq_maskedOutputTotal`, now discharged for a batch of
+    valid leaves rather than assumed. -/
+theorem rawOutputTotal_eq_maskedOutputTotal_of_Rleaf {ro : RandomOracle}
+    (hpre : ¬ HasZeroPreimage ro.H) {leaves : List LeafPublic}
+    (hvalid : ∀ p ∈ leaves, ∃ w, Rleaf ro p w) :
+    rawOutputTotal leaves = maskedOutputTotal leaves := by
+  apply rawOutputTotal_eq_maskedOutputTotal
+  intro p hp hpb
+  obtain ⟨w, hw⟩ := hvalid p hp
+  exact ((sentinels_agree hpre hw).mp hpb).2
 
 /-- Public output of a public-batch aggregation proof (see `public_batch` constants). -/
 structure PublicBatchOutput where
@@ -658,11 +889,32 @@ def RPublicBatch (_ro : RandomOracle) (inner : List PrivateBatchOutput) (addr : 
       o.volumeFeeBps = out.volumeFeeBps ∧
       o.blockHash = out.blockHash) ∧
   out.exitSlots = (inner.map forwardedSlots).flatten ∧
-  out.nullifiers = (inner.map forwardedNullifiers).flatten
+  out.nullifiers = (inner.map forwardedNullifiers).flatten ∧
+  -- Slot-count header: `constant(n_inner · slots_per_inner)`, which is the length of
+  -- the forwarded region (every inner has the shape-checked `slots_per_inner`).
+  out.totalExitSlots = out.exitSlots.length
   -- NOTE: the wrapper does not constrain per-inner `blockNumber` equality; it
   -- forwards the first non-dummy inner's number. Hash equality pins the number
   -- transitively through the leaf circuit's header parse.
-  -- TODO(Phase 3): `totalExitSlots` accounting and the public-batch aggregator-address
-  -- binding semantics.
+  -- NOTE: `aggregatorAddress` is a free witness bound only by the `= addr` conjunct;
+  -- what the chain does with it (fee-recipient derivation) is a pallet-side semantics,
+  -- not a circuit constraint, and is out of scope here.
+
+/-- Forwarding preserves each inner's slot count (zeroing is a `map`). -/
+theorem forwardedSlots_length (o : PrivateBatchOutput) :
+    (forwardedSlots o).length = o.exitSlots.length := by
+  unfold forwardedSlots
+  split <;> simp
+
+/-- The public-batch exit region is the concatenation of the inners' regions, so its
+    length — the `totalExitSlots` header — is the sum of the inner slot counts. -/
+theorem RPublicBatch_totalExitSlots {ro : RandomOracle} {inner : List PrivateBatchOutput}
+    {addr : Digest} {out : PublicBatchOutput} (h : RPublicBatch ro inner addr out) :
+    out.totalExitSlots = (inner.map fun o => o.exitSlots.length).sum := by
+  rw [h.2.2.2.2.2, h.2.2.2.1, List.length_flatten, List.map_map]
+  congr 1
+  apply List.map_congr_left
+  intro o _
+  exact forwardedSlots_length o
 
 end WormholeSpec

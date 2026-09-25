@@ -99,11 +99,18 @@ the segment input total.
 | `maskedInputTotal`, `maskedOutputTotal` | dummy-mask real leaf inputs and raw outputs before summing |
 | `privateBatchFeeOk`: `fee_bps ≤ 10000` and `sum_out·10000 ≤ sum_in·(10000−fee_bps)` | one aggregate check per private segment; no totals are forwarded |
 | `maskedChildPairs` → `groupExits` / `matchSum` (dummy slots masked to `(zero, 0)` at ingress; per-slot group sum + first-occurrence dedup) | dummy-mask selects + exit-account grouping loop — `circuit_logic.rs` |
+| `realNullifiersDistinct` (pairwise-distinct real nullifiers, anti-replay) | `and(and(is_real_i, is_real_j), digest_eq(null_i, null_j)) = 0` loop over `i < j` — `circuit_logic.rs` ("Real-nullifier uniqueness") |
+| `numExitSlots = 2 · N` | `num_exit_slots_t = constant(n_leaf * 2)` — `circuit_logic.rs` |
 | **thm** `RPrivateBatch_value_conservation`: `outputExitTotal = maskedOutputTotal` | derived from the grouping primitive |
+| **thm** `RPrivateBatch_settles_distinct_spends`: `outputExitTotal = rawOutputTotal (realLeaves)` ∧ `(realNullifiers).Nodup` | the property the uniqueness constraint protects: settled value is backed by distinct spends |
+| **thm** `RPrivateBatch_real_nullifier_mem`, `RPrivateBatch_exitSlots_length` | every real nullifier reaches the output; the exit region has exactly `numExitSlots` slots |
 | **thm** `RPrivateBatch_settlement_fee_conservation`, `RPrivateBatch_settlement_le_input` | combine aggregate fee enforcement with grouping to bound the actually settled output |
 | **thm** `masked{Input,Output}Total_mul_feeDenominator_lt_modulus`, `privateBatchFeeRhs_lt_modulus` | scaled fee operands cannot wrap for ≤64 leaves with 32-bit amounts |
+| **thm** `privateBatchFeeRhs_lt_two_pow_52`, `privateBatchFeeLhs_add_two_pow_52_lt_modulus` | the two side conditions that make `range_check(rhs − lhs, 52)` sound: honest `rhs < 2^52`; wrapped `p − lhs > 2^52` |
+| **thm** `sentinel_gap_or_zero_preimage` / `sentinels_agree` / `rawOutputTotal_eq_maskedOutputTotal_of_Rleaf` | leaf vs private-batch dummy sentinels agree on valid leaves, or an `H` preimage of `0` is exhibited (`HasZeroPreimage`) |
 | output layout (`PrivateBatchOutput`) | `aggregated_output` — `private_batch/circuit/constants.rs` |
 | `RPublicBatch` forwarding + consistency | `build_public_batch_constraints` — `public_batch/circuit/circuit_logic.rs` |
+| `totalExitSlots = out.exitSlots.length`; **thm** `RPublicBatch_totalExitSlots` (= sum of inner slot counts) | `constant(n_inner * slots_per_inner)` — `public_batch/circuit/circuit_logic.rs` |
 
 ### Security reductions (`Security.lean`)
 
@@ -181,24 +188,42 @@ step is the Phase-4 preimage game, as for the other security theorems.
    `RPrivateBatch_settlement_le_input`.
    Dummy masking discharges zero-contribution structurally
    (`rawOutputTotal_eq_maskedOutputTotal` remains as the leaf-side compatibility
-   statement for a full composition proof).
+   statement, now discharged for valid leaves — see gap 4).
+   `numExitSlots = 2·N` is a clause of `RPrivateBatch`, and
+   `RPrivateBatch_exitSlots_length` proves the exit region has that length.
    Remaining: the full per-account *multiset* characterization (which account
-   gets which sum) and `numExitSlots = 2·N` slot accounting (Phase 3).
+   gets which sum) (Phase 3).
    **Field caveat:** aggregate fee arithmetic is stated over `Nat`; over
    `ZMod p`, both scaled operands and the checked difference must not wrap.
    `maskedInputTotal_mul_feeDenominator_lt_modulus`,
    `maskedOutputTotal_mul_feeDenominator_lt_modulus`, and
    `privateBatchFeeRhs_lt_modulus` prove the operand bounds for the protocol cap
-   of 64 leaves and 32-bit amounts. Phase 2 must still connect the actual
-   batch-safe difference range check to this order relation and rework the
-   `omega` proofs for field arithmetic.
-3. **public-batch accounting.** `totalExitSlots` and aggregator-address binding semantics
-   (Phase 3).
-4. **Dummy-notion compatibility.** Prove the leaf dummy (`blockHash=0 ∧ outs=0`)
-   and private-batch dummy (`blockHash=0`) interact safely (Phase 3). Both
-   aggregate input/output accumulators and the exit region are independent of
-   the gap because private batch masks every `blockHash=0` child, narrowing the
-   remaining obligation to the nullifier and metadata clauses.
+   of 64 leaves and 32-bit amounts; `privateBatchFeeRhs_lt_two_pow_52` and
+   `privateBatchFeeLhs_add_two_pow_52_lt_modulus` are the two-sided bounds the
+   in-circuit `range_check(rhs − lhs, 52)` actually rests on (note `lhs` itself may
+   exceed `2^52`; soundness comes from the wrapped difference landing above it).
+   The field-level lift of those bounds through the range-check gadget lives in
+   `qp-plonky2/formal` (`Plonky2Spec.Wrapper`).
+3. ~~**public-batch accounting.**~~ **Done.** `totalExitSlots = out.exitSlots.length`
+   is a clause of `RPublicBatch`; `RPublicBatch_totalExitSlots` equates it to the
+   sum of inner slot counts. The aggregator address is a free witness bound by the
+   `= addr` conjunct; its fee-recipient semantics are pallet-side, not a circuit
+   constraint.
+4. ~~**Dummy-notion compatibility.**~~ **Done (as a reduction).** A valid leaf
+   (`Rleaf`) with `blockHash = 0` but non-zero outputs would have to supply a
+   block-header preimage of the zero digest (`sentinel_gap_or_zero_preimage`), so
+   under explicit zero-preimage resistance (`¬ HasZeroPreimage ro.H`) the two
+   sentinels coincide on valid leaves (`sentinels_agree`), and every private-batch
+   dummy carries zero outputs (`rawOutputTotal_eq_maskedOutputTotal_of_Rleaf`). The
+   ingress mask already made the exit region independent of the gap; this closes
+   the nullifier/metadata side too.
+8. **Real-nullifier uniqueness.** ~~Not modeled.~~ **Done.** `realNullifiersDistinct`
+   is a clause of `RPrivateBatch` (and `PrivateBatchCircuit`), mirroring the
+   circuit's pairwise `i < j` loop. `RPrivateBatch_settles_distinct_spends` is the
+   theorem the constraint exists for: the settled total is the output total of the
+   real children, whose nullifiers are `Nodup`. Not enforced (and not claimed): a
+   *dummy* nullifier `DNull(u)` colliding with a real one — dummies never settle, so
+   the circuit exempts them.
 5. **`exit_account_1/2` are unconstrained at the leaf** — bound only at private-batch. The
    spec reflects this (no `Rleaf` clause references them); the binding obligation
    lives in `RPrivateBatch`, whose grouping masks dummy children's exits to the
