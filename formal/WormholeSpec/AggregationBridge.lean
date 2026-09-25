@@ -118,6 +118,11 @@ structure PrivateBatchCircuit (ro : RandomOracle) (leaves : List LeafPublic)
   metaOk : metadataConsistent leaves out
   /-- The header is taken from the first non-dummy child (first-real scan result). -/
   ref : referenceFromFirstReal leaves out
+  /-- Real slots carry pairwise-distinct nullifiers (the satisfied form of the
+      `and(both_real, digest_eq) = 0` loop over `i < j`). -/
+  nullsDistinct : realNullifiersDistinct leaves
+  /-- The slot-count header is the constant `2 · n_leaf`. -/
+  numSlots : out.numExitSlots = 2 * leaves.length
 
 /-- **Private-batch bridge.** The wrapper constraints imply the spec relation `RPrivateBatch`. -/
 theorem private_batch_bridge {ro : RandomOracle} {leaves : List LeafPublic}
@@ -126,7 +131,7 @@ theorem private_batch_bridge {ro : RandomOracle} {leaves : List LeafPublic}
   refine ⟨h.metaOk, h.ref,
     ⟨buildNullifiers ro leaves us, nullifiersReplaced_build ro leaves us h.uslen,
       h.nullsPerm⟩,
-    ?_, h.feeOk, h.exits⟩
+    ?_, h.feeOk, h.exits, h.nullsDistinct, h.numSlots⟩
   exact h.nullsPerm.length_eq.trans (buildNullifiers_length ro leaves us h.uslen)
 
 /-- **Private-batch soundness (end to end).** A satisfied private-batch aggregation circuit whose
