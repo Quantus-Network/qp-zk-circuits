@@ -195,13 +195,29 @@ def metadataConsistent (leaves : List LeafPublic) (out : PrivateBatchOutput) : P
     p.blockHash = out.blockHash ∧
     p.blockNumber = out.blockNumber
 
-/-- The block reference is the first non-dummy child; an all-dummy batch yields a
-    zero block hash (and settles nothing). -/
+/-- The block reference is the first non-dummy child; an all-dummy batch keeps the
+    scan's zero initial values for the block hash, block number and fee (and settles
+    nothing). `assetId` is taken from slot 0 unconditionally (every slot's asset is
+    connected to it, dummies included), so it is not part of the scan. -/
 def referenceFromFirstReal (leaves : List LeafPublic) (out : PrivateBatchOutput) : Prop :=
   match leaves.find? isRealB with
   | some p => out.blockHash = p.blockHash ∧ out.blockNumber = p.blockNumber ∧
               out.assetId = p.assetId ∧ out.volumeFeeBps = p.volumeFeeBps
-  | none   => out.blockHash = Digest.zero
+  | none   => out.blockHash = Digest.zero ∧ out.blockNumber = 0 ∧ out.volumeFeeBps = 0
+
+/-- The reference fee is either a real child's fee or the scan's zero, so any bound
+    every child's fee satisfies is inherited by the header (used by the field-level
+    fee-comparator bridge, which needs `volumeFeeBps < 2^32`). -/
+theorem referenceFromFirstReal_volumeFeeBps_lt {leaves : List LeafPublic}
+    {out : PrivateBatchOutput} {M : Felt} (hM : 0 < M)
+    (href : referenceFromFirstReal leaves out)
+    (hfee : ∀ p ∈ leaves, p.volumeFeeBps < M) : out.volumeFeeBps < M := by
+  unfold referenceFromFirstReal at href
+  split at href
+  · next p hp =>
+      rw [href.2.2.2]
+      exact hfee p (List.mem_of_find?_eq_some hp)
+  · rw [href.2.2]; exact hM
 
 /-- Per-slot nullifier output: real children forward `nullifier`; private-batch dummies
     are replaced by `DNull(u)` for the witnessed preimage `u`.
@@ -863,7 +879,8 @@ def innerReferenceFromFirstReal (inner : List PrivateBatchOutput)
   match inner.find? isRealInnerB with
   | some o => out.blockHash = o.blockHash ∧ out.blockNumber = o.blockNumber ∧
               out.assetId = o.assetId ∧ out.volumeFeeBps = o.volumeFeeBps
-  | none   => out.blockHash = Digest.zero
+  | none   => out.blockHash = Digest.zero ∧ out.blockNumber = 0 ∧
+              out.assetId = 0 ∧ out.volumeFeeBps = 0
 
 /--
 `RPublicBatch ro inner addr out` holds iff the public-batch wrapper aggregates the private-batch

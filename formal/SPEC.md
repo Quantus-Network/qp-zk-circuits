@@ -92,7 +92,7 @@ the segment input total.
 | Spec clause | Rust source |
 |-------------|-------------|
 | `metadataConsistent` (asset/fee/block across non-dummy) | `build_private_batch_constraints` — `private_batch/circuit/circuit_logic.rs` |
-| `referenceFromFirstReal` (block ref = first non-dummy slot) | prefix-scan selection — `private_batch/circuit/circuit_logic.rs` (the `illuzen/full-shuffle` fix) |
+| `referenceFromFirstReal` (block ref = first non-dummy slot; all-dummy keeps the scan's zero hash/number/fee) | prefix-scan selection — `private_batch/circuit/circuit_logic.rs` (the `illuzen/full-shuffle` fix) |
 | `nullifiersReplaced` `DNull(u)=H(H(u))`, held of the pre-permutation list (`∃ raw, … ∧ Perm` in `RPrivateBatch`) | `hash_dummy_nullifier_pre_image` — `circuit_logic.rs` |
 | `out.nullifiers.Perm raw` (exact selected-nullifier multiset, privately reordered) | `permute_digests4` over selected nullifiers — `circuit_logic.rs`; gadget in `common/src/gadgets.rs` |
 | `isDummyPrivateBatch = blockHash=0` (weaker sentinel) | dummy detection at private-batch — `circuit_logic.rs` |
