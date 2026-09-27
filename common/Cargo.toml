@@ -18,6 +18,7 @@ serde_json = { version = "=1.0.150", default-features = false, features = ["allo
 
 [features]
 default = ["std"]
+formal-export = ["qp-plonky2/formal-export", "std"]
 std = [
 	"anyhow/std",
 	"dep:rand",

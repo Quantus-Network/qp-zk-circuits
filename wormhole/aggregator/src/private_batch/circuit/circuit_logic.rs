@@ -35,7 +35,6 @@
 use anyhow::{ensure, Result};
 use plonky2::{
     field::types::Field,
-    hash::poseidon2::Poseidon2Hash,
     iop::target::{BoolTarget, Target},
     plonk::{
         circuit_builder::CircuitBuilder,
@@ -50,6 +49,7 @@ use qp_wormhole_inputs::validate_proof_count;
 
 use zk_circuits_common::{
     circuit::{validate_circuit_config, C, D, F},
+    gadget_builder::GadgetBuilder,
     gadgets::{bytes_digest_eq, limb1_at_offset, limbs4_at_offset, permute_digests4},
 };
 
@@ -171,8 +171,10 @@ impl PrivateBatchCircuit {
     }
 }
 
-fn build_private_batch_constraints(
-    builder: &mut CircuitBuilder<F, D>,
+/// The wrapper logic, written against [`GadgetBuilder`] so the `formal-export` tracing
+/// builder can record the exact gadget calls the production `CircuitBuilder` receives.
+pub(crate) fn build_private_batch_constraints(
+    builder: &mut impl GadgetBuilder<F, D>,
     targets: &PrivateBatchCircuitTargets,
     n_leaf: usize,
 ) -> Vec<BoolTarget> {
@@ -499,12 +501,12 @@ fn build_private_batch_constraints(
 }
 
 fn hash_dummy_nullifier_pre_image(
-    builder: &mut CircuitBuilder<F, D>,
+    builder: &mut impl GadgetBuilder<F, D>,
     pre_image: [Target; 4],
 ) -> [Target; 4] {
-    let inner_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(pre_image.to_vec());
+    let inner_hash = builder.poseidon2_hash_no_pad(pre_image.to_vec());
     builder
-        .hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(inner_hash.elements.to_vec())
+        .poseidon2_hash_no_pad(inner_hash.elements.to_vec())
         .elements
 }
 
