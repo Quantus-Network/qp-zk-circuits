@@ -28,6 +28,7 @@ use qp_wormhole_inputs::validate_proof_count;
 
 use zk_circuits_common::{
     circuit::{validate_circuit_config, C, D, F},
+    gadget_builder::GadgetBuilder,
     gadgets::bytes_digest_eq,
 };
 
@@ -164,8 +165,10 @@ impl PublicBatchCircuit {
 ///  total_exit_slots(1),
 ///  [sum(1), exit(4)] * total_exit_slots,
 ///  nullifier(4) * total_nullifiers]
-fn build_public_batch_constraints(
-    builder: &mut CircuitBuilder<F, D>,
+/// The wrapper logic, written against [`GadgetBuilder`] so the `formal-export` tracing
+/// builder can record the exact gadget calls the production `CircuitBuilder` receives.
+pub(crate) fn build_public_batch_constraints(
+    builder: &mut impl GadgetBuilder<F, D>,
     targets: &PublicBatchCircuitTargets,
     n_inner: usize,
     private_batch_num_leaves: usize,
