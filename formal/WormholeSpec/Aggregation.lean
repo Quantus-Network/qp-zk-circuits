@@ -187,13 +187,19 @@ def amtNotIn (seen : List Digest) : List (Digest × Felt) → Felt
 /-- Sum of the settled exit-slot amounts of a private-batch output. -/
 def outputExitTotal (out : PrivateBatchOutput) : Felt := slotsTotal out.exitSlots
 
-/-- Metadata of each non-dummy child agrees with the aggregate header. -/
+/-- Metadata of each non-dummy child agrees with the aggregate header: asset id
+    (`connect`), fee and block hash (`or(is_dummy, matches_ref) = 1`). The circuit does
+    *not* constrain the children's `blockNumber`; it forwards the first real child's
+    (`referenceFromFirstReal`), and the chain only reads that one, to look up the hash it
+    checks `out.blockHash` against. Equal hashes pin the number through the leaf circuit's
+    header parse (`Rleaf`: `blockHash = H (headerPreimage w blockNumber)`), so a real child
+    with the header's hash and a different number is a collision. Same shape as
+    `RPublicBatch` one layer up. -/
 def metadataConsistent (leaves : List LeafPublic) (out : PrivateBatchOutput) : Prop :=
   ∀ p ∈ leaves, ¬ isDummyPrivateBatch p →
     p.assetId = out.assetId ∧
     p.volumeFeeBps = out.volumeFeeBps ∧
-    p.blockHash = out.blockHash ∧
-    p.blockNumber = out.blockNumber
+    p.blockHash = out.blockHash
 
 /-- The block reference is the first non-dummy child; an all-dummy batch keeps the
     scan's zero initial values for the block hash, block number and fee (and settles
