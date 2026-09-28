@@ -2122,3 +2122,75 @@ fn wrapper_only_n2_builds_without_verifiers() {
         data.prover_only.public_inputs.len(),
     );
 }
+
+/// Records the `n = 2` wrapper's gadget calls and constraint system for the Lean constraint
+/// exporter (`qp-plonky2/constraint-exporter`, PLAN.md Step 8c) and checks the trace in
+/// `formal/traces/` is current. Regenerate with
+/// `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib private_batch_wrapper_n2_trace`.
+#[test]
+fn private_batch_wrapper_n2_trace_is_current() {
+    use zk_circuits_common::formal_trace::{Trace, TracingBuilder};
+
+    let leaf = build_fake_leaf_circuit().0;
+    let n_leaf = 2;
+    let mut tracing = TracingBuilder::new(wormhole_private_batch_circuit_config());
+
+    let leaf_proofs: Vec<_> = (0..n_leaf)
+        .map(|_| tracing.inner.add_virtual_proof_with_pis(&leaf.common))
+        .collect();
+    let dummy_nullifier_pre_images: Vec<[Target; 4]> = (0..n_leaf)
+        .map(|_| core::array::from_fn(|_| tracing.inner.add_virtual_target()))
+        .collect();
+    let rows_before = tracing.inner.num_gates();
+    let mut targets = PrivateBatchCircuitTargets {
+        leaf_proofs,
+        dummy_nullifier_pre_images,
+        nullifier_permutation_switches: Vec::new(),
+    };
+    targets.nullifier_permutation_switches =
+        super::build_private_batch_constraints(&mut tracing, &targets, n_leaf);
+    assert_eq!(
+        rows_before, 0,
+        "wrapper rows must start at 0 for the exporter"
+    );
+
+    let mut named = Vec::new();
+    for (i, proof) in targets.leaf_proofs.iter().enumerate() {
+        named.push((format!("leaf_pis_{i}"), proof.public_inputs.clone()));
+    }
+    for (i, pre) in targets.dummy_nullifier_pre_images.iter().enumerate() {
+        named.push((format!("dummy_pre_image_{i}"), pre.to_vec()));
+    }
+    named.push((
+        "switches".to_string(),
+        targets
+            .nullifier_permutation_switches
+            .iter()
+            .map(|b| b.target)
+            .collect(),
+    ));
+    let trace = tracing.trace("private_batch_wrapper_n2", named);
+    let json = trace.to_json();
+    let round_trip = Trace::from_json(&json).expect("trace round-trips");
+    assert_eq!(round_trip.to_json(), json);
+    println!(
+        "wrapper trace n={n_leaf}: rows={} copies={} calls={}",
+        trace.rows.len(),
+        trace.copies.len(),
+        trace.calls.len()
+    );
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../formal/traces/private_batch_wrapper_n2.json");
+    if std::env::var_os("UPDATE_FORMAL_TRACE").is_some() {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, &json).unwrap();
+    }
+    let checked_in = std::fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        checked_in == json,
+        "formal/traces/private_batch_wrapper_n2.json is stale; regenerate with \
+         UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib \
+         private_batch_wrapper_n2_trace"
+    );
+}

@@ -6,6 +6,8 @@ use plonky2::{
     plonk::circuit_builder::CircuitBuilder,
 };
 
+use crate::gadget_builder::GadgetBuilder;
+
 fn assert_comparison_width(left: usize, n_log: usize) {
     assert!(n_log > 0, "comparison bit width must be greater than zero");
     // Goldilocks elements are < 2^64. Widths above 64 have no unique meaning as
@@ -142,7 +144,7 @@ fn xor<F: RichField + Extendable<D>, const D: usize>(
 /// Compare two 4-element arrays (e.g., hash outputs) for equality.
 #[inline]
 pub fn bytes_digest_eq<F: RichField + Extendable<D>, const D: usize>(
-    b: &mut CircuitBuilder<F, D>,
+    b: &mut impl GadgetBuilder<F, D>,
     a: [Target; 4],
     c: [Target; 4],
 ) -> BoolTarget {
@@ -235,7 +237,7 @@ fn split_canonical_u32_halves<F: RichField + Extendable<D>, const D: usize>(
 /// permutation of the inputs for every valid witness. The circuit does not
 /// constrain which permutation is chosen.
 pub fn permute_digests4<F: RichField + Extendable<D>, const D: usize>(
-    b: &mut CircuitBuilder<F, D>,
+    b: &mut impl GadgetBuilder<F, D>,
     values: Vec<[Target; 4]>,
 ) -> (Vec<[Target; 4]>, Vec<BoolTarget>) {
     let n = values.len();

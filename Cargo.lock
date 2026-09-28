@@ -904,9 +904,9 @@ dependencies = [
 
 [[package]]
 name = "qp-plonky2"
-version = "1.5.6"
+version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6684ffcd61d2aa7d036581a9c824b8cd2ce37db9739a86ecf080430d2a6a727"
+checksum = "deab078ff1652d1197e95795445eb4a95f418bd36af90a7faa66f950321130d4"
 dependencies = [
  "ahash",
  "anyhow",
@@ -932,9 +932,9 @@ dependencies = [
 
 [[package]]
 name = "qp-plonky2-core"
-version = "1.5.6"
+version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d67387f60a7d40106bcd24125c465b498d2c79720fcd1c1a01ba95eda3dfbb6c"
+checksum = "0ecd32cbc7fe55e09b40625439e555f420b64c2472591890efaaa0d47999ded2"
 dependencies = [
  "ahash",
  "anyhow",
@@ -953,9 +953,9 @@ dependencies = [
 
 [[package]]
 name = "qp-plonky2-field"
-version = "1.5.6"
+version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90c29e44067324abadc3b25e28ce6e3a2697415cd352202a36eaf01f6afba1c7"
+checksum = "c0ce829bf2eb688c78079c3c3230da1a1d277cf5e9d19570ccd44be7aa666912"
 dependencies = [
  "anyhow",
  "itertools 0.13.0",
@@ -970,9 +970,9 @@ dependencies = [
 
 [[package]]
 name = "qp-plonky2-verifier"
-version = "1.5.6"
+version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cb63da405433d8c07aa72aab56d15d41a3f75fa72c5588a2bd1cc6e029af3f9"
+checksum = "6d08c87f423f993065d834f8f63591949f421e2b1fd36caf3877d6db0bc7b779"
 dependencies = [
  "ahash",
  "anyhow",
