@@ -993,3 +993,76 @@ fn public_batch_rejects_proofs_from_substituted_private_batch_circuit() {
         "public batch must reject private-batch proofs from a substituted circuit"
     );
 }
+
+/// Records the `n_inner = 2` public-batch wrapper over `2`-leaf private batches — the
+/// wrapper logic only, on virtual inner-proof PI targets, without the recursive verifiers
+/// — for the Lean constraint exporter (`qp-plonky2/constraint-exporter`, PLAN.md Step 8)
+/// and checks the trace in `formal/traces/` is current. Regenerate with
+/// `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib public_batch_wrapper_n2_trace`.
+#[test]
+fn public_batch_wrapper_n2_trace_is_current() {
+    use zk_circuits_common::circuit::wormhole_public_batch_circuit_config;
+    use zk_circuits_common::formal_trace::{Trace, TracingBuilder};
+
+    let leaf = build_fake_leaf_circuit().0;
+    let mut tracing = TracingBuilder::new(wormhole_public_batch_circuit_config());
+
+    // Only the PI slice of each inner proof is read by the wrapper; the proof body comes
+    // from any common data.
+    let pi_len = pbc::private_batch_pi_len(NUM_LEAVES);
+    let private_batch_proofs: Vec<_> = (0..N_INNER)
+        .map(|_| {
+            let mut proof = tracing.inner.add_virtual_proof_with_pis(&leaf.common);
+            proof.public_inputs = tracing.inner.add_virtual_targets(pi_len);
+            proof
+        })
+        .collect();
+    let aggregator_address: [Target; AGGREGATOR_ADDRESS_LEN] = tracing
+        .inner
+        .add_virtual_targets(AGGREGATOR_ADDRESS_LEN)
+        .try_into()
+        .unwrap();
+    let rows_before = tracing.inner.num_gates();
+    let targets = PublicBatchCircuitTargets {
+        private_batch_proofs,
+        aggregator_address,
+    };
+    super::build_public_batch_constraints(&mut tracing, &targets, N_INNER, NUM_LEAVES);
+    assert_eq!(
+        rows_before, 0,
+        "wrapper rows must start at 0 for the exporter"
+    );
+
+    let mut named = Vec::new();
+    for (i, proof) in targets.private_batch_proofs.iter().enumerate() {
+        named.push((format!("inner_pis_{i}"), proof.public_inputs.clone()));
+    }
+    named.push((
+        "aggregator_address".to_string(),
+        targets.aggregator_address.to_vec(),
+    ));
+    let trace = tracing.trace("public_batch_wrapper_n2", named);
+    let json = trace.to_json();
+    let round_trip = Trace::from_json(&json).expect("trace round-trips");
+    assert_eq!(round_trip.to_json(), json);
+    println!(
+        "public wrapper trace n_inner={N_INNER} leaves={NUM_LEAVES}: rows={} copies={} calls={}",
+        trace.rows.len(),
+        trace.copies.len(),
+        trace.calls.len()
+    );
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../formal/traces/public_batch_wrapper_n2.json");
+    if std::env::var_os("UPDATE_FORMAL_TRACE").is_some() {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, &json).unwrap();
+    }
+    let checked_in = std::fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        checked_in == json,
+        "formal/traces/public_batch_wrapper_n2.json is stale; regenerate with \
+         UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib \
+         public_batch_wrapper_n2_trace"
+    );
+}
