@@ -41,7 +41,8 @@ pub struct TraceRow {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceCall {
     /// `select`, `not`, `and`, `or`, `add`, `sub`, `mul`, `is_equal`, `range_check`,
-    /// `connect`, `assert_bool` (`add_virtual_bool_target_safe`), `poseidon2_hash`.
+    /// `split_le`, `connect`, `assert_bool` (`add_virtual_bool_target_safe`),
+    /// `poseidon2_hash`, `split_low_high` (recorded but not modeled by the exporter).
     pub kind: String,
     pub args: Vec<String>,
     pub outs: Vec<String>,
@@ -208,6 +209,21 @@ impl TracingBuilder {
 }
 
 impl GadgetBuilder<F, D> for TracingBuilder {
+    fn add_virtual_target(&mut self) -> Target {
+        self.inner.add_virtual_target()
+    }
+    fn add_virtual_targets(&mut self, n: usize) -> Vec<Target> {
+        self.inner.add_virtual_targets(n)
+    }
+    fn add_virtual_public_input(&mut self) -> Target {
+        self.inner.add_virtual_public_input()
+    }
+    fn add_virtual_hash(&mut self) -> HashOutTarget {
+        self.inner.add_virtual_hash()
+    }
+    fn add_virtual_hash_public_input(&mut self) -> HashOutTarget {
+        self.inner.add_virtual_hash_public_input()
+    }
     fn one(&mut self) -> Target {
         self.inner.one()
     }
@@ -219,6 +235,12 @@ impl GadgetBuilder<F, D> for TracingBuilder {
     }
     fn _false(&mut self) -> BoolTarget {
         self.inner._false()
+    }
+    fn _true(&mut self) -> BoolTarget {
+        self.inner._true()
+    }
+    fn constant_bool(&mut self, b: bool) -> BoolTarget {
+        self.inner.constant_bool(b)
     }
     fn add_virtual_bool_target_safe(&mut self) -> BoolTarget {
         self.record(
@@ -301,6 +323,10 @@ impl GadgetBuilder<F, D> for TracingBuilder {
             |&out| alloc::vec![out],
         )
     }
+    fn mul_const(&mut self, c: F, x: Target) -> Target {
+        let c = self.inner.constant(c);
+        GadgetBuilder::mul(self, c, x)
+    }
     fn connect(&mut self, x: Target, y: Target) {
         self.record(
             "connect",
@@ -310,6 +336,11 @@ impl GadgetBuilder<F, D> for TracingBuilder {
             |_| Vec::new(),
         );
     }
+    fn connect_hashes(&mut self, x: HashOutTarget, y: HashOutTarget) {
+        for i in 0..4 {
+            GadgetBuilder::connect(self, x.elements[i], y.elements[i]);
+        }
+    }
     fn range_check(&mut self, x: Target, n_log: usize) {
         self.record(
             "range_check",
@@ -318,6 +349,27 @@ impl GadgetBuilder<F, D> for TracingBuilder {
             |bd| bd.range_check(x, n_log),
             |_| Vec::new(),
         );
+    }
+    fn split_le(&mut self, x: Target, num_bits: usize) -> Vec<BoolTarget> {
+        self.record(
+            "split_le",
+            &[x],
+            Some(num_bits),
+            |bd| bd.split_le(x, num_bits),
+            |bits| bits.iter().map(|b| b.target).collect(),
+        )
+    }
+    fn split_low_high(&mut self, x: Target, n_log: usize, num_bits: usize) -> (Target, Target) {
+        self.record(
+            "split_low_high",
+            &[x],
+            Some(n_log),
+            |bd| bd.split_low_high(x, n_log, num_bits),
+            |&(lo, hi)| alloc::vec![lo, hi],
+        )
+    }
+    fn register_public_input(&mut self, target: Target) {
+        self.inner.register_public_input(target)
     }
     fn register_public_inputs(&mut self, targets: &[Target]) {
         self.inner.register_public_inputs(targets)

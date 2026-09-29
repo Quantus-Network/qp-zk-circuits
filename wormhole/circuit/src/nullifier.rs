@@ -37,6 +37,7 @@ use plonky2::{
 };
 use zeroize::Zeroizing;
 use zk_circuits_common::circuit::{CircuitFragment, D, F};
+use zk_circuits_common::gadget_builder::GadgetBuilder;
 use zk_circuits_common::utils::{string_to_felts, u64_to_felts, BytesDigest, Digest};
 
 use crate::sensitive::SensitiveFelts;
@@ -271,7 +272,7 @@ pub struct NullifierTargets {
 }
 
 impl NullifierTargets {
-    pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
+    pub fn new(builder: &mut impl GadgetBuilder<F, D>) -> Self {
         Self {
             hash: builder.add_virtual_hash_public_input(),
             secret: builder.add_virtual_hash(),
@@ -284,7 +285,7 @@ impl Nullifier {
     /// Computes `H(H(salt + secret + transfer_count))` in-circuit.
     fn computed_nullifier(
         targets: &NullifierTargets,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut impl GadgetBuilder<F, D>,
     ) -> HashOutTarget {
         let salt_felts =
             string_to_felts(NULLIFIER_SALT).expect("NULLIFIER_SALT within serialization cap");
@@ -295,8 +296,8 @@ impl Nullifier {
         nullifier_preimage.extend(targets.secret.elements.iter().copied());
         nullifier_preimage.extend(targets.transfer_count.iter());
 
-        let inner_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(nullifier_preimage);
-        builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(inner_hash.elements.to_vec())
+        let inner_hash = builder.poseidon2_hash_no_pad(nullifier_preimage);
+        builder.poseidon2_hash_no_pad(inner_hash.elements.to_vec())
     }
 
     /// Enforces `hash == H(H(salt + secret + transfer_count))` whenever
@@ -312,7 +313,7 @@ impl Nullifier {
     /// [`CircuitFragment::circuit`], which enforces the binding unconditionally.
     pub fn conditional_hash_binding(
         targets: &NullifierTargets,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut impl GadgetBuilder<F, D>,
         is_not_dummy: Target,
     ) {
         let computed_nullifier = Self::computed_nullifier(targets, builder);

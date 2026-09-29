@@ -11,6 +11,7 @@ use zeroize::Zeroizing;
 use crate::inputs::CircuitInputs;
 use crate::sensitive::SensitiveFelts;
 use zk_circuits_common::circuit::{CircuitFragment, D, F};
+use zk_circuits_common::gadget_builder::GadgetBuilder;
 use zk_circuits_common::utils::{
     bytes_to_digest, digest_to_bytes, string_to_felts, BytesDigest, Digest, DIGEST_BYTES_LEN,
     POSEIDON2_OUTPUT,
@@ -198,7 +199,7 @@ pub struct UnspendableAccountTargets {
 }
 
 impl UnspendableAccountTargets {
-    pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
+    pub fn new(builder: &mut impl GadgetBuilder<F, D>) -> Self {
         Self {
             account_id: builder.add_virtual_hash(),
             secret: builder.add_virtual_hash(),
@@ -206,15 +207,13 @@ impl UnspendableAccountTargets {
     }
 }
 
-impl CircuitFragment for UnspendableAccount {
-    type Targets = UnspendableAccountTargets;
-
-    /// Builds a circuit that asserts that the `account_id` was generated from `H(H(salt+secret))`.
+impl UnspendableAccount {
+    /// Asserts that `account_id` was generated from `H(H(salt+secret))`.
     ///
-    /// The circuit computes the hash (4 felts) and directly compares with account_id (also 4 felts).
-    fn circuit(
-        Self::Targets { account_id, secret }: &Self::Targets,
-        builder: &mut CircuitBuilder<F, D>,
+    /// Computes the hash (4 felts) and directly compares with account_id (also 4 felts).
+    pub fn constraints(
+        UnspendableAccountTargets { account_id, secret }: &UnspendableAccountTargets,
+        builder: &mut impl GadgetBuilder<F, D>,
     ) {
         let salt =
             string_to_felts(UNSPENDABLE_SALT).expect("UNSPENDABLE_SALT within serialization cap");
@@ -226,14 +225,21 @@ impl CircuitFragment for UnspendableAccount {
 
         // Compute the hash by double-hashing the preimage (salt + secret).
         // Result is 4 field elements (HashOut).
-        let inner_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(preimage.clone());
-        let outer_hash =
-            builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(inner_hash.elements.to_vec());
+        let inner_hash = builder.poseidon2_hash_no_pad(preimage.clone());
+        let outer_hash = builder.poseidon2_hash_no_pad(inner_hash.elements.to_vec());
 
         // Assert that the computed hash matches the provided account_id (both are 4 felts)
         for i in 0..4 {
             builder.connect(outer_hash.elements[i], account_id.elements[i]);
         }
+    }
+}
+
+impl CircuitFragment for UnspendableAccount {
+    type Targets = UnspendableAccountTargets;
+
+    fn circuit(targets: &Self::Targets, builder: &mut CircuitBuilder<F, D>) {
+        Self::constraints(targets, builder);
     }
 
     fn fill_targets(

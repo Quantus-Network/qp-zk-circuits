@@ -27,6 +27,8 @@ std = [
 
 [dev-dependencies]
 env_logger = "=0.11.9"
+# Enables `TracingBuilder` for the checked-in formal leaf-circuit trace test.
+zk-circuits-common = { package = "qp-zk-circuits-common", version = "=4.4.0", path = "../../common", features = ["formal-export"] }
 
 [lints]
 workspace = true

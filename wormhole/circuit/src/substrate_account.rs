@@ -7,6 +7,7 @@ use plonky2::plonk::circuit_builder::CircuitBuilder;
 use zk_circuits_common::circuit::CircuitFragment;
 use zk_circuits_common::circuit::{D, F};
 use zk_circuits_common::codec::{ByteCodec, FieldElementCodec};
+use zk_circuits_common::gadget_builder::GadgetBuilder;
 use zk_circuits_common::utils::{
     bytes_to_digest, digest_to_bytes, BytesDigest, Digest, POSEIDON2_OUTPUT,
 };
@@ -85,13 +86,13 @@ pub struct AccountTargets {
 }
 
 impl AccountTargets {
-    pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
+    pub fn new(builder: &mut impl GadgetBuilder<F, D>) -> Self {
         Self {
             elements: core::array::from_fn(|_| builder.add_virtual_target()),
         }
     }
 
-    pub fn new_public(builder: &mut CircuitBuilder<F, D>) -> Self {
+    pub fn new_public(builder: &mut impl GadgetBuilder<F, D>) -> Self {
         Self {
             elements: core::array::from_fn(|_| builder.add_virtual_public_input()),
         }
@@ -109,7 +110,7 @@ pub struct ExitAccountTargets {
 }
 
 impl ExitAccountTargets {
-    pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
+    pub fn new(builder: &mut impl GadgetBuilder<F, D>) -> Self {
         Self {
             address: AccountTargets::new_public(builder),
         }
@@ -126,7 +127,7 @@ pub struct DualExitAccountTargets {
 }
 
 impl DualExitAccountTargets {
-    pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
+    pub fn new(builder: &mut impl GadgetBuilder<F, D>) -> Self {
         Self {
             exit_account_1: ExitAccountTargets::new(builder),
             exit_account_2: ExitAccountTargets::new(builder),
