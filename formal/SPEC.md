@@ -22,7 +22,7 @@ spec + the differential safety net.
 | `../wormhole/tests/.../spec_differential.rs` | proptest harness: native oracles vs spec |
 | `../wormhole/tests/.../encoding_safety.rs` | proptest harness: encoding round-trips + witnessed `{0,p}` collision |
 | `traces/private_batch_wrapper_n2.json` | Gadget-call trace of the real `n = 2` private-batch wrapper (rows, copy constraints, constants, public inputs, and every `GadgetBuilder` call with the rows/copies it emitted), recorded by `TracingBuilder` in `common/src/formal_trace.rs`. Consumed by `qp-plonky2/constraint-exporter` to generate and prove the wrapper's Lean decode theorem (qp-plonky2 `formal/PLAN.md` Step 8c). The aggregator's unit tests fail if it is stale; regenerate with `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib private_batch_wrapper_n2_trace` |
-| `traces/public_batch_wrapper_n2.json` | The same for the real `n_inner = 2` public-batch wrapper over `2`-leaf private batches (`build_public_batch_constraints`, wrapper logic only, on virtual inner PI targets). Regenerate with `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib public_batch_wrapper_n2_trace` |
+| `traces/public_batch_wrapper_n{2,4}.json` | The same for the real public-batch wrapper at `n_inner = 2` and `4` over `2`-leaf private batches (`build_public_batch_constraints`, wrapper logic only, on virtual inner PI targets). Regenerate with `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib public_batch_wrapper_n` |
 
 ## Building
 
