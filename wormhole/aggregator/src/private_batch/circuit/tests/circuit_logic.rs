@@ -2123,16 +2123,14 @@ fn wrapper_only_n2_builds_without_verifiers() {
     );
 }
 
-/// Records the `n = 2` wrapper's gadget calls and constraint system for the Lean constraint
-/// exporter (`qp-plonky2/constraint-exporter`, PLAN.md Step 8c) and checks the trace in
-/// `formal/traces/` is current. Regenerate with
-/// `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib private_batch_wrapper_n2_trace`.
-#[test]
-fn private_batch_wrapper_n2_trace_is_current() {
+/// Records the `n = n_leaf` wrapper's gadget calls and constraint system for the Lean
+/// constraint exporter (`qp-plonky2/constraint-exporter`, PLAN.md Steps 8c and 8e) and checks
+/// the trace `formal/traces/private_batch_wrapper_n{n_leaf}.json` is current. Regenerate with
+/// `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib private_batch_wrapper_n`.
+fn check_private_batch_wrapper_trace(n_leaf: usize) {
     use zk_circuits_common::formal_trace::{Trace, TracingBuilder};
 
     let leaf = build_fake_leaf_circuit().0;
-    let n_leaf = 2;
     let mut tracing = TracingBuilder::new(wormhole_private_batch_circuit_config());
 
     let leaf_proofs: Vec<_> = (0..n_leaf)
@@ -2169,7 +2167,8 @@ fn private_batch_wrapper_n2_trace_is_current() {
             .map(|b| b.target)
             .collect(),
     ));
-    let trace = tracing.trace("private_batch_wrapper_n2", named);
+    let name = format!("private_batch_wrapper_n{n_leaf}");
+    let trace = tracing.trace(&name, named);
     let json = trace.to_json();
     let round_trip = Trace::from_json(&json).expect("trace round-trips");
     assert_eq!(round_trip.to_json(), json);
@@ -2181,7 +2180,7 @@ fn private_batch_wrapper_n2_trace_is_current() {
     );
 
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../formal/traces/private_batch_wrapper_n2.json");
+        .join(format!("../../formal/traces/{name}.json"));
     if std::env::var_os("UPDATE_FORMAL_TRACE").is_some() {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, &json).unwrap();
@@ -2189,8 +2188,18 @@ fn private_batch_wrapper_n2_trace_is_current() {
     let checked_in = std::fs::read_to_string(&path).unwrap_or_default();
     assert!(
         checked_in == json,
-        "formal/traces/private_batch_wrapper_n2.json is stale; regenerate with \
+        "formal/traces/{name}.json is stale; regenerate with \
          UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib \
-         private_batch_wrapper_n2_trace"
+         private_batch_wrapper_n"
     );
+}
+
+#[test]
+fn private_batch_wrapper_n2_trace_is_current() {
+    check_private_batch_wrapper_trace(2);
+}
+
+#[test]
+fn private_batch_wrapper_n4_trace_is_current() {
+    check_private_batch_wrapper_trace(4);
 }
