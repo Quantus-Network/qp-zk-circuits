@@ -68,7 +68,7 @@ jobs:
           cargo test --workspace --locked --release --lib --bins -- --skip aggregator_tests --skip circuit_data_tests --skip prover_tests --skip verifier_tests
           cargo test --workspace --locked --release --doc
           cargo test --release --locked -p tests --test encoding_safety --test spec_differential
-          cargo test --release --locked -p qp-wormhole-circuit --test heap_zeroization
+          cargo test --release --locked -p qp-wormhole-circuit --test heap_zeroization --test formal_trace
 
   analysis:
     name: 🤖 Analysis (Clippy & Doc)
