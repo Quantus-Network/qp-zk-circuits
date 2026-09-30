@@ -32,6 +32,7 @@ use crate::inputs::CircuitInputs;
 use crate::substrate_account::AccountTargets;
 use zk_circuits_common::{
     circuit::{CircuitFragment, D, F},
+    gadget_builder::GadgetBuilder,
     gadgets::{enforce_target_less_than_const, is_const_less_than},
     zk_merkle::{Hash256, HASH_NUM_FELTS, MAX_DEPTH, SIBLINGS_PER_LEVEL},
 };
@@ -75,7 +76,7 @@ pub struct ZkLeafTargets {
 }
 
 impl ZkLeafTargets {
-    pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
+    pub fn new(builder: &mut impl GadgetBuilder<F, D>) -> Self {
         // Public inputs (registered first for consistent ordering)
         let asset_id = builder.add_virtual_public_input();
         let output_amount_1 = builder.add_virtual_public_input();
@@ -147,7 +148,7 @@ pub struct ZkMerkleProofTargets {
 }
 
 impl ZkMerkleProofTargets {
-    pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
+    pub fn new(builder: &mut impl GadgetBuilder<F, D>) -> Self {
         // Leaf targets (includes public inputs)
         let leaf = ZkLeafTargets::new(builder);
 
@@ -474,12 +475,11 @@ impl TryFrom<&CircuitInputs> for ZkMerkleProofData {
 // Circuit Implementation
 // ============================================================================
 
-impl CircuitFragment for ZkMerkleProofData {
-    type Targets = ZkMerkleProofTargets;
-
-    fn circuit(targets: &Self::Targets, builder: &mut CircuitBuilder<F, D>) {
-        use plonky2::hash::poseidon2::Poseidon2Hash;
-
+impl ZkMerkleProofData {
+    /// The Merkle-proof constraints: 32-bit range checks on the leaf fields, the leaf hash,
+    /// `depth ≤ MAX_DEPTH`, the `MAX_DEPTH`-level walk to the root, and (for non-dummy
+    /// proofs) `root == root_hash`.
+    pub fn constraints(targets: &ZkMerkleProofTargets, builder: &mut impl GadgetBuilder<F, D>) {
         let zero = builder.zero();
 
         // Range check 32-bit targets
@@ -490,7 +490,7 @@ impl CircuitFragment for ZkMerkleProofData {
         // Compute leaf hash using injective Poseidon (matches chain's hash_leaf)
         // The chain uses qp_poseidon_core::hash_bytes which is injective (4 bytes/felt)
         let leaf_felts = targets.leaf.collect_for_hash();
-        let leaf_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(leaf_felts);
+        let leaf_hash = builder.poseidon2_hash_no_pad(leaf_felts);
 
         // Enforce depth <= MAX_DEPTH (proof can have at most MAX_DEPTH levels)
         let n_log = (usize::BITS - MAX_DEPTH.leading_zeros()) as usize;
@@ -592,7 +592,7 @@ impl CircuitFragment for ZkMerkleProofData {
             for child in &children {
                 parent_preimage.extend_from_slice(&child.elements);
             }
-            let parent_hash = builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(parent_preimage);
+            let parent_hash = builder.poseidon2_hash_no_pad(parent_preimage);
 
             // Update current_hash: use parent_hash if active level, else keep current
             current_hash = HashOutTarget {
@@ -612,6 +612,14 @@ impl CircuitFragment for ZkMerkleProofData {
             let result = builder.mul(diff, targets.is_not_dummy.target);
             builder.connect(result, zero);
         }
+    }
+}
+
+impl CircuitFragment for ZkMerkleProofData {
+    type Targets = ZkMerkleProofTargets;
+
+    fn circuit(targets: &Self::Targets, builder: &mut CircuitBuilder<F, D>) {
+        Self::constraints(targets, builder);
     }
 
     fn fill_targets(

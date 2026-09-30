@@ -3,7 +3,6 @@ use plonky2::{
     field::extension::Extendable,
     hash::hash_types::RichField,
     iop::target::{BoolTarget, Target},
-    plonk::circuit_builder::CircuitBuilder,
 };
 
 use crate::gadget_builder::GadgetBuilder;
@@ -40,7 +39,7 @@ fn assert_comparison_width(left: usize, n_log: usize) {
 /// # Returns
 /// - `BoolTarget`: True if `left < right`, false otherwise.
 pub fn is_const_less_than<F: RichField + Extendable<D>, const D: usize>(
-    builder: &mut CircuitBuilder<F, D>,
+    builder: &mut impl GadgetBuilder<F, D>,
     left: usize,
     right: Target,
     n_log: usize,
@@ -81,7 +80,7 @@ pub fn is_const_less_than<F: RichField + Extendable<D>, const D: usize>(
 /// `left < right` for a 64-bit comparison, with `right` forced into its unique
 /// canonical 32-bit half decomposition (see [`split_canonical_u32_halves`]).
 fn is_const_less_than_canonical_u64<F: RichField + Extendable<D>, const D: usize>(
-    builder: &mut CircuitBuilder<F, D>,
+    builder: &mut impl GadgetBuilder<F, D>,
     left: u64,
     right: Target,
 ) -> BoolTarget {
@@ -101,7 +100,7 @@ fn is_const_less_than_canonical_u64<F: RichField + Extendable<D>, const D: usize
 ///
 /// This helper also constrains `target` to the minimum bit width implied by `n_log`.
 pub fn enforce_target_less_than_const<F: RichField + Extendable<D>, const D: usize>(
-    builder: &mut CircuitBuilder<F, D>,
+    builder: &mut impl GadgetBuilder<F, D>,
     target: Target,
     upper_bound_exclusive: usize,
     n_log: usize,
@@ -128,7 +127,7 @@ pub fn enforce_target_less_than_const<F: RichField + Extendable<D>, const D: usi
 /// # Returns
 /// - `BoolTarget`: The value given by XORing `a` and `b`.
 fn xor<F: RichField + Extendable<D>, const D: usize>(
-    builder: &mut CircuitBuilder<F, D>,
+    builder: &mut impl GadgetBuilder<F, D>,
     a: BoolTarget,
     b: BoolTarget,
 ) -> BoolTarget {
@@ -191,7 +190,7 @@ pub fn limb1_at_offset<const LEAF_PI_LEN: usize, const KEY_OFFSET: usize>(
 /// lies in `[1, 2^33 - 1]` (no field wraparound: `2^33 < p`); bit 32 of `t`
 /// is exactly `x >= y`.
 fn u32_lt<F: RichField + Extendable<D>, const D: usize>(
-    b: &mut CircuitBuilder<F, D>,
+    b: &mut impl GadgetBuilder<F, D>,
     x: Target,
     y: Target,
 ) -> BoolTarget {
@@ -214,7 +213,7 @@ fn u32_lt<F: RichField + Extendable<D>, const D: usize>(
 /// 32-bit halves), so excluding that region makes the decomposition unique
 /// and comparisons built on it sound against malicious provers.
 fn split_canonical_u32_halves<F: RichField + Extendable<D>, const D: usize>(
-    b: &mut CircuitBuilder<F, D>,
+    b: &mut impl GadgetBuilder<F, D>,
     x: Target,
 ) -> (Target, Target) {
     let (lo, hi) = b.split_low_high(x, 32, 64);
@@ -305,7 +304,7 @@ mod tests {
     use alloc::vec;
     use plonky2::field::types::{Field, PrimeField64};
     use plonky2::iop::witness::{PartialWitness, WitnessWrite};
-    use plonky2::plonk::circuit_data::CircuitConfig;
+    use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 
     /// Build `is_const_less_than(left, right, n_log)` as a public bool and prove it
     /// for the given `right` value; return the proved boolean.

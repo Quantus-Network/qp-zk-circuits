@@ -1,11 +1,9 @@
 use alloc::vec::Vec;
 use core::array;
-use plonky2::{
-    field::types::Field, hash::poseidon2::hash_no_pad_bytes, iop::target::Target,
-    plonk::circuit_builder::CircuitBuilder,
-};
+use plonky2::{field::types::Field, hash::poseidon2::hash_no_pad_bytes, iop::target::Target};
 use zk_circuits_common::{
     circuit::{D, F},
+    gadget_builder::GadgetBuilder,
     utils::{bytes_to_digest, bytes_to_felts, BytesDigest, Digest, POSEIDON2_OUTPUT},
 };
 
@@ -32,7 +30,7 @@ pub struct HeaderTargets {
 }
 
 impl HeaderTargets {
-    pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
+    pub fn new(builder: &mut impl GadgetBuilder<F, D>) -> Self {
         Self {
             // parent_hash is a private input -- it contributes to block_hash computation
             // but does not need to be exposed as a public input since block_hash already

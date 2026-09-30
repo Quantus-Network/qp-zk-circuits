@@ -1,5 +1,5 @@
 use plonky2::{
-    hash::{hash_types::HashOutTarget, poseidon2::Poseidon2Hash},
+    hash::hash_types::HashOutTarget,
     iop::{
         target::Target,
         witness::{PartialWitness, WitnessWrite},
@@ -8,6 +8,7 @@ use plonky2::{
 };
 use zk_circuits_common::{
     circuit::{CircuitFragment, D, F},
+    gadget_builder::GadgetBuilder,
     utils::{bytes_to_digest, BytesDigest, Digest},
 };
 
@@ -48,7 +49,7 @@ pub struct BlockHeaderTargets {
 }
 
 impl BlockHeaderTargets {
-    pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
+    pub fn new(builder: &mut impl GadgetBuilder<F, D>) -> Self {
         Self {
             block_hash: builder.add_virtual_hash_public_input(),
             header: HeaderTargets::new(builder),
@@ -60,10 +61,10 @@ impl BlockHeader {
     /// Computes `hash(header contents)` in-circuit.
     fn computed_block_hash(
         targets: &BlockHeaderTargets,
-        builder: &mut CircuitBuilder<F, D>,
-    ) -> plonky2::hash::hash_types::HashOutTarget {
+        builder: &mut impl GadgetBuilder<F, D>,
+    ) -> HashOutTarget {
         let pre_image = targets.header.collect_to_vec();
-        builder.hash_n_to_hash_no_pad_p2::<Poseidon2Hash>(pre_image)
+        builder.poseidon2_hash_no_pad(pre_image)
     }
 
     /// Builds the block header circuit WITHOUT binding `block_hash` to the header
@@ -78,7 +79,7 @@ impl BlockHeader {
     /// private header preimage.
     pub fn circuit_without_hash_binding(
         targets: &BlockHeaderTargets,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut impl GadgetBuilder<F, D>,
     ) {
         // Range constrain the block_number target to be 32 bits to verify injective encoding
         builder.range_check(targets.header.block_number, 32);
@@ -92,7 +93,7 @@ impl BlockHeader {
     /// otherwise a malicious prover can simply witness it to 0 and skip the check.
     pub fn conditional_block_hash_binding(
         targets: &BlockHeaderTargets,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut impl GadgetBuilder<F, D>,
         is_not_dummy: Target,
     ) {
         let computed_block_hash = Self::computed_block_hash(targets, builder);

@@ -19,7 +19,7 @@
 pub mod circuit_logic {
     use crate::block_header::BlockHeaderTargets;
     use crate::nullifier::{Nullifier, NullifierTargets};
-    use crate::substrate_account::{DualExitAccount, DualExitAccountTargets};
+    use crate::substrate_account::DualExitAccountTargets;
     use crate::unspendable_account::{UnspendableAccount, UnspendableAccountTargets};
     use crate::zk_merkle_proof::{ZkMerkleProofData, ZkMerkleProofTargets};
     use anyhow::Result;
@@ -27,8 +27,9 @@ pub mod circuit_logic {
         plonk::circuit_data::{CircuitData, ProverCircuitData, VerifierCircuitData},
         plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig},
     };
-    use zk_circuits_common::circuit::{
-        validate_circuit_config, wormhole_leaf_circuit_config, CircuitFragment, C, D, F,
+    use zk_circuits_common::{
+        circuit::{validate_circuit_config, wormhole_leaf_circuit_config, C, D, F},
+        gadget_builder::GadgetBuilder,
     };
 
     #[derive(Debug, Clone)]
@@ -41,7 +42,7 @@ pub mod circuit_logic {
     }
 
     impl CircuitTargets {
-        pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
+        pub fn new(builder: &mut impl GadgetBuilder<F, D>) -> Self {
             // zk_merkle_proof must be created first so asset_id is registered as public input at index 0
             let zk_merkle_proof = ZkMerkleProofTargets::new(builder);
             let nullifier = NullifierTargets::new(builder);
@@ -135,29 +136,8 @@ pub mod circuit_logic {
         #[cfg(not(feature = "profile"))]
         fn new_internal(config: CircuitConfig) -> Self {
             let mut builder = CircuitBuilder::<F, D>::new(config);
-
-            // Setup targets
             let targets = CircuitTargets::new(&mut builder);
-
-            // Setup circuits.
-            //
-            // Nullifier and BlockHeader deliberately do NOT use their
-            // `CircuitFragment::circuit` implementations here: those enforce the
-            // hash bindings unconditionally, but the full Wormhole circuit must
-            // make them conditional to support dummy proofs. The conditional
-            // bindings are added in `connect_shared_targets` via
-            // `Nullifier::conditional_hash_binding` and
-            // `BlockHeader::conditional_block_hash_binding`, gated on an
-            // in-circuit `is_not_dummy` flag.
-            use crate::block_header::BlockHeader;
-            UnspendableAccount::circuit(&targets.unspendable_account, &mut builder);
-            ZkMerkleProofData::circuit(&targets.zk_merkle_proof, &mut builder);
-            DualExitAccount::circuit(&targets.exit_accounts, &mut builder);
-            BlockHeader::circuit_without_hash_binding(&targets.block_header, &mut builder);
-
-            // Ensure that shared inputs to each fragment are the same.
-            connect_shared_targets(&targets, &mut builder);
-
+            build_leaf_constraints(&targets, &mut builder);
             Self { builder, targets }
         }
 
@@ -174,17 +154,16 @@ pub mod circuit_logic {
             println!("\n=== Circuit Fragment Gates ===");
             let gates_after_targets = builder.num_gates();
 
-            // Setup circuits with profiling. See `new_internal` for why Nullifier and
-            // BlockHeader do not use their `CircuitFragment::circuit` implementations.
+            // Setup circuits with profiling. See `build_leaf_constraints` for why Nullifier
+            // and BlockHeader do not use their `CircuitFragment::circuit` implementations.
             use crate::block_header::BlockHeader;
 
-            UnspendableAccount::circuit(&targets.unspendable_account, &mut builder);
+            UnspendableAccount::constraints(&targets.unspendable_account, &mut builder);
             profiler.checkpoint("UnspendableAccount::circuit", builder.num_gates());
 
-            ZkMerkleProofData::circuit(&targets.zk_merkle_proof, &mut builder);
+            ZkMerkleProofData::constraints(&targets.zk_merkle_proof, &mut builder);
             profiler.checkpoint("ZkMerkleProofData::circuit", builder.num_gates());
 
-            DualExitAccount::circuit(&targets.exit_accounts, &mut builder);
             profiler.checkpoint("DualExitAccount::circuit", builder.num_gates());
 
             BlockHeader::circuit_without_hash_binding(&targets.block_header, &mut builder);
@@ -240,7 +219,29 @@ pub mod circuit_logic {
         }
     }
 
-    fn connect_shared_targets(targets: &CircuitTargets, builder: &mut CircuitBuilder<F, D>) {
+    /// Every constraint of the leaf circuit on already-allocated targets, in the order the
+    /// circuit emits them. Generic over the builder so the formal constraint exporter can
+    /// record it (`formal/traces/leaf_circuit.json`).
+    ///
+    /// Nullifier and BlockHeader deliberately do NOT use their `CircuitFragment::circuit`
+    /// implementations here: those enforce the hash bindings unconditionally, but the full
+    /// Wormhole circuit must make them conditional to support dummy proofs. The conditional
+    /// bindings are added in `connect_shared_targets` via
+    /// `Nullifier::conditional_hash_binding` and
+    /// `BlockHeader::conditional_block_hash_binding`, gated on an in-circuit `is_not_dummy`
+    /// flag. `DualExitAccount` has no constraints (its accounts are public inputs only).
+    pub fn build_leaf_constraints(
+        targets: &CircuitTargets,
+        builder: &mut impl GadgetBuilder<F, D>,
+    ) {
+        use crate::block_header::BlockHeader;
+        UnspendableAccount::constraints(&targets.unspendable_account, builder);
+        ZkMerkleProofData::constraints(&targets.zk_merkle_proof, builder);
+        BlockHeader::circuit_without_hash_binding(&targets.block_header, builder);
+        connect_shared_targets(targets, builder);
+    }
+
+    fn connect_shared_targets(targets: &CircuitTargets, builder: &mut impl GadgetBuilder<F, D>) {
         builder.connect_hashes(targets.nullifier.secret, targets.unspendable_account.secret);
 
         // Transfer count: connect nullifier's transfer_count to zk_merkle_proof's
