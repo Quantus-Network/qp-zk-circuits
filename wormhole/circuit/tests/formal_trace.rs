@@ -2,13 +2,42 @@
 //! exporter (`qp-plonky2/constraint-exporter`, PLAN.md Step 9) and checks the trace
 //! `formal/traces/leaf_circuit.json` is current. Regenerate with
 //! `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-circuit --test formal_trace`.
+//! Also pins the salt constants of `formal/WormholeSpec/Basic.lean` to `string_to_felts`.
 
+use plonky2::field::types::PrimeField64;
 use plonky2::iop::target::Target;
 use qp_wormhole_circuit::circuit::circuit_logic::{build_leaf_constraints, CircuitTargets};
+use qp_wormhole_circuit::nullifier::NULLIFIER_SALT;
+use qp_wormhole_circuit::unspendable_account::UNSPENDABLE_SALT;
 use zk_circuits_common::{
     circuit::wormhole_leaf_circuit_config,
     formal_trace::{Trace, TracingBuilder},
+    utils::string_to_felts,
 };
+
+#[test]
+fn salts_match_formal_spec() {
+    let lean = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../formal/WormholeSpec/Basic.lean"),
+    )
+    .expect("formal/WormholeSpec/Basic.lean");
+    for (name, salt) in [
+        ("wormholeSalt", UNSPENDABLE_SALT),
+        ("nullifierSalt", NULLIFIER_SALT),
+    ] {
+        let felts: Vec<String> = string_to_felts(salt)
+            .expect("salt within serialization cap")
+            .iter()
+            .map(|f| f.to_canonical_u64().to_string())
+            .collect();
+        let expected = format!("def {name} : List Felt := [{}]", felts.join(", "));
+        assert!(
+            lean.contains(&expected),
+            "formal/WormholeSpec/Basic.lean must contain `{expected}` (string_to_felts({salt:?}))"
+        );
+    }
+}
 
 #[test]
 fn leaf_circuit_trace_is_current() {

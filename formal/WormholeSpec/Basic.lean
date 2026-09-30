@@ -65,14 +65,17 @@ end Digest
     canonical representative of a `bits`-bit natural (no field wraparound). -/
 def inRange (bits : Nat) (x : Felt) : Prop := x < 2 ^ bits
 
-/-- Domain-separation salt `string_to_felts("wormhole")` used by `WA`.
-    Length 3 (`UNSPENDABLE` `PREIMAGE_NUM_TARGETS = 3 + 4`). The concrete felt
-    values are pinned by the Phase-1 differential tests; here it is an abstract
-    but fixed constant. -/
-opaque wormholeSalt : List Felt
+/-- Domain-separation salt `string_to_felts("wormhole")` used by `WA`:
+    `"worm"`, `"hole"` as little-endian 32-bit words, then the `1` terminator word.
+    Length 3 (`UNSPENDABLE` `PREIMAGE_NUM_TARGETS = 3 + 4`). Pinned to the Rust
+    `UNSPENDABLE_SALT` encoding by `salts_match_formal_spec`
+    (`wormhole/circuit/tests/formal_trace.rs`). -/
+def wormholeSalt : List Felt := [1836216183, 1701605224, 1]
 
-/-- Domain-separation salt `string_to_felts("~nullif~")` used by `Null`.
-    Length 3 (`SALT_NUM_TARGETS = 3`). -/
-opaque nullifierSalt : List Felt
+/-- Domain-separation salt `string_to_felts("~nullif~")` used by `Null`:
+    `"~nul"`, `"lif~"` as little-endian 32-bit words, then the `1` terminator word.
+    Length 3 (`SALT_NUM_TARGETS = 3`). Pinned to the Rust `NULLIFIER_SALT` encoding by
+    `salts_match_formal_spec`. -/
+def nullifierSalt : List Felt := [1819635326, 2120640876, 1]
 
 end WormholeSpec
