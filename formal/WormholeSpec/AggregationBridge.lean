@@ -1,8 +1,9 @@
 /-
   The aggregation bridge: the private-batch/public-batch wrapper *circuit constraints* imply the spec
-  relations `RPrivateBatch` / `RPublicBatch`, and — composed with the trusted recursive-verifier
-  soundness (`Trusted.lean`) — a satisfied aggregation circuit attests both its own
-  relation and every child's relation.
+  relations `RPrivateBatch` / `RPublicBatch`, and — given each child's relation, which
+  qp-plonky2/formal recovers from the accepted child proofs through its one trusted axiom
+  `Plonky2Bridge.proof_sound` — a satisfied aggregation circuit attests both its own relation
+  and every child's relation.
 
   WHAT THIS MODELS. We model the wrapper constraints of `build_private_batch_constraints`
   / `build_public_batch_constraints` as the facts the circuit *enforces* on the
@@ -30,30 +31,29 @@
   aggregate output satisfies `RPrivateBatch` / `RPublicBatch`.
 
   SCOPE / ASSURANCE (read honestly). With gadget-level faithfulness delegated to
-  `Plonky2Spec.Wrapper` and proof-system soundness to `Trusted.lean`, the theorems
-  *here* are deliberately thin, and that should be stated plainly:
+  `Plonky2Spec.Wrapper` and proof-system soundness to `Plonky2Bridge.proof_sound`, the
+  theorems *here* are deliberately thin, and that should be stated plainly:
 
     * `private_batch_bridge` does one piece of real work — relating the *functional*
       `buildNullifiers` the circuit computes to the *relational* `nullifiersReplaced`
       (`nullifiersReplaced_build`), witnessing it as the `raw` list the output
       region permutes; its other conjuncts (`metaOk`, `ref`, `feeOk`, `exits`) are
-      shared verbatim with `RPrivateBatch`. So `private_batch_sound` is "the `private_batch_proof_sound` axiom
-      + that one modest nullifier lemma".
+      shared verbatim with `RPrivateBatch`. So `private_batch_sound` is "the children's
+      `Rleaf` hypothesis + that one modest nullifier lemma".
     * `public_batch_bridge` is the *identity*. The public-batch wrapper conditions are
       field-for-field `RPublicBatch`, so `PublicBatchCircuit` is *defined as* `RPublicBatch` (below) rather than
       restated, and the bridge carries no logical content. Consequently `public_batch_sound`
-      is "the `private_batch_proof_sound` axiom + a structural repackaging" — near-trivial as
+      is "the inners' `RPrivateBatch` hypothesis + a structural repackaging" — near-trivial as
       currently scoped.
 
   This is the intended package boundary, not an oversight; the non-trivial content lives
-  in `Plonky2Spec.Wrapper` (gadgets), `Trusted.lean` (proof-system soundness), and the
-  private-batch grouping/conservation proofs in `Aggregation.lean`.
+  in `Plonky2Spec.Wrapper` (gadgets), `Plonky2Bridge/Trusted.lean` (proof-system soundness),
+  and the private-batch grouping/conservation proofs in `Aggregation.lean`.
 -/
 import WormholeSpec.Basic
 import WormholeSpec.Hash
 import WormholeSpec.Leaf
 import WormholeSpec.Aggregation
-import WormholeSpec.Trusted
 
 namespace WormholeSpec
 
@@ -134,23 +134,24 @@ theorem private_batch_bridge {ro : RandomOracle} {leaves : List LeafPublic}
     ?_, h.feeOk, h.exits, h.nullsDistinct, h.numSlots⟩
   exact h.nullsPerm.length_eq.trans (buildNullifiers_length ro leaves us h.uslen)
 
-/-- **Private-batch soundness (end to end).** A satisfied private-batch aggregation circuit whose
-    recursion gadget accepted every child leaf proof attests both the private-batch relation
-    `RPrivateBatch` *and* that each child's public inputs satisfy the leaf relation `Rleaf`
-    (the latter via the trusted `leaf_proof_sound`).
+/-- **Private-batch soundness (end to end).** A satisfied private-batch aggregation circuit each
+    of whose children satisfies the leaf relation `Rleaf` attests both the private-batch
+    relation `RPrivateBatch` *and* (re-exported) each child's `Rleaf`.
 
-    Honestly scoped, this is "the `leaf_proof_sound` axiom + `private_batch_bridge`", and the
-    only real work inside the bridge is `nullifiersReplaced_build`; the aggregate
-    fee predicate and the remaining `RPrivateBatch` clauses are shared verbatim
-    with `PrivateBatchCircuit`. This does not prove that field-level sum and
-    comparison gadgets realize `privateBatchFeeOk`; that remains a Phase-2
-    bridge obligation. -/
+    The children's `Rleaf` is a hypothesis here: on the exported wiring it is what
+    `Plonky2Bridge.LeafCircuit.accepted_sound` (qp-plonky2/formal) yields for an accepted leaf
+    proof, through the one trusted axiom `Plonky2Bridge.proof_sound`. Honestly scoped, this is
+    "`private_batch_bridge` + that hypothesis", and the only real work inside the bridge is
+    `nullifiersReplaced_build`; the aggregate fee predicate and the remaining `RPrivateBatch`
+    clauses are shared verbatim with `PrivateBatchCircuit`. This does not prove that
+    field-level sum and comparison gadgets realize `privateBatchFeeOk`; that is
+    `Plonky2Bridge.private_batch_end_to_end`'s job. -/
 theorem private_batch_sound {ro : RandomOracle} {leaves : List LeafPublic}
     {us : List (List Felt)} {out : PrivateBatchOutput}
-    (hacc : ∀ p ∈ leaves, LeafProofAccepted ro p)
+    (hleaf : ∀ p ∈ leaves, ∃ w : LeafWitness, Rleaf ro p w)
     (hcirc : PrivateBatchCircuit ro leaves us out) :
     RPrivateBatch ro leaves us out ∧ ∀ p ∈ leaves, ∃ w : LeafWitness, Rleaf ro p w :=
-  ⟨private_batch_bridge hcirc, fun p hp => leaf_proof_sound ro p (hacc p hp)⟩
+  ⟨private_batch_bridge hcirc, hleaf⟩
 
 /-! ### Public-batch -/
 
@@ -177,19 +178,20 @@ theorem public_batch_bridge {ro : RandomOracle} {inner : List PrivateBatchOutput
     {addr : Digest} {out : PublicBatchOutput}
     (h : PublicBatchCircuit ro inner addr out) : RPublicBatch ro inner addr out := h
 
-/-- **Public-batch soundness (end to end).** A satisfied public-batch aggregation circuit whose
-    recursion gadget accepted every inner private-batch proof attests both `RPublicBatch` *and* that
-    each inner output satisfies `RPrivateBatch` for some children (via `private_batch_proof_sound`).
+/-- **Public-batch soundness (end to end).** A satisfied public-batch aggregation circuit each of
+    whose inners satisfies `RPrivateBatch` for some children attests both `RPublicBatch` *and*
+    (re-exported) each inner's `RPrivateBatch`.
 
-    As currently scoped this is near-trivial: the `RPublicBatch` half is `public_batch_bridge` (the
-    identity above), so the only substantive content is the trusted `private_batch_proof_sound`
-    axiom. The structural faithfulness of the public-batch wrapper gadgets lives in
+    The inners' `RPrivateBatch` is a hypothesis here: on the exported wiring it is what
+    `Plonky2Bridge.Wrapper{2,4}.accepted_sound` yields for an accepted private-batch proof. As
+    currently scoped this is near-trivial: the `RPublicBatch` half is `public_batch_bridge` (the
+    identity above). The structural faithfulness of the public-batch wrapper gadgets lives in
     `Plonky2Spec.Wrapper`, not here. -/
 theorem public_batch_sound {ro : RandomOracle} {inner : List PrivateBatchOutput}
     {addr : Digest} {out : PublicBatchOutput}
-    (hacc : ∀ o ∈ inner, PrivateBatchProofAccepted ro o)
+    (hinner : ∀ o ∈ inner, ∃ leaves us, RPrivateBatch ro leaves us o)
     (hcirc : PublicBatchCircuit ro inner addr out) :
     RPublicBatch ro inner addr out ∧ ∀ o ∈ inner, ∃ leaves us, RPrivateBatch ro leaves us o :=
-  ⟨public_batch_bridge hcirc, fun o ho => private_batch_proof_sound ro o (hacc o ho)⟩
+  ⟨public_batch_bridge hcirc, hinner⟩
 
 end WormholeSpec
