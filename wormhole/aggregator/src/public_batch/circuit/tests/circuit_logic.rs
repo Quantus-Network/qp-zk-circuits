@@ -1008,12 +1008,15 @@ fn check_public_batch_wrapper_trace(n_inner: usize) {
     let mut tracing = TracingBuilder::new(wormhole_public_batch_circuit_config());
 
     // Only the PI slice of each inner proof is read by the wrapper; the proof body comes
-    // from any common data.
+    // from any common data. Where production runs `add_recursive_verifiers` under the
+    // `NUM_LEAVES`-leaf private-batch verifier key.
     let pi_len = pbc::private_batch_pi_len(NUM_LEAVES);
+    let child = format!("private_batch_wrapper_n{NUM_LEAVES}");
     let private_batch_proofs: Vec<_> = (0..n_inner)
         .map(|_| {
             let mut proof = tracing.inner.add_virtual_proof_with_pis(&leaf.common);
             proof.public_inputs = tracing.inner.add_virtual_targets(pi_len);
+            tracing.verify_proof(&child, &proof);
             proof
         })
         .collect();

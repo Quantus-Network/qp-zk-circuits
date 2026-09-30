@@ -13,7 +13,10 @@ use plonky2::{
     field::types::PrimeField64,
     hash::{hash_types::HashOutTarget, poseidon2::Poseidon2Hash},
     iop::target::{BoolTarget, Target},
-    plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig},
+    plonk::{
+        circuit_builder::CircuitBuilder, circuit_data::CircuitConfig,
+        proof::ProofWithPublicInputsTarget,
+    },
 };
 use serde::{Deserialize, Serialize};
 
@@ -56,6 +59,17 @@ pub struct TraceCall {
     pub copies: [usize; 2],
 }
 
+/// A `verify_proof` gadget the circuit contains but the trace's rows do not: the child
+/// circuit is named by its own trace, and `public_inputs` are the parent targets that carry
+/// the child's public inputs. The verifier key baked into the gadget is that of the named
+/// circuit (production passes the built child's `VerifierCircuitData` to
+/// `add_recursive_verifiers`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TraceVerifier {
+    pub child: String,
+    pub public_inputs: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Trace {
     pub circuit: String,
@@ -68,6 +82,8 @@ pub struct Trace {
     pub num_virtual_targets: usize,
     /// Targets of interest by role, so the Lean statement can refer to them.
     pub named: Vec<(String, Vec<String>)>,
+    #[serde(default)]
+    pub verifiers: Vec<TraceVerifier>,
     pub calls: Vec<TraceCall>,
 }
 
@@ -88,7 +104,7 @@ impl Trace {
         format!(
             "{{\n  \"circuit\": {},\n  \"num_routed_wires\": {},\n  \"num_virtual_targets\": {},\n  \
              \"rows\": {},\n  \"copies\": {},\n  \"constants\": {},\n  \"public_inputs\": {},\n  \
-             \"named\": {},\n  \"calls\": {}\n}}\n",
+             \"named\": {},\n  \"verifiers\": {},\n  \"calls\": {}\n}}\n",
             serde_json::to_string(&self.circuit).expect("serializable"),
             self.num_routed_wires,
             self.num_virtual_targets,
@@ -97,6 +113,7 @@ impl Trace {
             list(&self.constants),
             list(&self.public_inputs),
             list(&self.named),
+            list(&self.verifiers),
             list(&self.calls),
         )
     }
@@ -110,6 +127,7 @@ impl Trace {
 pub struct TracingBuilder {
     pub inner: CircuitBuilder<F, D>,
     pub calls: Vec<TraceCall>,
+    pub verifiers: Vec<TraceVerifier>,
     num_routed_wires: usize,
 }
 
@@ -119,7 +137,23 @@ impl TracingBuilder {
             num_routed_wires: config.num_routed_wires,
             inner: CircuitBuilder::new(config),
             calls: Vec::new(),
+            verifiers: Vec::new(),
         }
+    }
+
+    /// Record a `verify_proof` gadget for a proof of the circuit whose trace is named `child`,
+    /// with `proof.public_inputs` carrying the child's public inputs. The gadget's rows are not
+    /// added: they are what the exporter's trusted proof-system-soundness axiom stands for.
+    pub fn verify_proof(&mut self, child: &str, proof: &ProofWithPublicInputsTarget<D>) {
+        self.verifiers.push(TraceVerifier {
+            child: child.into(),
+            public_inputs: proof
+                .public_inputs
+                .iter()
+                .copied()
+                .map(encode_target)
+                .collect(),
+        });
     }
 
     fn counts(&self) -> (usize, usize, usize) {
@@ -203,6 +237,7 @@ impl TracingBuilder {
                 .into_iter()
                 .map(|(n, ts)| (n, ts.into_iter().map(encode_target).collect()))
                 .collect(),
+            verifiers: self.verifiers.clone(),
             calls: self.calls.clone(),
         }
     }
