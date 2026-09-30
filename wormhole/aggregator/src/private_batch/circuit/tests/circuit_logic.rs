@@ -2133,8 +2133,13 @@ fn check_private_batch_wrapper_trace(n_leaf: usize) {
     let leaf = build_fake_leaf_circuit().0;
     let mut tracing = TracingBuilder::new(wormhole_private_batch_circuit_config());
 
+    // Where production runs `add_recursive_verifiers` under the leaf verifier key.
     let leaf_proofs: Vec<_> = (0..n_leaf)
-        .map(|_| tracing.inner.add_virtual_proof_with_pis(&leaf.common))
+        .map(|_| {
+            let proof = tracing.inner.add_virtual_proof_with_pis(&leaf.common);
+            tracing.verify_proof("leaf_circuit", &proof);
+            proof
+        })
         .collect();
     let dummy_nullifier_pre_images: Vec<[Target; 4]> = (0..n_leaf)
         .map(|_| core::array::from_fn(|_| tracing.inner.add_virtual_target()))
