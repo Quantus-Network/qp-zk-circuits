@@ -14,8 +14,7 @@ spec + the differential safety net.
 | `WormholeSpec/Hash.lean` | Random-oracle interface, `WA`/`Null`/`leafHash`/`nodeHash`/`dummyNull` |
 | `WormholeSpec/Leaf.lean` | 22-felt intermediate leaf relation `Rleaf` (C1–C4, conditional dummy path) |
 | `WormholeSpec/Aggregation.lean` | `RPrivateBatch` (aggregate segment fee), `RPublicBatch` |
-| `WormholeSpec/AggregationBridge.lean` | Public-input-level wrapper relations and trusted-soundness composition |
-| `WormholeSpec/Trusted.lean` | Explicit recursive-verifier soundness axioms |
+| `WormholeSpec/AggregationBridge.lean` | Public-input-level wrapper relations; composition with the children's relations |
 | `WormholeSpec/Security.lean` | Deterministic cores of the reduction theorems (`*_or_collision` + collision-resistance corollaries) |
 | `WormholeSpec/Encoding.lean` | Byte↔felt encoding safety (4-byte injective edges, 8-byte canonical-only) |
 | `WormholeSpec/LeafBinding.lean` | Finding A: chain↔circuit leaf-recipient consistency (spendable ⟺ recipient = `WA(s)`) |
@@ -60,9 +59,10 @@ hermetic. Toolchain is pinned in `lean-toolchain` (Lean `v4.30`).
   probabilistic accounting is the Phase-4 game-based track; this interface is the seam.
 - **TCB and phase boundary.** Not re-verified: Plonky2's FRI/PLONK soundness, the
   `PoseidonGate` implementation, the Lean kernel, or the field-level wrapper
-  gadgets. `Trusted.lean` keeps proof-system soundness explicit; the current
-  aggregation bridge assumes the decoded wrapper facts and does not prove that
-  field constraints implement the aggregate sums/comparison.
+  gadgets. This package is axiom-free; proof-system soundness is the one explicit
+  axiom `Plonky2Bridge.proof_sound` in qp-plonky2/formal (stated on the exported
+  recursion tree), and the field-level bridges there (`Plonky2Bridge.*_end_to_end`)
+  are what prove the field constraints implement the aggregate sums/comparison.
 
 ## Clause ↔ code cross-reference
 

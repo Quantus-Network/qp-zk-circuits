@@ -2075,7 +2075,7 @@ fn witness_fill_rejects_truncated_wires_cap() {
 /// targets, at `n = 2`, and reports the logical circuit size. This is the entry
 /// point a public-input decode exporter would use (qp-plonky2 formal/PLAN.md
 /// Step 8): the wrapper's constraints, copy constraints and PI registration are
-/// all present, while the leaf verifiers (trusted, `leaf_proof_sound`) are not.
+/// all present, while the leaf verifiers (trusted, `Plonky2Bridge.proof_sound`) are not.
 #[test]
 fn wrapper_only_n2_builds_without_verifiers() {
     let _ = env_logger::builder().is_test(true).try_init();
