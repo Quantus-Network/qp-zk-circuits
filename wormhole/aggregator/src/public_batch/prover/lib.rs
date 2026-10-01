@@ -59,7 +59,7 @@ pub struct PublicBatchProver {
     /// pad partial public batches. The circuit zeroes dummy inners' exit slots and
     /// nullifiers, so one template can fill several slots without collisions.
     dummy_proof_template: ProofWithPublicInputs<F, C, D>,
-    /// Private-batch verifier data, kept so `prove_batch` can cheaply verify
+    /// Private-batch verifier data, kept so `build_witness` can cheaply verify
     /// each supplied inner proof before starting the expensive proving run.
     private_batch_verifier: VerifierCircuitData<F, C, D>,
 }
@@ -254,6 +254,16 @@ impl PublicBatchProver {
 
     /// Prove one public batch from private-batch aggregated proofs.
     ///
+    /// Validates and prepares the inputs with [`Self::build_witness`], then
+    /// proves the circuit on the CPU.
+    pub fn prove_batch(&self, inputs: PublicBatchInputs) -> Result<ProofWithPublicInputs<F, C, D>> {
+        self.circuit_data
+            .prove(self.build_witness(inputs)?)
+            .context("Failed to prove public-batch aggregation circuit")
+    }
+
+    /// Fill a fresh partial witness from private-batch aggregated proofs.
+    ///
     /// Partial batches are padded with the dummy private-batch proof template.
     /// The circuit exempts dummies (`block_hash == 0`) from metadata consistency
     /// and zeroes their forwarded exit slots and nullifiers.
@@ -272,7 +282,12 @@ impl PublicBatchProver {
     /// Non-consuming: each call fills a fresh witness against the circuit
     /// built at construction, so one prover instance can prove any number of
     /// batches without paying the circuit build again.
-    pub fn prove_batch(&self, inputs: PublicBatchInputs) -> Result<ProofWithPublicInputs<F, C, D>> {
+    ///
+    /// Assigns the supplied proofs and aggregator address. The proving backend
+    /// still needs to generate the remaining witness values before proving.
+    /// Callers using a custom backend should verify its resulting proof with
+    /// [`Self::verifier_data`]; this method only prepares the partial witness.
+    pub fn build_witness(&self, inputs: PublicBatchInputs) -> Result<PartialWitness<F>> {
         let mut proofs = inputs.proofs;
         let aggregator_address = inputs.aggregator_address;
 
@@ -299,9 +314,7 @@ impl PublicBatchProver {
             aggregator_address_felts,
         )?;
 
-        self.circuit_data
-            .prove(partial_witness)
-            .map_err(|e| anyhow!("Failed to prove public-batch aggregation circuit: {}", e))
+        Ok(partial_witness)
     }
 
     /// Verifier data of the circuit built at construction. Built from source,
@@ -320,7 +333,7 @@ impl PublicBatchProver {
 /// targets — so it can run before any circuit construction, and a known-bad
 /// request costs milliseconds (audit finding: these admission checks used to
 /// run only after `PublicBatchProver::new`).
-/// [`PublicBatchProver::prove_batch`] runs the same checks so direct prover
+/// [`PublicBatchProver::build_witness`] runs the same checks so direct prover
 /// users remain covered.
 pub(crate) fn preflight_private_batch_proofs(
     proofs: &[ProofWithPublicInputs<F, C, D>],
@@ -673,9 +686,9 @@ mod tests {
     }
 
     /// Cryptographically invalid (tampered) inner proofs must be rejected at
-    /// commit time, before the expensive proving run starts.
+    /// witness preparation, before the expensive proving run starts.
     #[test]
-    fn commit_rejects_tampered_private_batch_proof_before_proving() {
+    fn build_witness_rejects_tampered_private_batch_proof() {
         let (leaf, leaf_targets) = build_fake_leaf_circuit();
         let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; PUBLIC_INPUTS_FELTS_LEN]);
         let private_batch = PrivateBatchCircuit::new(
@@ -706,7 +719,7 @@ mod tests {
             F::from_canonical_u64(9);
 
         let err = prover
-            .prove_batch(PublicBatchInputs {
+            .build_witness(PublicBatchInputs {
                 proofs: vec![tampered],
                 aggregator_address: BytesDigest::default(),
             })
