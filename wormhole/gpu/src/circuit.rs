@@ -17,11 +17,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "constraint-export")]
+mod fri;
+#[cfg(feature = "constraint-export")]
 mod openings;
 mod oracle;
 mod permutation;
 #[cfg(feature = "constraint-export")]
 mod quotient;
+#[cfg(feature = "constraint-export")]
+pub use fri::{FriBuffers, FriCommitment, FriFold, FriRoundBuffers};
 #[cfg(feature = "constraint-export")]
 pub use openings::{FriInput, OpeningBuffers, ResidentOpeningSet};
 pub use oracle::PolynomialCommitment;
@@ -58,6 +62,7 @@ pub struct CircuitPreparationTimings {
     pub permutation: Duration,
     pub quotient: Duration,
     pub openings: Duration,
+    pub fri: Duration,
 }
 
 /// Immutable constants/sigmas oracle, shared across proof workspaces. Batches
@@ -80,6 +85,8 @@ struct CircuitLayout {
     batch_columns: Vec<usize>,
     #[cfg(feature = "constraint-export")]
     openings: openings::OpeningLayout,
+    #[cfg(feature = "constraint-export")]
+    fri: fri::FriLayout,
 }
 
 impl CircuitLayout {
@@ -144,6 +151,19 @@ impl CircuitLayout {
         validate_fixed_commitment(oracle, degree, lde_rows)?;
         #[cfg(feature = "constraint-export")]
         let openings = openings::OpeningLayout::new(common)?;
+        #[cfg(feature = "constraint-export")]
+        ensure!(
+            common.fri_params.config == common.config.fri_config && !common.fri_params.leaf_hiding,
+            "FRI parameters do not match circuit configuration"
+        );
+        #[cfg(feature = "constraint-export")]
+        let fri = fri::FriLayout::new(
+            degree,
+            lde_rows,
+            &common.fri_params.reduction_arity_bits,
+            common.config.fri_config.cap_height,
+            limit,
+        )?;
         let columns_per_batch =
             column_capacity(lde_rows, width, limit, options.max_columns_per_batch)?;
         Ok(Self {
@@ -155,6 +175,8 @@ impl CircuitLayout {
             batch_columns: batches(width, columns_per_batch),
             #[cfg(feature = "constraint-export")]
             openings,
+            #[cfg(feature = "constraint-export")]
+            fri,
         })
     }
 }
@@ -210,6 +232,8 @@ pub struct PreparedCircuit<'a> {
     quotient: quotient::PreparedQuotient,
     #[cfg(feature = "constraint-export")]
     openings: openings::PreparedOpenings,
+    #[cfg(feature = "constraint-export")]
+    fri: fri::PreparedFri,
 }
 
 impl<'a> PreparedCircuit<'a> {
@@ -233,6 +257,8 @@ impl<'a> PreparedCircuit<'a> {
         let fft = Arc::new(FftKernels::prepare(context)?);
         #[cfg(feature = "constraint-export")]
         let extension = Arc::new(crate::ExtensionKernels::prepare(context)?);
+        #[cfg(feature = "constraint-export")]
+        let fri_kernels = Arc::new(crate::FriKernels::prepare(context)?);
         let gather = PreparedKernel::prepare(
             context,
             include_str!("shaders/witness.wgsl"),
@@ -307,7 +333,12 @@ impl<'a> PreparedCircuit<'a> {
         let quotient = {
             let started = Instant::now();
             let plan = quotient::PreparedQuotient::prepare(
-                context, circuit, &layout, options, poseidon, fft,
+                context,
+                circuit,
+                &layout,
+                options,
+                poseidon.clone(),
+                fft.clone(),
             )?;
             timings.quotient = started.elapsed();
             plan
@@ -318,6 +349,21 @@ impl<'a> PreparedCircuit<'a> {
             let plan =
                 openings::PreparedOpenings::prepare(context, common, &layout, options, extension)?;
             timings.openings = started.elapsed();
+            plan
+        };
+        #[cfg(feature = "constraint-export")]
+        let fri = {
+            let started = Instant::now();
+            let plan = fri::PreparedFri::prepare(
+                context,
+                circuit,
+                &layout.fri,
+                options,
+                fri_kernels,
+                poseidon,
+                fft,
+            )?;
+            timings.fri = started.elapsed();
             plan
         };
         let mut wire_workspace_fields = vec![representatives.len()];
@@ -341,6 +387,8 @@ impl<'a> PreparedCircuit<'a> {
             quotient,
             #[cfg(feature = "constraint-export")]
             openings,
+            #[cfg(feature = "constraint-export")]
+            fri,
         })
     }
 

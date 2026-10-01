@@ -46,6 +46,25 @@ fn preparation_rejects_unsupported_and_mismatched_circuit_data_without_gpu() {
             .expect("preparation must reject invalid input");
         assert_eq!(error.to_string(), message);
     };
+    #[cfg(feature = "constraint-export")]
+    {
+        circuit.common.fri_params.config.cap_height += 1;
+        rejected(
+            &circuit,
+            options,
+            limit,
+            "FRI parameters do not match circuit configuration",
+        );
+        circuit.common.fri_params.config.cap_height -= 1;
+        circuit.common.fri_params.leaf_hiding = true;
+        rejected(
+            &circuit,
+            options,
+            limit,
+            "FRI parameters do not match circuit configuration",
+        );
+        circuit.common.fri_params.leaf_hiding = false;
+    }
     assert!(CircuitLayout::new(&circuit, options, limit).is_ok());
     for invalid in [
         PreparationOptions {

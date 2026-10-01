@@ -203,6 +203,11 @@ impl CommitmentPlan {
         })
     }
 
+    /// Leaf rows packed and hashed per chunk.
+    pub fn chunk_rows(&self) -> usize {
+        self.chunk_rows
+    }
+
     /// Field counts for packed input chunk, chunk digests, and the final tree.
     pub fn workspace_field_counts(&self) -> [usize; 3] {
         [
@@ -230,11 +235,40 @@ impl CommitmentPlan {
         leaf_chunk: &DeviceFieldSlice,
         tree: &DeviceFieldSlice,
     ) -> Result<()> {
-        let shape = self.workspace_field_counts();
         ensure!(
             columns.len() == self.width && columns.iter().all(|column| column.len() == self.rows),
             "commitment column shape mismatch"
         );
+        self.encode_with_packing(encoder, input_chunk, leaf_chunk, tree, |encoder, offset| {
+            for (column, source) in columns.iter().enumerate() {
+                let destination =
+                    input_chunk.slice(column * self.chunk_rows..(column + 1) * self.chunk_rows)?;
+                match source {
+                    FieldSource::Fixed(source) => encoder.copy(
+                        &source.slice(offset..offset + self.chunk_rows)?,
+                        &destination,
+                    )?,
+                    FieldSource::Workspace(source) => encoder.copy(
+                        &source.slice(offset..offset + self.chunk_rows)?,
+                        &destination,
+                    )?,
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// Share hashing and packed-tree construction with operation-specific leaf
+    /// packing. The callback fills the column-major chunk before its hash pass.
+    pub(crate) fn encode_with_packing(
+        &self,
+        encoder: &mut ProofEncoder<'_>,
+        input_chunk: &DeviceFieldSlice,
+        leaf_chunk: &DeviceFieldSlice,
+        tree: &DeviceFieldSlice,
+        mut pack: impl FnMut(&mut ProofEncoder<'_>, usize) -> Result<()>,
+    ) -> Result<()> {
+        let shape = self.workspace_field_counts();
         ensure!(
             [input_chunk.len(), leaf_chunk.len(), tree.len()] == shape,
             "commitment workspace shape mismatch"
@@ -252,20 +286,7 @@ impl CommitmentPlan {
         };
         for (chunk, params) in self.scatter_params.iter().enumerate() {
             let offset = chunk * self.chunk_rows;
-            for (column, source) in columns.iter().enumerate() {
-                let destination =
-                    input_chunk.slice(column * self.chunk_rows..(column + 1) * self.chunk_rows)?;
-                match source {
-                    FieldSource::Fixed(source) => encoder.copy(
-                        &source.slice(offset..offset + self.chunk_rows)?,
-                        &destination,
-                    )?,
-                    FieldSource::Workspace(source) => encoder.copy(
-                        &source.slice(offset..offset + self.chunk_rows)?,
-                        &destination,
-                    )?,
-                }
-            }
+            pack(encoder, offset)?;
             encoder.dispatch_elements(
                 &self.kernels.leaves,
                 &leaves,

@@ -4,7 +4,8 @@ use plonky2::field::polynomial::{PolynomialCoeffs, PolynomialValues};
 use plonky2::fri::structure::{FriOpeningBatch, FriOpenings};
 use plonky2::fri::{FriChallenger, FriParamsObserve};
 use plonky2::gates::noop::NoopGate;
-use plonky2::hash::merkle_tree::MerkleTree;
+use plonky2::hash::hash_types::HashOut;
+use plonky2::hash::merkle_tree::{MerkleCap, MerkleTree};
 use plonky2::hash::poseidon::PoseidonHash;
 use plonky2::iop::challenger::Challenger;
 use plonky2::iop::witness::WitnessWrite;
@@ -210,7 +211,7 @@ fn cpu_quotient_values(
 
 #[test]
 #[ignore = "requires a hardware GPU with native u64 shader support"]
-fn resident_stages_through_fri_input_match_cpu_proof_across_domains() -> Result<()> {
+fn resident_stages_through_fri_commit_phase_match_cpu_proof_across_domains() -> Result<()> {
     let context = futures::executor::block_on(DeviceContext::new())?;
     for (challenges, factor, rate) in [(2, 8, 3), (3, 7, 4)] {
         let mut config = CircuitConfig::standard_recursion_config();
@@ -248,11 +249,14 @@ fn resident_stages_through_fri_input_match_cpu_proof_across_domains() -> Result<
         counts.extend_from_slice(prepared.quotient_workspace_field_counts());
         let ofirst = counts.len();
         counts.extend_from_slice(prepared.opening_workspace_field_counts());
+        let ffirst = counts.len();
+        counts.extend_from_slice(prepared.fri_workspace_field_counts());
         let mut workspace = ProofWorkspace::prepare(&context, &counts)?;
         let wire_buffers = prepared.wire_buffers(&workspace, 0)?;
         let product_buffers = prepared.permutation_buffers(&workspace, pfirst)?;
         let quotient_buffers = prepared.quotient_buffers(&workspace, qfirst)?;
         let opening_buffers = prepared.opening_buffers(&workspace, ofirst)?;
+        let fri_buffers = prepared.fri_buffers(&workspace, ffirst)?;
         let mut inputs = PartialWitness::new();
         inputs.set_target(input, F::NEG_ONE)?;
         let partition = generate_partial_witness(inputs, &circuit.prover_only, common)?;
@@ -488,6 +492,77 @@ fn resident_stages_through_fri_input_match_cpu_proof_across_domains() -> Result<
         assert_eq!(
             tree.cap,
             cpu_proof.proof.opening_proof.commit_phase_merkle_caps[0]
+        );
+        // Follow the same transcript through every resident FRI round. The
+        // CPU oracle retains LDE zero padding; the GPU omits it in coefficients.
+        assert_eq!(
+            fri_buffers.round_count(),
+            common.fri_params.reduction_arity_bits.len()
+        );
+        assert_eq!(
+            fri_buffers.round(usize::MAX).err().unwrap().to_string(),
+            "FRI round index out of range"
+        );
+        let mut coefficients = fri_input.coefficients.clone();
+        let mut evaluations = fri_input.evaluations.clone();
+        let mut cpu_coefficients = combined.padded(common.lde_size());
+        let mut coefficient_count = common.degree();
+        let mut shift = F::MULTIPLICATIVE_GROUP_GENERATOR;
+        for (index, &bits) in common.fri_params.reduction_arity_bits.iter().enumerate() {
+            let round = fri_buffers.round(index)?;
+            let mut encoder = workspace.begin(&context)?;
+            let commitment = round.encode_commitment(&mut encoder, &evaluations)?;
+            encoder.submit()?.finish()?;
+            let cap = MerkleCap::<F, PoseidonHash>(
+                context
+                    .readback(&commitment.cap)?
+                    .chunks_exact(4)
+                    .map(|chunk| HashOut {
+                        elements: chunk.try_into().unwrap(),
+                    })
+                    .collect(),
+            );
+            assert_eq!(
+                cap,
+                cpu_proof.proof.opening_proof.commit_phase_merkle_caps[index]
+            );
+            challenger.observe_cap::<PoseidonHash>(&cap);
+            let beta = challenger.get_extension_challenge::<2>();
+            let arity = 1 << bits;
+            assert_eq!(commitment.arity, arity);
+            let mut encoder = workspace.begin(&context)?;
+            let folded = round.encode_fold(&mut encoder, &coefficients, beta)?;
+            encoder.submit()?.finish()?;
+            cpu_coefficients = PolynomialCoeffs::new(
+                cpu_coefficients
+                    .coeffs
+                    .chunks_exact(arity)
+                    .map(|chunk| plonky2::plonk::plonk_common::reduce_with_powers(chunk, beta))
+                    .collect(),
+            );
+            coefficient_count /= arity;
+            assert!(cpu_coefficients.coeffs[coefficient_count..]
+                .iter()
+                .all(|value| *value == E::<F>::ZERO));
+            assert_eq!(
+                context.readback(&folded.coefficients)?,
+                planes(&cpu_coefficients.coeffs[..coefficient_count])
+            );
+            coefficients = folded.coefficients;
+            if let Some(next) = folded.evaluations {
+                shift = shift.exp_u64(arity as u64);
+                let expected = cpu_coefficients.coset_fft(E([shift, F::ZERO]));
+                assert_eq!(context.readback(&next)?, planes(&expected.values));
+                evaluations = next;
+            } else {
+                assert_eq!(index + 1, fri_buffers.round_count());
+            }
+        }
+        cpu_coefficients.coeffs.truncate(coefficient_count);
+        assert_eq!(cpu_coefficients, cpu_proof.proof.opening_proof.final_poly);
+        assert_eq!(
+            context.readback(&coefficients)?,
+            planes(&cpu_proof.proof.opening_proof.final_poly.coeffs)
         );
         // Reuse the same prepared plans and workspace with zero alpha. This
         // changes the composition and catches stale weights/accumulation data.

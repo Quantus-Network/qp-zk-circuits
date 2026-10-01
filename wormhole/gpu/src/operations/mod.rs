@@ -6,6 +6,7 @@ mod arithmetic;
 mod commitment;
 mod extension;
 mod fft;
+mod fri;
 #[cfg(feature = "constraint-export")]
 mod quotient;
 mod scan;
@@ -18,6 +19,7 @@ pub use extension::{
     ExtensionKernels, LinearDivisionPlan, PolynomialCombinationPlan, PolynomialEvaluationPlan,
 };
 pub use fft::{FftKernels, FftPlan};
+pub use fri::{FriCommitmentPlan, FriFoldPlan, FriKernels};
 #[cfg(feature = "constraint-export")]
 pub use quotient::{QuotientLayout, QuotientPlan};
 pub use scan::PrefixProductPlan;

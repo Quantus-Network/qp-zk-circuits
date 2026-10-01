@@ -2,18 +2,21 @@
 //!
 //! Enable `wgpu` to use the Metal/Vulkan execution backend. This crate currently
 //! supplies execution resources, prepared mathematical operations, and resident
-//! wire, permutation-product, quotient, opening and FRI-input stages, not a
-//! selectable public-batch proving backend. PreparedCircuit retains the circuit's fixed oracle, FFT tables,
-//! wire-gather map, and pipelines across proof workspaces. CPU witness generators
-//! run before upload; gathering, FFTs, products, quotient evaluation and Merkle
-//! commitments, openings and FRI-input preparation run on GPU. The coordinator
-//! supplies transcript challenges and explicitly exports the small opening set.
+//! wire, permutation-product, quotient, opening and FRI commit-phase stages,
+//! not a selectable public-batch proving backend. PreparedCircuit retains the
+//! circuit's fixed oracle, FFT tables, wire-gather map, and pipelines across
+//! proof workspaces. CPU witness generators run before upload; gathering, FFTs,
+//! products, quotient evaluation, Merkle commitments, openings, FRI-input
+//! preparation and FRI folding run on GPU.
+//! The coordinator supplies transcript challenges and explicitly exports caps,
+//! the small opening set and the final polynomial.
 //! Encoding does not compile shaders, wait for the GPU, or export intermediate
 //! results.
 //!
-//! `constraint-export` additionally enables quotient and opening stages. It requires
-//! the dependency's backend-neutral constraint exporter; until that is published,
-//! validation requires a local Cargo override, not a production dependency pin.
+//! `constraint-export` additionally enables quotient, opening and FRI stages.
+//! It requires the dependency's backend-neutral constraint exporter; until that
+//! is published, validation requires a local Cargo override, not a production
+//! dependency pin.
 //!
 //! Hardware-independent checks:
 //! `cargo test --release -p qp-wormhole-gpu --features constraint-export`.
@@ -40,14 +43,16 @@ pub use circuit::{
 
 #[cfg(feature = "constraint-export")]
 pub use circuit::{
-    FriInput, OpeningBuffers, QuotientBuffers, QuotientCommitment, ResidentOpeningSet,
+    FriBuffers, FriCommitment, FriFold, FriInput, FriRoundBuffers, OpeningBuffers, QuotientBuffers,
+    QuotientCommitment, ResidentOpeningSet,
 };
 
 #[cfg(feature = "wgpu")]
 pub use operations::{
     ArithmeticKernels, ArithmeticPlan, CommitmentPlan, EvaluationOrder, ExtensionKernels,
-    FftKernels, FftPlan, FieldOperation, LinearDivisionPlan, PolynomialCombinationPlan,
-    PolynomialEvaluationPlan, PoseidonKernels, PrefixProductPlan,
+    FftKernels, FftPlan, FieldOperation, FriCommitmentPlan, FriFoldPlan, FriKernels,
+    LinearDivisionPlan, PolynomialCombinationPlan, PolynomialEvaluationPlan, PoseidonKernels,
+    PrefixProductPlan,
 };
 
 #[cfg(feature = "constraint-export")]

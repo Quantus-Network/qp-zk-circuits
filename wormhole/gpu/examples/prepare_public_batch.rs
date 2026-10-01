@@ -68,6 +68,10 @@ fn main() -> Result<()> {
         timings.openings.as_secs_f64()
     );
     println!(
+        "FRI commit-phase preparation: {:.3}s",
+        timings.fri.as_secs_f64()
+    );
+    println!(
         "Trace rows: {}; LDE rows: {}; quotient rows: {}; quotient LDE step: {}",
         prepared.degree(),
         prepared.evaluation_rows(),
