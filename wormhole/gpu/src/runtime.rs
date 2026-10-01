@@ -161,6 +161,29 @@ impl DeviceContext {
         })
     }
 
+    pub(crate) fn prepare_params(&self, values: [u32; 4]) -> Result<KernelParams> {
+        self.check_device()?;
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("prepared kernel parameters"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM,
+            mapped_at_creation: true,
+        });
+        self.check_device()?;
+        {
+            let mut mapped = buffer.slice(..).get_mapped_range_mut();
+            for (value, bytes) in values.iter().zip(mapped.chunks_exact_mut(4)) {
+                bytes.copy_from_slice(&value.to_le_bytes());
+            }
+        }
+        buffer.unmap();
+        self.check_device()?;
+        Ok(KernelParams {
+            device_id: self.id,
+            buffer,
+        })
+    }
+
     /// Explicit export boundary. Copies only the requested view, then waits for
     /// mapping. Proof encoding and submission never call this method.
     pub fn readback<'a>(&self, source: impl Into<FieldSource<'a>>) -> Result<Vec<GoldilocksField>> {
@@ -260,6 +283,12 @@ impl<'a> From<&'a DeviceFieldSlice> for FieldSource<'a> {
 }
 
 impl<'a> FieldSource<'a> {
+    pub fn len(self) -> usize {
+        self.parts().2
+    }
+    pub fn is_empty(self) -> bool {
+        self.len() == 0
+    }
     fn device_id(self) -> u64 {
         match self {
             Self::Fixed(slice) => slice.device_id,
@@ -357,6 +386,13 @@ pub(crate) struct PreparedKernel {
     pipeline: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
     specs: Vec<FieldBindingSpec>,
+    has_params: bool,
+}
+
+/// Immutable host-known dispatch metadata, prepared outside proof encoding.
+pub(crate) struct KernelParams {
+    device_id: u64,
+    buffer: wgpu::Buffer,
 }
 
 #[allow(dead_code)]
@@ -367,14 +403,26 @@ impl PreparedKernel {
         specs: &[FieldBindingSpec],
         label: &str,
     ) -> Result<Self> {
+        Self::prepare_entry(context, source, specs, label, "main", false)
+    }
+
+    pub fn prepare_entry(
+        context: &DeviceContext,
+        source: &str,
+        specs: &[FieldBindingSpec],
+        label: &str,
+        entry: &str,
+        has_params: bool,
+    ) -> Result<Self> {
         context.check_device()?;
         let limits = context.limits();
         ensure!(
             specs.len() <= limits.max_storage_buffers_per_shader_stage as usize
-                && specs.len() <= limits.max_bindings_per_bind_group as usize,
+                && specs.len() + usize::from(has_params)
+                    <= limits.max_bindings_per_bind_group as usize,
             "too many kernel field bindings"
         );
-        let entries = specs
+        let mut entries = specs
             .iter()
             .enumerate()
             .map(|(index, spec)| {
@@ -397,6 +445,18 @@ impl PreparedKernel {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
+        if has_params {
+            entries.push(wgpu::BindGroupLayoutEntry {
+                binding: u32::try_from(specs.len())?,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(16),
+                },
+                count: None,
+            });
+        }
         let layout = context
             .device
             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -426,7 +486,7 @@ impl PreparedKernel {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
                 module: &module,
-                entry_point: Some("main"),
+                entry_point: Some(entry),
                 compilation_options: Default::default(),
                 cache: None,
             });
@@ -437,6 +497,7 @@ impl PreparedKernel {
             pipeline,
             layout,
             specs: specs.to_vec(),
+            has_params,
         })
     }
 }
@@ -742,6 +803,16 @@ impl ProofEncoder<'_> {
         bindings: &[FieldBinding<'_>],
         label: &str,
     ) -> Result<CheckedBindings> {
+        self.bind_with_params(kernel, bindings, None, label)
+    }
+
+    pub(crate) fn bind_with_params(
+        &self,
+        kernel: &PreparedKernel,
+        bindings: &[FieldBinding<'_>],
+        params: Option<&KernelParams>,
+        label: &str,
+    ) -> Result<CheckedBindings> {
         self.context.check_device()?;
         ensure!(
             kernel.device_id == self.context.id,
@@ -751,8 +822,18 @@ impl ProofEncoder<'_> {
             bindings.len() == kernel.specs.len(),
             "kernel binding count mismatch"
         );
+        ensure!(
+            params.is_some() == kernel.has_params,
+            "kernel parameter binding mismatch"
+        );
+        if let Some(params) = params {
+            ensure!(
+                params.device_id == self.context.id,
+                "kernel parameters belong to another GPU device"
+            );
+        }
         let limits = self.context.limits();
-        let entries = bindings
+        let mut entries = bindings
             .iter()
             .zip(&kernel.specs)
             .enumerate()
@@ -793,6 +874,12 @@ impl ProofEncoder<'_> {
                 );
             }
         }
+        if let Some(params) = params {
+            entries.push(wgpu::BindGroupEntry {
+                binding: u32::try_from(bindings.len())?,
+                resource: params.buffer.as_entire_binding(),
+            });
+        }
         let group = self
             .context
             .device
@@ -810,7 +897,6 @@ impl ProofEncoder<'_> {
         })
     }
 
-    #[allow(dead_code)] // Used by the next mathematical-operations stage.
     pub(crate) fn dispatch(
         &mut self,
         kernel: &PreparedKernel,
@@ -848,6 +934,24 @@ impl ProofEncoder<'_> {
         pass.dispatch_workgroups(workgroups[0], workgroups[1], workgroups[2]);
         drop(pass);
         self.context.check_device()
+    }
+
+    pub(crate) fn dispatch_elements(
+        &mut self,
+        kernel: &PreparedKernel,
+        bindings: &CheckedBindings,
+        elements: usize,
+        label: &str,
+    ) -> Result<()> {
+        let groups = u32::try_from(elements.div_ceil(64))?;
+        ensure!(groups > 0, "empty compute dispatch");
+        // Shader row addressing uses a fixed 2^21-element stride per y row.
+        self.dispatch(
+            kernel,
+            bindings,
+            [groups.min(32768), groups.div_ceil(32768), 1],
+            label,
+        )
     }
 }
 
@@ -1032,6 +1136,19 @@ mod tests {
         ];
         let kernel = PreparedKernel::prepare(&context, source, &specs, "shared data test")?;
         let other_kernel = PreparedKernel::prepare(&context, source, &specs, "other kernel")?;
+        let parameter_source = format!(
+            "{}\n@group(0) @binding(2) var<uniform> params: vec4<u32>;",
+            source.replace("fixed[id.x] + 1lu", "fixed[id.x] + u64(params.x)")
+        );
+        let parameter_kernel = PreparedKernel::prepare_entry(
+            &context,
+            &parameter_source,
+            &specs,
+            "parameter binding test",
+            "main",
+            true,
+        )?;
+        let params = context.prepare_params([1, 0, 0, 0])?;
         let writable_kernel = PreparedKernel::prepare(&context,
             "@group(0) @binding(0) var<storage, read_write> first: array<u64>;\n@group(0) @binding(1) var<storage, read_write> second: array<u64>;\n@compute @workgroup_size(1) fn main(@builtin(global_invocation_id) id: vec3<u32>) { first[id.x] = second[id.x]; }",
             &[FieldBindingSpec { access: BindingAccess::ReadWrite, min_elements: 2 }; 2], "writable alias test")?;
@@ -1043,9 +1160,35 @@ mod tests {
         let second_output = second.buffer(0)?;
         let other_device = futures::executor::block_on(DeviceContext::new())?;
         let foreign_fixed = other_device.prepare_fixed(&values)?;
+        let foreign_params = other_device.prepare_params([1, 0, 0, 0])?;
         let saved_bindings;
         {
             let mut encoder = first.begin(&context)?;
+            let fields = [
+                FieldBinding::Read((&fixed).into()),
+                FieldBinding::ReadWrite(&first_output),
+            ];
+            assert!(encoder
+                .bind(&parameter_kernel, &fields, "missing parameters")
+                .is_err());
+            assert!(encoder
+                .bind_with_params(
+                    &parameter_kernel,
+                    &fields,
+                    Some(&foreign_params),
+                    "foreign parameters"
+                )
+                .is_err());
+            assert!(encoder
+                .bind_with_params(&kernel, &fields, Some(&params), "unexpected parameters")
+                .is_err());
+            encoder.bind_with_params(
+                &parameter_kernel,
+                &fields,
+                Some(&params),
+                "valid parameters",
+            )?;
+            context.check_device()?;
             assert!(encoder.copy(&foreign_fixed, &first_output).is_err());
             assert!(encoder.bind(&kernel, &[], "missing bindings").is_err());
             assert!(encoder

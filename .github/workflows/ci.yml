@@ -69,7 +69,7 @@ jobs:
           cargo test --workspace --locked --release --doc
           cargo test --release --locked -p tests --test encoding_safety --test spec_differential
           cargo test --release --locked -p qp-wormhole-circuit --test heap_zeroization --test formal_trace
-          cargo test --release --locked -p qp-wormhole-gpu --features wgpu
+          cargo test --release --locked -p qp-wormhole-gpu --features constraint-export
 
   analysis:
     name: 🤖 Analysis (Clippy & Doc)
