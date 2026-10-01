@@ -29,12 +29,6 @@ wgpu = { version = "=27.0.1", optional = true, default-features = false, feature
 [dev-dependencies]
 futures = { version = "=0.3.32", default-features = false, features = ["executor"] }
 qp-plonky2 = { workspace = true, features = ["rand"] }
-qp-wormhole-aggregator = { version = "=4.4.0", path = "../aggregator" }
-zk-circuits-common = { package = "qp-zk-circuits-common", version = "=4.4.0", path = "../../common" }
-
-[[example]]
-name = "prepare_public_batch"
-required-features = ["constraint-export"]
 
 [lints]
 workspace = true

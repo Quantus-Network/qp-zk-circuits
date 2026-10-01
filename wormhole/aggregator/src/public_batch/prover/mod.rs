@@ -1,3 +1,4 @@
+mod backend;
 pub mod lib;
 /// Low-level witness filler — not an untrusted-input boundary.
 ///

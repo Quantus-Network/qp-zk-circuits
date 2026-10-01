@@ -13,6 +13,7 @@ use plonky2::iop::witness::{PartialWitness, PartitionWitness, Witness};
 use plonky2::plonk::circuit_data::CircuitData;
 use plonky2::plonk::config::PoseidonGoldilocksConfig as C;
 use plonky2::util::log2_ceil;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -222,8 +223,24 @@ fn evaluation_domains(
     Ok((lde_rows, quotient_rows, lde_rows / quotient_rows))
 }
 
-/// Prepared for this exact borrowed CPU circuit, not just its dimensions.
-/// The borrow prevents replacing circuit data while its fixed GPU resources
+enum CircuitDataSource<'a> {
+    Borrowed(&'a CircuitData<F, C, 2>),
+    Shared(Arc<CircuitData<F, C, 2>>),
+}
+
+impl Deref for CircuitDataSource<'_> {
+    type Target = CircuitData<F, C, 2>;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Borrowed(circuit) => circuit,
+            Self::Shared(circuit) => circuit,
+        }
+    }
+}
+
+/// Prepared for this exact CPU circuit, not just its dimensions. A borrow or
+/// shared ownership keeps its data alive and immutable while fixed GPU resources
 /// are in use. Wire-buffer views borrow this object and cannot switch circuits.
 ///
 /// Currently supports non-ZK Goldilocks/Poseidon circuits without lookups or
@@ -231,7 +248,7 @@ fn evaluation_domains(
 /// batches at zeta and g * zeta. Unsupported configurations or opening structures
 /// fail before shader compilation.
 pub struct PreparedCircuit<'a> {
-    circuit: &'a CircuitData<F, C, 2>,
+    circuit: CircuitDataSource<'a>,
     layout: CircuitLayout,
     wire_maps: Vec<FixedFieldSlice>,
     gather: PreparedKernel,
@@ -258,6 +275,25 @@ impl<'a> PreparedCircuit<'a> {
         circuit: &'a CircuitData<F, C, 2>,
         options: PreparationOptions,
     ) -> Result<Self> {
+        Self::prepare_source(context, CircuitDataSource::Borrowed(circuit), options)
+    }
+
+    /// Retain the same immutable CPU circuit for a stored proving backend,
+    /// without copying it or requiring a self-referential owner.
+    pub fn prepare_shared(
+        context: &DeviceContext,
+        circuit: Arc<CircuitData<F, C, 2>>,
+        options: PreparationOptions,
+    ) -> Result<PreparedCircuit<'static>> {
+        PreparedCircuit::prepare_source(context, CircuitDataSource::Shared(circuit), options)
+    }
+
+    fn prepare_source(
+        context: &DeviceContext,
+        source: CircuitDataSource<'a>,
+        options: PreparationOptions,
+    ) -> Result<Self> {
+        let circuit = &*source;
         let limit = context
             .limits()
             .max_buffer_size
@@ -401,7 +437,7 @@ impl<'a> PreparedCircuit<'a> {
         }
         wire_workspace_fields.extend(commitment.workspace_field_counts());
         Ok(Self {
-            circuit,
+            circuit: source,
             layout,
             wire_maps,
             gather,

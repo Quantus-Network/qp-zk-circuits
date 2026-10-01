@@ -2,8 +2,9 @@
 //!
 //! Enable `wgpu` to use the Metal/Vulkan execution backend. This crate currently
 //! supplies execution resources, prepared mathematical operations, resident
-//! proving stages and a blocking proof coordinator. It is not yet selectable
-//! through the public-batch aggregator. PreparedCircuit retains the
+//! proving stages and a blocking proof coordinator. The aggregator's optional
+//! `gpu` feature enables backend selection through `PublicBatchProver::with_gpu`
+//! or `PublicBatchAggregator::with_gpu`. PreparedCircuit retains the
 //! circuit's fixed oracle, FFT tables, wire-gather map, and pipelines across
 //! proof workspaces. CPU witness generators run before upload; gathering, FFTs,
 //! products, quotient evaluation, Merkle commitments, openings, FRI-input
@@ -26,8 +27,9 @@
 //! Hardware execution check (Metal on macOS, Vulkan elsewhere):
 //! `cargo test --release -p qp-wormhole-gpu --features constraint-export --lib -- --ignored`.
 //! These are small execution and CPU-parity checks, not proof benchmarks.
-//! `prepare_public_batch` measures initialization with the actual public-batch
-//! circuit, including specialized quotient pipelines; it generates no proof.
+//! The aggregator crate's `prepare_public_batch` example measures initialization
+//! with the actual public-batch circuit, including specialized quotient pipelines;
+//! it generates no proof.
 
 #[cfg(feature = "wgpu")]
 mod runtime;

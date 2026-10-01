@@ -230,6 +230,26 @@ impl PublicBatchAggregator {
         Self::with_limits(bins_dir, aggregator_address, PoolLimits::default())
     }
 
+    /// Select GPU proving during initialization, before cloning a proving
+    /// context. The pool and final proof/address verification are unchanged.
+    /// Calls sharing this aggregator reuse one serialized GPU workspace.
+    ///
+    /// GPU device failure is returned as an error, without CPU fallback. To
+    /// recover, stop workers and drop their proving contexts, then call this
+    /// method with a fresh device context and create new worker contexts. The
+    /// pool and CPU circuit are retained; GPU resources are prepared again.
+    #[cfg(feature = "gpu")]
+    pub fn with_gpu(
+        mut self,
+        context: Arc<qp_wormhole_gpu::DeviceContext>,
+        options: qp_wormhole_gpu::PreparationOptions,
+    ) -> Result<Self> {
+        let prover = Arc::try_unwrap(self.proving.prover)
+            .map_err(|_| anyhow!("select GPU backend before cloning the proving context"))?;
+        self.proving.prover = Arc::new(prover.with_gpu(context, options)?);
+        Ok(self)
+    }
+
     /// Load and pin every artifact needed for pooling and proving.
     ///
     /// After construction the aggregator never reads `bins_dir` again: a
@@ -428,3 +448,6 @@ impl PublicBatchAggregator {
         &self.proving.private_batch_verifier.common
     }
 }
+
+#[cfg(all(test, feature = "gpu"))]
+mod gpu_tests;

@@ -5,6 +5,7 @@
 //! is always rebuilt from source rather than loaded from a serialized artifact; see
 //! [`PublicBatchProver::new_from_bytes`].
 
+use super::backend::ProvingBackend;
 use anyhow::{anyhow, bail, Context, Result};
 use plonky2::field::types::PrimeField64;
 #[cfg(feature = "std")]
@@ -19,6 +20,7 @@ use plonky2::{
     },
 };
 use qp_wormhole_inputs::{validate_proof_count, BytesDigest, PrivateBatchPublicInputs};
+use std::sync::Arc;
 
 #[cfg(feature = "std")]
 use std::path::Path;
@@ -52,7 +54,9 @@ pub struct PublicBatchInputs {
 
 #[derive(Debug)]
 pub struct PublicBatchProver {
-    pub circuit_data: CircuitData<F, C, D>,
+    /// Immutable proving data shared with the selected backend.
+    pub circuit_data: Arc<CircuitData<F, C, D>>,
+    backend: ProvingBackend,
     targets: PublicBatchCircuitTargets,
     num_private_batch_proofs: usize,
     /// Dummy private-batch proof (over all-dummy leaves, `block_hash == 0`) used to
@@ -105,7 +109,8 @@ impl PublicBatchProver {
         verify_dummy_private_batch_template(&dummy_proof_template, &private_batch_verifier_data)?;
 
         Ok(Self {
-            circuit_data,
+            circuit_data: Arc::new(circuit_data),
+            backend: ProvingBackend::Cpu,
             targets,
             num_private_batch_proofs,
             dummy_proof_template,
@@ -182,7 +187,8 @@ impl PublicBatchProver {
         verify_dummy_private_batch_template(&dummy_proof_template, &private_batch_verifier_data)?;
 
         Ok(Self {
-            circuit_data,
+            circuit_data: Arc::new(circuit_data),
+            backend: ProvingBackend::Cpu,
             targets,
             num_private_batch_proofs,
             dummy_proof_template,
@@ -255,11 +261,28 @@ impl PublicBatchProver {
     /// Prove one public batch from private-batch aggregated proofs.
     ///
     /// Validates and prepares the inputs with [`Self::build_witness`], then
-    /// proves the circuit on the CPU.
+    /// proves the circuit with the backend selected during initialization.
+    /// CPU proving is the default.
     pub fn prove_batch(&self, inputs: PublicBatchInputs) -> Result<ProofWithPublicInputs<F, C, D>> {
-        self.circuit_data
-            .prove(self.build_witness(inputs)?)
+        self.backend
+            .prove(&self.circuit_data, self.build_witness(inputs)?)
             .context("Failed to prove public-batch aggregation circuit")
+    }
+
+    /// Prepare and select GPU proving before sharing this prover with workers.
+    /// Fixed resources and one reusable workspace are retained across calls.
+    /// CPU witness generation can overlap; GPU stages are serialized on this
+    /// workspace. Preparation/proving failures return errors, not CPU fallback.
+    #[cfg(feature = "gpu")]
+    pub fn with_gpu(
+        mut self,
+        context: Arc<qp_wormhole_gpu::DeviceContext>,
+        options: qp_wormhole_gpu::PreparationOptions,
+    ) -> Result<Self> {
+        let backend =
+            super::backend::GpuBackend::prepare(Arc::clone(&self.circuit_data), context, options)?;
+        self.backend = ProvingBackend::Gpu(Box::new(backend));
+        Ok(self)
     }
 
     /// Fill a fresh partial witness from private-batch aggregated proofs.
@@ -525,7 +548,7 @@ pub(crate) fn verify_dummy_private_batch_template(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::private_batch::circuit::circuit_logic::PrivateBatchCircuit;
     use crate::private_batch::prover::PrivateBatchProver;
@@ -683,6 +706,39 @@ mod tests {
         .unwrap()
         .aggregate(vec![real_leaf])
         .unwrap()
+    }
+
+    #[cfg(feature = "gpu")]
+    pub(crate) fn gpu_fixture() -> (
+        PublicBatchProver,
+        ProofWithPublicInputs<F, C, D>,
+        VerifierCircuitData<F, C, D>,
+    ) {
+        let (leaf, leaf_targets) = build_fake_leaf_circuit();
+        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; PUBLIC_INPUTS_FELTS_LEN]);
+        let private_batch = PrivateBatchCircuit::new(
+            wormhole_private_batch_circuit_config(),
+            &leaf.common,
+            &leaf.verifier_only,
+            1,
+        )
+        .unwrap()
+        .build_verifier();
+        let template = make_all_dummy_private_batch_template(&leaf, &dummy_leaf);
+        let mut pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
+        pis[crate::private_batch::circuit::constants::BLOCK_HASH_START] = F::ONE;
+        let inner = make_private_batch_proof(&leaf, &dummy_leaf, pis, &leaf_targets);
+        let prover = PublicBatchProver::new(
+            wormhole_public_batch_circuit_config(),
+            private_batch.common.clone(),
+            &private_batch.verifier_only,
+            1,
+            1,
+            template,
+        )
+        .unwrap();
+        assert!(matches!(prover.backend, ProvingBackend::Cpu));
+        (prover, inner, private_batch)
     }
 
     /// Cryptographically invalid (tampered) inner proofs must be rejected at

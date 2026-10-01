@@ -1381,10 +1381,12 @@ dependencies = [
  "anyhow",
  "criterion",
  "env_logger",
+ "futures",
  "hex",
  "qp-plonky2",
  "qp-wormhole-circuit",
  "qp-wormhole-circuit-builder",
+ "qp-wormhole-gpu",
  "qp-wormhole-inputs",
  "qp-wormhole-prover",
  "qp-zk-circuits-common",
@@ -1430,8 +1432,6 @@ dependencies = [
  "anyhow",
  "futures",
  "qp-plonky2",
- "qp-wormhole-aggregator",
- "qp-zk-circuits-common",
  "wgpu",
 ]
 
