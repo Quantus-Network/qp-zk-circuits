@@ -4,7 +4,7 @@ use plonky2::field::polynomial::{PolynomialCoeffs, PolynomialValues};
 use plonky2::field::types::PrimeField64;
 use plonky2::fri::proof::FriProof;
 use plonky2::fri::structure::{FriOpeningBatch, FriOpenings};
-use plonky2::fri::{FriChallenger, FriParamsObserve};
+use plonky2::fri::{FriChallenger, FriParamsObserve, FriReductionStrategy};
 use plonky2::gates::noop::NoopGate;
 use plonky2::hash::hash_types::HashOut;
 use plonky2::hash::merkle_tree::{MerkleCap, MerkleTree};
@@ -222,6 +222,9 @@ fn resident_proving_stages_match_cpu_and_generate_verifiable_proofs() -> Result<
         config.fri_config.rate_bits = rate;
         // A tiny proof is an independent CPU oracle, not an arity benchmark.
         config.fri_config.proof_of_work_bits = 8;
+        // Two rounds exercise fold -> next commitment scheduling and shifted
+        // query gathering instead of only the final-fold special case.
+        config.fri_config.reduction_strategy = FriReductionStrategy::Fixed(vec![2, 2]);
         config.security_bits = 80;
         let mut builder = CircuitBuilder::<F, 2>::new(config);
         let input = builder.add_virtual_target();
@@ -272,6 +275,7 @@ fn resident_proving_stages_match_cpu_and_generate_verifiable_proofs() -> Result<
             &mut TimingTree::default(),
         )?;
         circuit.verify(cpu_proof.clone())?;
+        let coordinator_witness = partition.clone();
         let full_witness = partition.clone().full_witness();
         let wire_values = (0..common.config.num_wires)
             .map(|column| {
@@ -674,6 +678,30 @@ fn resident_proving_stages_match_cpu_and_generate_verifiable_proofs() -> Result<
             .siblings[0]
             .elements[0] += F::ONE;
         assert!(circuit.verify(gpu_proof).is_err());
+        // Exercise the reusable coordinator with the same completed witness.
+        // Unlike the diagnostic sequence above, its challenges come only from
+        // GPU-produced caps and openings, never from the CPU proof oracle.
+        let coordinated =
+            prepared.prove_with_partition_witness(&context, &mut workspace, coordinator_witness)?;
+        assert_eq!(coordinated.proof.wires_cap, cpu_proof.proof.wires_cap);
+        assert_eq!(
+            coordinated.proof.plonk_zs_partial_products_cap,
+            cpu_proof.proof.plonk_zs_partial_products_cap
+        );
+        assert_eq!(
+            coordinated.proof.quotient_polys_cap,
+            cpu_proof.proof.quotient_polys_cap
+        );
+        assert_eq!(coordinated.proof.openings, cpu_proof.proof.openings);
+        assert_eq!(
+            coordinated.proof.opening_proof.commit_phase_merkle_caps,
+            cpu_proof.proof.opening_proof.commit_phase_merkle_caps
+        );
+        assert_eq!(
+            coordinated.proof.opening_proof.final_poly,
+            cpu_proof.proof.opening_proof.final_poly
+        );
+        circuit.verify(coordinated)?;
         // Reuse the same prepared plans and workspace with zero alpha. This
         // changes the composition and catches stale weights/accumulation data.
         let mut encoder = workspace.begin(&context)?;

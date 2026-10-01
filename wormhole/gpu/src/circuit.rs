@@ -25,6 +25,8 @@ mod permutation;
 #[cfg(feature = "constraint-export")]
 mod proof_tail;
 #[cfg(feature = "constraint-export")]
+mod prover;
+#[cfg(feature = "constraint-export")]
 mod quotient;
 #[cfg(feature = "constraint-export")]
 pub use fri::{FriBuffers, FriCommitment, FriFold, FriRoundBuffers};
@@ -651,6 +653,17 @@ impl WireBuffers<'_, '_> {
         partition: PartitionWitness<'_, F>,
     ) -> Result<WireCommitment> {
         let prepared = self.prepared;
+        ensure!(
+            partition.num_wires == prepared.circuit.common.config.num_wires
+                && partition.degree == prepared.degree()
+                && partition.values.len() == prepared.circuit.prover_only.representative_map.len()
+                && (std::ptr::eq(
+                    partition.representative_map,
+                    prepared.circuit.prover_only.representative_map.as_slice(),
+                ) || partition.representative_map
+                    == prepared.circuit.prover_only.representative_map),
+            "partition witness does not match prepared circuit"
+        );
         let public_inputs = prepared
             .circuit
             .prover_only

@@ -1,9 +1,9 @@
 //! GPU execution support for Wormhole proving.
 //!
 //! Enable `wgpu` to use the Metal/Vulkan execution backend. This crate currently
-//! supplies execution resources, prepared mathematical operations, and resident
-//! wire, permutation-product, quotient, opening, FRI commit-phase and proof-tail stages,
-//! not a selectable public-batch proving backend. PreparedCircuit retains the
+//! supplies execution resources, prepared mathematical operations, resident
+//! proving stages and a blocking proof coordinator. It is not yet selectable
+//! through the public-batch aggregator. PreparedCircuit retains the
 //! circuit's fixed oracle, FFT tables, wire-gather map, and pipelines across
 //! proof workspaces. CPU witness generators run before upload; gathering, FFTs,
 //! products, quotient evaluation, Merkle commitments, openings, FRI-input
@@ -12,6 +12,9 @@
 //! the small opening set, final polynomial, PoW result and sampled proof data.
 //! Encoding does not compile shaders, wait for the GPU, or export intermediate
 //! results.
+//! PreparedCircuit::prepare_workspace allocates reusable proof buffers;
+//! PreparedCircuit::prove runs CPU witness generators and coordinates a proof,
+//! while prove_with_partition_witness accepts an already-generated witness.
 //!
 //! `constraint-export` additionally enables quotient, opening, FRI and proof-tail stages.
 //! It requires the dependency's backend-neutral constraint exporter; until that
