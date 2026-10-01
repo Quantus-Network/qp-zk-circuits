@@ -10,6 +10,7 @@ members = [
 	"wormhole/aggregator",
 	"wormhole/circuit",
 	"wormhole/circuit-builder",
+	"wormhole/gpu",
 	"wormhole/inputs",
 	"wormhole/memprof",
 	"wormhole/prover",
