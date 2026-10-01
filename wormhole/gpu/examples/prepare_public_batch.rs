@@ -72,6 +72,10 @@ fn main() -> Result<()> {
         timings.fri.as_secs_f64()
     );
     println!(
+        "Proof-tail preparation: {:.3}s",
+        timings.proof_tail.as_secs_f64()
+    );
+    println!(
         "Trace rows: {}; LDE rows: {}; quotient rows: {}; quotient LDE step: {}",
         prepared.degree(),
         prepared.evaluation_rows(),

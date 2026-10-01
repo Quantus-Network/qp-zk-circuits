@@ -82,6 +82,10 @@ impl OpeningLayout {
         })
     }
 
+    pub(super) fn oracle_widths(&self) -> [usize; 4] {
+        self.widths
+    }
+
     fn all(&self) -> usize {
         self.widths.iter().sum()
     }

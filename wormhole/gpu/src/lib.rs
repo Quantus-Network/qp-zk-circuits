@@ -2,18 +2,18 @@
 //!
 //! Enable `wgpu` to use the Metal/Vulkan execution backend. This crate currently
 //! supplies execution resources, prepared mathematical operations, and resident
-//! wire, permutation-product, quotient, opening and FRI commit-phase stages,
+//! wire, permutation-product, quotient, opening, FRI commit-phase and proof-tail stages,
 //! not a selectable public-batch proving backend. PreparedCircuit retains the
 //! circuit's fixed oracle, FFT tables, wire-gather map, and pipelines across
 //! proof workspaces. CPU witness generators run before upload; gathering, FFTs,
 //! products, quotient evaluation, Merkle commitments, openings, FRI-input
-//! preparation and FRI folding run on GPU.
+//! preparation, FRI folding, PoW search and sparse query gathering run on GPU.
 //! The coordinator supplies transcript challenges and explicitly exports caps,
-//! the small opening set and the final polynomial.
+//! the small opening set, final polynomial, PoW result and sampled proof data.
 //! Encoding does not compile shaders, wait for the GPU, or export intermediate
 //! results.
 //!
-//! `constraint-export` additionally enables quotient, opening and FRI stages.
+//! `constraint-export` additionally enables quotient, opening, FRI and proof-tail stages.
 //! It requires the dependency's backend-neutral constraint exporter; until that
 //! is published, validation requires a local Cargo override, not a production
 //! dependency pin.
@@ -43,16 +43,17 @@ pub use circuit::{
 
 #[cfg(feature = "constraint-export")]
 pub use circuit::{
-    FriBuffers, FriCommitment, FriFold, FriInput, FriRoundBuffers, OpeningBuffers, QuotientBuffers,
-    QuotientCommitment, ResidentOpeningSet,
+    FriBuffers, FriCommitment, FriFold, FriInput, FriRoundBuffers, OpeningBuffers,
+    ProofTailBuffers, QuotientBuffers, QuotientCommitment, ResidentOpeningSet, ResidentQueryRounds,
 };
 
 #[cfg(feature = "wgpu")]
 pub use operations::{
     ArithmeticKernels, ArithmeticPlan, CommitmentPlan, EvaluationOrder, ExtensionKernels,
     FftKernels, FftPlan, FieldOperation, FriCommitmentPlan, FriFoldPlan, FriKernels,
-    LinearDivisionPlan, PolynomialCombinationPlan, PolynomialEvaluationPlan, PoseidonKernels,
-    PrefixProductPlan,
+    LinearDivisionPlan, MerkleQuery, MerkleQueryKernels, MerkleQueryLayout, MerkleQueryPlan,
+    PolynomialCombinationPlan, PolynomialEvaluationPlan, PoseidonKernels, PowKernels, PowPlan,
+    PowResult, PrefixProductPlan, ResidentMerkleQueries,
 };
 
 #[cfg(feature = "constraint-export")]

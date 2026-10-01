@@ -7,6 +7,8 @@ mod commitment;
 mod extension;
 mod fft;
 mod fri;
+mod pow;
+mod queries;
 #[cfg(feature = "constraint-export")]
 mod quotient;
 mod scan;
@@ -20,6 +22,12 @@ pub use extension::{
 };
 pub use fft::{FftKernels, FftPlan};
 pub use fri::{FriCommitmentPlan, FriFoldPlan, FriKernels};
+#[cfg(feature = "constraint-export")]
+pub(crate) use pow::validate_pow;
+pub use pow::{PowKernels, PowPlan, PowResult};
+pub use queries::{
+    MerkleQuery, MerkleQueryKernels, MerkleQueryLayout, MerkleQueryPlan, ResidentMerkleQueries,
+};
 #[cfg(feature = "constraint-export")]
 pub use quotient::{QuotientLayout, QuotientPlan};
 pub use scan::PrefixProductPlan;

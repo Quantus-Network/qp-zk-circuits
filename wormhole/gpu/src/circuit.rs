@@ -23,6 +23,8 @@ mod openings;
 mod oracle;
 mod permutation;
 #[cfg(feature = "constraint-export")]
+mod proof_tail;
+#[cfg(feature = "constraint-export")]
 mod quotient;
 #[cfg(feature = "constraint-export")]
 pub use fri::{FriBuffers, FriCommitment, FriFold, FriRoundBuffers};
@@ -30,6 +32,8 @@ pub use fri::{FriBuffers, FriCommitment, FriFold, FriRoundBuffers};
 pub use openings::{FriInput, OpeningBuffers, ResidentOpeningSet};
 pub use oracle::PolynomialCommitment;
 pub use permutation::{PermutationBuffers, PermutationCommitment};
+#[cfg(feature = "constraint-export")]
+pub use proof_tail::{ProofTailBuffers, ResidentQueryRounds};
 #[cfg(feature = "constraint-export")]
 pub use quotient::{QuotientBuffers, QuotientCommitment};
 
@@ -63,6 +67,7 @@ pub struct CircuitPreparationTimings {
     pub quotient: Duration,
     pub openings: Duration,
     pub fri: Duration,
+    pub proof_tail: Duration,
 }
 
 /// Immutable constants/sigmas oracle, shared across proof workspaces. Batches
@@ -87,6 +92,8 @@ struct CircuitLayout {
     openings: openings::OpeningLayout,
     #[cfg(feature = "constraint-export")]
     fri: fri::FriLayout,
+    #[cfg(feature = "constraint-export")]
+    proof_tail: proof_tail::ProofTailLayout,
 }
 
 impl CircuitLayout {
@@ -166,6 +173,9 @@ impl CircuitLayout {
         )?;
         let columns_per_batch =
             column_capacity(lde_rows, width, limit, options.max_columns_per_batch)?;
+        #[cfg(feature = "constraint-export")]
+        let proof_tail =
+            proof_tail::ProofTailLayout::new(common, lde_rows, openings.oracle_widths(), limit)?;
         Ok(Self {
             degree,
             lde_rows,
@@ -177,6 +187,8 @@ impl CircuitLayout {
             openings,
             #[cfg(feature = "constraint-export")]
             fri,
+            #[cfg(feature = "constraint-export")]
+            proof_tail,
         })
     }
 }
@@ -234,6 +246,8 @@ pub struct PreparedCircuit<'a> {
     openings: openings::PreparedOpenings,
     #[cfg(feature = "constraint-export")]
     fri: fri::PreparedFri,
+    #[cfg(feature = "constraint-export")]
+    proof_tail: proof_tail::PreparedProofTail,
 }
 
 impl<'a> PreparedCircuit<'a> {
@@ -259,6 +273,10 @@ impl<'a> PreparedCircuit<'a> {
         let extension = Arc::new(crate::ExtensionKernels::prepare(context)?);
         #[cfg(feature = "constraint-export")]
         let fri_kernels = Arc::new(crate::FriKernels::prepare(context)?);
+        #[cfg(feature = "constraint-export")]
+        let pow = Arc::new(crate::PowKernels::prepare(context, poseidon.clone())?);
+        #[cfg(feature = "constraint-export")]
+        let queries = Arc::new(crate::MerkleQueryKernels::prepare(context)?);
         let gather = PreparedKernel::prepare(
             context,
             include_str!("shaders/witness.wgsl"),
@@ -366,6 +384,15 @@ impl<'a> PreparedCircuit<'a> {
             timings.fri = started.elapsed();
             plan
         };
+        #[cfg(feature = "constraint-export")]
+        let proof_tail = {
+            let started = Instant::now();
+            let plan = proof_tail::PreparedProofTail::prepare(
+                context, circuit, &layout, options, pow, queries,
+            )?;
+            timings.proof_tail = started.elapsed();
+            plan
+        };
         let mut wire_workspace_fields = vec![representatives.len()];
         for &columns in &layout.batch_columns {
             wire_workspace_fields.extend([degree * columns, degree * columns, rows * columns]);
@@ -389,6 +416,8 @@ impl<'a> PreparedCircuit<'a> {
             openings,
             #[cfg(feature = "constraint-export")]
             fri,
+            #[cfg(feature = "constraint-export")]
+            proof_tail,
         })
     }
 

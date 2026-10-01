@@ -165,11 +165,18 @@ impl DeviceContext {
         })
     }
 
-    pub(crate) fn prepare_params(&self, values: [u32; 4]) -> Result<KernelParams> {
+    pub(crate) fn prepare_params<const N: usize>(&self, values: [u32; N]) -> Result<KernelParams> {
         self.check_device()?;
+        let size = N.checked_mul(4).context("kernel parameter size overflow")?;
+        ensure!(
+            N > 0
+                && N.is_multiple_of(4)
+                && size <= self.limits().max_uniform_buffer_binding_size as usize,
+            "invalid kernel parameter size"
+        );
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("prepared kernel parameters"),
-            size: 16,
+            size: size as u64,
             usage: wgpu::BufferUsages::UNIFORM,
             mapped_at_creation: true,
         });
@@ -333,6 +340,10 @@ pub struct DeviceFieldSlice {
 }
 
 impl DeviceFieldSlice {
+    pub(crate) fn shares_buffer(&self, other: &Self) -> bool {
+        self.buffer == other.buffer
+    }
+
     pub fn len(&self) -> usize {
         self.len
     }
@@ -401,7 +412,7 @@ pub(crate) struct PreparedKernel {
     pipeline: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
     specs: Vec<FieldBindingSpec>,
-    has_params: bool,
+    params_bytes: u64,
 }
 
 /// Immutable host-known dispatch metadata, prepared outside proof encoding.
@@ -429,8 +440,35 @@ impl PreparedKernel {
         entry: &str,
         has_params: bool,
     ) -> Result<Self> {
+        Self::prepare_entry_with_params(
+            context,
+            source,
+            specs,
+            label,
+            entry,
+            if has_params { 4 } else { 0 },
+        )
+    }
+
+    pub fn prepare_entry_with_params(
+        context: &DeviceContext,
+        source: &str,
+        specs: &[FieldBindingSpec],
+        label: &str,
+        entry: &str,
+        param_words: usize,
+    ) -> Result<Self> {
         context.check_device()?;
         let limits = context.limits();
+        let params_bytes = param_words
+            .checked_mul(4)
+            .context("kernel parameter size overflow")? as u64;
+        ensure!(
+            param_words.is_multiple_of(4)
+                && params_bytes <= u64::from(limits.max_uniform_buffer_binding_size),
+            "invalid kernel parameter size"
+        );
+        let has_params = params_bytes > 0;
         ensure!(
             specs.len() <= limits.max_storage_buffers_per_shader_stage as usize
                 && specs.len() + usize::from(has_params)
@@ -467,7 +505,7 @@ impl PreparedKernel {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(16),
+                    min_binding_size: wgpu::BufferSize::new(params_bytes),
                 },
                 count: None,
             });
@@ -512,7 +550,7 @@ impl PreparedKernel {
             pipeline,
             layout,
             specs: specs.to_vec(),
-            has_params,
+            params_bytes,
         })
     }
 }
@@ -929,10 +967,14 @@ impl ProofEncoder<'_> {
             "kernel binding count mismatch"
         );
         ensure!(
-            params.is_some() == kernel.has_params,
+            params.is_some() == (kernel.params_bytes > 0),
             "kernel parameter binding mismatch"
         );
         if let Some(params) = params {
+            ensure!(
+                params.buffer.size() == kernel.params_bytes,
+                "kernel parameter size mismatch"
+            );
             ensure!(
                 params.device_id == self.context.id,
                 "kernel parameters belong to another GPU device"

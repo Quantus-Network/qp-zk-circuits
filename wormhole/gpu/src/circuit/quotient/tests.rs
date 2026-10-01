@@ -1,6 +1,8 @@
 use super::*;
 use plonky2::field::extension::quadratic::QuadraticExtension as E;
 use plonky2::field::polynomial::{PolynomialCoeffs, PolynomialValues};
+use plonky2::field::types::PrimeField64;
+use plonky2::fri::proof::FriProof;
 use plonky2::fri::structure::{FriOpeningBatch, FriOpenings};
 use plonky2::fri::{FriChallenger, FriParamsObserve};
 use plonky2::gates::noop::NoopGate;
@@ -12,7 +14,7 @@ use plonky2::iop::witness::WitnessWrite;
 use plonky2::plonk::circuit_builder::CircuitBuilder;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::plonk_common::reduce_with_powers_multi;
-use plonky2::plonk::proof::OpeningSet;
+use plonky2::plonk::proof::{OpeningSet, Proof, ProofWithPublicInputs};
 use plonky2::plonk::prover::prove_with_partition_witness;
 use plonky2::plonk::vars::EvaluationVarsBaseBatch;
 use plonky2::util::reducing::ReducingFactor;
@@ -211,7 +213,7 @@ fn cpu_quotient_values(
 
 #[test]
 #[ignore = "requires a hardware GPU with native u64 shader support"]
-fn resident_stages_through_fri_commit_phase_match_cpu_proof_across_domains() -> Result<()> {
+fn resident_proving_stages_match_cpu_and_generate_verifiable_proofs() -> Result<()> {
     let context = futures::executor::block_on(DeviceContext::new())?;
     for (challenges, factor, rate) in [(2, 8, 3), (3, 7, 4)] {
         let mut config = CircuitConfig::standard_recursion_config();
@@ -219,7 +221,7 @@ fn resident_stages_through_fri_commit_phase_match_cpu_proof_across_domains() -> 
         config.max_quotient_degree_factor = factor;
         config.fri_config.rate_bits = rate;
         // A tiny proof is an independent CPU oracle, not an arity benchmark.
-        config.fri_config.proof_of_work_bits = 0;
+        config.fri_config.proof_of_work_bits = 8;
         config.security_bits = 80;
         let mut builder = CircuitBuilder::<F, 2>::new(config);
         let input = builder.add_virtual_target();
@@ -251,12 +253,15 @@ fn resident_stages_through_fri_commit_phase_match_cpu_proof_across_domains() -> 
         counts.extend_from_slice(prepared.opening_workspace_field_counts());
         let ffirst = counts.len();
         counts.extend_from_slice(prepared.fri_workspace_field_counts());
+        let tfirst = counts.len();
+        counts.extend_from_slice(prepared.proof_tail_workspace_field_counts());
         let mut workspace = ProofWorkspace::prepare(&context, &counts)?;
         let wire_buffers = prepared.wire_buffers(&workspace, 0)?;
         let product_buffers = prepared.permutation_buffers(&workspace, pfirst)?;
         let quotient_buffers = prepared.quotient_buffers(&workspace, qfirst)?;
         let opening_buffers = prepared.opening_buffers(&workspace, ofirst)?;
         let fri_buffers = prepared.fri_buffers(&workspace, ffirst)?;
+        let tail_buffers = prepared.proof_tail_buffers(&workspace, tfirst)?;
         let mut inputs = PartialWitness::new();
         inputs.set_target(input, F::NEG_ONE)?;
         let partition = generate_partial_witness(inputs, &circuit.prover_only, common)?;
@@ -504,15 +509,22 @@ fn resident_stages_through_fri_commit_phase_match_cpu_proof_across_domains() -> 
             "FRI round index out of range"
         );
         let mut coefficients = fri_input.coefficients.clone();
-        let mut evaluations = fri_input.evaluations.clone();
+        let evaluations = fri_input.evaluations.clone();
         let mut cpu_coefficients = combined.padded(common.lde_size());
         let mut coefficient_count = common.degree();
         let mut shift = F::MULTIPLICATIVE_GROUP_GENERATOR;
+        let mut fri_commitments = Vec::new();
+        let mut fri_caps = Vec::new();
+        let mut encoder = workspace.begin(&context)?;
+        let mut pending_commitment = Some(
+            fri_buffers
+                .round(0)?
+                .encode_commitment(&mut encoder, &evaluations)?,
+        );
+        encoder.submit()?.finish()?;
         for (index, &bits) in common.fri_params.reduction_arity_bits.iter().enumerate() {
             let round = fri_buffers.round(index)?;
-            let mut encoder = workspace.begin(&context)?;
-            let commitment = round.encode_commitment(&mut encoder, &evaluations)?;
-            encoder.submit()?.finish()?;
+            let commitment = pending_commitment.take().unwrap();
             let cap = MerkleCap::<F, PoseidonHash>(
                 context
                     .readback(&commitment.cap)?
@@ -527,12 +539,25 @@ fn resident_stages_through_fri_commit_phase_match_cpu_proof_across_domains() -> 
                 cpu_proof.proof.opening_proof.commit_phase_merkle_caps[index]
             );
             challenger.observe_cap::<PoseidonHash>(&cap);
+            fri_caps.push(cap);
             let beta = challenger.get_extension_challenge::<2>();
             let arity = 1 << bits;
             assert_eq!(commitment.arity, arity);
             let mut encoder = workspace.begin(&context)?;
             let folded = round.encode_fold(&mut encoder, &coefficients, beta)?;
+            // There is no transcript dependency between this fold and the
+            // following commitment: submit both, then export only its cap.
+            pending_commitment = folded
+                .evaluations
+                .as_ref()
+                .map(|values| {
+                    fri_buffers
+                        .round(index + 1)?
+                        .encode_commitment(&mut encoder, values)
+                })
+                .transpose()?;
             encoder.submit()?.finish()?;
+            fri_commitments.push(commitment);
             cpu_coefficients = PolynomialCoeffs::new(
                 cpu_coefficients
                     .coeffs
@@ -553,7 +578,6 @@ fn resident_stages_through_fri_commit_phase_match_cpu_proof_across_domains() -> 
                 shift = shift.exp_u64(arity as u64);
                 let expected = cpu_coefficients.coset_fft(E([shift, F::ZERO]));
                 assert_eq!(context.readback(&next)?, planes(&expected.values));
-                evaluations = next;
             } else {
                 assert_eq!(index + 1, fri_buffers.round_count());
             }
@@ -564,6 +588,92 @@ fn resident_stages_through_fri_commit_phase_match_cpu_proof_across_domains() -> 
             context.readback(&coefficients)?,
             planes(&cpu_proof.proof.opening_proof.final_poly.coeffs)
         );
+        let final_words = context.readback(&coefficients)?;
+        let final_count = final_words.len() / 2;
+        let final_poly = PolynomialCoeffs::new(
+            (0..final_count)
+                .map(|index| E([final_words[index], final_words[final_count + index]]))
+                .collect(),
+        );
+        challenger.observe_extension_elements::<2>(&final_poly.coeffs);
+        // A different nonce deliberately gives different query challenges.
+        // Compare gathered paths to CPU trees at those actual GPU-proof indices,
+        // then verify the assembled proof with the normal circuit verifier.
+        let mut encoder = workspace.begin(&context)?;
+        let pow = tail_buffers.encode_pow(&mut encoder, &challenger, 100)?;
+        encoder.submit()?.finish()?;
+        let pow_witness = pow.readback(&context, &mut challenger)?.unwrap();
+        let query_challenges =
+            challenger.get_n_challenges(common.config.fri_config.num_query_rounds);
+        let mut encoder = workspace.begin(&context)?;
+        assert!(tail_buffers
+            .encode_queries(
+                &mut encoder,
+                &query_challenges[..query_challenges.len() - 1],
+                &wires,
+                &products,
+                &quotient,
+                &fri_commitments
+            )
+            .is_err());
+        let queries = tail_buffers.encode_queries(
+            &mut encoder,
+            &query_challenges,
+            &wires,
+            &products,
+            &quotient,
+            &fri_commitments,
+        )?;
+        encoder.submit()?.finish()?;
+        let query_round_proofs = queries.readback(&context)?;
+        for (proof, challenge) in query_round_proofs.iter().zip(&query_challenges) {
+            let index = challenge.to_canonical_u64() as usize % common.lde_size();
+            let expected = cpu_oracles
+                .iter()
+                .map(|oracle| {
+                    (
+                        oracle.merkle_tree.get(index).to_vec(),
+                        oracle.merkle_tree.prove(index),
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(proof.initial_trees_proof.evals_proofs, expected);
+        }
+        let read_cap = |buffer: &DeviceFieldSlice| -> Result<MerkleCap<F, PoseidonHash>> {
+            Ok(MerkleCap(
+                context
+                    .readback(buffer)?
+                    .chunks_exact(4)
+                    .map(|chunk| HashOut {
+                        elements: chunk.try_into().unwrap(),
+                    })
+                    .collect(),
+            ))
+        };
+        let mut gpu_proof = ProofWithPublicInputs::<F, C, 2> {
+            public_inputs: wires.public_inputs.clone(),
+            proof: Proof {
+                wires_cap: read_cap(&wires.cap)?,
+                plonk_zs_partial_products_cap: read_cap(&products.oracle.cap)?,
+                quotient_polys_cap: read_cap(&quotient.oracle.cap)?,
+                openings: openings.readback(&context)?,
+                opening_proof: FriProof {
+                    commit_phase_merkle_caps: fri_caps,
+                    query_round_proofs,
+                    final_poly,
+                    pow_witness,
+                },
+            },
+        };
+        circuit.verify(gpu_proof.clone())?;
+        // A malformed gathered sibling is not accepted by the CPU verifier.
+        gpu_proof.proof.opening_proof.query_round_proofs[0]
+            .initial_trees_proof
+            .evals_proofs[0]
+            .1
+            .siblings[0]
+            .elements[0] += F::ONE;
+        assert!(circuit.verify(gpu_proof).is_err());
         // Reuse the same prepared plans and workspace with zero alpha. This
         // changes the composition and catches stale weights/accumulation data.
         let mut encoder = workspace.begin(&context)?;

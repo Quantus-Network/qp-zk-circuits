@@ -9,6 +9,8 @@ use plonky2::field::types::Field;
 use plonky2::hash::poseidon::{Poseidon, ALL_ROUND_CONSTANTS};
 use std::sync::Arc;
 
+pub(super) const PERMUTATION: &str = include_str!("../shaders/poseidon_permutation.wgsl");
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EvaluationOrder {
     Natural,
@@ -22,9 +24,9 @@ pub struct PoseidonKernels {
     scatter: PreparedKernel,
     scatter_reversed: PreparedKernel,
     nodes: PreparedKernel,
-    circ: FixedFieldSlice,
-    diag: FixedFieldSlice,
-    constants: FixedFieldSlice,
+    pub(super) circ: FixedFieldSlice,
+    pub(super) diag: FixedFieldSlice,
+    pub(super) constants: FixedFieldSlice,
 }
 
 impl PoseidonKernels {
@@ -52,7 +54,10 @@ impl PoseidonKernels {
         let circ = upload(&F::MDS_MATRIX_CIRC)?;
         let diag = upload(&F::MDS_MATRIX_DIAG)?;
         let constants = upload(&constants)?;
-        let source = format!("{FIELD}\n{}", include_str!("../shaders/poseidon.wgsl"));
+        let source = format!(
+            "{FIELD}\n{PERMUTATION}\n{}",
+            include_str!("../shaders/poseidon.wgsl")
+        );
         let specs = [write(4), read(1), read(12), read(12), read(999)];
         Ok(Self {
             leaves: PreparedKernel::prepare_entry(
