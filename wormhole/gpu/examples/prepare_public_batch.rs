@@ -64,6 +64,10 @@ fn main() -> Result<()> {
         timings.quotient.as_secs_f64()
     );
     println!(
+        "Opening/FRI-input preparation: {:.3}s",
+        timings.openings.as_secs_f64()
+    );
+    println!(
         "Trace rows: {}; LDE rows: {}; quotient rows: {}; quotient LDE step: {}",
         prepared.degree(),
         prepared.evaluation_rows(),

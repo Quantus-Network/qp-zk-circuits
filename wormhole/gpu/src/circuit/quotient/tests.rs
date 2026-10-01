@@ -1,15 +1,21 @@
 use super::*;
+use plonky2::field::extension::quadratic::QuadraticExtension as E;
 use plonky2::field::polynomial::{PolynomialCoeffs, PolynomialValues};
-use plonky2::fri::FriParamsObserve;
+use plonky2::fri::structure::{FriOpeningBatch, FriOpenings};
+use plonky2::fri::{FriChallenger, FriParamsObserve};
 use plonky2::gates::noop::NoopGate;
+use plonky2::hash::merkle_tree::MerkleTree;
 use plonky2::hash::poseidon::PoseidonHash;
 use plonky2::iop::challenger::Challenger;
 use plonky2::iop::witness::WitnessWrite;
 use plonky2::plonk::circuit_builder::CircuitBuilder;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::plonk_common::reduce_with_powers_multi;
+use plonky2::plonk::proof::OpeningSet;
 use plonky2::plonk::prover::prove_with_partition_witness;
 use plonky2::plonk::vars::EvaluationVarsBaseBatch;
+use plonky2::util::reducing::ReducingFactor;
+use plonky2::util::reverse_index_bits_in_place;
 use plonky2::util::timing::TimingTree;
 
 #[test]
@@ -204,7 +210,7 @@ fn cpu_quotient_values(
 
 #[test]
 #[ignore = "requires a hardware GPU with native u64 shader support"]
-fn resident_products_and_quotient_match_cpu_prover_across_domains() -> Result<()> {
+fn resident_stages_through_fri_input_match_cpu_proof_across_domains() -> Result<()> {
     let context = futures::executor::block_on(DeviceContext::new())?;
     for (challenges, factor, rate) in [(2, 8, 3), (3, 7, 4)] {
         let mut config = CircuitConfig::standard_recursion_config();
@@ -240,10 +246,13 @@ fn resident_products_and_quotient_match_cpu_prover_across_domains() -> Result<()
         counts.extend_from_slice(prepared.permutation_workspace_field_counts());
         let qfirst = counts.len();
         counts.extend_from_slice(prepared.quotient_workspace_field_counts());
+        let ofirst = counts.len();
+        counts.extend_from_slice(prepared.opening_workspace_field_counts());
         let mut workspace = ProofWorkspace::prepare(&context, &counts)?;
         let wire_buffers = prepared.wire_buffers(&workspace, 0)?;
         let product_buffers = prepared.permutation_buffers(&workspace, pfirst)?;
         let quotient_buffers = prepared.quotient_buffers(&workspace, qfirst)?;
+        let opening_buffers = prepared.opening_buffers(&workspace, ofirst)?;
         let mut inputs = PartialWitness::new();
         inputs.set_target(input, F::NEG_ONE)?;
         let partition = generate_partial_witness(inputs, &circuit.prover_only, common)?;
@@ -376,6 +385,123 @@ fn resident_products_and_quotient_match_cpu_prover_across_domains() -> Result<()
             &cpu_quotient,
             prepared.evaluation_rows(),
         )?;
+        challenger.observe_cap::<PoseidonHash>(&cpu_quotient.merkle_tree.cap);
+        let zeta = challenger.get_extension_challenge::<2>();
+        let g = E::<F>::primitive_root_of_unity(common.degree_bits());
+        let cpu_openings = OpeningSet::new(
+            zeta,
+            g,
+            &circuit.prover_only.constants_sigmas_commitment,
+            &cpu_wires,
+            &cpu_products,
+            &cpu_quotient,
+            common,
+        );
+        assert_eq!(cpu_openings, cpu_proof.proof.openings);
+        let mut encoder = workspace.begin(&context)?;
+        assert_eq!(
+            opening_buffers
+                .encode_openings(&mut encoder, &wires, &products, &quotient, E::<F>::ONE)
+                .err()
+                .unwrap()
+                .to_string(),
+            "Opening point is in the subgroup."
+        );
+        let openings =
+            opening_buffers.encode_openings(&mut encoder, &wires, &products, &quotient, zeta)?;
+        encoder.submit()?.finish()?;
+        let gpu_openings = openings.readback(&context)?;
+        assert_eq!(gpu_openings, cpu_openings);
+        challenger.observe_openings(&FriOpenings::<F, 2> {
+            batches: vec![
+                FriOpeningBatch {
+                    values: [
+                        gpu_openings.constants,
+                        gpu_openings.plonk_sigmas,
+                        gpu_openings.wires,
+                        gpu_openings.plonk_zs,
+                        gpu_openings.partial_products,
+                        gpu_openings.quotient_polys,
+                    ]
+                    .concat(),
+                },
+                FriOpeningBatch {
+                    values: gpu_openings.plonk_zs_next,
+                },
+            ],
+        });
+        let alpha = challenger.get_extension_challenge::<2>();
+        let mut encoder = workspace.begin(&context)?;
+        let fri_input = opening_buffers.encode_fri_input(&mut encoder, &openings, alpha)?;
+        encoder.submit()?.finish()?;
+        let cpu_oracles = [
+            &circuit.prover_only.constants_sigmas_commitment,
+            &cpu_wires,
+            &cpu_products,
+            &cpu_quotient,
+        ];
+        let all = cpu_oracles
+            .iter()
+            .flat_map(|oracle| oracle.polynomials.iter().map(|p| p.to_extension::<2>()))
+            .collect::<Vec<_>>();
+        let next = cpu_products.polynomials[..challenges]
+            .iter()
+            .map(|p| p.to_extension::<2>())
+            .collect::<Vec<_>>();
+        let mut reduction = ReducingFactor::new(alpha);
+        let mut combined = PolynomialCoeffs::empty();
+        for (polynomials, point) in [(all, zeta), (next, g * zeta)] {
+            let composition = reduction.reduce_polys(polynomials.iter());
+            let mut quotient = composition.divide_by_linear(point);
+            quotient.coeffs.push(E::<F>::ZERO);
+            reduction.shift_poly(&mut combined);
+            combined += quotient;
+        }
+        let planes = |values: &[E<F>]| {
+            (0..2)
+                .flat_map(|component| values.iter().map(move |value| value.0[component]))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            context.readback(&fri_input.coefficients)?,
+            planes(&combined.coeffs)
+        );
+        let lde = combined
+            .padded(common.lde_size())
+            .coset_fft(E([F::coset_shift(), F::ZERO]));
+        assert_eq!(
+            context.readback(&fri_input.evaluations)?,
+            planes(&lde.values)
+        );
+        // Anchor the independent reduction oracle to the real CPU proof's
+        // first FRI cap, not only to a second implementation of the formula.
+        let mut leaves = lde.values;
+        reverse_index_bits_in_place(&mut leaves);
+        let arity = 1 << common.fri_params.reduction_arity_bits[0];
+        let tree = MerkleTree::<F, PoseidonHash>::new(
+            leaves
+                .chunks(arity)
+                .map(|chunk| chunk.iter().flat_map(|value| value.0).collect())
+                .collect(),
+            common.config.fri_config.cap_height,
+        );
+        assert_eq!(
+            tree.cap,
+            cpu_proof.proof.opening_proof.commit_phase_merkle_caps[0]
+        );
+        // Reuse the same prepared plans and workspace with zero alpha. This
+        // changes the composition and catches stale weights/accumulation data.
+        let mut encoder = workspace.begin(&context)?;
+        let zero_input = opening_buffers.encode_fri_input(&mut encoder, &openings, E::<F>::ZERO)?;
+        encoder.submit()?.finish()?;
+        let mut zero_expected = cpu_products.polynomials[0]
+            .to_extension::<2>()
+            .divide_by_linear(g * zeta);
+        zero_expected.coeffs.push(E::<F>::ZERO);
+        assert_eq!(
+            context.readback(&zero_input.coefficients)?,
+            planes(&zero_expected.coeffs)
+        );
         // Reuse the stage allocations without re-preparing pipelines. A zero
         // denominator must set the resident flag, not disappear via inverse(0).
         let mut encoder = workspace.begin(&context)?;

@@ -16,10 +16,14 @@ use plonky2::util::log2_ceil;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "constraint-export")]
+mod openings;
 mod oracle;
 mod permutation;
 #[cfg(feature = "constraint-export")]
 mod quotient;
+#[cfg(feature = "constraint-export")]
+pub use openings::{FriInput, OpeningBuffers, ResidentOpeningSet};
 pub use oracle::PolynomialCommitment;
 pub use permutation::{PermutationBuffers, PermutationCommitment};
 #[cfg(feature = "constraint-export")]
@@ -53,6 +57,7 @@ pub struct CircuitPreparationTimings {
     pub fixed_data: Duration,
     pub permutation: Duration,
     pub quotient: Duration,
+    pub openings: Duration,
 }
 
 /// Immutable constants/sigmas oracle, shared across proof workspaces. Batches
@@ -73,6 +78,8 @@ struct CircuitLayout {
     quotient_step: usize,
     columns_per_batch: usize,
     batch_columns: Vec<usize>,
+    #[cfg(feature = "constraint-export")]
+    openings: openings::OpeningLayout,
 }
 
 impl CircuitLayout {
@@ -135,6 +142,8 @@ impl CircuitLayout {
             "fixed oracle does not match circuit metadata"
         );
         validate_fixed_commitment(oracle, degree, lde_rows)?;
+        #[cfg(feature = "constraint-export")]
+        let openings = openings::OpeningLayout::new(common)?;
         let columns_per_batch =
             column_capacity(lde_rows, width, limit, options.max_columns_per_batch)?;
         Ok(Self {
@@ -144,6 +153,8 @@ impl CircuitLayout {
             quotient_step,
             columns_per_batch,
             batch_columns: batches(width, columns_per_batch),
+            #[cfg(feature = "constraint-export")]
+            openings,
         })
     }
 }
@@ -180,7 +191,9 @@ fn evaluation_domains(
 /// are in use. Wire-buffer views borrow this object and cannot switch circuits.
 ///
 /// Currently supports non-ZK Goldilocks/Poseidon circuits without lookups or
-/// degree lifting. These configurations fail before shader compilation.
+/// degree lifting. The opening stage supports the canonical raw-polynomial
+/// batches at zeta and g * zeta. Unsupported configurations or opening structures
+/// fail before shader compilation.
 pub struct PreparedCircuit<'a> {
     circuit: &'a CircuitData<F, C, 2>,
     layout: CircuitLayout,
@@ -195,6 +208,8 @@ pub struct PreparedCircuit<'a> {
     permutation: permutation::PreparedPermutation,
     #[cfg(feature = "constraint-export")]
     quotient: quotient::PreparedQuotient,
+    #[cfg(feature = "constraint-export")]
+    openings: openings::PreparedOpenings,
 }
 
 impl<'a> PreparedCircuit<'a> {
@@ -216,6 +231,8 @@ impl<'a> PreparedCircuit<'a> {
         let started = Instant::now();
         let poseidon = Arc::new(PoseidonKernels::prepare(context)?);
         let fft = Arc::new(FftKernels::prepare(context)?);
+        #[cfg(feature = "constraint-export")]
+        let extension = Arc::new(crate::ExtensionKernels::prepare(context)?);
         let gather = PreparedKernel::prepare(
             context,
             include_str!("shaders/witness.wgsl"),
@@ -295,6 +312,14 @@ impl<'a> PreparedCircuit<'a> {
             timings.quotient = started.elapsed();
             plan
         };
+        #[cfg(feature = "constraint-export")]
+        let openings = {
+            let started = Instant::now();
+            let plan =
+                openings::PreparedOpenings::prepare(context, common, &layout, options, extension)?;
+            timings.openings = started.elapsed();
+            plan
+        };
         let mut wire_workspace_fields = vec![representatives.len()];
         for &columns in &layout.batch_columns {
             wire_workspace_fields.extend([degree * columns, degree * columns, rows * columns]);
@@ -314,6 +339,8 @@ impl<'a> PreparedCircuit<'a> {
             permutation,
             #[cfg(feature = "constraint-export")]
             quotient,
+            #[cfg(feature = "constraint-export")]
+            openings,
         })
     }
 

@@ -2,15 +2,16 @@
 //!
 //! Enable `wgpu` to use the Metal/Vulkan execution backend. This crate currently
 //! supplies execution resources, prepared mathematical operations, and resident
-//! wire, permutation-product and quotient stages, not a selectable public-batch
-//! proving backend. PreparedCircuit retains the circuit's fixed oracle, FFT tables,
+//! wire, permutation-product, quotient, opening and FRI-input stages, not a
+//! selectable public-batch proving backend. PreparedCircuit retains the circuit's fixed oracle, FFT tables,
 //! wire-gather map, and pipelines across proof workspaces. CPU witness generators
 //! run before upload; gathering, FFTs, products, quotient evaluation and Merkle
-//! commitments run on GPU. The coordinator supplies transcript challenges.
+//! commitments, openings and FRI-input preparation run on GPU. The coordinator
+//! supplies transcript challenges and explicitly exports the small opening set.
 //! Encoding does not compile shaders, wait for the GPU, or export intermediate
 //! results.
 //!
-//! `constraint-export` additionally enables quotient evaluation. It requires
+//! `constraint-export` additionally enables quotient and opening stages. It requires
 //! the dependency's backend-neutral constraint exporter; until that is published,
 //! validation requires a local Cargo override, not a production dependency pin.
 //!
@@ -38,12 +39,15 @@ pub use circuit::{
 };
 
 #[cfg(feature = "constraint-export")]
-pub use circuit::{QuotientBuffers, QuotientCommitment};
+pub use circuit::{
+    FriInput, OpeningBuffers, QuotientBuffers, QuotientCommitment, ResidentOpeningSet,
+};
 
 #[cfg(feature = "wgpu")]
 pub use operations::{
-    ArithmeticKernels, ArithmeticPlan, CommitmentPlan, EvaluationOrder, FftKernels, FftPlan,
-    FieldOperation, PoseidonKernels, PrefixProductPlan,
+    ArithmeticKernels, ArithmeticPlan, CommitmentPlan, EvaluationOrder, ExtensionKernels,
+    FftKernels, FftPlan, FieldOperation, LinearDivisionPlan, PolynomialCombinationPlan,
+    PolynomialEvaluationPlan, PoseidonKernels, PrefixProductPlan,
 };
 
 #[cfg(feature = "constraint-export")]

@@ -4,6 +4,7 @@
 
 mod arithmetic;
 mod commitment;
+mod extension;
 mod fft;
 #[cfg(feature = "constraint-export")]
 mod quotient;
@@ -11,6 +12,11 @@ mod scan;
 
 pub use arithmetic::{ArithmeticKernels, ArithmeticPlan, FieldOperation};
 pub use commitment::{CommitmentPlan, EvaluationOrder, PoseidonKernels};
+#[cfg(feature = "constraint-export")]
+pub(crate) use extension::EXTENSION;
+pub use extension::{
+    ExtensionKernels, LinearDivisionPlan, PolynomialCombinationPlan, PolynomialEvaluationPlan,
+};
 pub use fft::{FftKernels, FftPlan};
 #[cfg(feature = "constraint-export")]
 pub use quotient::{QuotientLayout, QuotientPlan};
