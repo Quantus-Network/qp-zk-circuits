@@ -1,11 +1,12 @@
 //! GPU execution support for Wormhole proving.
 //!
 //! Enable `wgpu` to use the Metal/Vulkan execution backend. This crate currently
-//! supplies execution resources, prepared mathematical operations, and the
-//! witness-to-wire-commitment stage, not a selectable public-batch proving
-//! backend. PreparedCircuit retains the circuit's fixed oracle, FFT tables,
+//! supplies execution resources, prepared mathematical operations, and resident
+//! wire, permutation-product and quotient stages, not a selectable public-batch
+//! proving backend. PreparedCircuit retains the circuit's fixed oracle, FFT tables,
 //! wire-gather map, and pipelines across proof workspaces. CPU witness generators
-//! run before upload; column gathering, FFTs, and wire commitment run on GPU.
+//! run before upload; gathering, FFTs, products, quotient evaluation and Merkle
+//! commitments run on GPU. The coordinator supplies transcript challenges.
 //! Encoding does not compile shaders, wait for the GPU, or export intermediate
 //! results.
 //!
@@ -32,14 +33,17 @@ mod circuit;
 
 #[cfg(feature = "wgpu")]
 pub use circuit::{
-    CircuitPreparationTimings, FixedCommitment, PreparationOptions, PreparedCircuit, WireBuffers,
-    WireCommitment,
+    CircuitPreparationTimings, FixedCommitment, PermutationBuffers, PermutationCommitment,
+    PolynomialCommitment, PreparationOptions, PreparedCircuit, WireBuffers, WireCommitment,
 };
+
+#[cfg(feature = "constraint-export")]
+pub use circuit::{QuotientBuffers, QuotientCommitment};
 
 #[cfg(feature = "wgpu")]
 pub use operations::{
     ArithmeticKernels, ArithmeticPlan, CommitmentPlan, EvaluationOrder, FftKernels, FftPlan,
-    FieldOperation, PoseidonKernels,
+    FieldOperation, PoseidonKernels, PrefixProductPlan,
 };
 
 #[cfg(feature = "constraint-export")]

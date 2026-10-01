@@ -1,5 +1,5 @@
 use std::ops::Range;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{ensure, Context, Result};
@@ -20,6 +20,7 @@ pub struct DeviceContext {
     device: wgpu::Device,
     queue: wgpu::Queue,
     failure: Arc<Mutex<Option<String>>>,
+    command_buffers: Option<Arc<MetalCommandBufferPool>>,
 }
 
 fn record_failure(failure: &Mutex<Option<String>>, message: String) {
@@ -87,12 +88,15 @@ impl DeviceContext {
         device.on_uncaptured_error(Arc::new(move |error| {
             record_gpu_error(&callback, error);
         }));
+        let command_buffers = (info.backend == wgpu::Backend::Metal)
+            .then(|| Arc::new(MetalCommandBufferPool::new(METAL_COMMAND_BUFFERS)));
         let context = Self {
             id: NEXT_DEVICE_ID.fetch_add(1, Ordering::Relaxed),
             info,
             device,
             queue,
             failure,
+            command_buffers,
         };
         context.check_device()?;
         Ok(context)
@@ -197,12 +201,23 @@ impl DeviceContext {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
+        // Reclaim completed reservations before checking queue capacity; do not wait.
+        self.device
+            .poll(wgpu::PollType::Poll)
+            .context("poll completed work before field export")?;
         self.check_device()?;
+        let mut command_budget = MetalCommandBufferBudget::new(self.command_buffers.clone())?;
+        command_budget.copy()?;
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(buffer, offset, &staging, 0, bytes);
         let commands = encoder.finish();
-        self.check_device()?;
+        if let Err(error) = self.check_device() {
+            drop(commands);
+            return Err(error);
+        }
         self.queue.submit([commands]);
+        self.queue
+            .on_submitted_work_done(move || drop(command_budget));
         self.check_device()?;
         let (tx, rx) = std::sync::mpsc::channel();
         staging
@@ -678,22 +693,111 @@ impl ProofWorkspace {
             return Err(error);
         }
         self.completion.reclaim()?;
+        let command_budget = MetalCommandBufferBudget::new(context.command_buffers.clone())?;
         let commands = context.device.create_command_encoder(&Default::default());
         context.check_device()?;
         Ok(ProofEncoder {
             context,
             commands,
             workspace: self,
+            command_budget,
         })
     }
 }
 
 /// An exclusive workspace lease. All writes, copies and dispatches are queued
 /// in one command encoder; dropping it before submission discards them all.
+/// Excessive command fragmentation on Metal returns an error before submission;
+/// use larger row chunks or submit separate stage encoders in that case.
 pub struct ProofEncoder<'a> {
     context: &'a DeviceContext,
     workspace: &'a mut ProofWorkspace,
     commands: wgpu::CommandEncoder,
+    // Drop the native encoder before releasing its reservation on cancellation.
+    command_budget: MetalCommandBufferBudget,
+}
+
+// wgpu-hal 27's Metal queue permits 4096 outstanding native command buffers.
+// wgpu-core 27 records two per compute pass, plus one per contiguous copy run.
+// Reserve four per encoder for initialization/submission work. wgpu-core 27
+// materializes recorded passes at finish(), so reserve before recording and
+// retain capacity across all encoders until cancellation or GPU completion.
+// Other backends do not have this particular queue limit.
+const METAL_COMMAND_BUFFERS: usize = 4096;
+const SUBMISSION_OVERHEAD: usize = 4;
+
+struct MetalCommandBufferPool {
+    used: AtomicUsize,
+    limit: usize,
+}
+
+impl MetalCommandBufferPool {
+    fn new(limit: usize) -> Self {
+        Self {
+            used: AtomicUsize::new(0),
+            limit,
+        }
+    }
+
+    fn reserve(&self, count: usize) -> Result<()> {
+        ensure!(self.used.fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+            used.checked_add(count).filter(|&next| next <= self.limit)
+        }).is_ok(),
+            "Metal command-buffer capacity is in use; finish outstanding work or drop unsubmitted encoders");
+        Ok(())
+    }
+}
+
+struct MetalCommandBufferBudget {
+    pool: Option<Arc<MetalCommandBufferPool>>,
+    used: usize,
+    copying: bool,
+}
+
+impl MetalCommandBufferBudget {
+    fn new(pool: Option<Arc<MetalCommandBufferPool>>) -> Result<Self> {
+        let mut budget = Self {
+            pool,
+            used: 0,
+            copying: false,
+        };
+        budget.reserve(SUBMISSION_OVERHEAD)?;
+        Ok(budget)
+    }
+
+    fn reserve(&mut self, count: usize) -> Result<()> {
+        if let Some(pool) = &self.pool {
+            let used = self
+                .used
+                .checked_add(count)
+                .context("command count overflow")?;
+            ensure!(used <= METAL_COMMAND_BUFFERS,
+                "Metal command-buffer limit exceeded; use larger row chunks or separate submissions");
+            pool.reserve(count)?;
+            self.used = used;
+        }
+        Ok(())
+    }
+
+    fn copy(&mut self) -> Result<()> {
+        self.reserve(usize::from(!self.copying))?;
+        self.copying = true;
+        Ok(())
+    }
+
+    fn dispatch(&mut self) -> Result<()> {
+        self.reserve(2)?;
+        self.copying = false;
+        Ok(())
+    }
+}
+
+impl Drop for MetalCommandBufferBudget {
+    fn drop(&mut self) {
+        if let Some(pool) = &self.pool {
+            pool.used.fetch_sub(self.used, Ordering::AcqRel);
+        }
+    }
 }
 
 impl ProofEncoder<'_> {
@@ -729,6 +833,7 @@ impl ProofEncoder<'_> {
     ) -> Result<()> {
         self.validate(destination)?;
         ensure!(destination.len == values.len(), "upload length mismatch");
+        self.command_budget.copy()?;
         let bytes = values
             .iter()
             .flat_map(|value| value.to_canonical_u64().to_le_bytes())
@@ -779,6 +884,7 @@ impl ProofEncoder<'_> {
             *buffer != destination.buffer,
             "same-buffer copies are unsupported"
         );
+        self.command_budget.copy()?;
         self.commands.copy_buffer_to_buffer(
             buffer,
             offset,
@@ -923,6 +1029,7 @@ impl ProofEncoder<'_> {
                 .all(|&n| n > 0 && n <= self.context.limits().max_compute_workgroups_per_dimension),
             "invalid compute dispatch dimensions"
         );
+        self.command_budget.dispatch()?;
         let mut pass = self
             .commands
             .begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -960,23 +1067,30 @@ impl<'a> ProofEncoder<'a> {
     /// not release the workspace until its GPU completion callback fires.
     pub fn submit(self) -> Result<PendingSubmission<'a>> {
         self.context.check_device()?;
-        let commands = self.commands.finish();
-        self.context.check_device()?;
-        self.context.queue.submit([commands]);
-        let done = Arc::new(AtomicBool::new(false));
-        let callback = Arc::clone(&done);
-        self.context
-            .queue
-            .on_submitted_work_done(move || callback.store(true, Ordering::Release));
-        self.workspace.completion = Completion::Pending(done);
-        if let Err(error) = self.context.check_device() {
-            self.workspace.completion = Completion::Poisoned;
+        let Self {
+            context,
+            workspace,
+            commands,
+            command_budget,
+        } = self;
+        let commands = commands.finish();
+        if let Err(error) = context.check_device() {
+            drop(commands);
             return Err(error);
         }
-        Ok(PendingSubmission {
-            context: self.context,
-            workspace: self.workspace,
-        })
+        context.queue.submit([commands]);
+        let done = Arc::new(AtomicBool::new(false));
+        let callback = Arc::clone(&done);
+        context.queue.on_submitted_work_done(move || {
+            drop(command_budget);
+            callback.store(true, Ordering::Release);
+        });
+        workspace.completion = Completion::Pending(done);
+        if let Err(error) = context.check_device() {
+            workspace.completion = Completion::Poisoned;
+            return Err(error);
+        }
+        Ok(PendingSubmission { context, workspace })
     }
 }
 
@@ -995,6 +1109,95 @@ impl PendingSubmission<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metal_command_budget_counts_passes_and_copy_runs() -> Result<()> {
+        let pool = Arc::new(MetalCommandBufferPool::new(METAL_COMMAND_BUFFERS));
+        let mut budget = MetalCommandBufferBudget::new(Some(pool.clone()))?;
+        for _ in 0..10000 {
+            budget.copy()?;
+        }
+        assert_eq!(budget.used, SUBMISSION_OVERHEAD + 1);
+        budget.dispatch()?;
+        budget.copy()?;
+        assert_eq!(budget.used, SUBMISSION_OVERHEAD + 4);
+        for _ in 0..(METAL_COMMAND_BUFFERS - SUBMISSION_OVERHEAD - 4) / 2 {
+            budget.dispatch()?;
+        }
+        let before = budget.used;
+        assert_eq!(
+            budget.dispatch().unwrap_err().to_string(),
+            "Metal command-buffer limit exceeded; use larger row chunks or separate submissions"
+        );
+        assert_eq!(budget.used, before);
+        assert_eq!(pool.used.load(Ordering::Acquire), before);
+        drop(budget);
+        assert_eq!(pool.used.load(Ordering::Acquire), 0);
+        let mut other = MetalCommandBufferBudget::new(None)?;
+        for _ in 0..METAL_COMMAND_BUFFERS {
+            other.dispatch()?;
+            other.copy()?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn metal_command_capacity_is_shared_until_cancel_or_completion() -> Result<()> {
+        let pool = Arc::new(MetalCommandBufferPool::new(16));
+        let mut first = MetalCommandBufferBudget::new(Some(pool.clone()))?;
+        first.reserve(8)?;
+        let mut second = MetalCommandBufferBudget::new(Some(pool.clone()))?;
+        assert_eq!(pool.used.load(Ordering::Acquire), 16);
+        let shared_error = "Metal command-buffer capacity is in use; finish outstanding work or drop unsubmitted encoders";
+        assert_eq!(second.copy().unwrap_err().to_string(), shared_error);
+        assert_eq!(second.used, SUBMISSION_OVERHEAD);
+        assert!(!second.copying);
+        assert!(MetalCommandBufferBudget::new(Some(pool.clone())).is_err());
+        assert_eq!(pool.used.load(Ordering::Acquire), 16);
+        // Cancellation releases only the cancelled encoder's reservation.
+        drop(first);
+        second.copy()?;
+        assert_eq!(pool.used.load(Ordering::Acquire), 5);
+        // Transfer ownership as submit() does: no release until the callback.
+        let complete = move || drop(second);
+        let mut third = MetalCommandBufferBudget::new(Some(pool.clone()))?;
+        assert_eq!(third.reserve(8).unwrap_err().to_string(), shared_error);
+        complete();
+        third.reserve(8)?;
+        drop(third);
+        assert_eq!(pool.used.load(Ordering::Acquire), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn metal_command_reservations_are_atomic_between_encoders() -> Result<()> {
+        let pool = Arc::new(MetalCommandBufferPool::new(12));
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        std::thread::scope(|scope| {
+            let mut workers = Vec::new();
+            for _ in 0..2 {
+                let pool = pool.clone();
+                let barrier = barrier.clone();
+                workers.push(scope.spawn(move || -> Result<()> {
+                    let mut budget = MetalCommandBufferBudget::new(Some(pool))?;
+                    budget.dispatch()?;
+                    barrier.wait();
+                    assert!(budget.copy().is_err());
+                    barrier.wait();
+                    Ok(())
+                }));
+            }
+            barrier.wait();
+            assert_eq!(pool.used.load(Ordering::Acquire), 12);
+            barrier.wait();
+            for worker in workers {
+                worker.join().unwrap()?;
+            }
+            Ok::<_, anyhow::Error>(())
+        })?;
+        assert_eq!(pool.used.load(Ordering::Acquire), 0);
+        Ok(())
+    }
 
     #[test]
     fn buffer_sizes_are_checked() {
@@ -1054,7 +1257,7 @@ mod tests {
     #[test]
     #[ignore = "requires a hardware GPU with native u64 shader support"]
     fn hardware_upload_copy_export_and_reuse() -> Result<()> {
-        let context = futures::executor::block_on(DeviceContext::new())?;
+        let mut context = futures::executor::block_on(DeviceContext::new())?;
         let mut workspace = ProofWorkspace::prepare(&context, &[4, 2])?;
         assert_eq!(workspace.allocated_bytes(), 48);
         let source = workspace.buffer(0)?;
@@ -1103,6 +1306,66 @@ mod tests {
         }
         other.wait(&context)?;
         drop(other.begin(&context)?);
+        if context.info.backend == wgpu::Backend::Metal {
+            let before = context.readback(&destination)?;
+            // A small shared cap exercises rejection without approaching the
+            // actual native queue limit. Cancel both encoders without submit.
+            let pool = Arc::new(MetalCommandBufferPool::new(16));
+            context.command_buffers = Some(pool.clone());
+            let mut first = workspace.begin(&context)?;
+            let first_bindings = first.bind(
+                &kernel,
+                &[FieldBinding::ReadWrite(&destination)],
+                "shared capacity test",
+            )?;
+            for _ in 0..3 {
+                first.dispatch(&kernel, &first_bindings, [2, 1, 1], "shared capacity test")?;
+            }
+            let mut second = other.begin(&context)?;
+            let bindings = second.bind(
+                &kernel,
+                &[FieldBinding::ReadWrite(&foreign)],
+                "shared capacity test",
+            )?;
+            second.dispatch(&kernel, &bindings, [2, 1, 1], "shared capacity test")?;
+            let shared_error = "Metal command-buffer capacity is in use; finish outstanding work or drop unsubmitted encoders";
+            assert_eq!(
+                first
+                    .dispatch(&kernel, &first_bindings, [2, 1, 1], "shared capacity test")
+                    .unwrap_err()
+                    .to_string(),
+                shared_error
+            );
+            assert_eq!(
+                context.readback(&destination).unwrap_err().to_string(),
+                shared_error
+            );
+            assert_eq!(pool.used.load(Ordering::Acquire), 16);
+            drop(second);
+            drop(first);
+            assert_eq!(pool.used.load(Ordering::Acquire), 0);
+            assert_eq!(context.readback(&destination)?, before);
+            let mut encoder = workspace.begin(&context)?;
+            encoder.copy(&source.slice(1..3)?, &destination)?;
+            encoder.submit()?.finish()?;
+            assert_eq!(pool.used.load(Ordering::Acquire), 0);
+            // An idle queue can still have reservations awaiting a callback.
+            // Readback must process that callback before reserving capacity.
+            let mut completed = MetalCommandBufferBudget::new(Some(pool.clone()))?;
+            completed.reserve(12)?;
+            context
+                .queue
+                .on_submitted_work_done(move || drop(completed));
+            assert_eq!(pool.used.load(Ordering::Acquire), 16);
+            assert_eq!(context.readback(&destination)?.len(), destination.len());
+            assert_eq!(pool.used.load(Ordering::Acquire), 0);
+            // Dropping the public token must not release a submitted reservation.
+            {
+                let _pending = other.begin(&context)?.submit()?;
+            }
+            other.wait(&context)?;
+            assert_eq!(pool.used.load(Ordering::Acquire), 0);
+        }
         context.device.destroy();
         assert!(workspace.begin(&context).is_err());
         Ok(())

@@ -145,6 +145,21 @@ impl QuotientPlan {
                 == self.workspace_field_counts(),
             "quotient buffer shape mismatch"
         );
+        self.encode_weights(encoder, scalars, weights)?;
+        self.encode_rows(encoder, rows, scalars, weights, output)
+    }
+
+    pub(crate) fn encode_weights<'a>(
+        &self,
+        encoder: &mut ProofEncoder<'_>,
+        scalars: impl Into<FieldSource<'a>>,
+        weights: &DeviceFieldSlice,
+    ) -> Result<()> {
+        let scalars = scalars.into();
+        ensure!(
+            scalars.len() == self.layout.scalar_count && weights.len() == self.challenges,
+            "quotient weight buffer shape mismatch"
+        );
         let group = encoder.bind(
             &self.powers,
             &[
@@ -154,6 +169,24 @@ impl QuotientPlan {
             "quotient alpha powers",
         )?;
         encoder.dispatch(&self.powers, &group, [1, 1, 1], "quotient alpha powers")?;
+        Ok(())
+    }
+
+    pub(crate) fn encode_rows<'a>(
+        &self,
+        encoder: &mut ProofEncoder<'_>,
+        rows: impl Into<FieldSource<'a>>,
+        scalars: impl Into<FieldSource<'a>>,
+        weights: &DeviceFieldSlice,
+        output: &DeviceFieldSlice,
+    ) -> Result<()> {
+        let rows = rows.into();
+        let scalars = scalars.into();
+        ensure!(
+            [rows.len(), scalars.len(), weights.len(), output.len()]
+                == self.workspace_field_counts(),
+            "quotient buffer shape mismatch"
+        );
         let inputs = [
             FieldBinding::ReadWrite(output),
             FieldBinding::Read(rows),
@@ -174,7 +207,7 @@ impl QuotientPlan {
 }
 
 impl QuotientLayout {
-    fn new(common: &CommonCircuitData<F, 2>) -> Self {
+    pub(crate) fn new(common: &CommonCircuitData<F, 2>) -> Self {
         let c = common.config.num_challenges;
         let constants = 0;
         let sigmas = common.num_constants;

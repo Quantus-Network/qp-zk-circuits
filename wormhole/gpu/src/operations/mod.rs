@@ -7,26 +7,28 @@ mod commitment;
 mod fft;
 #[cfg(feature = "constraint-export")]
 mod quotient;
+mod scan;
 
 pub use arithmetic::{ArithmeticKernels, ArithmeticPlan, FieldOperation};
 pub use commitment::{CommitmentPlan, EvaluationOrder, PoseidonKernels};
 pub use fft::{FftKernels, FftPlan};
 #[cfg(feature = "constraint-export")]
 pub use quotient::{QuotientLayout, QuotientPlan};
+pub use scan::PrefixProductPlan;
 
 use crate::runtime::{BindingAccess, FieldBindingSpec};
 use anyhow::{ensure, Result};
 
-const FIELD: &str = include_str!("../shaders/field.wgsl");
+pub(crate) const FIELD: &str = include_str!("../shaders/field.wgsl");
 
-fn read(min_elements: usize) -> FieldBindingSpec {
+pub(crate) fn read(min_elements: usize) -> FieldBindingSpec {
     FieldBindingSpec {
         access: BindingAccess::Read,
         min_elements,
     }
 }
 
-fn write(min_elements: usize) -> FieldBindingSpec {
+pub(crate) fn write(min_elements: usize) -> FieldBindingSpec {
     FieldBindingSpec {
         access: BindingAccess::ReadWrite,
         min_elements,

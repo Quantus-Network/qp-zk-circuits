@@ -1,4 +1,4 @@
-//! Circuit-invariant preparation and the first resident proving stage.
+//! Circuit-invariant preparation and resident proving stages.
 use crate::runtime::{BindingAccess, FieldBinding, FieldBindingSpec, PreparedKernel};
 use crate::{
     CommitmentPlan, DeviceContext, DeviceFieldSlice, EvaluationOrder, FftKernels, FftPlan,
@@ -15,6 +15,15 @@ use plonky2::plonk::config::PoseidonGoldilocksConfig as C;
 use plonky2::util::log2_ceil;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+mod oracle;
+mod permutation;
+#[cfg(feature = "constraint-export")]
+mod quotient;
+pub use oracle::PolynomialCommitment;
+pub use permutation::{PermutationBuffers, PermutationCommitment};
+#[cfg(feature = "constraint-export")]
+pub use quotient::{QuotientBuffers, QuotientCommitment};
 
 /// Resource limits, not protocol parameters. Column batches are further bounded
 /// by the adapter's storage-binding limit. Chunk sizes bound reusable scratch.
@@ -42,6 +51,7 @@ pub struct CircuitPreparationTimings {
     pub kernels: Duration,
     pub fft_tables: Duration,
     pub fixed_data: Duration,
+    pub permutation: Duration,
     pub quotient: Duration,
 }
 
@@ -182,8 +192,9 @@ pub struct PreparedCircuit<'a> {
     fixed: FixedCommitment,
     wire_workspace_fields: Vec<usize>,
     timings: CircuitPreparationTimings,
+    permutation: permutation::PreparedPermutation,
     #[cfg(feature = "constraint-export")]
-    quotient: crate::QuotientPlan,
+    quotient: quotient::PreparedQuotient,
 }
 
 impl<'a> PreparedCircuit<'a> {
@@ -203,7 +214,7 @@ impl<'a> PreparedCircuit<'a> {
         let width = common.config.num_wires;
         let representatives = &circuit.prover_only.representative_map;
         let started = Instant::now();
-        let commitment = Arc::new(PoseidonKernels::prepare(context)?);
+        let poseidon = Arc::new(PoseidonKernels::prepare(context)?);
         let fft = Arc::new(FftKernels::prepare(context)?);
         let gather = PreparedKernel::prepare(
             context,
@@ -230,10 +241,11 @@ impl<'a> PreparedCircuit<'a> {
         };
         let started = Instant::now();
         let inverse = FftPlan::prepare_inverse(context, Arc::clone(&fft), degree, F::ONE)?;
-        let forward = FftPlan::prepare_coset(context, fft, degree, rows, F::coset_shift())?;
+        let forward =
+            FftPlan::prepare_coset(context, Arc::clone(&fft), degree, rows, F::coset_shift())?;
         let commitment = CommitmentPlan::prepare_chunked(
             context,
-            commitment,
+            Arc::clone(&poseidon),
             rows,
             width,
             common.config.fri_config.cap_height,
@@ -265,13 +277,20 @@ impl<'a> PreparedCircuit<'a> {
             layout.columns_per_batch,
         )?;
         timings.fixed_data = started.elapsed();
+        let started = Instant::now();
+        let permutation = permutation::PreparedPermutation::prepare(
+            context,
+            circuit,
+            &layout,
+            options,
+            Arc::clone(&poseidon),
+        )?;
+        timings.permutation = started.elapsed();
         #[cfg(feature = "constraint-export")]
         let quotient = {
             let started = Instant::now();
-            let plan = crate::QuotientPlan::prepare(
-                context,
-                common,
-                options.quotient_chunk_rows.min(layout.quotient_rows),
+            let plan = quotient::PreparedQuotient::prepare(
+                context, circuit, &layout, options, poseidon, fft,
             )?;
             timings.quotient = started.elapsed();
             plan
@@ -292,6 +311,7 @@ impl<'a> PreparedCircuit<'a> {
             fixed,
             wire_workspace_fields,
             timings,
+            permutation,
             #[cfg(feature = "constraint-export")]
             quotient,
         })
@@ -331,7 +351,7 @@ impl<'a> PreparedCircuit<'a> {
 
     #[cfg(feature = "constraint-export")]
     pub fn quotient_plan(&self) -> &crate::QuotientPlan {
-        &self.quotient
+        &self.quotient.evaluation
     }
 
     /// Append these counts to the shared per-proof allocation plan. Other

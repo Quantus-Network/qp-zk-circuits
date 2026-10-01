@@ -56,6 +56,10 @@ fn main() -> Result<()> {
         timings.fixed_data.as_secs_f64()
     );
     println!(
+        "Permutation preparation: {:.3}s",
+        timings.permutation.as_secs_f64()
+    );
+    println!(
         "Specialized quotient preparation: {:.3}s",
         timings.quotient.as_secs_f64()
     );
