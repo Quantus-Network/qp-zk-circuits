@@ -264,8 +264,13 @@ impl PublicBatchProver {
     /// proves the circuit with the backend selected during initialization.
     /// CPU proving is the default.
     pub fn prove_batch(&self, inputs: PublicBatchInputs) -> Result<ProofWithPublicInputs<F, C, D>> {
+        #[cfg(feature = "gpu")]
+        let admission = crate::profiling::HostOperation::new("admission_and_witness_fill");
+        let witness = self.build_witness(inputs)?;
+        #[cfg(feature = "gpu")]
+        drop(admission);
         self.backend
-            .prove(&self.circuit_data, self.build_witness(inputs)?)
+            .prove(&self.circuit_data, witness)
             .context("Failed to prove public-batch aggregation circuit")
     }
 

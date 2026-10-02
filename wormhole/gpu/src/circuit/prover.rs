@@ -63,9 +63,10 @@ impl PreparedCircuit<'_> {
         workspace: &mut ProofWorkspace,
         inputs: PartialWitness<F>,
     ) -> Result<ProofWithPublicInputs<F, C, 2>> {
-        let partition =
+        let partition = crate::profiling::measure("witness_generation", || {
             generate_partial_witness(inputs, &self.circuit.prover_only, &self.circuit.common)
-                .context("generate proving witness")?;
+                .context("generate proving witness")
+        })?;
         self.prove_with_partition_witness(context, workspace, partition)
     }
 
@@ -83,6 +84,7 @@ impl PreparedCircuit<'_> {
         workspace: &mut ProofWorkspace,
         partition: PartitionWitness<'_, F>,
     ) -> Result<ProofWithPublicInputs<F, C, 2>> {
+        let _proof = crate::profiling::HostOperation::new("gpu_prove");
         let layout = self.proving_workspace_layout();
         let [wfirst, pfirst, qfirst, ofirst, ffirst, tfirst] = layout.first;
         // Resolve and validate all stage views before recording any commands.
@@ -94,11 +96,13 @@ impl PreparedCircuit<'_> {
         let tail = self.proof_tail_buffers(workspace, tfirst)?;
         workspace.wait(context)?;
 
+        let phase = enter_phase("wires", None);
         let mut encoder = workspace.begin(context)?;
         let wires = wires.encode_generated(&mut encoder, partition)?;
         encoder.submit()?.finish().context("commit witness wires")?;
         let wires_cap = read_cap(context, &wires.cap)?;
 
+        let transcript = crate::profiling::HostOperation::new("transcript");
         let common = &self.circuit.common;
         let public_inputs_hash =
             <C as GenericConfig<2>>::InnerHasher::hash_no_pad(&wires.public_inputs);
@@ -111,7 +115,10 @@ impl PreparedCircuit<'_> {
         challenger.observe_cap::<<C as GenericConfig<2>>::Hasher>(&wires_cap);
         let betas = challenger.get_n_challenges(common.config.num_challenges);
         let gammas = challenger.get_n_challenges(common.config.num_challenges);
+        drop(transcript);
+        drop(phase);
 
+        let phase = enter_phase("permutation", None);
         let mut encoder = workspace.begin(context)?;
         let products = products.encode(&mut encoder, &wires, &betas, &gammas)?;
         encoder
@@ -120,9 +127,13 @@ impl PreparedCircuit<'_> {
             .context("commit permutation products")?;
         products.check_status(context)?;
         let products_cap = read_cap(context, &products.oracle.cap)?;
+        let transcript = crate::profiling::HostOperation::new("transcript");
         challenger.observe_cap::<<C as GenericConfig<2>>::Hasher>(&products_cap);
         let alphas = challenger.get_n_challenges(common.config.num_challenges);
+        drop(transcript);
+        drop(phase);
 
+        let phase = enter_phase("quotient", None);
         let mut encoder = workspace.begin(context)?;
         let quotient = quotient.encode(&mut encoder, &wires, &products, &alphas)?;
         encoder
@@ -131,9 +142,13 @@ impl PreparedCircuit<'_> {
             .context("commit quotient polynomials")?;
         quotient.check_status(context)?;
         let quotient_cap = read_cap(context, &quotient.oracle.cap)?;
+        let transcript = crate::profiling::HostOperation::new("transcript");
         challenger.observe_cap::<<C as GenericConfig<2>>::Hasher>(&quotient_cap);
         let zeta = challenger.get_extension_challenge::<2>();
+        drop(transcript);
+        drop(phase);
 
+        let phase = enter_phase("openings", None);
         let mut encoder = workspace.begin(context)?;
         let resident_openings =
             openings.encode_openings(&mut encoder, &wires, &products, &quotient, zeta)?;
@@ -142,11 +157,15 @@ impl PreparedCircuit<'_> {
             .finish()
             .context("evaluate polynomial openings")?;
         let opening_set = resident_openings.readback(context)?;
+        let transcript = crate::profiling::HostOperation::new("transcript");
         observe_openings(&mut challenger, &opening_set);
         let alpha = challenger.get_extension_challenge::<2>();
+        drop(transcript);
+        drop(phase);
 
         // Compose FRI-input generation with the first commitment. After each
         // cap, compose the fold with the next commitment in one submission.
+        let phase = enter_phase("fri_input_and_first_commitment", None);
         let mut encoder = workspace.begin(context)?;
         let input = openings.encode_fri_input(&mut encoder, &resident_openings, alpha)?;
         let mut pending = if fri.round_count() > 0 {
@@ -161,15 +180,19 @@ impl PreparedCircuit<'_> {
             .submit()?
             .finish()
             .context("prepare FRI input and first commitment")?;
+        drop(phase);
         let mut coefficients = input.coefficients;
         let mut commitments = Vec::with_capacity(fri.round_count());
         let mut caps = Vec::with_capacity(fri.round_count());
         for index in 0..fri.round_count() {
+            let phase = enter_phase("fri_fold_and_next_commitment", Some(index));
             let commitment = pending.take().context("missing FRI round commitment")?;
             let cap = read_cap(context, &commitment.cap)?;
+            let transcript = crate::profiling::HostOperation::new("transcript");
             challenger.observe_cap::<<C as GenericConfig<2>>::Hasher>(&cap);
             caps.push(cap);
             let beta = challenger.get_extension_challenge::<2>();
+            drop(transcript);
             let mut encoder = workspace.begin(context)?;
             let folded = fri
                 .round(index)?
@@ -188,14 +211,22 @@ impl PreparedCircuit<'_> {
                 .context("fold FRI round and commit next layer")?;
             coefficients = folded.coefficients;
             commitments.push(commitment);
+            drop(phase);
         }
+        let phase = enter_phase("final_polynomial", None);
         let final_poly = read_final_poly(context, &coefficients)?;
-        challenger.observe_extension_elements::<2>(&final_poly.coeffs);
+        crate::profiling::measure("transcript", || {
+            challenger.observe_extension_elements::<2>(&final_poly.coeffs)
+        });
+        drop(phase);
 
+        let phase = enter_phase("pow", None);
         let mut base = 0;
+        let mut chunks = 0u64;
         let pow_witness = loop {
             let mut encoder = workspace.begin(context)?;
             let result = tail.encode_pow(&mut encoder, &challenger, base)?;
+            chunks += 1;
             encoder
                 .submit()?
                 .finish()
@@ -205,7 +236,13 @@ impl PreparedCircuit<'_> {
             }
             base = next_pow_base(base, self.pow_chunk_trials())?;
         };
-        let challenges = challenger.get_n_challenges(common.config.fri_config.num_query_rounds);
+        tracing::debug!(target: "qp_wormhole_gpu::profile", pow_chunks = chunks,
+            pow_trials_dispatched = chunks * self.pow_chunk_trials() as u64, "FRI grind");
+        drop(phase);
+        let challenges = crate::profiling::measure("transcript", || {
+            challenger.get_n_challenges(common.config.fri_config.num_query_rounds)
+        });
+        let phase = enter_phase("queries", None);
         let mut encoder = workspace.begin(context)?;
         let queries = tail.encode_queries(
             &mut encoder,
@@ -217,6 +254,8 @@ impl PreparedCircuit<'_> {
         )?;
         encoder.submit()?.finish().context("gather proof queries")?;
         let query_round_proofs = queries.readback(context)?;
+        drop(phase);
+        let _assembly = crate::profiling::HostOperation::new("proof_assembly");
         Ok(ProofWithPublicInputs {
             public_inputs: wires.public_inputs,
             proof: Proof {
@@ -233,6 +272,10 @@ impl PreparedCircuit<'_> {
             },
         })
     }
+}
+
+fn enter_phase(name: &'static str, round: Option<usize>) -> crate::profiling::HostOperation {
+    crate::profiling::HostOperation::phase(name, round)
 }
 
 fn next_pow_base(base: u64, trials: usize) -> Result<u64> {

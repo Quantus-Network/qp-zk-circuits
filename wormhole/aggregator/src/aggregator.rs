@@ -177,6 +177,8 @@ impl ProvingContext {
     /// without holding whatever lock guards the aggregator — this context is
     /// owned, so nothing here needs the lock.
     pub fn prove_batch(&self, proofs: Vec<Proof>) -> Result<Proof> {
+        #[cfg(feature = "gpu")]
+        let _proof = crate::profiling::HostOperation::new("public_batch_prove");
         // Admission checks (count bounds, public-input shape, cryptographic
         // verification, batch compatibility) run inside the prover before
         // witness filling, so a known-bad proof vector fails in milliseconds.
@@ -192,6 +194,8 @@ impl ProvingContext {
             })
             .context("public-batch proving failed")?;
 
+        #[cfg(feature = "gpu")]
+        let _verification = crate::profiling::HostOperation::new("final_verification");
         self.verify(proof.clone())
             .context("proved public-batch proof rejected by the aggregator's pinned verifier")?;
         Ok(proof)

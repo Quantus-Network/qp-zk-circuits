@@ -3,13 +3,16 @@
 //! Dataset A is full-0.bin through full-52.bin; B is full-53.bin through full-105.bin.
 //! Initialization, input loading and output checks are outside the proof timer.
 //! ProvingContext::prove_batch includes admission, witness generation and final verification.
+//! Add --profile for host telemetry; --timestamps also enables GPU pass timing.
+#[path = "support/profile.rs"]
+mod profile;
 use anyhow::{ensure, Context, Result};
 use plonky2::field::types::PrimeField64;
 use plonky2::plonk::config::{GenericConfig, Hasher};
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_aggregator::aggregator::PublicBatchAggregator;
 use qp_wormhole_aggregator::CircuitBinsConfig;
-use qp_wormhole_gpu::{DeviceContext, PreparationOptions};
+use qp_wormhole_gpu::{DeviceContext, DeviceOptions, PreparationOptions};
 use qp_wormhole_inputs::{BytesDigest, PrivateBatchPublicInputs, PublicBatchPublicInputs};
 use std::{collections::BTreeSet, path::PathBuf, sync::Arc, time::Instant};
 use zk_circuits_common::circuit::{C, D, F};
@@ -70,11 +73,31 @@ fn check_output(proof: &Proof, inputs: &[Proof], address: BytesDigest) -> Result
 }
 
 fn main() -> Result<()> {
-    let mut args = std::env::args().skip(1);
+    let arguments: Vec<_> = std::env::args().skip(1).collect();
+    let timestamps = arguments.iter().any(|arg| arg == "--timestamps");
+    let enabled = timestamps || arguments.iter().any(|arg| arg == "--profile");
+    let profile = profile::Profile::default();
+    if enabled {
+        tracing::dispatcher::with_default(&profile.dispatcher(), || {
+            run(arguments, timestamps, Some(&profile))
+        })
+    } else {
+        run(arguments, false, None)
+    }
+}
+
+fn run(arguments: Vec<String>, timestamps: bool, profile: Option<&profile::Profile>) -> Result<()> {
+    let mut args = arguments
+        .into_iter()
+        .filter(|arg| arg != "--profile" && arg != "--timestamps");
     let backend = args.next().context("expected cpu or gpu backend")?;
     ensure!(
         matches!(backend.as_str(), "cpu" | "gpu"),
         "expected cpu or gpu backend"
+    );
+    ensure!(
+        !timestamps || backend == "gpu",
+        "GPU timestamps require the GPU backend"
     );
     let dir = PathBuf::from(args.next().context("expected fixture directory")?);
     let mut cases: Vec<_> = args.collect();
@@ -102,7 +125,12 @@ fn main() -> Result<()> {
     let mut gpu_init = 0.0;
     if backend == "gpu" {
         let device_started = Instant::now();
-        let context = Arc::new(futures::executor::block_on(DeviceContext::new())?);
+        let context = Arc::new(futures::executor::block_on(DeviceContext::with_options(
+            DeviceOptions {
+                timestamps,
+                ..Default::default()
+            },
+        ))?);
         device_init = device_started.elapsed().as_secs_f64();
         println!("[adapter] {:?}", context.adapter_info());
         let gpu_started = Instant::now();
@@ -119,6 +147,9 @@ fn main() -> Result<()> {
             "arity":ARITY, "leaves":LEAVES
         })
     );
+    if let Some(profile) = profile {
+        profile.print("initialization");
+    }
     let mut datasets = Vec::new();
     for case in &cases {
         let first = if case == "a" { 0 } else { ARITY };
@@ -139,6 +170,9 @@ fn main() -> Result<()> {
         let started = Instant::now();
         let proof = worker.prove_batch(inputs)?;
         let seconds = started.elapsed().as_secs_f64();
+        if let Some(profile) = profile {
+            profile.print(&case);
+        }
         check_output(&proof, &expected, address)?;
         if let Some((_, pis)) = seen.iter().find(|(name, _)| *name == case) {
             ensure!(

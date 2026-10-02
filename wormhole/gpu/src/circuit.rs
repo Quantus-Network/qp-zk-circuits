@@ -1,4 +1,5 @@
 //! Circuit-invariant preparation and resident proving stages.
+use crate::profiling::HostOperation;
 use crate::runtime::{BindingAccess, FieldBinding, FieldBindingSpec, PreparedKernel};
 use crate::{
     CommitmentPlan, DeviceContext, DeviceFieldSlice, EvaluationOrder, FftKernels, FftPlan,
@@ -15,7 +16,6 @@ use plonky2::plonk::config::PoseidonGoldilocksConfig as C;
 use plonky2::util::log2_ceil;
 use std::ops::Deref;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 #[cfg(feature = "constraint-export")]
 mod fri;
@@ -57,20 +57,6 @@ impl Default for PreparationOptions {
             quotient_chunk_rows: 1 << 16,
         }
     }
-}
-
-/// Host wall time for initialization, including native pipeline creation.
-/// These are not GPU execution timestamps or per-proof measurements.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct CircuitPreparationTimings {
-    pub kernels: Duration,
-    pub fft_tables: Duration,
-    pub fixed_data: Duration,
-    pub permutation: Duration,
-    pub quotient: Duration,
-    pub openings: Duration,
-    pub fri: Duration,
-    pub proof_tail: Duration,
 }
 
 /// Immutable constants/sigmas oracle, shared across proof workspaces. Batches
@@ -257,7 +243,6 @@ pub struct PreparedCircuit<'a> {
     commitment: CommitmentPlan,
     fixed: FixedCommitment,
     wire_workspace_fields: Vec<usize>,
-    timings: CircuitPreparationTimings,
     permutation: permutation::PreparedPermutation,
     #[cfg(feature = "constraint-export")]
     quotient: quotient::PreparedQuotient,
@@ -293,6 +278,7 @@ impl<'a> PreparedCircuit<'a> {
         source: CircuitDataSource<'a>,
         options: PreparationOptions,
     ) -> Result<Self> {
+        let _preparation = HostOperation::new("circuit_preparation");
         let circuit = &*source;
         let limit = context
             .limits()
@@ -304,7 +290,7 @@ impl<'a> PreparedCircuit<'a> {
         let rows = layout.lde_rows;
         let width = common.config.num_wires;
         let representatives = &circuit.prover_only.representative_map;
-        let started = Instant::now();
+        let preparation = HostOperation::new("shared_kernels_preparation");
         let poseidon = Arc::new(PoseidonKernels::prepare(context)?);
         let fft = Arc::new(FftKernels::prepare(context)?);
         #[cfg(feature = "constraint-export")]
@@ -334,11 +320,8 @@ impl<'a> PreparedCircuit<'a> {
             ],
             "witness wire gathering",
         )?;
-        let mut timings = CircuitPreparationTimings {
-            kernels: started.elapsed(),
-            ..Default::default()
-        };
-        let started = Instant::now();
+        drop(preparation);
+        let preparation = HostOperation::new("fft_tables_preparation");
         let inverse = FftPlan::prepare_inverse(context, Arc::clone(&fft), degree, F::ONE)?;
         let forward =
             FftPlan::prepare_coset(context, Arc::clone(&fft), degree, rows, F::coset_shift())?;
@@ -351,8 +334,8 @@ impl<'a> PreparedCircuit<'a> {
             EvaluationOrder::BitReversed,
             options.commitment_chunk_rows,
         )?;
-        timings.fft_tables = started.elapsed();
-        let started = Instant::now();
+        drop(preparation);
+        let preparation = HostOperation::new("fixed_data_preparation");
         let mut first_column = 0;
         let wire_maps = layout
             .batch_columns
@@ -375,8 +358,8 @@ impl<'a> PreparedCircuit<'a> {
             rows,
             layout.columns_per_batch,
         )?;
-        timings.fixed_data = started.elapsed();
-        let started = Instant::now();
+        drop(preparation);
+        let preparation = HostOperation::new("permutation_preparation");
         let permutation = permutation::PreparedPermutation::prepare(
             context,
             circuit,
@@ -384,33 +367,28 @@ impl<'a> PreparedCircuit<'a> {
             options,
             Arc::clone(&poseidon),
         )?;
-        timings.permutation = started.elapsed();
+        drop(preparation);
         #[cfg(feature = "constraint-export")]
         let quotient = {
-            let started = Instant::now();
-            let plan = quotient::PreparedQuotient::prepare(
+            let _preparation = HostOperation::new("quotient_preparation");
+            quotient::PreparedQuotient::prepare(
                 context,
                 circuit,
                 &layout,
                 options,
                 poseidon.clone(),
                 fft.clone(),
-            )?;
-            timings.quotient = started.elapsed();
-            plan
+            )?
         };
         #[cfg(feature = "constraint-export")]
         let openings = {
-            let started = Instant::now();
-            let plan =
-                openings::PreparedOpenings::prepare(context, common, &layout, options, extension)?;
-            timings.openings = started.elapsed();
-            plan
+            let _preparation = HostOperation::new("openings_preparation");
+            openings::PreparedOpenings::prepare(context, common, &layout, options, extension)?
         };
         #[cfg(feature = "constraint-export")]
         let fri = {
-            let started = Instant::now();
-            let plan = fri::PreparedFri::prepare(
+            let _preparation = HostOperation::new("fri_preparation");
+            fri::PreparedFri::prepare(
                 context,
                 circuit,
                 &layout.fri,
@@ -418,18 +396,14 @@ impl<'a> PreparedCircuit<'a> {
                 fri_kernels,
                 poseidon,
                 fft,
-            )?;
-            timings.fri = started.elapsed();
-            plan
+            )?
         };
         #[cfg(feature = "constraint-export")]
         let proof_tail = {
-            let started = Instant::now();
-            let plan = proof_tail::PreparedProofTail::prepare(
+            let _preparation = HostOperation::new("proof_tail_preparation");
+            proof_tail::PreparedProofTail::prepare(
                 context, circuit, &layout, options, pow, queries,
-            )?;
-            timings.proof_tail = started.elapsed();
-            plan
+            )?
         };
         let mut wire_workspace_fields = vec![representatives.len()];
         for &columns in &layout.batch_columns {
@@ -446,7 +420,6 @@ impl<'a> PreparedCircuit<'a> {
             commitment,
             fixed,
             wire_workspace_fields,
-            timings,
             permutation,
             #[cfg(feature = "constraint-export")]
             quotient,
@@ -459,9 +432,6 @@ impl<'a> PreparedCircuit<'a> {
         })
     }
 
-    pub fn timings(&self) -> CircuitPreparationTimings {
-        self.timings
-    }
     pub fn degree(&self) -> usize {
         self.layout.degree
     }

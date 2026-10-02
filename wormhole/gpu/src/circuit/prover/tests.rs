@@ -1,8 +1,127 @@
 use super::*;
+use crate::DeviceOptions;
 use plonky2::fri::FriReductionStrategy;
 use plonky2::iop::witness::WitnessWrite;
 use plonky2::plonk::circuit_builder::CircuitBuilder;
 use plonky2::plonk::circuit_data::CircuitConfig;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
+use tracing_subscriber::{layer::Context as TraceContext, prelude::*, registry::LookupSpan, Layer};
+
+#[derive(Clone, Default)]
+struct HostSpans(Arc<Mutex<BTreeMap<String, u64>>>);
+
+#[derive(Default)]
+struct HostFields {
+    name: String,
+    elapsed: Option<u64>,
+}
+
+impl tracing::field::Visit for HostFields {
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if matches!(field.name(), "operation" | "phase") {
+            self.name = value.to_owned();
+        }
+    }
+    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        if field.name() == "elapsed_ns" {
+            self.elapsed = Some(value);
+        }
+    }
+    fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
+}
+
+impl<S: tracing::Subscriber + for<'lookup> LookupSpan<'lookup>> Layer<S> for HostSpans {
+    fn on_new_span(
+        &self,
+        attributes: &tracing::span::Attributes<'_>,
+        id: &tracing::span::Id,
+        context: TraceContext<'_, S>,
+    ) {
+        let mut fields = HostFields::default();
+        attributes.record(&mut fields);
+        context.span(id).unwrap().extensions_mut().insert(fields);
+    }
+    fn on_record(
+        &self,
+        id: &tracing::span::Id,
+        record: &tracing::span::Record<'_>,
+        context: TraceContext<'_, S>,
+    ) {
+        let mut fields = HostFields::default();
+        record.record(&mut fields);
+        if let Some(elapsed) = fields.elapsed {
+            let span = context.span(id).unwrap();
+            let extensions = span.extensions();
+            let name = &extensions.get::<HostFields>().unwrap().name;
+            *self.0.lock().unwrap().entry(name.clone()).or_default() += elapsed;
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires hardware timestamp queries and native u64 shaders"]
+fn profiled_coordinator_generates_verifiable_proofs_with_fri_and_reuses_workspace() -> Result<()> {
+    let captured = HostSpans::default();
+    let dispatcher = tracing::Dispatch::new(tracing_subscriber::registry().with(captured.clone()));
+    tracing::dispatcher::with_default(&dispatcher, || -> Result<()> {
+        let context = futures::executor::block_on(DeviceContext::with_options(DeviceOptions {
+            timestamps: true,
+            ..Default::default()
+        }))?;
+        let mut config = CircuitConfig::standard_recursion_config();
+        config.fri_config.reduction_strategy = FriReductionStrategy::Fixed(vec![1, 1]);
+        config.fri_config.proof_of_work_bits = 8;
+        config.security_bits = 80;
+        let mut builder = CircuitBuilder::<F, 2>::new(config);
+        let input = builder.add_virtual_target();
+        let square = builder.mul(input, input);
+        builder.register_public_input(square);
+        // Pad enough rows for both reductions and the configured cap; do not
+        // rely on public-input hashing to supply the padding rows.
+        for _ in 0..16 {
+            builder.add_gate(plonky2::gates::noop::NoopGate, vec![]);
+        }
+        let circuit = builder.build::<C>();
+        let prepared = PreparedCircuit::prepare(&context, &circuit, PreparationOptions::default())?;
+        let mut workspace = prepared.prepare_workspace(&context)?;
+        for value in [F::from_canonical_usize(3), F::from_canonical_usize(5)] {
+            let mut inputs = PartialWitness::new();
+            inputs.set_target(input, value)?;
+            let proof = prepared.prove(&context, &mut workspace, inputs)?;
+            assert_eq!(proof.public_inputs, [value * value]);
+            assert_eq!(proof.proof.opening_proof.commit_phase_merkle_caps.len(), 2);
+            circuit.verify(proof)?;
+        }
+        Ok(())
+    })?;
+    let host = captured.0.lock().unwrap();
+    for name in [
+        "witness_generation",
+        "gpu_prove",
+        "wires",
+        "permutation",
+        "quotient",
+        "openings",
+        "fri_input_and_first_commitment",
+        "fri_fold_and_next_commitment",
+        "final_polynomial",
+        "pow",
+        "queries",
+        "submit",
+        "wait",
+        "readback",
+        "transcript",
+        "timestamp_collection",
+    ] {
+        assert!(
+            host.get(name).is_some_and(|&ns| ns > 0),
+            "missing host measurement: {name}"
+        );
+    }
+    assert!(host["gpu_prove"] >= host["wait"]);
+    Ok(())
+}
 
 #[test]
 fn workspace_ranges_and_pow_retries_are_checked() {

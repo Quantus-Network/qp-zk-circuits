@@ -1,4 +1,6 @@
 //! Measure actual circuit/GPU initialization, without generating a proof.
+#[path = "support/profile.rs"]
+mod profile;
 use anyhow::{Context, Result};
 use qp_wormhole_aggregator::common::utils::{
     canonical_leaf_verifier_data, canonical_private_batch_verifier_data,
@@ -9,6 +11,11 @@ use std::time::Instant;
 use zk_circuits_common::circuit::wormhole_public_batch_circuit_config;
 
 fn main() -> Result<()> {
+    let profile = profile::Profile::default();
+    tracing::dispatcher::with_default(&profile.dispatcher(), || run(&profile))
+}
+
+fn run(profile: &profile::Profile) -> Result<()> {
     let arity = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "53".into())
@@ -45,36 +52,6 @@ fn main() -> Result<()> {
         "GPU circuit preparation: {:.3}s",
         start.elapsed().as_secs_f64()
     );
-    let timings = prepared.timings();
-    println!("Shared pipelines: {:.3}s", timings.kernels.as_secs_f64());
-    println!(
-        "FFT/commitment plans and tables: {:.3}s",
-        timings.fft_tables.as_secs_f64()
-    );
-    println!(
-        "Fixed oracle and wire-map upload: {:.3}s",
-        timings.fixed_data.as_secs_f64()
-    );
-    println!(
-        "Permutation preparation: {:.3}s",
-        timings.permutation.as_secs_f64()
-    );
-    println!(
-        "Specialized quotient preparation: {:.3}s",
-        timings.quotient.as_secs_f64()
-    );
-    println!(
-        "Opening/FRI-input preparation: {:.3}s",
-        timings.openings.as_secs_f64()
-    );
-    println!(
-        "FRI commit-phase preparation: {:.3}s",
-        timings.fri.as_secs_f64()
-    );
-    println!(
-        "Proof-tail preparation: {:.3}s",
-        timings.proof_tail.as_secs_f64()
-    );
     println!(
         "Trace rows: {}; LDE rows: {}; quotient rows: {}; quotient LDE step: {}",
         prepared.degree(),
@@ -92,5 +69,6 @@ fn main() -> Result<()> {
         workspace.allocated_bytes()
     );
     println!("No proof generated.");
+    profile.print("initialization");
     Ok(())
 }

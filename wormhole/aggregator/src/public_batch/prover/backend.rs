@@ -21,7 +21,11 @@ impl ProvingBackend {
         witness: PartialWitness<F>,
     ) -> Result<ProofWithPublicInputs<F, C, D>> {
         match self {
-            Self::Cpu => circuit.prove(witness),
+            Self::Cpu => {
+                #[cfg(feature = "gpu")]
+                let _proof = crate::profiling::HostOperation::new("cpu_prove");
+                circuit.prove(witness)
+            }
             #[cfg(feature = "gpu")]
             Self::Gpu(backend) => backend.prove(circuit, witness),
         }
@@ -79,16 +83,20 @@ impl GpuBackend {
             "public-batch circuit changed after GPU preparation"
         );
         // CPU witness generation does not hold the shared GPU workspace lock.
+        let generation = crate::profiling::HostOperation::new("witness_generation");
         let partition = plonky2::iop::generator::generate_partial_witness(
             witness,
             &self.circuit.prover_only,
             &self.circuit.common,
         )
         .context("generate public-batch witness")?;
+        drop(generation);
+        let lock = crate::profiling::HostOperation::new("workspace_lock_wait");
         let mut workspace = self
             .workspace
             .lock()
             .map_err(|_| anyhow!("public-batch GPU workspace lock was poisoned"))?;
+        drop(lock);
         self.prepared
             .prove_with_partition_witness(&self.context, &mut workspace, partition)
     }

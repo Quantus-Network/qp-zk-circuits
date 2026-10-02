@@ -2,9 +2,31 @@ use std::ops::Range;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::profiling::HostOperation;
 use anyhow::{ensure, Context, Result};
 use plonky2::field::goldilocks_field::GoldilocksField;
 use plonky2::field::types::{Field, Field64, PrimeField64};
+mod timestamps;
+use timestamps::TimestampBuffers;
+
+/// Explicit device instrumentation options. The default path requests no
+/// timestamp feature and allocates no query resources. Capacity is per
+/// submission; multiple query sets are prepared when necessary, never extra
+/// submissions. An explicitly requested unsupported feature is an error.
+#[derive(Clone, Copy, Debug)]
+pub struct DeviceOptions {
+    pub timestamps: bool,
+    pub timestamp_dispatch_capacity: usize,
+}
+
+impl Default for DeviceOptions {
+    fn default() -> Self {
+        Self {
+            timestamps: false,
+            timestamp_dispatch_capacity: 8192,
+        }
+    }
+}
 
 static NEXT_DEVICE_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_WORKSPACE_ID: AtomicU64 = AtomicU64::new(1);
@@ -21,6 +43,7 @@ pub struct DeviceContext {
     queue: wgpu::Queue,
     failure: Arc<Mutex<Option<String>>>,
     command_buffers: Option<Arc<MetalCommandBufferPool>>,
+    options: DeviceOptions,
 }
 
 fn record_failure(failure: &Mutex<Option<String>>, message: String) {
@@ -39,6 +62,18 @@ impl DeviceContext {
     /// Select a hardware adapter. The established kernels require native u64
     /// shader arithmetic; unsupported adapters are rejected, not emulated.
     pub async fn new() -> Result<Self> {
+        Self::with_options(DeviceOptions::default()).await
+    }
+
+    pub async fn with_options(options: DeviceOptions) -> Result<Self> {
+        // Do not hold an entered span across await: it would attribute other
+        // futures on this thread to initialization and make the future !Send.
+        let span = tracing::debug_span!(target: "qp_wormhole_gpu::profile", "prover.host",
+            operation = "device_initialization", elapsed_ns = tracing::field::Empty);
+        let started = (!span.is_disabled()).then(std::time::Instant::now);
+        if options.timestamps {
+            timestamps::query_counts(options.timestamp_dispatch_capacity)?;
+        }
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: if cfg!(target_os = "macos") {
                 wgpu::Backends::METAL
@@ -64,10 +99,18 @@ impl DeviceContext {
             adapter.features().contains(wgpu::Features::SHADER_INT64),
             "GPU lacks native u64 shader arithmetic"
         );
+        let mut features = wgpu::Features::SHADER_INT64;
+        if options.timestamps {
+            ensure!(
+                adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY),
+                "GPU does not support requested timestamp queries"
+            );
+            features |= wgpu::Features::TIMESTAMP_QUERY;
+        }
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("Wormhole prover"),
-                required_features: wgpu::Features::SHADER_INT64,
+                required_features: features,
                 required_limits: wgpu::Limits {
                     max_storage_buffer_binding_size: adapter
                         .limits()
@@ -97,8 +140,12 @@ impl DeviceContext {
             queue,
             failure,
             command_buffers,
+            options,
         };
         context.check_device()?;
+        if let Some(started) = started {
+            span.record("elapsed_ns", started.elapsed().as_nanos() as u64);
+        }
         Ok(context)
     }
 
@@ -157,6 +204,8 @@ impl DeviceContext {
         }
         buffer.unmap();
         self.check_device()?;
+        tracing::debug!(target: "qp_wormhole_gpu::profile", fixed_buffer_bytes = size,
+            fixed_upload_bytes = size, "fixed field buffer prepared");
         Ok(FixedFieldSlice {
             device_id: self.id,
             buffer,
@@ -198,10 +247,13 @@ impl DeviceContext {
     /// Explicit export boundary. Copies only the requested view, then waits for
     /// mapping. Proof encoding and submission never call this method.
     pub fn readback<'a>(&self, source: impl Into<FieldSource<'a>>) -> Result<Vec<GoldilocksField>> {
+        let _operation = HostOperation::new("readback");
         let source = source.into();
         self.validate_source(source)?;
         let (buffer, offset, len) = source.parts();
         let bytes = field_bytes(len)?;
+        tracing::debug!(target: "qp_wormhole_gpu::profile", readback_bytes = bytes,
+            "field export");
         let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("field export"),
             size: bytes,
@@ -215,6 +267,8 @@ impl DeviceContext {
         self.check_device()?;
         let mut command_budget = MetalCommandBufferBudget::new(self.command_buffers.clone())?;
         command_budget.copy()?;
+        tracing::debug!(target: "qp_wormhole_gpu::profile",
+            metal_command_buffers = command_budget.used, "field export submission");
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(buffer, offset, &staging, 0, bytes);
         let commands = encoder.finish();
@@ -622,10 +676,12 @@ pub struct ProofWorkspace {
     buffers: Vec<DeviceFieldSlice>,
     allocated_bytes: u64,
     completion: Completion,
+    timestamps: Option<TimestampBuffers>,
 }
 
 impl ProofWorkspace {
     pub fn prepare(context: &DeviceContext, field_counts: &[usize]) -> Result<Self> {
+        let _operation = HostOperation::new("workspace_preparation");
         context.check_device()?;
         let limits = context.limits();
         // Validate the entire plan before allocating any of it.
@@ -670,12 +726,16 @@ impl ProofWorkspace {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
+        let timestamps = TimestampBuffers::prepare(context)?;
+        tracing::debug!(target: "qp_wormhole_gpu::profile", workspace_buffer_bytes = allocated_bytes,
+            "proof workspace prepared");
         Ok(Self {
             device_id: context.id,
             id,
             buffers,
             allocated_bytes,
             completion: Completion::Ready,
+            timestamps,
         })
     }
 
@@ -703,8 +763,14 @@ impl ProofWorkspace {
             !matches!(self.completion, Completion::Poisoned),
             "proof workspace was invalidated by device failure"
         );
+        let wait = HostOperation::new("wait");
         if let Err(error) = context.check_device().and_then(|_| {
-            if matches!(self.completion, Completion::Pending(_)) {
+            if matches!(self.completion, Completion::Pending(_))
+                || self
+                    .timestamps
+                    .as_ref()
+                    .is_some_and(TimestampBuffers::has_pending)
+            {
                 context
                     .device
                     .poll(wgpu::PollType::wait_indefinitely())
@@ -715,7 +781,12 @@ impl ProofWorkspace {
             self.completion = Completion::Poisoned;
             return Err(error);
         }
-        self.completion.reclaim()
+        self.completion.reclaim()?;
+        drop(wait);
+        if let Some(timestamps) = &mut self.timestamps {
+            timestamps.collect(context)?;
+        }
+        Ok(())
     }
 
     pub fn begin<'a>(&'a mut self, context: &'a DeviceContext) -> Result<ProofEncoder<'a>> {
@@ -731,6 +802,9 @@ impl ProofWorkspace {
             return Err(error);
         }
         self.completion.reclaim()?;
+        if let Some(timestamps) = &mut self.timestamps {
+            timestamps.collect(context)?;
+        }
         let command_budget = MetalCommandBufferBudget::new(context.command_buffers.clone())?;
         let commands = context.device.create_command_encoder(&Default::default());
         context.check_device()?;
@@ -739,6 +813,11 @@ impl ProofWorkspace {
             commands,
             workspace: self,
             command_budget,
+            counters: tracing::enabled!(target: "qp_wormhole_gpu::profile", tracing::Level::DEBUG)
+                .then(SubmissionCounters::default),
+            started: tracing::enabled!(target: "qp_wormhole_gpu::profile", tracing::Level::DEBUG)
+                .then(std::time::Instant::now),
+            timestamp_labels: Vec::new(),
         })
     }
 }
@@ -753,6 +832,16 @@ pub struct ProofEncoder<'a> {
     commands: wgpu::CommandEncoder,
     // Drop the native encoder before releasing its reservation on cancellation.
     command_budget: MetalCommandBufferBudget,
+    counters: Option<SubmissionCounters>,
+    started: Option<std::time::Instant>,
+    timestamp_labels: Vec<&'static str>,
+}
+
+#[derive(Default)]
+struct SubmissionCounters {
+    upload_bytes: u64,
+    device_copy_bytes: u64,
+    dispatches: u64,
 }
 
 // wgpu-hal 27's Metal queue permits 4096 outstanding native command buffers.
@@ -898,6 +987,9 @@ impl ProofEncoder<'_> {
             destination.offset,
             bytes.len() as u64,
         );
+        if let Some(counters) = &mut self.counters {
+            counters.upload_bytes += bytes.len() as u64;
+        }
         self.context.check_device()
     }
 
@@ -930,6 +1022,9 @@ impl ProofEncoder<'_> {
             destination.offset,
             field_bytes(len)?,
         );
+        if let Some(counters) = &mut self.counters {
+            counters.device_copy_bytes += field_bytes(len)?;
+        }
         self.context.check_device()
     }
 
@@ -1050,7 +1145,7 @@ impl ProofEncoder<'_> {
         kernel: &PreparedKernel,
         bindings: &CheckedBindings,
         workgroups: [u32; 3],
-        label: &str,
+        label: &'static str,
     ) -> Result<()> {
         self.context.check_device()?;
         ensure!(
@@ -1071,17 +1166,29 @@ impl ProofEncoder<'_> {
                 .all(|&n| n > 0 && n <= self.context.limits().max_compute_workgroups_per_dimension),
             "invalid compute dispatch dimensions"
         );
+        let timestamp_writes = self
+            .workspace
+            .timestamps
+            .as_ref()
+            .map(|timestamps| timestamps.writes(self.timestamp_labels.len()))
+            .transpose()?;
         self.command_budget.dispatch()?;
         let mut pass = self
             .commands
             .begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(label),
-                timestamp_writes: None,
+                timestamp_writes,
             });
         pass.set_pipeline(&kernel.pipeline);
         pass.set_bind_group(0, &bindings.group, &[]);
         pass.dispatch_workgroups(workgroups[0], workgroups[1], workgroups[2]);
         drop(pass);
+        if self.workspace.timestamps.is_some() {
+            self.timestamp_labels.push(label);
+        }
+        if let Some(counters) = &mut self.counters {
+            counters.dispatches += 1;
+        }
         self.context.check_device()
     }
 
@@ -1090,7 +1197,7 @@ impl ProofEncoder<'_> {
         kernel: &PreparedKernel,
         bindings: &CheckedBindings,
         elements: usize,
-        label: &str,
+        label: &'static str,
     ) -> Result<()> {
         let groups = u32::try_from(elements.div_ceil(64))?;
         ensure!(groups > 0, "empty compute dispatch");
@@ -1107,13 +1214,37 @@ impl ProofEncoder<'_> {
 impl<'a> ProofEncoder<'a> {
     /// Submit without a GPU wait or readback. A dropped completion token does
     /// not release the workspace until its GPU completion callback fires.
-    pub fn submit(self) -> Result<PendingSubmission<'a>> {
+    pub fn submit(mut self) -> Result<PendingSubmission<'a>> {
         self.context.check_device()?;
+        let parent = tracing::Span::current();
+        if let Some(started) = self.started {
+            tracing::debug!(target: "qp_wormhole_gpu::profile", operation = "encode",
+                elapsed_ns = started.elapsed().as_nanos() as u64, "host encoding");
+        }
+        let _operation = HostOperation::new("submit");
+        if !self.timestamp_labels.is_empty() {
+            let _operation = HostOperation::new("timestamp_resolve_encoding");
+            self.command_budget.copy()?;
+            self.workspace
+                .timestamps
+                .as_ref()
+                .unwrap()
+                .resolve(&mut self.commands, self.timestamp_labels.len());
+        }
+        if let Some(counters) = &self.counters {
+            tracing::debug!(target: "qp_wormhole_gpu::profile", upload_bytes = counters.upload_bytes,
+                device_copy_bytes = counters.device_copy_bytes, dispatches = counters.dispatches,
+                metal_command_buffers = self.command_budget.used,
+                profiling_readback_bytes = self.timestamp_labels.len() as u64 * 16,
+                "proof submission");
+        }
         let Self {
             context,
             workspace,
             commands,
             command_budget,
+            timestamp_labels,
+            ..
         } = self;
         let commands = commands.finish();
         if let Err(error) = context.check_device() {
@@ -1128,6 +1259,13 @@ impl<'a> ProofEncoder<'a> {
             callback.store(true, Ordering::Release);
         });
         workspace.completion = Completion::Pending(done);
+        if !timestamp_labels.is_empty() {
+            workspace
+                .timestamps
+                .as_mut()
+                .unwrap()
+                .map(timestamp_labels, parent);
+        }
         if let Err(error) = context.check_device() {
             workspace.completion = Completion::Poisoned;
             return Err(error);
