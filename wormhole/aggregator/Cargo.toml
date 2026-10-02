@@ -56,3 +56,7 @@ name = "aggregator"
 [[example]]
 name = "prepare_public_batch"
 required-features = ["gpu"]
+
+[[example]]
+name = "public_batch_compare"
+required-features = ["gpu"]
