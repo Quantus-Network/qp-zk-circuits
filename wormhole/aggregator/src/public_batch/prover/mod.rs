@@ -1,8 +1,9 @@
+mod backend;
 pub mod lib;
 /// Low-level witness filler — not an untrusted-input boundary.
 ///
 /// Cryptographic verification, metadata compatibility, dummy-padding, and the
-/// non-all-dummy admission check live in [`PublicBatchProver::prove_batch`]. This
+/// non-all-dummy admission check live in [`PublicBatchProver::build_witness`]. This
 /// module is `pub(crate)` so downstream services cannot bypass those checks by
 /// calling [`witness::fill_public_batch_witness`] directly (audit finding:
 /// exposed helper deferred rejection until the expensive proving path / let

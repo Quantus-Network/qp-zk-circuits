@@ -177,6 +177,8 @@ impl ProvingContext {
     /// without holding whatever lock guards the aggregator — this context is
     /// owned, so nothing here needs the lock.
     pub fn prove_batch(&self, proofs: Vec<Proof>) -> Result<Proof> {
+        #[cfg(feature = "gpu")]
+        let _proof = crate::profiling::HostOperation::new("public_batch_prove");
         // Admission checks (count bounds, public-input shape, cryptographic
         // verification, batch compatibility) run inside the prover before
         // witness filling, so a known-bad proof vector fails in milliseconds.
@@ -192,6 +194,8 @@ impl ProvingContext {
             })
             .context("public-batch proving failed")?;
 
+        #[cfg(feature = "gpu")]
+        let _verification = crate::profiling::HostOperation::new("final_verification");
         self.verify(proof.clone())
             .context("proved public-batch proof rejected by the aggregator's pinned verifier")?;
         Ok(proof)
@@ -228,6 +232,31 @@ impl ProvingContext {
 impl PublicBatchAggregator {
     pub fn new<P: AsRef<Path>>(bins_dir: P, aggregator_address: BytesDigest) -> Result<Self> {
         Self::with_limits(bins_dir, aggregator_address, PoolLimits::default())
+    }
+
+    /// Select GPU proving during initialization, before cloning a proving
+    /// context. The pool and final proof/address verification are unchanged.
+    /// Calls sharing this aggregator reuse one serialized GPU workspace.
+    ///
+    /// GPU device failure is returned as an error, without CPU fallback. To
+    /// recover, stop workers and drop their proving contexts, then call this
+    /// method with a fresh device context and create new worker contexts. The
+    /// pool and CPU circuit are retained; GPU resources are prepared again.
+    /// Validation failures leave the existing backend unchanged. Re-preparation
+    /// releases the old GPU resources first; a rebuild failure leaves proving
+    /// unavailable until a retry succeeds.
+    /// This also releases the previous backend when switching adapters. Waiting
+    /// for old-device cleanup can block for up to 30 seconds before rebuilding.
+    /// Drop caller-owned old device handles too when retiring a failed context.
+    #[cfg(feature = "gpu")]
+    pub fn with_gpu(
+        &mut self,
+        context: Arc<qp_wormhole_gpu::DeviceContext>,
+        options: qp_wormhole_gpu::PreparationOptions,
+    ) -> Result<()> {
+        let prover = Arc::get_mut(&mut self.proving.prover)
+            .ok_or_else(|| anyhow!("select GPU backend before cloning the proving context"))?;
+        prover.with_gpu(context, options)
     }
 
     /// Load and pin every artifact needed for pooling and proving.
@@ -428,3 +457,6 @@ impl PublicBatchAggregator {
         &self.proving.private_batch_verifier.common
     }
 }
+
+#[cfg(all(test, feature = "gpu"))]
+mod gpu_tests;
