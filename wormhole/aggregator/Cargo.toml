@@ -61,4 +61,4 @@ required-features = ["gpu"]
 
 [[example]]
 name = "public_batch_compare"
-required-features = ["gpu"]
+required-features = ["gpu", "multithread"]
