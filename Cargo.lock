@@ -1438,6 +1438,7 @@ name = "qp-wormhole-gpu"
 version = "4.4.0"
 dependencies = [
  "anyhow",
+ "criterion",
  "futures",
  "qp-plonky2",
  "tracing",

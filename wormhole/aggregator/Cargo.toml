@@ -55,6 +55,11 @@ workspace = true
 harness = false
 name = "aggregator"
 
+[[bench]]
+harness = false
+name = "gpu"
+required-features = ["gpu"]
+
 [[example]]
 name = "prepare_public_batch"
 required-features = ["gpu"]
