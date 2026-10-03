@@ -255,6 +255,22 @@ pub struct PreparedCircuit<'a> {
 }
 
 impl<'a> PreparedCircuit<'a> {
+    /// Validate device health, circuit layout and options without creating GPU resources.
+    /// Run before releasing an existing backend for re-preparation.
+    pub fn validate_preparation(
+        context: &DeviceContext,
+        circuit: &CircuitData<F, C, 2>,
+        options: PreparationOptions,
+    ) -> Result<()> {
+        context.check_device()?;
+        let limit = context
+            .limits()
+            .max_buffer_size
+            .min(u64::from(context.limits().max_storage_buffer_binding_size));
+        CircuitLayout::new(circuit, options, limit)?;
+        Ok(())
+    }
+
     pub fn prepare(
         context: &DeviceContext,
         circuit: &'a CircuitData<F, C, 2>,

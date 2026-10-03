@@ -157,7 +157,20 @@ impl DeviceContext {
         self.device.limits()
     }
 
-    fn check_device(&self) -> Result<()> {
+    /// Wait for previously submitted work and process deferred resource cleanup.
+    /// Stop submitting work first. This does not guarantee driver VRAM reclamation.
+    pub fn wait_idle(&self, timeout: std::time::Duration) -> Result<()> {
+        self.check_device()?;
+        self.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(timeout),
+            })
+            .context("wait for GPU device cleanup")?;
+        self.check_device()
+    }
+
+    pub(crate) fn check_device(&self) -> Result<()> {
         let failure = self.failure.lock().unwrap_or_else(|e| e.into_inner());
         ensure!(
             failure.is_none(),
@@ -1418,6 +1431,32 @@ mod tests {
             .contains("injected allocation failure"));
         record_failure(&failure, "invalid buffer after allocation failure".into());
         assert_eq!(*failure.lock().unwrap(), first);
+    }
+
+    #[test]
+    #[ignore = "requires a hardware GPU with native u64 shader support"]
+    fn hardware_preparation_rejects_failed_context() -> Result<()> {
+        use plonky2::plonk::circuit_builder::CircuitBuilder;
+        use plonky2::plonk::circuit_data::CircuitConfig;
+        use plonky2::plonk::config::PoseidonGoldilocksConfig;
+
+        let context = futures::executor::block_on(DeviceContext::new())?;
+        let builder =
+            CircuitBuilder::<GoldilocksField, 2>::new(CircuitConfig::standard_recursion_config());
+        let circuit = builder.build::<PoseidonGoldilocksConfig>();
+        // Inject the recorded failure state without causing a driver device loss.
+        record_failure(&context.failure, "injected device loss".into());
+        let options = crate::PreparationOptions {
+            quotient_chunk_rows: 0,
+            ..Default::default()
+        };
+        let error =
+            crate::PreparedCircuit::validate_preparation(&context, &circuit, options).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "GPU context failed: injected device loss"
+        );
+        Ok(())
     }
 
     #[test]
