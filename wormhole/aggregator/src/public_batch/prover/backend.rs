@@ -29,7 +29,13 @@ impl ProvingBackend {
                 circuit.prove(witness)
             }
             #[cfg(feature = "gpu")]
-            Self::Gpu(backend) => backend.prove(circuit, witness),
+            Self::Gpu(backend) => {
+                anyhow::ensure!(
+                    Arc::ptr_eq(circuit, &backend.circuit),
+                    "public-batch circuit changed after GPU preparation"
+                );
+                backend.prove(witness)
+            }
             #[cfg(feature = "gpu")]
             Self::GpuUnavailable => anyhow::bail!("GPU backend unavailable; retry with_gpu"),
         }
@@ -112,15 +118,7 @@ impl GpuBackend {
         Ok(())
     }
 
-    fn prove(
-        &self,
-        circuit: &Arc<CircuitData<F, C, D>>,
-        witness: PartialWitness<F>,
-    ) -> Result<ProofWithPublicInputs<F, C, D>> {
-        anyhow::ensure!(
-            Arc::ptr_eq(circuit, &self.circuit),
-            "public-batch circuit changed after GPU preparation"
-        );
+    fn prove(&self, witness: PartialWitness<F>) -> Result<ProofWithPublicInputs<F, C, D>> {
         // CPU witness generation does not hold the shared GPU workspace lock.
         let generation = crate::profiling::HostOperation::new("witness_generation");
         let partition = plonky2::iop::generator::generate_partial_witness(
@@ -148,7 +146,7 @@ mod tests {
     use plonky2::plonk::circuit_data::CircuitConfig;
     use qp_wormhole_gpu::{DeviceContext, PreparationOptions};
 
-    fn circuit() -> Arc<CircuitData<F, C, D>> {
+    fn build_circuit() -> Arc<CircuitData<F, C, D>> {
         let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
         let zero = builder.zero();
         builder.register_public_input(zero);
@@ -159,7 +157,7 @@ mod tests {
     fn unavailable_gpu_backend_does_not_fall_back_to_cpu() {
         let backend = ProvingBackend::GpuUnavailable;
         let error = backend
-            .prove(&circuit(), PartialWitness::new())
+            .prove(&build_circuit(), PartialWitness::new())
             .unwrap_err();
         assert_eq!(error.to_string(), "GPU backend unavailable; retry with_gpu");
     }
@@ -167,7 +165,7 @@ mod tests {
     #[test]
     #[ignore = "requires a hardware GPU with native u64 shader support"]
     fn gpu_rebuild_releases_old_backend_and_can_retry_after_failure() -> Result<()> {
-        let circuit = circuit();
+        let circuit = build_circuit();
         let options = PreparationOptions::default();
         let old_context = Arc::new(futures::executor::block_on(DeviceContext::new())?);
         let old_weak = Arc::downgrade(&old_context);
@@ -195,6 +193,13 @@ mod tests {
         backend.replace_gpu(&context, || {
             GpuBackend::prepare(Arc::clone(&circuit), Arc::clone(&context), options)
         })?;
+        let error = backend
+            .prove(&build_circuit(), PartialWitness::new())
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "public-batch circuit changed after GPU preparation"
+        );
         let proof = backend.prove(&circuit, PartialWitness::new())?;
         circuit.verify(proof)?;
         Ok(())
