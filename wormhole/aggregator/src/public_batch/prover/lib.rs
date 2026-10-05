@@ -278,16 +278,27 @@ impl PublicBatchProver {
     /// Fixed resources and one reusable workspace are retained across calls.
     /// CPU witness generation can overlap; GPU stages are serialized on this
     /// workspace. Preparation/proving failures return errors, not CPU fallback.
+    /// Validation failures leave the existing backend unchanged. Re-preparation
+    /// releases an existing GPU backend first; if rebuilding fails, proving
+    /// returns an unavailable error until a later `with_gpu` call succeeds.
+    /// The CPU circuit is always retained.
+    /// The previous GPU backend is released even when switching adapters;
+    /// waiting for its device cleanup can block for up to 30 seconds.
     #[cfg(feature = "gpu")]
     pub fn with_gpu(
-        mut self,
+        &mut self,
         context: Arc<qp_wormhole_gpu::DeviceContext>,
         options: qp_wormhole_gpu::PreparationOptions,
-    ) -> Result<Self> {
-        let backend =
-            super::backend::GpuBackend::prepare(Arc::clone(&self.circuit_data), context, options)?;
-        self.backend = ProvingBackend::Gpu(Box::new(backend));
-        Ok(self)
+    ) -> Result<()> {
+        qp_wormhole_gpu::PreparedCircuit::validate_preparation(
+            &context,
+            &self.circuit_data,
+            options,
+        )?;
+        let circuit = Arc::clone(&self.circuit_data);
+        self.backend.replace_gpu(&context, || {
+            super::backend::GpuBackend::prepare(circuit, Arc::clone(&context), options)
+        })
     }
 
     /// Fill a fresh partial witness from private-batch aggregated proofs.

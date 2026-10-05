@@ -242,16 +242,21 @@ impl PublicBatchAggregator {
     /// recover, stop workers and drop their proving contexts, then call this
     /// method with a fresh device context and create new worker contexts. The
     /// pool and CPU circuit are retained; GPU resources are prepared again.
+    /// Validation failures leave the existing backend unchanged. Re-preparation
+    /// releases the old GPU resources first; a rebuild failure leaves proving
+    /// unavailable until a retry succeeds.
+    /// This also releases the previous backend when switching adapters. Waiting
+    /// for old-device cleanup can block for up to 30 seconds before rebuilding.
+    /// Drop caller-owned old device handles too when retiring a failed context.
     #[cfg(feature = "gpu")]
     pub fn with_gpu(
-        mut self,
+        &mut self,
         context: Arc<qp_wormhole_gpu::DeviceContext>,
         options: qp_wormhole_gpu::PreparationOptions,
-    ) -> Result<Self> {
-        let prover = Arc::try_unwrap(self.proving.prover)
-            .map_err(|_| anyhow!("select GPU backend before cloning the proving context"))?;
-        self.proving.prover = Arc::new(prover.with_gpu(context, options)?);
-        Ok(self)
+    ) -> Result<()> {
+        let prover = Arc::get_mut(&mut self.proving.prover)
+            .ok_or_else(|| anyhow!("select GPU backend before cloning the proving context"))?;
+        prover.with_gpu(context, options)
     }
 
     /// Load and pin every artifact needed for pooling and proving.

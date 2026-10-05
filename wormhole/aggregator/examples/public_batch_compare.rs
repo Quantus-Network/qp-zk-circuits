@@ -134,7 +134,7 @@ fn run(arguments: Vec<String>, timestamps: bool, profile: Option<&profile::Profi
         device_init = device_started.elapsed().as_secs_f64();
         println!("[adapter] {:?}", context.adapter_info());
         let gpu_started = Instant::now();
-        aggregator = aggregator.with_gpu(context, PreparationOptions::default())?;
+        aggregator.with_gpu(context, PreparationOptions::default())?;
         gpu_init = gpu_started.elapsed().as_secs_f64();
     }
     println!(

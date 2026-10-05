@@ -20,27 +20,62 @@ fn gpu_backend_proves_through_aggregator_and_cloned_workers() -> Result<()> {
         prover: Arc::new(prover),
     };
     let cpu_proof = proving.prove_batch(vec![inner.clone()])?;
-    let pool = || ProofPool::new(private_batch_verifier.clone(), 1, 1, PoolLimits::default());
-    let aggregator = PublicBatchAggregator {
-        pool: pool()?,
+    let mut aggregator = PublicBatchAggregator {
+        pool: ProofPool::new(private_batch_verifier, 1, 1, PoolLimits::default())?,
         proving,
     };
+    let key = aggregator.push_proof(inner.clone())?;
+    let circuit = Arc::clone(&aggregator.proving.prover.circuit_data);
     let saved_context = aggregator.proving_context();
     assert_eq!(
         aggregator
             .with_gpu(Arc::clone(&context), options)
-            .err()
-            .unwrap()
+            .unwrap_err()
             .to_string(),
         "select GPU backend before cloning the proving context"
     );
-    // The rejected builder leaves the previously cloned CPU context valid.
+    // Failed setup preserves the aggregator, queued proof and cloned worker.
+    assert_eq!(aggregator.pool.len(), 1);
+    assert!(Arc::ptr_eq(
+        &circuit,
+        &aggregator.proving.prover.circuit_data
+    ));
+    assert_eq!(
+        aggregator.snapshot_batch(&key)?[0].public_inputs,
+        inner.public_inputs
+    );
     saved_context.verify(cpu_proof.clone())?;
-    let mut aggregator = PublicBatchAggregator {
-        pool: pool()?,
-        proving: saved_context,
-    }
-    .with_gpu(Arc::clone(&context), options)?;
+    drop(saved_context);
+
+    let invalid_options = PreparationOptions {
+        quotient_chunk_rows: 0,
+        ..options
+    };
+    let error = aggregator
+        .with_gpu(Arc::clone(&context), invalid_options)
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("preparation resource limits must be nonzero"));
+    assert_eq!(aggregator.pool.len(), 1);
+    assert!(Arc::ptr_eq(
+        &circuit,
+        &aggregator.proving.prover.circuit_data
+    ));
+    let snapshot = aggregator.snapshot_batch(&key)?;
+    let retry = aggregator.prove_batch(snapshot)?;
+    assert_eq!(retry.public_inputs, cpu_proof.public_inputs);
+    aggregator.verify(retry)?;
+
+    aggregator.with_gpu(Arc::clone(&context), options)?;
+    // Invalid options must not release a working GPU backend.
+    let context_owners = Arc::strong_count(&context);
+    let error = aggregator
+        .with_gpu(Arc::clone(&context), invalid_options)
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("preparation resource limits must be nonzero"));
+    assert_eq!(Arc::strong_count(&context), context_owners);
+    assert_eq!(aggregator.pool.len(), 1);
+    // Exercise re-preparation on the same device context.
+    aggregator.with_gpu(Arc::clone(&context), options)?;
     let worker = aggregator.proving_context();
     let mut invalid = inner.clone();
     invalid.public_inputs[0] += F::ONE;
@@ -50,7 +85,6 @@ fn gpu_backend_proves_through_aggregator_and_cloned_workers() -> Result<()> {
     );
     assert!(format!("{:#}", worker.prove_batch(vec![]).unwrap_err())
         .contains("no private-batch proofs"));
-    let key = aggregator.push_proof(inner)?;
     let proof = aggregator.aggregate(&key)?;
     assert_eq!(proof.public_inputs, cpu_proof.public_inputs);
     aggregator.verify(proof.clone())?;
