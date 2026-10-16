@@ -730,6 +730,23 @@ pub(crate) mod tests {
         ProofWithPublicInputs<F, C, D>,
         VerifierCircuitData<F, C, D>,
     ) {
+        let (prover, mut inners, verifier) = gpu_fixture_with_arity(1, 1);
+        (prover, inners.pop().unwrap(), verifier)
+    }
+
+    /// A public-batch prover with `num_private_batch_proofs` slots over the
+    /// fake leaf circuit, plus `num_inner_proofs` genuine single-leaf
+    /// private-batch proofs sharing one block hash with distinct nullifiers.
+    #[cfg(feature = "gpu")]
+    pub(crate) fn gpu_fixture_with_arity(
+        num_private_batch_proofs: usize,
+        num_inner_proofs: usize,
+    ) -> (
+        PublicBatchProver,
+        Vec<ProofWithPublicInputs<F, C, D>>,
+        VerifierCircuitData<F, C, D>,
+    ) {
+        use crate::private_batch::circuit::constants::{BLOCK_HASH_START, NULLIFIER_START};
         let (leaf, leaf_targets) = build_fake_leaf_circuit();
         let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; PUBLIC_INPUTS_FELTS_LEN]);
         let private_batch = PrivateBatchCircuit::new(
@@ -741,20 +758,25 @@ pub(crate) mod tests {
         .unwrap()
         .build_verifier();
         let template = make_all_dummy_private_batch_template(&leaf, &dummy_leaf);
-        let mut pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
-        pis[crate::private_batch::circuit::constants::BLOCK_HASH_START] = F::ONE;
-        let inner = make_private_batch_proof(&leaf, &dummy_leaf, pis, &leaf_targets);
+        let inners = (0..num_inner_proofs)
+            .map(|i| {
+                let mut pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
+                pis[BLOCK_HASH_START] = F::ONE;
+                pis[NULLIFIER_START] = F::from_canonical_usize(i + 1);
+                make_private_batch_proof(&leaf, &dummy_leaf, pis, &leaf_targets)
+            })
+            .collect();
         let prover = PublicBatchProver::new(
             wormhole_public_batch_circuit_config(),
             private_batch.common.clone(),
             &private_batch.verifier_only,
-            1,
+            num_private_batch_proofs,
             1,
             template,
         )
         .unwrap();
         assert!(matches!(prover.backend, ProvingBackend::Cpu));
-        (prover, inner, private_batch)
+        (prover, inners, private_batch)
     }
 
     /// Cryptographically invalid (tampered) inner proofs must be rejected at
