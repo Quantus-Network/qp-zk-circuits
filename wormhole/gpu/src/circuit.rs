@@ -42,11 +42,15 @@ pub use quotient::{QuotientBuffers, QuotientCommitment};
 
 /// Resource limits, not protocol parameters. Column batches are further bounded
 /// by the adapter's storage-binding limit. Chunk sizes bound reusable scratch.
+/// `pow_chunk_trials` is the number of nonces searched per FRI grind dispatch;
+/// any value gives a valid proof, it only changes how many dispatches a grind
+/// takes.
 #[derive(Clone, Copy, Debug)]
 pub struct PreparationOptions {
     pub max_columns_per_batch: usize,
     pub commitment_chunk_rows: usize,
     pub quotient_chunk_rows: usize,
+    pub pow_chunk_trials: usize,
 }
 
 impl Default for PreparationOptions {
@@ -55,6 +59,7 @@ impl Default for PreparationOptions {
             max_columns_per_batch: usize::MAX,
             commitment_chunk_rows: 1 << 16,
             quotient_chunk_rows: 1 << 16,
+            pow_chunk_trials: 1 << 20,
         }
     }
 }
@@ -112,7 +117,8 @@ impl CircuitLayout {
         ensure!(
             options.max_columns_per_batch > 0
                 && options.commitment_chunk_rows > 0
-                && options.quotient_chunk_rows > 0,
+                && options.quotient_chunk_rows > 0
+                && options.pow_chunk_trials > 0,
             "preparation resource limits must be nonzero"
         );
         let degree = common.degree();
@@ -163,8 +169,13 @@ impl CircuitLayout {
         let columns_per_batch =
             column_capacity(lde_rows, width, limit, options.max_columns_per_batch)?;
         #[cfg(feature = "constraint-export")]
-        let proof_tail =
-            proof_tail::ProofTailLayout::new(common, lde_rows, openings.oracle_widths(), limit)?;
+        let proof_tail = proof_tail::ProofTailLayout::new(
+            common,
+            lde_rows,
+            openings.oracle_widths(),
+            limit,
+            options.pow_chunk_trials,
+        )?;
         Ok(Self {
             degree,
             lde_rows,

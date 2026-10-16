@@ -79,6 +79,10 @@ fn preparation_rejects_unsupported_and_mismatched_circuit_data_without_gpu() {
             quotient_chunk_rows: 0,
             ..options
         },
+        PreparationOptions {
+            pow_chunk_trials: 0,
+            ..options
+        },
     ] {
         rejected(
             &circuit,
@@ -215,6 +219,7 @@ fn resident_wire_commitment_matches_cpu_and_reuses_preparation() -> Result<()> {
             max_columns_per_batch: 17,
             commitment_chunk_rows: 4,
             quotient_chunk_rows: 4,
+            ..Default::default()
         },
     )?;
     let fixed = prepared.fixed_commitment();

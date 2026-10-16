@@ -123,6 +123,67 @@ fn profiled_coordinator_generates_verifiable_proofs_with_fri_and_reuses_workspac
     Ok(())
 }
 
+/// With one trial per dispatch the grind walks the nonce space one chunk at
+/// a time through `next_pow_base`, so a proof only succeeds if the retry
+/// path is correct. For a fixed partition witness proving is deterministic,
+/// so the proof must be bit-identical to the single-chunk GPU proof and to
+/// the CPU proof, nonce included.
+#[test]
+#[ignore = "requires a hardware GPU with native u64 shader support"]
+fn pow_grind_spanning_many_chunks_matches_single_chunk_and_cpu_proofs() -> Result<()> {
+    let context = futures::executor::block_on(DeviceContext::new())?;
+    let mut config = CircuitConfig::standard_recursion_config();
+    config.fri_config.reduction_strategy = FriReductionStrategy::Fixed(vec![]);
+    config.fri_config.proof_of_work_bits = 6;
+    config.security_bits = 80;
+    let mut builder = CircuitBuilder::<F, 2>::new(config);
+    let input = builder.add_virtual_target();
+    let square = builder.mul(input, input);
+    builder.register_public_input(square);
+    let circuit = builder.build::<C>();
+    let chunked = PreparedCircuit::prepare(
+        &context,
+        &circuit,
+        PreparationOptions {
+            pow_chunk_trials: 1,
+            ..Default::default()
+        },
+    )?;
+    assert_eq!(chunked.pow_chunk_trials(), 1);
+    let single = PreparedCircuit::prepare(&context, &circuit, PreparationOptions::default())?;
+    let mut chunked_workspace = chunked.prepare_workspace(&context)?;
+    let mut single_workspace = single.prepare_workspace(&context)?;
+    let mut saw_retry = false;
+    for value in 1..=4u64 {
+        let mut inputs = PartialWitness::new();
+        inputs.set_target(input, F::from_canonical_u64(value))?;
+        let partition = plonky2::iop::generator::generate_partial_witness(
+            inputs,
+            &circuit.prover_only,
+            &circuit.common,
+        )?;
+        let cpu = plonky2::plonk::prover::prove_with_partition_witness(
+            &circuit.prover_only,
+            &circuit.common,
+            partition.clone(),
+            &mut plonky2::util::timing::TimingTree::default(),
+        )?;
+        let gpu_single = single.prove_with_partition_witness(
+            &context,
+            &mut single_workspace,
+            partition.clone(),
+        )?;
+        let gpu_chunked =
+            chunked.prove_with_partition_witness(&context, &mut chunked_workspace, partition)?;
+        assert_eq!(gpu_chunked, gpu_single);
+        assert_eq!(gpu_chunked, cpu);
+        saw_retry |= gpu_chunked.proof.opening_proof.pow_witness != F::ZERO;
+        circuit.verify(gpu_chunked)?;
+    }
+    assert!(saw_retry, "every grind succeeded on the first nonce");
+    Ok(())
+}
+
 #[test]
 fn workspace_ranges_and_pow_retries_are_checked() {
     let layout = ProvingWorkspaceLayout::new([&[1, 2], &[3], &[4, 5], &[6], &[], &[7, 8]]);

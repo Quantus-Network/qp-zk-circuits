@@ -245,6 +245,7 @@ fn resident_proving_stages_match_cpu_and_generate_verifiable_proofs() -> Result<
                 max_columns_per_batch: 17,
                 commitment_chunk_rows: 128,
                 quotient_chunk_rows: 257,
+                ..Default::default()
             },
         )?;
         let mut counts = prepared.wire_workspace_field_counts().to_vec();

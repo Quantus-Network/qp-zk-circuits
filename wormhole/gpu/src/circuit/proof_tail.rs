@@ -9,12 +9,11 @@ use plonky2::fri::proof::{FriInitialTreeProof, FriQueryRound, FriQueryStep};
 use plonky2::hash::poseidon::PoseidonHash;
 use plonky2::iop::challenger::Challenger;
 
-const POW_CHUNK_TRIALS: usize = 1 << 20;
-
 pub(super) struct ProofTailLayout {
     initial: Vec<MerkleQueryLayout>,
     fri: Vec<(MerkleQueryLayout, usize)>,
     count: usize,
+    pow_chunk_trials: usize,
 }
 
 impl ProofTailLayout {
@@ -23,10 +22,11 @@ impl ProofTailLayout {
         rows: usize,
         widths: [usize; 4],
         limit: u64,
+        pow_chunk_trials: usize,
     ) -> Result<Self> {
         crate::operations::validate_pow(
             common.config.fri_config.proof_of_work_bits,
-            POW_CHUNK_TRIALS,
+            pow_chunk_trials,
         )?;
         let count = common.config.fri_config.num_query_rounds;
         let cap = common.config.fri_config.cap_height;
@@ -54,6 +54,7 @@ impl ProofTailLayout {
             initial,
             fri,
             count,
+            pow_chunk_trials,
         })
     }
 }
@@ -78,7 +79,7 @@ impl PreparedProofTail {
             context,
             pow,
             circuit.common.config.fri_config.proof_of_work_bits,
-            POW_CHUNK_TRIALS,
+            layout.proof_tail.pow_chunk_trials,
         )?;
         let limit = context
             .limits()
@@ -160,7 +161,7 @@ impl PreparedCircuit<'_> {
         &self.proof_tail.fields
     }
     pub fn pow_chunk_trials(&self) -> usize {
-        POW_CHUNK_TRIALS
+        self.layout.proof_tail.pow_chunk_trials
     }
 
     pub fn proof_tail_buffers(
