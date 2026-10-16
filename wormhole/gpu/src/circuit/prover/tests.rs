@@ -184,6 +184,75 @@ fn pow_grind_spanning_many_chunks_matches_single_chunk_and_cpu_proofs() -> Resul
     Ok(())
 }
 
+/// Witness values at the Goldilocks boundaries (p-1, the 2^32 split points,
+/// 2^63) flow through upload, public-input hashing, wire LDEs, the
+/// permutation argument and the quotient as canonical field elements, not
+/// raw u64s. With a fixed partition witness the GPU proof must match the CPU
+/// proof bit-for-bit.
+#[test]
+#[ignore = "requires a hardware GPU with native u64 shader support"]
+fn boundary_witness_values_prove_identically_to_cpu() -> Result<()> {
+    let context = futures::executor::block_on(DeviceContext::new())?;
+    let mut config = CircuitConfig::standard_recursion_config();
+    config.fri_config.reduction_strategy = FriReductionStrategy::Fixed(vec![1]);
+    config.fri_config.proof_of_work_bits = 4;
+    config.security_bits = 80;
+    let mut builder = CircuitBuilder::<F, 2>::new(config);
+    let inputs: [_; 4] = core::array::from_fn(|_| builder.add_virtual_target());
+    builder.register_public_inputs(&inputs);
+    let mut acc = builder.one();
+    for &input in &inputs {
+        acc = builder.mul(acc, input);
+        let shifted = builder.mul_const(F::from_canonical_u64(1 << 32), input);
+        builder.register_public_input(shifted);
+    }
+    builder.register_public_input(acc);
+    for _ in 0..8 {
+        builder.add_gate(plonky2::gates::noop::NoopGate, vec![]);
+    }
+    let circuit = builder.build::<C>();
+    let prepared = PreparedCircuit::prepare(&context, &circuit, PreparationOptions::default())?;
+    let mut workspace = prepared.prepare_workspace(&context)?;
+    let edges = [
+        F::NEG_ONE,
+        F::from_canonical_u64((1 << 32) - 1),
+        F::from_canonical_u64(1 << 32),
+        F::from_canonical_u64((1 << 32) + 1),
+        F::from_canonical_u64(1 << 63),
+        F::from_canonical_u64(F::ORDER - (1 << 32)),
+        F::ZERO,
+        F::ONE,
+    ];
+    for assignment in [
+        [edges[0], edges[1], edges[2], edges[3]],
+        [edges[4], edges[5], edges[0], edges[0]],
+        [edges[6], edges[0], edges[7], edges[4]],
+    ] {
+        let mut partial = PartialWitness::new();
+        for (target, value) in inputs.iter().zip(assignment) {
+            partial.set_target(*target, value)?;
+        }
+        let partition = plonky2::iop::generator::generate_partial_witness(
+            partial,
+            &circuit.prover_only,
+            &circuit.common,
+        )?;
+        let cpu = plonky2::plonk::prover::prove_with_partition_witness(
+            &circuit.prover_only,
+            &circuit.common,
+            partition.clone(),
+            &mut plonky2::util::timing::TimingTree::default(),
+        )?;
+        let gpu = prepared.prove_with_partition_witness(&context, &mut workspace, partition)?;
+        assert_eq!(gpu, cpu);
+        let product = assignment.iter().copied().product::<F>();
+        assert_eq!(gpu.public_inputs[..4], assignment);
+        assert_eq!(*gpu.public_inputs.last().unwrap(), product);
+        circuit.verify(gpu)?;
+    }
+    Ok(())
+}
+
 #[test]
 fn workspace_ranges_and_pow_retries_are_checked() {
     let layout = ProvingWorkspaceLayout::new([&[1, 2], &[3], &[4, 5], &[6], &[], &[7, 8]]);
