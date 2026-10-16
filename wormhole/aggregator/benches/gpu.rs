@@ -72,7 +72,7 @@ fn bench_public_batch(c: &mut Criterion) {
         };
         // Built once and reused, like production (`ProvingContext` builds the
         // circuit at aggregator construction and proves many batches on it).
-        let prover = PublicBatchProver::new_from_binaries_dir(Path::new(bins_dir()))
+        let mut prover = PublicBatchProver::new_from_binaries_dir(Path::new(bins_dir()))
             .expect("Failed to load public-batch prover");
 
         let mut group = c.benchmark_group("public_batch_prove");
@@ -127,11 +127,10 @@ fn bench_public_batch(c: &mut Criterion) {
         }
 
         // End-to-end GPU-assisted proving through the backend a service uses.
-        let prover = Arc::new(
-            prover
-                .with_gpu(device(), PreparationOptions::default())
-                .expect("Failed to select the GPU backend"),
-        );
+        prover
+            .with_gpu(device(), PreparationOptions::default())
+            .expect("Failed to select the GPU backend");
+        let prover = Arc::new(prover);
         group.bench_function(BenchmarkId::new("gpu", arity), |b| {
             b.iter_batched(
                 inputs,
