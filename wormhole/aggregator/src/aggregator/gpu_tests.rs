@@ -2,6 +2,15 @@ use super::*;
 use plonky2::field::types::Field;
 use qp_wormhole_gpu::{DeviceContext, PreparationOptions};
 
+/// Runs without a device: the exported gate programs the GPU quotient kernels
+/// are compiled from must agree with the CPU gate evaluators for every gate in
+/// the real public-batch circuit.
+#[test]
+fn public_batch_circuit_exports_constraints_matching_cpu_gate_evaluators() -> Result<()> {
+    let (prover, _, _) = crate::public_batch::prover::lib::tests::gpu_fixture();
+    qp_wormhole_gpu::check_exported_constraints(&prover.circuit_data.common, 8)
+}
+
 #[test]
 #[ignore = "requires a hardware GPU with native u64 shader support"]
 fn gpu_backend_proves_through_aggregator_and_cloned_workers() -> Result<()> {

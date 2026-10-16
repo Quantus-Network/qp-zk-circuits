@@ -29,7 +29,7 @@ pub use queries::{
     MerkleQuery, MerkleQueryKernels, MerkleQueryLayout, MerkleQueryPlan, ResidentMerkleQueries,
 };
 #[cfg(feature = "constraint-export")]
-pub use quotient::{QuotientLayout, QuotientPlan};
+pub use quotient::{check_exported_constraints, QuotientLayout, QuotientPlan};
 pub use scan::PrefixProductPlan;
 
 use crate::runtime::{BindingAccess, FieldBindingSpec};

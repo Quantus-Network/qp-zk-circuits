@@ -338,6 +338,87 @@ fn gate_body(
     Some(body)
 }
 
+/// Evaluate every exported gate program on `rows` pseudorandom rows (plus the
+/// field boundary values) and compare with the CPU evaluator the quotient
+/// kernels replace. Export traces each gate's recursive evaluator, so the GPU
+/// quotient is sound only if that evaluator agrees with the gate's base-field
+/// evaluator for every gate in the circuit; this checks exactly that, on the
+/// host, without a device.
+pub fn check_exported_constraints(common: &CommonCircuitData<F, 2>, rows: usize) -> Result<()> {
+    check_program_against_cpu(common, &export_gate_constraints(common)?, rows)
+}
+
+fn check_program_against_cpu(
+    common: &CommonCircuitData<F, 2>,
+    program: &GateConstraintProgram<F>,
+    rows: usize,
+) -> Result<()> {
+    use plonky2::hash::hash_types::HashOut;
+    use plonky2::plonk::vars::EvaluationVarsBaseBatch;
+
+    validate_program(program)?;
+    ensure!(
+        program.gates.len() == common.gates.len(),
+        "exported gate count mismatch"
+    );
+    let selectors = &common.selectors_info;
+    let boundary = [F::ZERO, F::ONE, F::NEG_ONE, F::from_canonical_u64(1 << 32)];
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    let mut sample = |row: usize, index: usize| -> F {
+        if row < boundary.len() {
+            return boundary[(row + index) % boundary.len()];
+        }
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        F::from_noncanonical_u64(state)
+    };
+    for row in 0..rows + boundary.len() {
+        let constants: Vec<F> = (0..program.num_constants).map(|i| sample(row, i)).collect();
+        let wires: Vec<F> = (0..program.num_wires)
+            .map(|i| sample(row, program.num_constants + i))
+            .collect();
+        let hash = HashOut {
+            elements: core::array::from_fn(|i| {
+                sample(row, program.num_constants + program.num_wires + i)
+            }),
+        };
+        for (gate_index, (gate, exported)) in common.gates.iter().zip(&program.gates).enumerate() {
+            let mut values = Vec::with_capacity(exported.nodes.len());
+            for node in &exported.nodes {
+                values.push(match *node {
+                    ArithmeticNode::Constant(value) => value,
+                    ArithmeticNode::Input(ConstraintInput::Constant(column)) => constants[column],
+                    ArithmeticNode::Input(ConstraintInput::Wire(column)) => wires[column],
+                    ArithmeticNode::Input(ConstraintInput::PublicInputHash(index)) => {
+                        hash.elements[index]
+                    }
+                    ArithmeticNode::Add(a, b) => values[a] + values[b],
+                    ArithmeticNode::Mul(a, b) => values[a] * values[b],
+                });
+            }
+            let selector = selectors.selector_indices[gate_index];
+            let expected = gate.0.eval_filtered_base_batch(
+                EvaluationVarsBaseBatch::new(1, &constants, &wires, &hash),
+                gate_index,
+                selector,
+                selectors.groups[selector].clone(),
+                selectors.num_selectors(),
+                0,
+            );
+            for (slot, &output) in exported.outputs.iter().enumerate() {
+                let want = expected.get(slot).copied().unwrap_or(F::ZERO);
+                ensure!(
+                    values[output] == want,
+                    "exported constraint {slot} of gate {} disagrees with the CPU evaluator on row {row}",
+                    exported.gate_id
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_program(program: &GateConstraintProgram<F>) -> Result<()> {
     for gate in &program.gates {
         ensure!(

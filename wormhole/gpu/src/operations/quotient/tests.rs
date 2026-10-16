@@ -13,6 +13,7 @@ use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::config::PoseidonGoldilocksConfig;
 use plonky2::plonk::plonk_common::reduce_with_powers_multi;
 use plonky2::plonk::vars::EvaluationVarsBaseBatch;
+use plonky2::util::reducing::ReducingFactorTarget;
 
 #[test]
 fn malformed_expression_programs_fail_closed() {
@@ -36,6 +37,89 @@ fn malformed_expression_programs_fail_closed() {
     program.gates[0].nodes[0] = ArithmeticNode::Constant(F::ONE);
     program.gates[0].outputs[0] = 1;
     assert!(validate_program(&program).is_err());
+}
+
+/// Every gate type the recursive verifier emits (Poseidon, random access,
+/// coset interpolation, reducing, exponentiation, base-sum, extension
+/// arithmetic, constants, public inputs) must export to a program that agrees
+/// with its CPU base-field evaluator. A recursive verifier of a tiny inner
+/// proof is the smallest circuit containing all of them.
+#[test]
+fn exported_constraints_match_cpu_gate_evaluators_for_recursive_verifier_gates() -> Result<()> {
+    let config = CircuitConfig::standard_recursion_config();
+    let mut inner = CircuitBuilder::<F, 2>::new(config.clone());
+    let input = inner.add_virtual_target();
+    let mut digest = inner.hash_n_to_hash_no_pad::<PoseidonHash>(vec![input]);
+    for _ in 0..1100 {
+        digest = inner.hash_n_to_hash_no_pad::<PoseidonHash>(digest.elements.to_vec());
+    }
+    inner.register_public_inputs(&digest.elements);
+    let inner = inner.build::<PoseidonGoldilocksConfig>();
+    assert!(
+        inner.common.fri_params.reduction_arity_bits.len() >= 2,
+        "inner proof must have FRI reduction rounds"
+    );
+
+    let mut outer = CircuitBuilder::<F, 2>::new(config);
+    let proof = outer.add_virtual_proof_with_pis(&inner.common);
+    let verifier = outer.add_virtual_verifier_data(inner.common.config.fri_config.cap_height);
+    outer.verify_proof::<PoseidonGoldilocksConfig>(&proof, &verifier, &inner.common);
+    // The verifier itself does not emit these two, so add them explicitly.
+    let base = outer.add_virtual_target();
+    let exponent = outer.add_virtual_target();
+    outer.exp(base, exponent, 8);
+    let alpha = outer.add_virtual_extension_target();
+    let terms: Vec<_> = (0..40).map(|_| outer.add_virtual_target()).collect();
+    ReducingFactorTarget::new(alpha).reduce_base(&terms, &mut outer);
+    let outer = outer.build::<PoseidonGoldilocksConfig>();
+    let gate_ids: Vec<_> = outer.common.gates.iter().map(|gate| gate.0.id()).collect();
+    for required in [
+        "NoopGate",
+        "PoseidonGate",
+        "PoseidonMdsGate",
+        "RandomAccessGate",
+        "CosetInterpolationGate",
+        "ReducingExtensionGate",
+        "ReducingGate",
+        "ExponentiationGate",
+        "BaseSumGate",
+        "MulExtensionGate",
+        "ArithmeticExtensionGate",
+        "ArithmeticGate",
+        "ConstantGate",
+        "PublicInputGate",
+    ] {
+        assert!(
+            gate_ids.iter().any(|id| id.starts_with(required)),
+            "recursive verifier fixture lost {required}: {gate_ids:?}"
+        );
+    }
+    check_exported_constraints(&outer.common, 16)?;
+
+    // A program that disagrees with the evaluator must be reported, not
+    // accepted: perturb one exported output of the first non-trivial gate.
+    let mut program = export_gate_constraints(&outer.common)?;
+    let gate = program
+        .gates
+        .iter_mut()
+        .find(|gate| {
+            gate.outputs
+                .iter()
+                .any(|&o| !matches!(gate.nodes[o], ArithmeticNode::Constant(_)))
+        })
+        .unwrap();
+    gate.nodes.push(ArithmeticNode::Constant(F::ONE));
+    let slot = gate
+        .outputs
+        .iter()
+        .position(|&o| !matches!(gate.nodes[o], ArithmeticNode::Constant(_)))
+        .unwrap();
+    gate.outputs[slot] = gate.nodes.len() - 1;
+    assert!(check_program_against_cpu(&outer.common, &program, 1)
+        .unwrap_err()
+        .to_string()
+        .contains("disagrees with the CPU evaluator"));
+    Ok(())
 }
 
 #[test]

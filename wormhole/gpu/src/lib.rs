@@ -86,7 +86,7 @@ pub use operations::{
 };
 
 #[cfg(feature = "constraint-export")]
-pub use operations::{QuotientLayout, QuotientPlan};
+pub use operations::{check_exported_constraints, QuotientLayout, QuotientPlan};
 
 #[cfg(feature = "wgpu")]
 pub use runtime::{
