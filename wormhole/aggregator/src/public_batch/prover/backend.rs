@@ -1,6 +1,6 @@
-use anyhow::Result;
 #[cfg(feature = "gpu")]
-use anyhow::{anyhow, Context};
+use anyhow::Context;
+use anyhow::Result;
 use plonky2::iop::witness::PartialWitness;
 use plonky2::plonk::circuit_data::CircuitData;
 use plonky2::plonk::proof::ProofWithPublicInputs;
@@ -129,10 +129,12 @@ impl GpuBackend {
         .context("generate public-batch witness")?;
         drop(generation);
         let lock = crate::profiling::HostOperation::new("workspace_lock_wait");
+        // A panic in a previous proof leaves no state behind that the next
+        // proof depends on: every workspace view is rewritten from scratch.
         let mut workspace = self
             .workspace
             .lock()
-            .map_err(|_| anyhow!("public-batch GPU workspace lock was poisoned"))?;
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         drop(lock);
         self.prepared
             .prove_with_partition_witness(&self.context, &mut workspace, partition)
@@ -160,6 +162,28 @@ mod tests {
             .prove(&build_circuit(), PartialWitness::new())
             .unwrap_err();
         assert_eq!(error.to_string(), "GPU backend unavailable; retry with_gpu");
+    }
+
+    #[test]
+    #[ignore = "requires a hardware GPU with native u64 shader support"]
+    fn gpu_backend_keeps_proving_after_a_worker_panics_mid_proof() -> Result<()> {
+        let circuit = build_circuit();
+        let context = Arc::new(futures::executor::block_on(DeviceContext::new())?);
+        let backend =
+            GpuBackend::prepare(Arc::clone(&circuit), context, PreparationOptions::default())?;
+        circuit.verify(backend.prove(PartialWitness::new())?)?;
+        let panicked = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let _workspace = backend.workspace.lock().unwrap();
+                    panic!("injected panic while holding the workspace");
+                })
+                .join()
+        });
+        assert!(panicked.is_err());
+        assert!(backend.workspace.is_poisoned());
+        circuit.verify(backend.prove(PartialWitness::new())?)?;
+        Ok(())
     }
 
     #[test]
