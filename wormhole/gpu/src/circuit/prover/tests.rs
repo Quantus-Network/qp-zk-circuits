@@ -1,9 +1,10 @@
 use super::*;
 use crate::DeviceOptions;
 use plonky2::fri::FriReductionStrategy;
+use plonky2::iop::target::Target;
 use plonky2::iop::witness::WitnessWrite;
 use plonky2::plonk::circuit_builder::CircuitBuilder;
-use plonky2::plonk::circuit_data::CircuitConfig;
+use plonky2::plonk::circuit_data::{CircuitConfig, CircuitData};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use tracing_subscriber::{layer::Context as TraceContext, prelude::*, registry::LookupSpan, Layer};
@@ -59,9 +60,50 @@ impl<S: tracing::Subscriber + for<'lookup> LookupSpan<'lookup>> Layer<S> for Hos
     }
 }
 
+/// A circuit small enough to prove quickly whose FRI still has two
+/// reduction rounds and a grind.
+fn two_round_fri_circuit() -> (CircuitData<F, C, 2>, Target) {
+    let mut config = CircuitConfig::standard_recursion_config();
+    config.fri_config.reduction_strategy = FriReductionStrategy::Fixed(vec![1, 1]);
+    config.fri_config.proof_of_work_bits = 8;
+    config.security_bits = 80;
+    let mut builder = CircuitBuilder::<F, 2>::new(config);
+    let input = builder.add_virtual_target();
+    let square = builder.mul(input, input);
+    builder.register_public_input(square);
+    // Pad enough rows for both reductions and the configured cap; do not
+    // rely on public-input hashing to supply the padding rows.
+    for _ in 0..16 {
+        builder.add_gate(plonky2::gates::noop::NoopGate, vec![]);
+    }
+    (builder.build::<C>(), input)
+}
+
+fn prove_two_inputs_on_one_workspace(context: &DeviceContext) -> Result<()> {
+    let (circuit, input) = two_round_fri_circuit();
+    let prepared = PreparedCircuit::prepare(context, &circuit, PreparationOptions::default())?;
+    let mut workspace = prepared.prepare_workspace(context)?;
+    for value in [F::from_canonical_usize(3), F::from_canonical_usize(5)] {
+        let mut inputs = PartialWitness::new();
+        inputs.set_target(input, value)?;
+        let proof = prepared.prove(context, &mut workspace, inputs)?;
+        assert_eq!(proof.public_inputs, [value * value]);
+        assert_eq!(proof.proof.opening_proof.commit_phase_merkle_caps.len(), 2);
+        circuit.verify(proof)?;
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires a hardware GPU with native u64 shader support"]
+fn coordinator_generates_verifiable_proofs_with_fri_and_reuses_workspace() -> Result<()> {
+    let context = futures::executor::block_on(DeviceContext::new())?;
+    prove_two_inputs_on_one_workspace(&context)
+}
+
 #[test]
 #[ignore = "requires hardware timestamp queries and native u64 shaders"]
-fn profiled_coordinator_generates_verifiable_proofs_with_fri_and_reuses_workspace() -> Result<()> {
+fn profiled_coordinator_records_every_host_span() -> Result<()> {
     let captured = HostSpans::default();
     let dispatcher = tracing::Dispatch::new(tracing_subscriber::registry().with(captured.clone()));
     tracing::dispatcher::with_default(&dispatcher, || -> Result<()> {
@@ -69,31 +111,14 @@ fn profiled_coordinator_generates_verifiable_proofs_with_fri_and_reuses_workspac
             timestamps: true,
             ..Default::default()
         }))?;
-        let mut config = CircuitConfig::standard_recursion_config();
-        config.fri_config.reduction_strategy = FriReductionStrategy::Fixed(vec![1, 1]);
-        config.fri_config.proof_of_work_bits = 8;
-        config.security_bits = 80;
-        let mut builder = CircuitBuilder::<F, 2>::new(config);
-        let input = builder.add_virtual_target();
-        let square = builder.mul(input, input);
-        builder.register_public_input(square);
-        // Pad enough rows for both reductions and the configured cap; do not
-        // rely on public-input hashing to supply the padding rows.
-        for _ in 0..16 {
-            builder.add_gate(plonky2::gates::noop::NoopGate, vec![]);
-        }
-        let circuit = builder.build::<C>();
-        let prepared = PreparedCircuit::prepare(&context, &circuit, PreparationOptions::default())?;
-        let mut workspace = prepared.prepare_workspace(&context)?;
-        for value in [F::from_canonical_usize(3), F::from_canonical_usize(5)] {
-            let mut inputs = PartialWitness::new();
-            inputs.set_target(input, value)?;
-            let proof = prepared.prove(&context, &mut workspace, inputs)?;
-            assert_eq!(proof.public_inputs, [value * value]);
-            assert_eq!(proof.proof.opening_proof.commit_phase_merkle_caps.len(), 2);
-            circuit.verify(proof)?;
-        }
-        Ok(())
+        // Callsite interest is a process-wide cache. A concurrent test that
+        // proves without a subscriber can register a span callsite as
+        // disabled in the window before this dispatcher's rebuild, so touch
+        // every callsite once and rebuild before the measured run.
+        prove_two_inputs_on_one_workspace(&context)?;
+        tracing::callsite::rebuild_interest_cache();
+        captured.0.lock().unwrap().clear();
+        prove_two_inputs_on_one_workspace(&context)
     })?;
     let host = captured.0.lock().unwrap();
     for name in [
