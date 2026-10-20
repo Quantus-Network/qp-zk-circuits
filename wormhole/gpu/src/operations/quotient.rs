@@ -1,15 +1,15 @@
-//! Lower the dependency's backend-neutral gate expressions to WGSL. Permutation
+//! Lower the exported backend-neutral gate expressions to WGSL. Permutation
 //! and boundary terms follow plonk/vanishing_poly.rs; lookup circuits fail export.
 use super::{read, table_size, write, FIELD};
+use crate::constraint_export::{
+    export_gate_constraints, ArithmeticNode, ConstraintInput, GateConstraintExpression,
+    GateConstraintProgram,
+};
 use crate::runtime::{
     DeviceContext, DeviceFieldSlice, FieldBinding, FieldSource, KernelParams, PreparedKernel,
     ProofEncoder,
 };
 use anyhow::{ensure, Result};
-use plonky2::constraint_export::{
-    export_gate_constraints, ArithmeticNode, ConstraintInput, GateConstraintExpression,
-    GateConstraintProgram,
-};
 use plonky2::field::goldilocks_field::GoldilocksField as F;
 use plonky2::field::types::{Field, PrimeField64};
 use plonky2::plonk::circuit_data::CommonCircuitData;

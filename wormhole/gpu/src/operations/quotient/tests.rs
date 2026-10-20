@@ -1,9 +1,9 @@
 use super::*;
-use crate::ProofWorkspace;
-use anyhow::Result;
-use plonky2::constraint_export::{
+use crate::constraint_export::{
     ArithmeticNode, ConstraintInput, GateConstraintExpression, GateConstraintProgram,
 };
+use crate::ProofWorkspace;
+use anyhow::Result;
 use plonky2::field::types::Field;
 use plonky2::field::zero_poly_coset::ZeroPolyOnCoset;
 use plonky2::hash::hash_types::HashOut;

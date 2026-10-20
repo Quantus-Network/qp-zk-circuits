@@ -18,9 +18,9 @@
 //! while prove_with_partition_witness accepts an already-generated witness.
 //!
 //! `constraint-export` additionally enables quotient, opening, FRI and proof-tail stages.
-//! It requires the dependency's backend-neutral constraint exporter; until that
-//! is published, validation requires a local Cargo override, not a production
-//! dependency pin.
+//! Gate constraints are exported in this crate (see `constraint_export`) by running
+//! each gate's recursive evaluator against a scratch builder and reading the
+//! placed rows back through the dependency's `formal-export` view.
 //!
 //! Hardware-independent checks:
 //! `cargo test --release -p qp-wormhole-gpu --features constraint-export`.
@@ -63,6 +63,9 @@ mod operations;
 
 #[cfg(feature = "wgpu")]
 mod circuit;
+
+#[cfg(feature = "constraint-export")]
+pub mod constraint_export;
 
 #[cfg(feature = "wgpu")]
 pub use circuit::{

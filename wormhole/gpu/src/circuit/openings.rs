@@ -7,8 +7,12 @@ use crate::{
 };
 use plonky2::field::extension::quadratic::QuadraticExtension;
 use plonky2::field::types::PrimeField64;
-use plonky2::fri::structure::{FriCoefficient, FriInstanceInfo};
+use plonky2::fri::structure::{
+    FriBatchInfo, FriCoefficient, FriInstanceInfo, FriOpeningExpression, FriOracleInfo,
+    FriPolynomialInfo,
+};
 use plonky2::plonk::circuit_data::CommonCircuitData;
+use plonky2::plonk::plonk_common::PlonkOracle;
 use plonky2::plonk::proof::OpeningSet;
 
 type E = QuadraticExtension<F>;
@@ -20,9 +24,82 @@ pub(super) struct OpeningLayout {
     next: usize,
 }
 
+/// The verifier's FRI instance for `common` at `zeta`: the oracles and the
+/// order in which every polynomial is opened at `zeta` and `g * zeta`. This
+/// is `CommonCircuitData::get_fri_instance`, which the dependency keeps
+/// crate-private; the pinned dependency version fixes the layout, and every
+/// proof test verifies against that same verifier.
+pub(crate) fn verifier_fri_instance(
+    common: &CommonCircuitData<F, 2>,
+    zeta: E,
+) -> FriInstanceInfo<F, 2> {
+    let num_preprocessed = common.sigmas_range().end;
+    let num_zs_partial_products = common.config.num_challenges * (1 + common.num_partial_products);
+    let num_lookup = common.config.num_challenges * common.num_lookup_polys;
+    let num_quotient = common.config.num_challenges * common.quotient_degree_factor;
+    let oracles = vec![
+        FriOracleInfo {
+            num_polys: num_preprocessed,
+            blinding: PlonkOracle::CONSTANTS_SIGMAS.blinding,
+        },
+        FriOracleInfo {
+            num_polys: common.config.num_wires,
+            blinding: PlonkOracle::WIRES.blinding,
+        },
+        FriOracleInfo {
+            num_polys: num_zs_partial_products + num_lookup,
+            blinding: PlonkOracle::ZS_PARTIAL_PRODUCTS.blinding,
+        },
+        FriOracleInfo {
+            num_polys: num_quotient,
+            blinding: PlonkOracle::QUOTIENT.blinding,
+        },
+    ];
+    let openings = |oracle: PlonkOracle, polynomials: core::ops::Range<usize>| {
+        polynomials.map(move |polynomial_index| {
+            FriOpeningExpression::raw(FriPolynomialInfo {
+                oracle_index: oracle.index,
+                polynomial_index,
+            })
+        })
+    };
+    let all = openings(PlonkOracle::CONSTANTS_SIGMAS, 0..num_preprocessed)
+        .chain(openings(PlonkOracle::WIRES, 0..common.config.num_wires))
+        .chain(openings(
+            PlonkOracle::ZS_PARTIAL_PRODUCTS,
+            0..num_zs_partial_products,
+        ))
+        .chain(openings(PlonkOracle::QUOTIENT, 0..num_quotient))
+        .chain(openings(
+            PlonkOracle::ZS_PARTIAL_PRODUCTS,
+            num_zs_partial_products..num_zs_partial_products + num_lookup,
+        ))
+        .collect();
+    let next = openings(PlonkOracle::ZS_PARTIAL_PRODUCTS, common.zs_range())
+        .chain(openings(
+            PlonkOracle::ZS_PARTIAL_PRODUCTS,
+            num_zs_partial_products..num_zs_partial_products + num_lookup,
+        ))
+        .collect();
+    let g = E::primitive_root_of_unity(common.degree_bits());
+    FriInstanceInfo {
+        oracles,
+        batches: vec![
+            FriBatchInfo {
+                point: zeta,
+                openings: all,
+            },
+            FriBatchInfo {
+                point: g * zeta,
+                openings: next,
+            },
+        ],
+    }
+}
+
 impl OpeningLayout {
     pub fn new(common: &CommonCircuitData<F, 2>) -> Result<Self> {
-        Self::from_instance(common, common.get_fri_instance(E::ONE))
+        Self::from_instance(common, verifier_fri_instance(common, E::ONE))
     }
 
     fn from_instance(

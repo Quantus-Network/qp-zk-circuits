@@ -8,7 +8,7 @@ repository.workspace = true
 version.workspace = true
 
 [features]
-constraint-export = ["qp-plonky2/constraint-export", "wgpu"]
+constraint-export = ["qp-plonky2/formal-export", "wgpu"]
 default = []
 wgpu = [
 	"dep:anyhow",

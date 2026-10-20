@@ -10,10 +10,12 @@ fn opening_layout_matches_cpu_and_rejects_changed_protocol_structure() -> Result
     let layout = OpeningLayout::new(common)?;
     assert_eq!(
         layout.all(),
-        common.get_fri_instance(E::ONE).batches[0].openings.len()
+        verifier_fri_instance(common, E::ONE).batches[0]
+            .openings
+            .len()
     );
     assert_eq!(layout.next, common.config.num_challenges);
-    let mut instance = common.get_fri_instance(E::ONE);
+    let mut instance = verifier_fri_instance(common, E::ONE);
     instance.oracles[0].num_polys += 1;
     assert_eq!(
         OpeningLayout::from_instance(common, instance)
@@ -22,7 +24,7 @@ fn opening_layout_matches_cpu_and_rejects_changed_protocol_structure() -> Result
             .to_string(),
         "unsupported FRI opening oracle structure"
     );
-    let mut instance = common.get_fri_instance(E::ONE);
+    let mut instance = verifier_fri_instance(common, E::ONE);
     instance.batches[1].point = E::ZERO;
     assert_eq!(
         OpeningLayout::from_instance(common, instance)
@@ -31,7 +33,7 @@ fn opening_layout_matches_cpu_and_rejects_changed_protocol_structure() -> Result
             .to_string(),
         "unsupported FRI opening points"
     );
-    let mut instance = common.get_fri_instance(E::ONE);
+    let mut instance = verifier_fri_instance(common, E::ONE);
     instance.batches[0].openings.pop();
     assert_eq!(
         OpeningLayout::from_instance(common, instance)
@@ -40,7 +42,7 @@ fn opening_layout_matches_cpu_and_rejects_changed_protocol_structure() -> Result
             .to_string(),
         "unsupported FRI opening batch width"
     );
-    let mut instance = common.get_fri_instance(E::ONE);
+    let mut instance = verifier_fri_instance(common, E::ONE);
     instance.batches[0].openings.swap(0, 1);
     assert_eq!(
         OpeningLayout::from_instance(common, instance)
@@ -49,7 +51,7 @@ fn opening_layout_matches_cpu_and_rejects_changed_protocol_structure() -> Result
             .to_string(),
         "unsupported FRI opening expression or order"
     );
-    let mut instance = common.get_fri_instance(E::ONE);
+    let mut instance = verifier_fri_instance(common, E::ONE);
     instance.batches[0].openings[0].terms[0].coefficient = FriCoefficient::PointPower(1);
     assert_eq!(
         OpeningLayout::from_instance(common, instance)
