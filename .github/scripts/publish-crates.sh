@@ -59,6 +59,9 @@ publish_dir wormhole/prover
 prepare_manifest wormhole/verifier/Cargo.toml
 publish_dir wormhole/verifier
 
+prepare_manifest wormhole/gpu/Cargo.toml
+publish_dir wormhole/gpu
+
 prepare_manifest wormhole/aggregator/Cargo.toml
 publish_dir wormhole/aggregator
 

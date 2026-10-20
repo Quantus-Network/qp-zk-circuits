@@ -12,6 +12,7 @@ This repository is a Cargo workspace organized to clearly separate different cir
   - [`prover/`](./wormhole/prover/): The prover for the Wormhole circuit.
   - [`verifier/`](./wormhole/verifier/): The verifier for the Wormhole circuit.
   - [`aggregator/`](./wormhole/aggregator/): A circuit for recursively aggregating Wormhole proofs.
+  - [`gpu/`](./wormhole/gpu/): Optional Metal/Vulkan backend for public-batch proof generation.
   - [`tests/`](./wormhole/tests/): Integration tests for the complete Wormhole circuit.
 - [`ownership/`](./ownership/): Circuit that proves knowledge of a wormhole-address secret, without inclusion proofs. Used to claim a mainnet airdrop from a testnet wormhole address.
   - [`circuit/`](./ownership/circuit/): Plonky2 circuit definition.
