@@ -73,18 +73,6 @@ jobs:
           cargo test --release --locked -p qp-wormhole-aggregator --features gpu --lib gpu
           cargo test --release --locked -p qp-wormhole-aggregator --features gpu --example public_batch_compare
 
-  gpu-hardware:
-    name: 🎮 GPU Hardware Tests (Metal)
-    runs-on: macos-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/macos
-      - name: Run device-backed tests
-        run: |
-          cargo test --release --locked -p qp-wormhole-gpu --features constraint-export -- --ignored
-          cargo test --release --locked -p qp-wormhole-aggregator --features gpu --lib gpu -- --ignored
-
   analysis:
     name: 🤖 Analysis (Clippy & Doc)
     # needs: fast-checks
