@@ -478,8 +478,8 @@ fn private_batch_prover_rejects_poisoned_dummy_template() {
     setup_test_binaries();
     // A tampered dummy_proof.bin must be rejected when the prover loads its
     // binaries. Otherwise the poisoned template would be padded into every
-    // partial batch, replaying its payout once per empty slot via the circuit's
-    // exit-dedup sum (leaf-level analogue of #97026).
+    // partial batch, counting its burn towards the fee check once per empty
+    // slot (leaf-level analogue of #97026).
     let poisoned_dir = test_bins_root().join("private-poisoned-dummy");
     let _ = std::fs::remove_dir_all(&poisoned_dir);
     std::fs::create_dir_all(&poisoned_dir).unwrap();

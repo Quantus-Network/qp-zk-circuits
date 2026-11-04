@@ -64,10 +64,7 @@ fn check_output(proof: &Proof, inputs: &[Proof], address: BytesDigest) -> Result
         "fixture must contain distinct nullifiers"
     );
     ensure!(
-        actual
-            .account_data
-            .iter()
-            .all(|a| a.summed_output_amount > 0),
+        actual.account_data.iter().all(|a| a.output_amount > 0),
         "fixture must contain populated exits"
     );
     Ok(())

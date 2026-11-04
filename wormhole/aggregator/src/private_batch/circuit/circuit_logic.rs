@@ -8,7 +8,6 @@
 //!   `volume_fee_bps` as public outputs
 //! - enforce the volume fee once over the whole batch:
 //!   `sum(amounts) * 10_000 <= sum(real inputs) * (10_000 - volume_fee_bps)`
-//! - dedupe exit accounts and sum amounts per account
 //! - replace dummy nullifiers with hashes of externally provided random preimages
 //! - privately permute nullifiers and emit fixed-format aggregated public inputs
 //!
@@ -346,50 +345,15 @@ pub(crate) fn build_private_batch_constraints(
     builder.range_check(diff, 52);
 
     // =========================================================================
-    // Exit-account grouping / dedup
+    // Exit slots
     // =========================================================================
     //
-    // For each of the M slots, we:
-    // 1) take that slot's exit account as the "key"
-    // 2) sum all matching amounts across all M slots
-    // 3) if this exit already appeared in an earlier slot, zero out the slot
-    //
-    // This makes duplicates indistinguishable from unused slots in output.
-    let slot_exits: Vec<[Target; 4]> = targets.exit_slots.iter().map(|s| s.exit_account).collect();
-    let slot_amounts: Vec<Target> = targets.exit_slots.iter().map(|s| s.amount).collect();
-
-    for slot in 0..num_exit_slots {
-        let exit_slot = slot_exits[slot];
-
-        // Check whether this exit appeared earlier (for dedupe)
-        let mut is_duplicate = builder._false();
-        for exit_earlier in slot_exits.iter().take(slot) {
-            let matches_earlier = bytes_digest_eq(builder, *exit_earlier, exit_slot);
-            is_duplicate = builder.or(is_duplicate, matches_earlier);
-        }
-
-        // Sum all matching amounts across all M slots
-        let mut acc = zero;
-        for (exit_j, amount_j) in slot_exits.iter().zip(&slot_amounts) {
-            let matches = bytes_digest_eq(builder, *exit_j, exit_slot);
-            let conditional_amount = builder.select(matches, *amount_j, zero);
-            acc = builder.add(acc, conditional_amount);
-        }
-
-        // Zero duplicates so they look like unused slots
-        let final_sum = builder.select(is_duplicate, zero, acc);
-        let final_exit = [
-            builder.select(is_duplicate, zero, exit_slot[0]),
-            builder.select(is_duplicate, zero, exit_slot[1]),
-            builder.select(is_duplicate, zero, exit_slot[2]),
-            builder.select(is_duplicate, zero, exit_slot[3]),
-        ];
-
-        // Range check final sum to 32 bits (u32::MAX > the max possible sum on our chain)
-        builder.range_check(final_sum, 32);
-
-        output_pis.push(final_sum);
-        output_pis.extend_from_slice(&final_exit);
+    // Every slot is a prover-chosen witness, so the prover is responsible for
+    // merging outputs to the same account if it wants to; the circuit forwards
+    // the slots verbatim. The chain settles each slot independently.
+    for slot in &targets.exit_slots {
+        output_pis.push(slot.amount);
+        output_pis.extend_from_slice(&slot.exit_account);
     }
 
     // =========================================================================
