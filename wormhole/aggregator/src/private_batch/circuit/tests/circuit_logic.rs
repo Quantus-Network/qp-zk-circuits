@@ -109,32 +109,13 @@ fn deterministic_dummy_nullifier_pre_images(n: usize) -> Vec<[F; 4]> {
 }
 
 /// Prove one private batch, padding `outputs` with zero slots up to the
-/// circuit's exit-slot count, with the identity nullifier permutation.
+/// circuit's exit-slot count.
 fn prove_private_batch(
     data: &CircuitData<F, C, D>,
     targets: &PrivateBatchCircuitTargets,
     proofs: &[ProofWithPublicInputs<F, C, D>],
     outputs: &[WithdrawalOutput],
     volume_fee_bps: u32,
-) -> Result<ProofWithPublicInputs<F, C, D>> {
-    let permutation: Vec<usize> = (0..proofs.len()).collect();
-    prove_private_batch_with_permutation(
-        data,
-        targets,
-        proofs,
-        outputs,
-        volume_fee_bps,
-        &permutation,
-    )
-}
-
-fn prove_private_batch_with_permutation(
-    data: &CircuitData<F, C, D>,
-    targets: &PrivateBatchCircuitTargets,
-    proofs: &[ProofWithPublicInputs<F, C, D>],
-    outputs: &[WithdrawalOutput],
-    volume_fee_bps: u32,
-    nullifier_permutation: &[usize],
 ) -> Result<ProofWithPublicInputs<F, C, D>> {
     let mut padded_outputs = outputs.to_vec();
     padded_outputs.resize(targets.exit_slots.len(), WithdrawalOutput::default());
@@ -146,7 +127,6 @@ fn prove_private_batch_with_permutation(
         &padded_outputs,
         volume_fee_bps,
         &deterministic_dummy_nullifier_pre_images(proofs.len()),
-        nullifier_permutation,
     )?;
     let proof = data.prove(pw)?;
     data.verify(proof.clone())?;
@@ -511,7 +491,6 @@ fn recursive_aggregation_tree() {
     expected_slots.push((F::ZERO, [F::ZERO; 4]));
     assert_eq!(exit_slots(pis, SHAPE), expected_slots);
 
-    // The test helper witnesses the identity permutation.
     let expected_nullifiers: Vec<[F; 4]> = (0..SHAPE.num_leaf_proofs).map(nullifier).collect();
     assert_eq!(nullifier_region(pis, SHAPE), expected_nullifiers);
 }
@@ -597,7 +576,6 @@ fn recursive_aggregation_tree_with_dummy_proofs() {
     expected_slots.push((F::ZERO, [F::ZERO; 4]));
     assert_eq!(exit_slots(pis, SHAPE), expected_slots);
 
-    // The test helper witnesses the identity permutation.
     let pre_images = deterministic_dummy_nullifier_pre_images(SHAPE.num_leaf_proofs);
     let expected: Vec<[F; 4]> = (0..SHAPE.num_leaf_proofs)
         .map(|i| {
@@ -729,17 +707,20 @@ fn recursive_aggregation_tree_all_dummy_proofs() {
     );
 }
 
-/// The private switch witness may route the verified nullifier multiset into
-/// any requested order without changing any digest contents.
+/// Nullifiers are emitted in leaf-slot order, so the prover's slot shuffle is
+/// what randomises the public order.
 #[test]
-fn nullifier_region_follows_private_permutation() {
+fn nullifier_region_follows_slot_order() {
     const SHAPE: PrivateBatchShape = PrivateBatchShape::new(4, 1);
 
     let (leaf_data, leaf_targets) = build_fake_leaf_circuit();
     let (data, targets) = build_private_batch(&leaf_data, SHAPE);
     let block = block_hash(0);
-    let proofs: Vec<_> = (0..SHAPE.num_leaf_proofs)
-        .map(|i| {
+
+    let slot_order = [2usize, 0, 3, 1];
+    let proofs: Vec<_> = slot_order
+        .iter()
+        .map(|&i| {
             prove_fake_leaf(
                 &leaf_data,
                 &leaf_targets,
@@ -748,17 +729,11 @@ fn nullifier_region_follows_private_permutation() {
         })
         .collect();
 
-    let permutation = vec![2, 0, 3, 1];
-    let root_proof =
-        prove_private_batch_with_permutation(&data, &targets, &proofs, &[], 0, &permutation)
-            .unwrap();
+    let root_proof = prove_private_batch(&data, &targets, &proofs, &[], 0).unwrap();
 
     let got = nullifier_region(&root_proof.public_inputs, SHAPE);
-    let expected: Vec<[F; 4]> = permutation.iter().map(|&i| nullifier(i)).collect();
-    assert_eq!(
-        got, expected,
-        "nullifier region must follow the private permutation exactly"
-    );
+    let expected: Vec<[F; 4]> = slot_order.iter().map(|&i| nullifier(i)).collect();
+    assert_eq!(got, expected);
 }
 
 // =========================================================================
@@ -782,14 +757,12 @@ fn build_malicious_leaf_circuit() -> (CircuitData<F, C, D>, Vec<Target>) {
 }
 
 /// Set every non-proof witness target directly: zero fee, zero exit accounts,
-/// the given per-slot amounts, fixed dummy preimages. Only valid for shapes
-/// with a single leaf (no permutation switches).
+/// the given per-slot amounts, fixed dummy preimages.
 fn set_batch_witnesses(
     pw: &mut PartialWitness<F>,
     targets: &PrivateBatchCircuitTargets,
     amounts: &[F],
 ) {
-    assert!(targets.nullifier_permutation_switches.is_empty());
     pw.set_target(targets.volume_fee_bps, F::ZERO).unwrap();
     for (slot, amount) in targets.exit_slots.iter().zip(amounts) {
         pw.set_target(slot.amount, *amount).unwrap();
@@ -994,7 +967,6 @@ fn fill_witness_with(
     targets: &PrivateBatchCircuitTargets,
     proof: ProofWithPublicInputs<F, C, D>,
     outputs: &[WithdrawalOutput],
-    permutation: &[usize],
 ) -> Result<()> {
     let mut pw = PartialWitness::new();
     fill_private_batch_witness(
@@ -1004,7 +976,6 @@ fn fill_witness_with(
         outputs,
         0,
         &deterministic_dummy_nullifier_pre_images(1),
-        permutation,
     )
 }
 
@@ -1012,7 +983,7 @@ fn fill_witness_with_proof(
     targets: &PrivateBatchCircuitTargets,
     proof: ProofWithPublicInputs<F, C, D>,
 ) -> Result<()> {
-    fill_witness_with(targets, proof, &[WithdrawalOutput::default()], &[0])
+    fill_witness_with(targets, proof, &[WithdrawalOutput::default()])
 }
 
 /// Control: an untampered proof must still pass the shape preflight.
@@ -1037,32 +1008,19 @@ fn witness_fill_rejects_wrong_pi_length_proof() {
 fn witness_fill_rejects_wrong_output_count() {
     let (proof, targets) = valid_leaf_proof_and_targets();
 
-    let err = fill_witness_with(&targets, proof.clone(), &[], &[0])
+    let err = fill_witness_with(&targets, proof.clone(), &[])
         .expect_err("too few outputs must be rejected");
     assert!(
         err.to_string().contains("output count mismatch"),
         "got: {err}"
     );
 
-    let err = fill_witness_with(&targets, proof, &[output(0, 1), output(1, 1)], &[0])
+    let err = fill_witness_with(&targets, proof, &[output(0, 1), output(1, 1)])
         .expect_err("too many outputs must be rejected");
     assert!(
         err.to_string().contains("output count mismatch"),
         "got: {err}"
     );
-}
-
-#[test]
-fn witness_fill_rejects_invalid_nullifier_permutation() {
-    let (proof, targets) = valid_leaf_proof_and_targets();
-
-    let err = fill_witness_with(&targets, proof.clone(), &[WithdrawalOutput::default()], &[])
-        .expect_err("short nullifier permutation must be rejected");
-    assert!(err.to_string().contains("length mismatch"), "got: {err}");
-
-    let err = fill_witness_with(&targets, proof, &[WithdrawalOutput::default()], &[1])
-        .expect_err("out-of-range nullifier permutation index must be rejected");
-    assert!(err.to_string().contains("every input index"), "got: {err}");
 }
 
 /// A shortened FRI query-round list panics in plonky2's zip_eq without a
@@ -1122,22 +1080,19 @@ fn wrapper_only_n2_builds_without_verifiers() {
     let leaf_proofs = (0..shape.num_leaf_proofs)
         .map(|_| builder.add_virtual_proof_with_pis(&leaf.common))
         .collect();
-    let mut targets = PrivateBatchCircuitTargets::allocate(&mut builder, leaf_proofs, shape);
+    let targets = PrivateBatchCircuitTargets::allocate(&mut builder, leaf_proofs, shape);
     let gates_before = builder.num_gates();
-    targets.nullifier_permutation_switches =
-        super::build_private_batch_constraints(&mut builder, &targets);
+    super::build_private_batch_constraints(&mut builder, &targets);
 
     println!(
-        "wrapper-only {shape:?}: gates={} (before wrapper: {gates_before}) pis={} switches={}",
+        "wrapper-only {shape:?}: gates={} (before wrapper: {gates_before}) pis={}",
         builder.num_gates(),
         builder.num_public_inputs(),
-        targets.nullifier_permutation_switches.len(),
     );
     assert_eq!(
         builder.num_public_inputs(),
         aggregated_output::pi_len(shape)
     );
-    assert_eq!(targets.nullifier_permutation_switches.len(), 1);
 
     let data = builder.build::<C>();
     println!(
@@ -1174,9 +1129,8 @@ fn check_private_batch_wrapper_trace(n_leaf: usize) {
         })
         .collect();
     let rows_before = tracing.inner.num_gates();
-    let mut targets = PrivateBatchCircuitTargets::allocate(&mut tracing, leaf_proofs, shape);
-    targets.nullifier_permutation_switches =
-        super::build_private_batch_constraints(&mut tracing, &targets);
+    let targets = PrivateBatchCircuitTargets::allocate(&mut tracing, leaf_proofs, shape);
+    super::build_private_batch_constraints(&mut tracing, &targets);
     assert_eq!(
         rows_before, 0,
         "wrapper rows must start at 0 for the exporter"
@@ -1194,14 +1148,6 @@ fn check_private_batch_wrapper_trace(n_leaf: usize) {
     for (i, pre) in targets.dummy_nullifier_pre_images.iter().enumerate() {
         named.push((format!("dummy_pre_image_{i}"), pre.to_vec()));
     }
-    named.push((
-        "switches".to_string(),
-        targets
-            .nullifier_permutation_switches
-            .iter()
-            .map(|b| b.target)
-            .collect(),
-    ));
     let name = format!("private_batch_wrapper_n{n_leaf}");
     let trace = tracing.trace(&name, named);
     let json = trace.to_json();

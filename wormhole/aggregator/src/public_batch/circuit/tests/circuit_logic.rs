@@ -160,7 +160,7 @@ fn build_private_batch(
 }
 
 /// Prove a private-batch aggregated proof using the monolithic PrivateBatchCircuit
-/// (identity nullifier permutation, deterministic dummy preimages).
+/// (deterministic dummy preimages).
 fn prove_private_batch_batch(
     private_batch_data: &CircuitData<F, C, D>,
     private_batch_targets: &PrivateBatchCircuitTargets,
@@ -183,7 +183,6 @@ fn prove_private_batch_batch(
         &padded_outputs,
         volume_fee_bps,
         &pre_images,
-        &(0..NUM_LEAVES).collect::<Vec<_>>(),
     )
     .unwrap();
     private_batch_data.prove(pw).unwrap()
