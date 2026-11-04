@@ -534,12 +534,12 @@ pub(crate) fn verify_dummy_private_batch_template(
         );
     }
     for (i, slot) in pis.account_data.iter().enumerate() {
-        if slot.summed_output_amount != 0 {
+        if slot.output_amount != 0 {
             bail!(
                 "dummy private-batch proof template forwards non-zero payout at slot {} ({}); \
                  padding templates must contribute zero to every exit slot",
                 i,
-                slot.summed_output_amount
+                slot.output_amount
             );
         }
         if slot.exit_account != BytesDigest::default() {

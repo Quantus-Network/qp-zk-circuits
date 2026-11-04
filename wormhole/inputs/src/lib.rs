@@ -294,8 +294,9 @@ impl fmt::Debug for PublicCircuitInputs {
 /// Exit account data in aggregated proofs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicInputsByAccount {
-    /// Output amounts of duplicate exit accounts summed.
-    pub summed_output_amount: u32,
+    /// Amount paid to `exit_account` by this slot. Slots are forwarded
+    /// verbatim; several slots may name the same account.
+    pub output_amount: u32,
     /// The address of the account to pay out to.
     pub exit_account: BytesDigest,
 }
@@ -550,9 +551,9 @@ impl PrivateBatchPublicInputs {
                     i
                 );
             }
-            let summed_output_amount: u32 = pis[cursor].try_into().with_context(|| {
+            let output_amount: u32 = pis[cursor].try_into().with_context(|| {
                 format!(
-                    "AggregatedPI: summed_output_amount at cursor {} exceeds u32 range",
+                    "AggregatedPI: output_amount at cursor {} exceeds u32 range",
                     cursor
                 )
             })?;
@@ -576,7 +577,7 @@ impl PrivateBatchPublicInputs {
             cursor += 4;
 
             account_data.push(PublicInputsByAccount {
-                summed_output_amount,
+                output_amount,
                 exit_account,
             });
         }
@@ -707,7 +708,7 @@ impl PublicBatchPublicInputs {
             .ok_or_else(|| anyhow!("PublicBatchPI: exit slot count overflow"))?;
         let mut account_data = Vec::with_capacity(total_slots);
         for i in 0..total_slots {
-            let summed_output_amount: u32 = pis[cursor]
+            let output_amount: u32 = pis[cursor]
                 .try_into()
                 .with_context(|| format!("PublicBatchPI: exit slot {} sum exceeds u32", i))?;
             cursor += 1;
@@ -717,7 +718,7 @@ impl PublicBatchPublicInputs {
             cursor += 4;
 
             account_data.push(PublicInputsByAccount {
-                summed_output_amount,
+                output_amount,
                 exit_account,
             });
         }

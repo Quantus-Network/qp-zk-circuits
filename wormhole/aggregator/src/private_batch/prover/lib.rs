@@ -590,14 +590,13 @@ fn ensure_outputs_covered_by_burns(
 }
 
 /// Verify that the dummy leaf proof template is a valid leaf proof carrying the
-/// strong dummy sentinel: `block_hash == 0`, both output amounts zero,
-/// `asset_id == 0`, AND both exit accounts all-zero.
+/// dummy sentinel: `block_hash == 0`, `input_amount == 0` and `asset_id == 0`.
 ///
-/// The private-batch circuit only treats `block_hash == 0` slots as dummies, and
-/// its exit-dedup gadget sums output amounts across matching exit accounts. If a
+/// The private-batch circuit only treats `block_hash == 0` slots as dummies. If a
 /// poisoned `dummy_proof.bin` contained a *real* proof (non-zero block hash or
-/// outputs), every empty slot in a partial batch would replay that payout. This
-/// mirrors `verify_dummy_private_batch_template` at the public-batch layer (#97026).
+/// burn), every empty slot in a partial batch would count that burn towards the
+/// fee check. This mirrors `verify_dummy_private_batch_template` at the
+/// public-batch layer (#97026).
 ///
 /// `asset_id` must be zero because `commit` pads native-asset (`asset_id = 0`)
 /// batches with this template and the circuit enforces asset_id equality across

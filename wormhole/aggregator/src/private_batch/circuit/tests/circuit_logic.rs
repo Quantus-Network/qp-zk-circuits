@@ -328,6 +328,27 @@ fn exit_amount_above_u32_fails() {
     );
 }
 
+/// Exit slots are forwarded verbatim: several slots naming the same account
+/// stay separate and keep their own amounts.
+#[test]
+fn duplicate_exit_accounts_pass_through_verbatim() {
+    const SHAPE: PrivateBatchShape = PrivateBatchShape::new(1, 3);
+
+    let (leaf_data, leaf_targets) = build_fake_leaf_circuit();
+    let (data, targets) = build_private_batch(&leaf_data, SHAPE);
+    let proof = prove_fake_leaf(
+        &leaf_data,
+        &leaf_targets,
+        real_leaf_pis(0, 1_000, nullifier(0), block_hash(0)),
+    );
+
+    let outputs = [output(0, 300), output(1, 200), output(0, 500)];
+    let root = prove_private_batch(&data, &targets, &[proof], &outputs, 0).unwrap();
+
+    let expected: Vec<_> = outputs.iter().map(expected_slot).collect();
+    assert_eq!(exit_slots(&root.public_inputs, SHAPE), expected);
+}
+
 #[test]
 fn private_batch_masking_uniqueness_and_privacy_regressions() {
     const SHAPE: PrivateBatchShape = PrivateBatchShape::new(2, 2);
