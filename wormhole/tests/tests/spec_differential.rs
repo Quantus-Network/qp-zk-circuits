@@ -203,21 +203,10 @@ fn derivations_are_deterministic(
         transfer_count in any::<u64>(),
         asset_id in any::<u32>(),
         input_amount in any::<u32>(),
-        output_amount_1 in any::<u32>(),
-        output_amount_2 in any::<u32>(),
-        volume_fee_bps in any::<u32>(),
     ) {
         let to_account = bytes32_from_limbs([a, b, c, d]);
 
-        let leaf = ZkLeafData::new(
-            to_account,
-            transfer_count,
-            asset_id,
-            input_amount,
-            output_amount_1,
-            output_amount_2,
-            volume_fee_bps,
-        );
+        let leaf = ZkLeafData::new(to_account, transfer_count, asset_id, input_amount);
         let actual = Poseidon2Hash::hash_no_pad(&leaf.collect_for_hash()).elements;
 
         // Independently reconstruct the spec-documented preimage order.

@@ -800,8 +800,9 @@ fn private_batch_rejects_malicious_circuit_proofs() {
     let private_batch_targets = private_batch_circuit.targets();
     let private_batch_data = private_batch_circuit.build_circuit();
 
-    let mut fake_pis = real_leaf_pis(999, 0xFFFF_FFFF, nullifier(0), block_hash(0));
-    fake_pis[1] = F::from_canonical_u64(0xFFFF_FFFF); // would fail range_check in legit circuit
+    let mut fake_pis = real_leaf_pis(999, 0, nullifier(0), block_hash(0));
+    // Would fail the legit circuit's 32-bit range check on input_amount.
+    fake_pis[INPUT_AMOUNT_START] = F::from_canonical_u64(1 << 40);
     let mut pw = PartialWitness::new();
     for (t, v) in malicious_targets.iter().zip(fake_pis) {
         pw.set_target(*t, v).unwrap();

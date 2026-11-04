@@ -626,12 +626,12 @@ pub(crate) fn verify_dummy_leaf_template(
             pis.block_hash
         );
     }
-    if pis.output_amount_1 != 0 || pis.output_amount_2 != 0 {
+    if pis.input_amount != 0 {
         bail!(
-            "dummy leaf proof template has non-zero output amounts ({}, {}); \
-             padding templates must contribute zero to every exit slot",
-            pis.output_amount_1,
-            pis.output_amount_2
+            "dummy leaf proof template has non-zero input_amount {}; padding templates \
+             must authenticate no value (the leaf circuit forces this for the zero \
+             block-hash sentinel, and the wrapper masks dummy inputs as defense in depth)",
+            pis.input_amount
         );
     }
     if pis.asset_id != 0 {
@@ -640,16 +640,6 @@ pub(crate) fn verify_dummy_leaf_template(
              must use the native asset (asset_id = 0) because the circuit enforces \
              asset_id equality across all slots, dummies included",
             pis.asset_id
-        );
-    }
-    if pis.exit_account_1 != BytesDigest::default() || pis.exit_account_2 != BytesDigest::default()
-    {
-        bail!(
-            "dummy leaf proof template has non-zero exit account(s); padding templates \
-             must use the canonical all-zero exit account: the leaf circuit leaves exit \
-             accounts unconstrained, and marked exits would make padded slots \
-             distinguishable in the aggregated output (the wrapper circuit also masks \
-             dummy exits to zero as defense in depth)"
         );
     }
 
@@ -679,8 +669,7 @@ mod tests {
     };
     use plonky2::field::types::Field;
     use qp_wormhole_inputs::{
-        BLOCK_HASH_START_INDEX, EXIT_ACCOUNT_1_START_INDEX, EXIT_ACCOUNT_2_START_INDEX,
-        NULLIFIER_START_INDEX, OUTPUT_AMOUNT_1_INDEX, PUBLIC_INPUTS_FELTS_LEN,
+        BLOCK_HASH_START_INDEX, INPUT_AMOUNT_INDEX, NULLIFIER_START_INDEX, PUBLIC_INPUTS_FELTS_LEN,
     };
     use test_helpers::fake_leaf::{build_fake_leaf_circuit, prove_fake_leaf};
 
@@ -756,43 +745,18 @@ mod tests {
         assert!(err.to_string().contains("non-zero asset_id"), "got: {err}");
     }
 
+    /// The leaf circuit forces a zero-block-hash leaf to burn nothing; a
+    /// template claiming otherwise could only come from a different circuit
+    /// and must be rejected before the cryptographic check.
     #[test]
-    fn dummy_template_with_nonzero_payout_is_rejected() {
+    fn dummy_template_with_nonzero_input_amount_is_rejected() {
         let (leaf, targets) = build_fake_leaf_circuit();
         let mut pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
-        pis[OUTPUT_AMOUNT_1_INDEX] = F::from_canonical_u32(5);
+        pis[INPUT_AMOUNT_INDEX] = F::from_canonical_u32(5);
         let template = prove_fake_leaf(&leaf, &targets, pis);
         let err = verify_dummy_leaf_template(&template, &leaf.verifier_data()).unwrap_err();
         assert!(
-            err.to_string().contains("non-zero output amounts"),
-            "got: {err}"
-        );
-    }
-
-    /// The leaf circuit leaves exit accounts unconstrained and its dummy
-    /// sentinel does not cover them, so a proof can be fully dummy (zero
-    /// block hash, zero amounts) yet carry attacker-chosen exit accounts
-    /// that mark every padded slot in the aggregated output (audit finding:
-    /// incomplete dummy sentinel).
-    #[test]
-    fn dummy_template_with_nonzero_exit_account_is_rejected() {
-        let (leaf, targets) = build_fake_leaf_circuit();
-
-        let mut pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
-        pis[EXIT_ACCOUNT_1_START_INDEX] = F::ONE;
-        let template = prove_fake_leaf(&leaf, &targets, pis);
-        let err = verify_dummy_leaf_template(&template, &leaf.verifier_data()).unwrap_err();
-        assert!(
-            err.to_string().contains("non-zero exit account"),
-            "got: {err}"
-        );
-
-        let mut pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
-        pis[EXIT_ACCOUNT_2_START_INDEX] = F::ONE;
-        let template = prove_fake_leaf(&leaf, &targets, pis);
-        let err = verify_dummy_leaf_template(&template, &leaf.verifier_data()).unwrap_err();
-        assert!(
-            err.to_string().contains("non-zero exit account"),
+            err.to_string().contains("non-zero input_amount"),
             "got: {err}"
         );
     }

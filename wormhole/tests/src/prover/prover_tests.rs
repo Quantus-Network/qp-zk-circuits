@@ -285,6 +285,17 @@ fn test_random_tree_proof_native_verification() {
     }
 }
 
+/// Replace the zero block hash with the genuine hash of the header fields so
+/// the proof is a real burn of `input_amount` (the dummy sentinel forces a zero
+/// burn and skips the header and Merkle-root bindings these tests exercise).
+fn with_genuine_block_hash(mut inputs: CircuitInputs) -> CircuitInputs {
+    use wormhole_circuit::block_header::header::HeaderInputs;
+    inputs.public.block_hash = HeaderInputs::try_from(&inputs)
+        .expect("header inputs")
+        .block_hash();
+    inputs
+}
+
 #[test]
 fn test_random_tree_circuit_verification() {
     use rand::rngs::StdRng;
@@ -355,19 +366,13 @@ fn test_random_tree_circuit_verification() {
     let unspendable_account =
         digest_to_bytes(UnspendableAccount::from_secret(secret_digest).account_id);
     let nullifier = digest_to_bytes(Nullifier::from_preimage(secret_digest, transfer_count).hash);
-    let exit_account = BytesDigest::try_from([4u8; 32]).unwrap();
-
     let inputs = CircuitInputs {
         public: PublicCircuitInputs {
             asset_id,
-            // Use dummy mode (block_hash=0, outputs=0) to skip block header validation
-            output_amount_1: 0u32,
-            output_amount_2: 0u32,
-            volume_fee_bps: 10,
             nullifier,
-            exit_account_1: exit_account,
-            exit_account_2: BytesDigest::default(),
-            block_hash: BytesDigest::try_from([0u8; 32]).unwrap(),
+            // Filled with the genuine header hash below: a real burn of
+            // `input_amount` (the dummy sentinel forces a zero burn).
+            block_hash: BytesDigest::default(),
             block_number: DEFAULT_BLOCK_NUMBERS[0],
             input_amount,
         },
@@ -384,6 +389,7 @@ fn test_random_tree_circuit_verification() {
             zk_merkle_positions: positions,
         },
     };
+    let inputs = with_genuine_block_hash(inputs);
 
     // Run the circuit prover
     let prover = WormholeProver::new(CIRCUIT_CONFIG).expect("valid circuit config");
@@ -462,18 +468,11 @@ fn test_depth_2_tree_circuit_verification() {
             digest_to_bytes(UnspendableAccount::from_secret(secret_digest).account_id);
         let nullifier =
             digest_to_bytes(Nullifier::from_preimage(secret_digest, transfer_count).hash);
-        let exit_account = BytesDigest::try_from([4u8; 32]).unwrap();
-
         let inputs = CircuitInputs {
             public: PublicCircuitInputs {
                 asset_id,
-                output_amount_1: 0u32,
-                output_amount_2: 0u32,
-                volume_fee_bps: 10,
                 nullifier,
-                exit_account_1: exit_account,
-                exit_account_2: BytesDigest::default(),
-                block_hash: BytesDigest::try_from([0u8; 32]).unwrap(),
+                block_hash: BytesDigest::default(),
                 block_number: DEFAULT_BLOCK_NUMBERS[0],
                 input_amount,
             },
@@ -490,6 +489,7 @@ fn test_depth_2_tree_circuit_verification() {
                 zk_merkle_positions: positions,
             },
         };
+        let inputs = with_genuine_block_hash(inputs);
 
         let prover = WormholeProver::new(CIRCUIT_CONFIG).expect("valid circuit config");
         let _proof = prover.commit(&inputs).unwrap().prove().unwrap();
@@ -579,18 +579,11 @@ fn test_depth_3_tree_circuit_verification() {
             digest_to_bytes(UnspendableAccount::from_secret(secret_digest).account_id);
         let nullifier =
             digest_to_bytes(Nullifier::from_preimage(secret_digest, transfer_count).hash);
-        let exit_account = BytesDigest::try_from([4u8; 32]).unwrap();
-
         let inputs = CircuitInputs {
             public: PublicCircuitInputs {
                 asset_id,
-                output_amount_1: 0u32,
-                output_amount_2: 0u32,
-                volume_fee_bps: 10,
                 nullifier,
-                exit_account_1: exit_account,
-                exit_account_2: BytesDigest::default(),
-                block_hash: BytesDigest::try_from([0u8; 32]).unwrap(),
+                block_hash: BytesDigest::default(),
                 block_number: DEFAULT_BLOCK_NUMBERS[0],
                 input_amount,
             },
@@ -607,6 +600,7 @@ fn test_depth_3_tree_circuit_verification() {
                 zk_merkle_positions: positions,
             },
         };
+        let inputs = with_genuine_block_hash(inputs);
 
         let prover = WormholeProver::new(CIRCUIT_CONFIG).expect("valid circuit config");
         let _proof = prover.commit(&inputs).unwrap().prove().unwrap();

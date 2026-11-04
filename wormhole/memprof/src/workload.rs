@@ -56,9 +56,7 @@ fn print_private_batch_metrics(num_leaf_proofs: usize, metrics: PrivateBatchBuil
 
 fn build_profile_circuit_inputs() -> Result<CircuitInputs> {
     let mut inputs = build_dummy_circuit_inputs()?;
-    let fee_denominator = 10_000u64 - u64::from(inputs.public.volume_fee_bps);
-    inputs.public.output_amount_1 =
-        (u64::from(inputs.public.input_amount) * fee_denominator / 10_000) as u32;
+    inputs.public.input_amount = 100;
     inputs.public.nullifier = digest_to_bytes(
         Nullifier::from_preimage(
             inputs.private.secret.expose_digest(),

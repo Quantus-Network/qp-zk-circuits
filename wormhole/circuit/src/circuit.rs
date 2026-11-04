@@ -19,7 +19,6 @@
 pub mod circuit_logic {
     use crate::block_header::BlockHeaderTargets;
     use crate::nullifier::{Nullifier, NullifierTargets};
-    use crate::substrate_account::DualExitAccountTargets;
     use crate::unspendable_account::{UnspendableAccount, UnspendableAccountTargets};
     use crate::zk_merkle_proof::{ZkMerkleProofData, ZkMerkleProofTargets};
     use anyhow::Result;
@@ -37,7 +36,6 @@ pub mod circuit_logic {
         pub nullifier: NullifierTargets,
         pub unspendable_account: UnspendableAccountTargets,
         pub zk_merkle_proof: ZkMerkleProofTargets,
-        pub exit_accounts: DualExitAccountTargets,
         pub block_header: BlockHeaderTargets,
     }
 
@@ -47,18 +45,15 @@ pub mod circuit_logic {
             let zk_merkle_proof = ZkMerkleProofTargets::new(builder);
             let nullifier = NullifierTargets::new(builder);
             let unspendable_account = UnspendableAccountTargets::new(builder);
-            let exit_accounts = DualExitAccountTargets::new(builder);
             let block_header = BlockHeaderTargets::new(builder);
 
-            // Keep the established 21-felt layout stable and append the authenticated
-            // input amount for consumption by the private-batch wrapper.
+            // Leaf PI layout: asset_id | nullifier(4) | block_hash(4) | block_number | input_amount.
             builder.register_public_input(zk_merkle_proof.leaf.input_amount);
 
             Self {
                 nullifier,
                 unspendable_account,
                 zk_merkle_proof,
-                exit_accounts,
                 block_header,
             }
         }
@@ -79,9 +74,6 @@ pub mod circuit_logic {
             let unspendable_account = UnspendableAccountTargets::new(builder);
             profiler.checkpoint("UnspendableAccountTargets::new", builder.num_gates());
 
-            let exit_accounts = DualExitAccountTargets::new(builder);
-            profiler.checkpoint("DualExitAccountTargets::new", builder.num_gates());
-
             let block_header = BlockHeaderTargets::new(builder);
             profiler.checkpoint("BlockHeaderTargets::new", builder.num_gates());
 
@@ -91,7 +83,6 @@ pub mod circuit_logic {
                 nullifier,
                 unspendable_account,
                 zk_merkle_proof,
-                exit_accounts,
                 block_header,
             }
         }
@@ -164,8 +155,6 @@ pub mod circuit_logic {
             ZkMerkleProofData::constraints(&targets.zk_merkle_proof, &mut builder);
             profiler.checkpoint("ZkMerkleProofData::circuit", builder.num_gates());
 
-            profiler.checkpoint("DualExitAccount::circuit", builder.num_gates());
-
             BlockHeader::circuit_without_hash_binding(&targets.block_header, &mut builder);
             profiler.checkpoint(
                 "BlockHeader::circuit_without_hash_binding",
@@ -229,7 +218,7 @@ pub mod circuit_logic {
     /// bindings are added in `connect_shared_targets` via
     /// `Nullifier::conditional_hash_binding` and
     /// `BlockHeader::conditional_block_hash_binding`, gated on an in-circuit `is_not_dummy`
-    /// flag. `DualExitAccount` has no constraints (its accounts are public inputs only).
+    /// flag.
     pub fn build_leaf_constraints(
         targets: &CircuitTargets,
         builder: &mut impl GadgetBuilder<F, D>,
@@ -265,9 +254,10 @@ pub mod circuit_logic {
             builder.connect(a, b);
         }
 
-        // Dummy proof detection: requires BOTH block_hash == 0 AND output_amounts == 0.
-        // This prevents an attacker from slipping funds through with a zero block hash
-        // but positive output amounts.
+        // Dummy proof detection: block_hash == 0. A dummy leaf skips every
+        // binding below, so it must not authenticate any value: its
+        // `input_amount` is forced to zero (the private batch also masks dummy
+        // inputs out of its fee check as defense in depth).
         let zero = builder.zero();
         let one = builder.one();
 
@@ -280,31 +270,26 @@ pub mod circuit_logic {
 
         let bh01_zero = builder.and(bh0_is_zero, bh1_is_zero);
         let bh23_zero = builder.and(bh2_is_zero, bh3_is_zero);
-        let block_hash_is_zero = builder.and(bh01_zero, bh23_zero);
-
-        // Check if both output amounts are individually zero
-        let leaf = &targets.zk_merkle_proof.leaf;
-        let output_1_is_zero = builder.is_equal(leaf.output_amount_1, zero);
-        let output_2_is_zero = builder.is_equal(leaf.output_amount_2, zero);
-        let both_outputs_zero = builder.and(output_1_is_zero, output_2_is_zero);
-
-        // is_dummy = block_hash_is_zero AND both_outputs_zero
-        let is_dummy = builder.and(block_hash_is_zero, both_outputs_zero);
+        let is_dummy = builder.and(bh01_zero, bh23_zero);
         let is_not_dummy = builder.sub(one, is_dummy.target);
+
+        // is_dummy * input_amount == 0
+        let dummy_input = builder.mul(is_dummy.target, targets.zk_merkle_proof.leaf.input_amount);
+        builder.connect(dummy_input, zero);
 
         // Connect is_not_dummy in zk_merkle_proof.
         // This allows the ZK Merkle proof circuit to detect dummy proofs (block_hash == 0).
         builder.connect(targets.zk_merkle_proof.is_not_dummy.target, is_not_dummy);
 
         // Nullifier validation: nullifier == H(H(salt + secret + transfer_count))
-        // Skip this validation for dummy proofs (block_hash == 0 AND outputs == 0).
+        // Skip this validation for dummy proofs (block_hash == 0).
         // This allows dummy proofs to use random nullifiers for better privacy.
         // `is_not_dummy` is derived in-circuit above, so a prover cannot skip the
         // binding by witnessing the flag.
         Nullifier::conditional_hash_binding(&targets.nullifier, builder, is_not_dummy);
 
         // Block hash validation: block_hash == hash(header contents)
-        // Skip this validation for dummy proofs (block_hash == 0 AND outputs == 0).
+        // Skip this validation for dummy proofs (block_hash == 0).
         crate::block_header::BlockHeader::conditional_block_hash_binding(
             &targets.block_header,
             builder,
@@ -322,7 +307,7 @@ pub mod circuit_logic {
         // 3. zk_merkle_proof.root_hash == computed merkle root (in ZkMerkleProofData::circuit)
         // 4. computed merkle root is derived from leaf data
         //
-        // Skip this validation for dummy proofs (block_hash == 0 AND outputs == 0).
+        // Skip this validation for dummy proofs (block_hash == 0).
         for i in 0..4 {
             let diff = builder.sub(
                 targets.block_header.header.zk_tree_root[i],

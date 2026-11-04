@@ -4,15 +4,17 @@ use circuit_builder::generate_all_circuit_binaries;
 use plonky2::field::types::Field;
 use plonky2::plonk::circuit_data::VerifierCircuitData;
 use plonky2::plonk::proof::ProofWithPublicInputs;
-use qp_wormhole_inputs::{BytesDigest, PublicCircuitInputs};
+use qp_wormhole_inputs::{
+    BytesDigest, PublicCircuitInputs, INPUT_AMOUNT_INDEX, NULLIFIER_START_INDEX,
+};
 use std::path::PathBuf;
 use std::sync::{Once, OnceLock};
 use test_helpers::block_header::{
     DEFAULT_BLOCK_NUMBERS, DEFAULT_DIGESTS, DEFAULT_EXTRINSICS_ROOTS, DEFAULT_STATE_ROOTS,
 };
 use test_helpers::{
-    compute_zk_leaf_hash, TestInputs, DEFAULT_EXIT_ACCOUNT, DEFAULT_INPUT_AMOUNTS, DEFAULT_SECRETS,
-    DEFAULT_TRANSFER_COUNTS, DEFAULT_VOLUME_FEE_BPS,
+    compute_zk_leaf_hash, with_real_block, TestInputs, DEFAULT_EXIT_ACCOUNT, DEFAULT_INPUT_AMOUNTS,
+    DEFAULT_SECRETS, DEFAULT_TRANSFER_COUNTS,
 };
 use wormhole_aggregator::aggregator::PublicBatchAggregator;
 use wormhole_aggregator::common::utils::{
@@ -131,15 +133,12 @@ fn private_batch_verifier() -> VerifierCircuitData<F, C, D> {
     .expect("Failed to load private-batch verifier data")
 }
 
-/// Valid leaf inputs like `test_inputs_0` but with a REAL block hash computed
-/// from the header fields, so the proof is non-dummy (`test_inputs_0` uses the
-/// dummy sentinel `block_hash == 0`, which pools into the dummy bucket that
-/// `PublicBatchAggregator` refuses to aggregate).
 /// Replace the dummy-sentinel block hash (0) with the genuine hash of the
-/// inputs' header fields, making the resulting leaf proof non-dummy. Needed
-/// wherever a batch is aggregated: `PrivateBatchProver::commit` rejects
-/// all-dummy leaf batches (they settle nothing on-chain).
-fn with_real_block(mut inputs: CircuitInputs) -> CircuitInputs {
+/// inputs' header fields, making the resulting leaf proof non-dummy without
+/// touching the (already consistent) ZK tree root. Needed wherever a batch is
+/// aggregated: `PrivateBatchProver::commit` rejects all-dummy leaf batches
+/// (they settle nothing on-chain).
+fn with_genuine_block_hash(mut inputs: CircuitInputs) -> CircuitInputs {
     use wormhole_circuit::block_header::header::HeaderInputs;
 
     inputs.public.block_hash = HeaderInputs::try_from(&inputs)
@@ -148,12 +147,13 @@ fn with_real_block(mut inputs: CircuitInputs) -> CircuitInputs {
     inputs
 }
 
+/// A real burn of `DEFAULT_INPUT_AMOUNTS[0]` from `test_inputs_0`.
 fn test_inputs_with_real_block() -> CircuitInputs {
-    with_real_block(CircuitInputs::test_inputs_0())
+    with_real_block(CircuitInputs::test_inputs_0(), DEFAULT_INPUT_AMOUNTS[0])
 }
 
-/// Valid leaf inputs like `test_inputs_0` but for a non-native asset. The asset
-/// id is part of the ZK leaf hash, so the tree root must be recomputed.
+/// Dummy-sentinel leaf inputs like `test_inputs_0` but for a non-native asset.
+/// The asset id is part of the ZK leaf hash, so the tree root must be recomputed.
 fn test_inputs_with_asset(asset_id: u32) -> CircuitInputs {
     let mut inputs = CircuitInputs::test_inputs_0();
     inputs.public.asset_id = asset_id;
@@ -227,19 +227,13 @@ fn two_real_leaves_same_block_with_amounts(
     }
     // Pad the 4-ary node with zero hashes (canonical empty siblings).
 
-    let exit_account = BytesDigest::try_from(DEFAULT_EXIT_ACCOUNT).unwrap();
     let mut out = Vec::with_capacity(2);
     for i in 0..2 {
         let (siblings, positions, root) = depth1_merkle_proof(i, &leaf_hashes);
         let inputs = CircuitInputs {
             public: PublicCircuitInputs {
                 asset_id,
-                output_amount_1: 0,
-                output_amount_2: 0,
-                volume_fee_bps: DEFAULT_VOLUME_FEE_BPS,
                 nullifier: nullifiers[i],
-                exit_account_1: exit_account,
-                exit_account_2: BytesDigest::default(),
                 block_hash: BytesDigest::try_from([0u8; 32]).unwrap(),
                 block_number: DEFAULT_BLOCK_NUMBERS[0],
                 input_amount: input_amounts[i],
@@ -257,7 +251,7 @@ fn two_real_leaves_same_block_with_amounts(
                 zk_merkle_positions: positions,
             },
         };
-        out.push(with_real_block(inputs));
+        out.push(with_genuine_block_hash(inputs));
     }
     assert_eq!(out[0].public.block_hash, out[1].public.block_hash);
     assert_ne!(out[0].public.nullifier, out[1].public.nullifier);
@@ -354,7 +348,10 @@ fn commit_rejects_nonzero_asset_id_when_dummy_padding_is_needed() {
     // dummy padding (asset_id = 0). Commit must reject that mismatch before
     // proving. (Tampering with asset_id on an existing proof would fail the
     // leaf-verify-at-commit check first; this exercises the padding preflight.)
-    let proof = make_leaf_proof(&with_real_block(test_inputs_with_asset(5)));
+    let proof = make_leaf_proof(&with_real_block(
+        test_inputs_with_asset(5),
+        DEFAULT_INPUT_AMOUNTS[0],
+    ));
 
     let prover = make_private_batch_prover();
     let err = prover.aggregate(burns_only(vec![proof])).unwrap_err();
@@ -491,13 +488,10 @@ fn private_batch_prover_rejects_poisoned_dummy_template() {
         std::fs::copy(entry.path(), poisoned_dir.join(entry.file_name())).unwrap();
     }
 
-    // Sentinel-neutral tampering: block_hash, outputs, and exit accounts stay
-    // zero (test_inputs_0 carries a nonzero exit_account_1, which the sentinel
-    // now rejects on its own), so only the cryptographic check can catch it.
-    let mut dummy_inputs = CircuitInputs::test_inputs_0();
-    dummy_inputs.public.exit_account_1 = zk_circuits_common::utils::BytesDigest::default();
-    let mut poisoned = make_leaf_proof(&dummy_inputs);
-    poisoned.public_inputs[4] = F::from_canonical_u64(0xdead_beef); // nullifier felt
+    // Sentinel-neutral tampering: block_hash and input_amount stay zero, so
+    // only the cryptographic check can catch it.
+    let mut poisoned = make_leaf_proof(&CircuitInputs::test_inputs_0());
+    poisoned.public_inputs[NULLIFIER_START_INDEX] = F::from_canonical_u64(0xdead_beef);
     std::fs::write(poisoned_dir.join("dummy_proof.bin"), poisoned.to_bytes()).unwrap();
 
     let err = PrivateBatchProver::new_from_binaries_dir(&poisoned_dir)
@@ -508,37 +502,20 @@ fn private_batch_prover_rejects_poisoned_dummy_template() {
         "got: {err}"
     );
 
-    // A cryptographically VALID dummy proof (over the real leaf circuit) with a
-    // nonzero exit account is exactly the poisoned-padding shape from the audit
-    // finding (incomplete dummy sentinel): block hash and amounts are zero, yet
-    // its exit bytes would mark every padded slot. The sentinel must reject it.
-    let marked_exits = make_leaf_proof(&CircuitInputs::test_inputs_0());
+    // A template claiming a non-zero burn must be rejected by the sentinel
+    // check before the (also failing) cryptographic check.
+    let mut nonzero_burn = make_leaf_proof(&CircuitInputs::test_inputs_0());
+    nonzero_burn.public_inputs[INPUT_AMOUNT_INDEX] = F::from_canonical_u64(7);
     std::fs::write(
         poisoned_dir.join("dummy_proof.bin"),
-        marked_exits.to_bytes(),
+        nonzero_burn.to_bytes(),
     )
     .unwrap();
 
     let err = PrivateBatchProver::new_from_binaries_dir(&poisoned_dir)
-        .expect_err("dummy template with a nonzero exit account must be rejected at load time");
+        .expect_err("non-zero-burn dummy template must be rejected at load time");
     assert!(
-        err.to_string().contains("non-zero exit account"),
-        "got: {err}"
-    );
-
-    // A template with a non-zero payout must be rejected by the sentinel check.
-    let mut nonzero_payout = make_leaf_proof(&CircuitInputs::test_inputs_0());
-    nonzero_payout.public_inputs[1] = F::from_canonical_u64(7); // output_amount_1
-    std::fs::write(
-        poisoned_dir.join("dummy_proof.bin"),
-        nonzero_payout.to_bytes(),
-    )
-    .unwrap();
-
-    let err = PrivateBatchProver::new_from_binaries_dir(&poisoned_dir)
-        .expect_err("non-zero-payout dummy template must be rejected at load time");
-    assert!(
-        err.to_string().contains("non-zero output amounts"),
+        err.to_string().contains("non-zero input_amount"),
         "got: {err}"
     );
 

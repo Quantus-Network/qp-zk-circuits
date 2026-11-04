@@ -5,6 +5,7 @@ use plonky2::hash::poseidon2::Poseidon2Hash;
 use plonky2::plonk::config::Hasher;
 use qp_wormhole_inputs::PublicCircuitInputs;
 use wormhole_circuit::{
+    block_header::header::HeaderInputs,
     inputs::{CircuitInputs, PrivateCircuitInputs},
     nullifier::Nullifier,
     unspendable_account::UnspendableAccount,
@@ -20,9 +21,8 @@ pub const DEFAULT_SECRETS: [&str; 2] = [
     "c6034553e5556630d24a593d2c92de9f1ede81d48f0fb3371764462cc3594b3f",
 ];
 pub const DEFAULT_TRANSFER_COUNTS: [u64; 2] = [4, 98];
+/// Burn amounts used by [`with_real_block`]; dummy-sentinel inputs burn 0.
 pub const DEFAULT_INPUT_AMOUNTS: [u32; 2] = [100, 300];
-/// Outputs leave enough value for the private batch's aggregate 10 bps fee.
-pub const DEFAULT_OUTPUT_AMOUNTS: [u32; 2] = [99, 297];
 pub const DEFAULT_VOLUME_FEE_BPS: u32 = 10; // 0.1% = 10 basis points
 
 pub const DEFAULT_EXIT_ACCOUNT: [u8; 32] = [4u8; 32];
@@ -71,6 +71,24 @@ pub trait TestInputs {
     fn test_inputs_1() -> Self;
 }
 
+/// Turn dummy-sentinel leaf inputs into a real proof of burn of `input_amount`:
+/// recompute the depth-0 ZK tree root for the new amount and replace the zero
+/// block hash with the genuine hash of the header fields, so every binding
+/// the dummy sentinel skips is enforced.
+pub fn with_real_block(mut inputs: CircuitInputs, input_amount: u32) -> CircuitInputs {
+    inputs.public.input_amount = input_amount;
+    inputs.private.zk_tree_root = compute_zk_leaf_hash(
+        &inputs.private.unspendable_account,
+        inputs.private.transfer_count,
+        inputs.public.asset_id,
+        input_amount,
+    );
+    inputs.public.block_hash = HeaderInputs::try_from(&inputs)
+        .expect("header inputs from test inputs")
+        .block_hash();
+    inputs
+}
+
 pub trait TestAggrInputs {
     fn test_aggr_inputs() -> Vec<Self>
     where
@@ -84,9 +102,10 @@ impl TestInputs for CircuitInputs {
     /// The circuit computes: leaf_hash = H(to_account || transfer_count || asset_id || input_amount)
     /// and verifies it matches the provided root.
     ///
-    /// Uses dummy proof mode (block_hash=0, outputs=0) to bypass block header and
-    /// nullifier hash validation, but the ZK Merkle proof and unspendable account
-    /// constraints are still verified.
+    /// Uses dummy proof mode (block_hash=0, which forces input_amount=0) to bypass
+    /// block header and nullifier hash validation, but the ZK Merkle proof and
+    /// unspendable account constraints are still verified. See [`with_real_block`]
+    /// for a real proof of burn.
     fn test_inputs_0() -> Self {
         let secret: BytesDigest = hex::decode(DEFAULT_SECRETS[0].trim()).unwrap()[..32]
             .try_into()
@@ -96,7 +115,6 @@ impl TestInputs for CircuitInputs {
             digest_to_bytes(Nullifier::from_preimage(secret, DEFAULT_TRANSFER_COUNTS[0]).hash);
         let unspendable_account_digest = UnspendableAccount::from_secret(secret).account_id;
         let unspendable_account = digest_to_bytes(unspendable_account_digest);
-        let exit_account = BytesDigest::try_from(DEFAULT_EXIT_ACCOUNT).unwrap();
 
         // Compute the ZK leaf hash for a single-leaf tree (depth 0)
         // For depth 0, the leaf hash IS the root
@@ -104,7 +122,7 @@ impl TestInputs for CircuitInputs {
             &unspendable_account,
             DEFAULT_TRANSFER_COUNTS[0],
             0u32, // asset_id
-            DEFAULT_INPUT_AMOUNTS[0],
+            0u32, // dummy burn
         );
         let zk_merkle_siblings: Vec<[[u8; 32]; SIBLINGS_PER_LEVEL]> = vec![]; // Empty for depth 0
         let zk_merkle_positions: Vec<u8> = vec![]; // Empty for depth 0
@@ -112,17 +130,11 @@ impl TestInputs for CircuitInputs {
         Self {
             public: PublicCircuitInputs {
                 asset_id: 0u32,
-                // DUMMY: output amounts = 0 (part of dummy sentinel to skip block hash validation)
-                output_amount_1: 0u32,
-                output_amount_2: 0u32,
-                volume_fee_bps: DEFAULT_VOLUME_FEE_BPS,
                 nullifier,
-                exit_account_1: exit_account,
-                exit_account_2: BytesDigest::default(),
-                // DUMMY: block_hash = 0 (part of dummy sentinel)
+                // DUMMY: block_hash = 0 (sentinel); a dummy burns nothing
                 block_hash: BytesDigest::try_from([0u8; 32]).unwrap(),
                 block_number: DEFAULT_BLOCK_NUMBERS[0],
-                input_amount: DEFAULT_INPUT_AMOUNTS[0],
+                input_amount: 0u32,
             },
             private: PrivateCircuitInputs {
                 secret: secret.into(),
@@ -150,14 +162,13 @@ impl TestInputs for CircuitInputs {
             digest_to_bytes(Nullifier::from_preimage(secret, DEFAULT_TRANSFER_COUNTS[1]).hash);
         let unspendable_account_digest = UnspendableAccount::from_secret(secret).account_id;
         let unspendable_account = digest_to_bytes(unspendable_account_digest);
-        let exit_account = BytesDigest::try_from(DEFAULT_EXIT_ACCOUNT).unwrap();
 
         // Compute the ZK leaf hash for a single-leaf tree (depth 0)
         let zk_tree_root = compute_zk_leaf_hash(
             &unspendable_account,
             DEFAULT_TRANSFER_COUNTS[1],
             0u32, // asset_id
-            DEFAULT_INPUT_AMOUNTS[1],
+            0u32, // dummy burn
         );
         let zk_merkle_siblings: Vec<[[u8; 32]; SIBLINGS_PER_LEVEL]> = vec![];
         let zk_merkle_positions: Vec<u8> = vec![];
@@ -165,15 +176,10 @@ impl TestInputs for CircuitInputs {
         Self {
             public: PublicCircuitInputs {
                 asset_id: 0u32,
-                output_amount_1: 0u32,
-                output_amount_2: 0u32,
-                volume_fee_bps: DEFAULT_VOLUME_FEE_BPS,
                 nullifier,
-                exit_account_1: exit_account,
-                exit_account_2: BytesDigest::default(),
                 block_hash: BytesDigest::try_from([0u8; 32]).unwrap(),
                 block_number: DEFAULT_BLOCK_NUMBERS[1],
-                input_amount: DEFAULT_INPUT_AMOUNTS[1],
+                input_amount: 0u32,
             },
             private: PrivateCircuitInputs {
                 secret: secret.into(),

@@ -76,7 +76,7 @@ impl From<BytesDigest> for SubstrateAccount {
 }
 
 // ============================================================================
-// AccountTargets - Hash output encoding (4 felts) for exit accounts
+// AccountTargets - Hash output encoding (4 felts) for hash-derived accounts
 // ============================================================================
 
 /// Targets for a substrate account (4 field elements).
@@ -103,7 +103,7 @@ impl AccountTargets {
     }
 }
 
-/// Targets for a single exit account (used for public outputs)
+/// Targets for a single public account (used by the ownership circuit's claim account)
 #[derive(Debug, Clone, Copy)]
 pub struct ExitAccountTargets {
     pub address: AccountTargets,
@@ -114,55 +114,6 @@ impl ExitAccountTargets {
         Self {
             address: AccountTargets::new_public(builder),
         }
-    }
-}
-
-/// Targets for two exit accounts (spend + change) in Bitcoin-style outputs
-#[derive(Debug, Clone, Copy)]
-pub struct DualExitAccountTargets {
-    /// First exit account (spend destination)
-    pub exit_account_1: ExitAccountTargets,
-    /// Second exit account (change destination)
-    pub exit_account_2: ExitAccountTargets,
-}
-
-impl DualExitAccountTargets {
-    pub fn new(builder: &mut impl GadgetBuilder<F, D>) -> Self {
-        Self {
-            exit_account_1: ExitAccountTargets::new(builder),
-            exit_account_2: ExitAccountTargets::new(builder),
-        }
-    }
-}
-
-/// Exit account data for two outputs (spend + change)
-#[derive(Debug, Clone)]
-pub struct DualExitAccount {
-    pub exit_account_1: SubstrateAccount,
-    pub exit_account_2: SubstrateAccount,
-}
-
-impl CircuitFragment for DualExitAccount {
-    type Targets = DualExitAccountTargets;
-
-    /// Builds a dummy circuit to include both exit accounts as public inputs.
-    fn circuit(_targets: &Self::Targets, _builder: &mut CircuitBuilder<F, D>) {
-        // No constraints needed - exit accounts are just public inputs
-    }
-
-    fn fill_targets(
-        &self,
-        pw: &mut PartialWitness<F>,
-        targets: Self::Targets,
-    ) -> anyhow::Result<()> {
-        pw.set_target_arr(
-            &targets.exit_account_1.address.elements,
-            &self.exit_account_1.0,
-        )?;
-        pw.set_target_arr(
-            &targets.exit_account_2.address.elements,
-            &self.exit_account_2.0,
-        )
     }
 }
 

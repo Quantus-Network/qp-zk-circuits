@@ -16,9 +16,7 @@ pub use qp_wormhole_inputs::{
 };
 use qp_wormhole_inputs::{
     ASSET_ID_INDEX, BLOCK_HASH_END_INDEX, BLOCK_HASH_START_INDEX, BLOCK_NUMBER_INDEX,
-    EXIT_ACCOUNT_1_END_INDEX, EXIT_ACCOUNT_1_START_INDEX, EXIT_ACCOUNT_2_END_INDEX,
-    EXIT_ACCOUNT_2_START_INDEX, INPUT_AMOUNT_INDEX, NULLIFIER_END_INDEX, NULLIFIER_START_INDEX,
-    OUTPUT_AMOUNT_1_INDEX, OUTPUT_AMOUNT_2_INDEX, PUBLIC_INPUTS_FELTS_LEN, VOLUME_FEE_BPS_INDEX,
+    INPUT_AMOUNT_INDEX, NULLIFIER_END_INDEX, NULLIFIER_START_INDEX, PUBLIC_INPUTS_FELTS_LEN,
 };
 
 /// Inputs required to commit to the wormhole circuit.
@@ -124,14 +122,9 @@ pub trait ParsePublicInputs {
 
 impl ParsePublicInputs for PublicCircuitInputs {
     fn try_from_felts(pis: &[GoldilocksField]) -> anyhow::Result<PublicCircuitInputs> {
-        // Public inputs are ordered as follows (total 22 felts):
+        // Public inputs are ordered as follows (total 11 felts):
         // asset_id: 1 felt
-        // output_amount_1: 1 felt (spend)
-        // output_amount_2: 1 felt (change)
-        // volume_fee_bps: 1 felt
         // Nullifier.hash: 4 felts
-        // ExitAccount1.address: 4 felts (8 bytes/felt for hash-derived accounts)
-        // ExitAccount2.address: 4 felts (8 bytes/felt for hash-derived accounts)
         // BlockHeader.block_hash: 4 felts
         // BlockHeader.block_number: 1 felt
         // input_amount: 1 felt (intermediate only; not forwarded by aggregation)
@@ -146,29 +139,11 @@ impl ParsePublicInputs for PublicCircuitInputs {
             .to_canonical_u64()
             .try_into()
             .context("failed to convert asset_id felt to u32")?;
-        let output_amount_1 = pis[OUTPUT_AMOUNT_1_INDEX]
-            .to_canonical_u64()
-            .try_into()
-            .context("failed to convert output_amount_1 felt to u32")?;
-        let output_amount_2 = pis[OUTPUT_AMOUNT_2_INDEX]
-            .to_canonical_u64()
-            .try_into()
-            .context("failed to convert output_amount_2 felt to u32")?;
-        let volume_fee_bps = pis[VOLUME_FEE_BPS_INDEX]
-            .to_canonical_u64()
-            .try_into()
-            .context("failed to convert volume_fee_bps felt to u32")?;
         let nullifier = try_4_felts_to_bytes(&pis[NULLIFIER_START_INDEX..NULLIFIER_END_INDEX])
             .context("failed to deserialize nullifier hash")?;
         let block_hash = try_4_felts_to_bytes(&pis[BLOCK_HASH_START_INDEX..BLOCK_HASH_END_INDEX])
             .context("failed to deserialize block hash")?;
 
-        let exit_account_1 =
-            try_4_felts_to_bytes(&pis[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX])
-                .context("failed to deserialize exit_account_1")?;
-        let exit_account_2 =
-            try_4_felts_to_bytes(&pis[EXIT_ACCOUNT_2_START_INDEX..EXIT_ACCOUNT_2_END_INDEX])
-                .context("failed to deserialize exit_account_2")?;
         let block_number_felt = pis[BLOCK_NUMBER_INDEX];
         let block_number = block_number_felt
             .to_canonical_u64()
@@ -181,13 +156,8 @@ impl ParsePublicInputs for PublicCircuitInputs {
 
         Ok(PublicCircuitInputs {
             asset_id,
-            output_amount_1,
-            output_amount_2,
-            volume_fee_bps,
             nullifier,
             block_hash,
-            exit_account_1,
-            exit_account_2,
             block_number,
             input_amount,
         })
