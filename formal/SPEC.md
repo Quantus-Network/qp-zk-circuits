@@ -12,8 +12,8 @@ spec + the differential safety net.
 |------|----------|
 | `WormholeSpec/Basic.lean` | Field/digest model, salts, `inRange` |
 | `WormholeSpec/Hash.lean` | Random-oracle interface, `WA`/`Null`/`leafHash`/`nodeHash`/`dummyNull` |
-| `WormholeSpec/Leaf.lean` | 22-felt intermediate leaf relation `Rleaf` (C1–C4, conditional dummy path) |
-| `WormholeSpec/Aggregation.lean` | `RPrivateBatch` (aggregate segment fee), `RPublicBatch` |
+| `WormholeSpec/Leaf.lean` | 11-felt proof-of-burn leaf relation `Rleaf` (C1–C4, conditional dummy path, dummy burns zero) |
+| `WormholeSpec/Aggregation.lean` | `RPrivateBatch` (prover-chosen exit slots, aggregate segment fee), `RPublicBatch` |
 | `WormholeSpec/AggregationBridge.lean` | Public-input-level wrapper relations; composition with the children's relations |
 | `WormholeSpec/Security.lean` | Deterministic cores of the reduction theorems (`*_or_collision` + collision-resistance corollaries) |
 | `WormholeSpec/Encoding.lean` | Byte↔felt encoding safety (4-byte injective edges, 8-byte canonical-only) |
@@ -22,7 +22,7 @@ spec + the differential safety net.
 | `../wormhole/tests/.../encoding_safety.rs` | proptest harness: encoding round-trips + witnessed `{0,p}` collision |
 | `traces/private_batch_wrapper_n{2,4}.json` | Gadget-call trace of the real private-batch wrapper at `n = 2` and `4` (rows, copy constraints, constants, public inputs, and every `GadgetBuilder` call with the rows/copies it emitted), recorded by `TracingBuilder` in `common/src/formal_trace.rs`. Consumed by `qp-plonky2/constraint-exporter` to generate and prove the wrapper's Lean decode theorem and its composition into `RPrivateBatch` (qp-plonky2 `formal/PLAN.md` Steps 8c and 8e). The aggregator's unit tests fail if it is stale; regenerate with `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib private_batch_wrapper_n` |
 | `traces/public_batch_wrapper_n{2,4}.json` | The same for the real public-batch wrapper at `n_inner = 2` and `4` over `2`-leaf private batches (`build_public_batch_constraints`, wrapper logic only, on virtual inner PI targets). Regenerate with `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib public_batch_wrapper_n` |
-| `traces/leaf_circuit.json` | The same for the whole leaf circuit (`WormholeCircuit`: every constraint of `build_leaf_constraints` on the targets of `CircuitTargets::new`, no recursion) — 195 rows, 1566 gadget calls, the 22 public inputs and the private witness targets by name. Consumed by the exporter to generate the leaf decode theorem and its bridge to `Rleaf` (qp-plonky2 `formal/PLAN.md` Step 9). Regenerate with `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-circuit --test formal_trace` |
+| `traces/leaf_circuit.json` | The same for the whole leaf circuit (`WormholeCircuit`: every constraint of `build_leaf_constraints` on the targets of `CircuitTargets::new`, no recursion) — the 11 public inputs and the private witness targets by name. Consumed by the exporter to generate the leaf decode theorem and its bridge to `Rleaf` (qp-plonky2 `formal/PLAN.md` Step 9). Regenerate with `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-circuit --test formal_trace` |
 
 ## Building
 
@@ -41,8 +41,8 @@ hermetic. Toolchain is pinned in `lean-toolchain` (Lean `v4.30`).
   *explicitly* over `Nat` with the modulus `goldilocks` — see `Encoding.lean` —
   so they do not require `Felt` to be the field. **The representation is not a
   free global swap:** redefining `Felt := ZMod goldilocks` workspace-wide would
-  force the `Nat`-level arithmetic/encoding proofs (`Aggregation` grouping and
-  aggregate-fee bounds, `Encoding` byte bounds, all `omega`) to be reworked for modular arithmetic. The
+  force the `Nat`-level arithmetic/encoding proofs (`Aggregation` aggregate-fee
+  bounds, `Encoding` byte bounds, all `omega`) to be reworked for modular arithmetic. The
   *hash interface* no longer pins the carrier (see next bullet). (See the warnings
   in `Basic.lean` / `Hash.lean`.)
 - **Hash `H` with explicit collision resistance.** Represented by an opaque total
@@ -72,45 +72,45 @@ hermetic. Toolchain is pinned in `lean-toolchain` (Lean `v4.30`).
 |-------------|-------|-------------|
 | `WA s = H(H(salt_wh ‖ s))` (`RandomOracle.WA`) | C2 | `UnspendableAccount::from_secret` / `::circuit` — `wormhole/circuit/src/unspendable_account.rs` (salt `UNSPENDABLE_SALT = "wormhole"`) |
 | `Null s c = H(H(salt_null ‖ s ‖ c))` (`RandomOracle.Null`) | C1 | `Nullifier::from_preimage` — `nullifier.rs` (salt `NULLIFIER_SALT = "~nullif~"`); in-circuit in `connect_shared_targets` — `circuit.rs:282–304` |
-| `LeafPublic.inputAmount` is the appended 22nd intermediate PI | aggregate-fee interface | leaf PI registration / parser (`INPUT_AMOUNT_INDEX = 21`); consumed only by private batch, not forwarded |
+| `LeafPublic.inputAmount` is the final intermediate PI | aggregate-fee interface | leaf PI registration / parser (`INPUT_AMOUNT_INDEX = 10`); consumed only by private batch, not forwarded |
 | `leafHash` preimage order `to_account ‖ tc ‖ asset_id ‖ input` | C3 | `ZkLeaf::collect_for_hash` — `zk_merkle_proof.rs:101–112,419–422` |
 | `nodeHash` 4-ary `H(c0‖c1‖c2‖c3)` | C3 | `zk_merkle_proof.rs:518–524` |
 | `computeRoot` / `stepUp` position insert | C3 | Merkle walk + position `select` — `zk_merkle_proof.rs:433–536` |
 | `depth ≤ maxDepth`, `pos < 4` | C3 | `enforce_target_less_than_const`, `range_check(position, 2)` — `zk_merkle_proof.rs:425–426,441–442` |
-| `inRange 32 …` (transfer_count ×2, asset_id, input, outputs, volume_fee_bps) | C3/interface | `ZkLeaf::collect_32_bit_targets` + `range_check(_,32)` |
+| `inRange 32 …` (transfer_count ×2, asset_id, input) | C3/interface | `ZkLeaf::collect_32_bit_targets` + `range_check(_,32)` |
 | `inRange 32 block_number` | C4 | `range_check(_, 32)` — `block_header/mod.rs:71–73` |
 | `headerPreimage` order | C4 | `HeaderTargets::collect_to_vec` — `block_header/header.rs:63–75` |
 | root binding `zkTreeRoot = rootHash` | C4 | `connect_shared_targets` — `circuit.rs:331–338` |
-| dummy gating `¬isDummy → {C1, C4, root}` | §4 | `is_not_dummy` multiply-by-flag — `circuit.rs:251–338`, `zk_merkle_proof.rs:538–543` |
-| `isDummy = blockHash=0 ∧ outs=0` | §4 | `circuit.rs:251–276` |
+| dummy gating `¬isDummy → {C1, C4, root}` | §4 | `is_not_dummy` multiply-by-flag — `circuit.rs`, `zk_merkle_proof.rs` |
+| `isDummy = blockHash=0` | §4 | `is_dummy = block_hash == 0` — `circuit.rs` |
+| `isDummy → inputAmount = 0` | §4 | `is_dummy * input_amount == 0` — `circuit.rs` |
 
-The leaf relation deliberately has no fee inequality and no binding
-`volumeFeeBps ≤ 10000` clause. It still range-checks and Merkle-binds
-`inputAmount`; exposing that amount in the intermediate leaf proof lets the
-private wrapper enforce one aggregate inequality without exposing or forwarding
-the segment input total.
+The leaf is a proof of burn: it carries no outputs and no fee, so the relation
+has no fee inequality and no `volumeFeeBps` clause at all. It range-checks and
+Merkle-binds `inputAmount`; exposing that amount in the intermediate leaf proof
+lets the private wrapper enforce one aggregate inequality over its prover-chosen
+exit slots without exposing or forwarding the segment input total.
 
 ### Aggregation (`Aggregation.lean`)
 
 | Spec clause | Rust source |
 |-------------|-------------|
-| `metadataConsistent` (asset/fee/block hash across non-dummy; block *number* is forwarded from the first real slot, not checked per slot) | `build_private_batch_constraints` — `private_batch/circuit/circuit_logic.rs` |
-| `referenceFromFirstReal` (block ref = first non-dummy slot; all-dummy keeps the scan's zero hash/number/fee) | prefix-scan selection — `private_batch/circuit/circuit_logic.rs` (the `illuzen/full-shuffle` fix) |
-| `nullifiersReplaced` `DNull(u)=H(H(u))`, held of the pre-permutation list (`∃ raw, … ∧ Perm` in `RPrivateBatch`) | `hash_dummy_nullifier_pre_image` — `circuit_logic.rs` |
+| `metadataConsistent` (asset/block hash across non-dummy; block *number* is forwarded from the first real slot, not checked per slot) | `build_private_batch_constraints` — `private_batch/circuit/circuit_logic.rs` |
+| `referenceFromFirstReal` (block ref = first non-dummy slot; all-dummy keeps the scan's zero hash/number) | prefix-scan selection — `private_batch/circuit/circuit_logic.rs` (the `illuzen/full-shuffle` fix) |
+| `nullifiersReplaced` `DNull(u)=H(H(u))`, held of the pre-permutation list (`∃ raw, … ∧ Perm` in `RPrivateBatch`) | `hash_dummy_nullifier_pre_image` + per-slot `select` — `circuit_logic.rs` |
 | `out.nullifiers.Perm raw` (exact selected-nullifier multiset, privately reordered) | `permute_digests4` over selected nullifiers — `circuit_logic.rs`; gadget in `common/src/gadgets.rs` |
-| `isDummyPrivateBatch = blockHash=0` (weaker sentinel) | dummy detection at private-batch — `circuit_logic.rs` |
-| `maskedInputTotal`, `maskedOutputTotal` | dummy-mask real leaf inputs and raw outputs before summing |
-| `privateBatchFeeOk`: `fee_bps ≤ 10000` and `sum_out·10000 ≤ sum_in·(10000−fee_bps)` | one aggregate check per private segment; no totals are forwarded |
-| `maskedChildPairs` → `groupExits` / `matchSum` (dummy slots masked to `(zero, 0)` at ingress; per-slot group sum + first-occurrence dedup) | dummy-mask selects + exit-account grouping loop — `circuit_logic.rs` |
+| `isDummyPrivateBatch = blockHash=0` (same sentinel as the leaf) | dummy detection at private-batch — `circuit_logic.rs` |
+| `maskedInputTotal` | dummy-mask real leaf inputs before summing |
+| `∀ s ∈ out.exitSlots, inRange 32 s.amount` | `range_check(slot.amount, 32)` over the witnessed exit slots — `circuit_logic.rs` |
+| `privateBatchFeeOk`: `fee_bps ≤ 10000` and `outputExitTotal·10000 ≤ sum_in·(10000−fee_bps)` | one aggregate check per private segment over the prover-chosen exits; no totals are forwarded |
 | `realNullifiersDistinct` (pairwise-distinct real nullifiers, anti-replay) | `and(and(is_real_i, is_real_j), digest_eq(null_i, null_j)) = 0` loop over `i < j` — `circuit_logic.rs` ("Real-nullifier uniqueness") |
-| `numExitSlots = 2 · N` | `num_exit_slots_t = constant(n_leaf * 2)` — `circuit_logic.rs` |
-| **thm** `RPrivateBatch_value_conservation`: `outputExitTotal = maskedOutputTotal` | derived from the grouping primitive |
-| **thm** `RPrivateBatch_settles_distinct_spends`: `outputExitTotal = rawOutputTotal (realLeaves)` ∧ `(realNullifiers).Nodup` | the property the uniqueness constraint protects: settled value is backed by distinct spends |
+| `numExitSlots = out.exitSlots.length` | `num_exit_slots_t = constant(num_exit_slots)` — `circuit_logic.rs` |
+| **thm** `RPrivateBatch_settles_distinct_spends`: `outputExitTotal ≤ rawInputTotal (realLeaves)` ∧ `(realNullifiers).Nodup` | the property the uniqueness constraint protects: settled value is backed by distinct spends |
 | **thm** `RPrivateBatch_real_nullifier_mem`, `RPrivateBatch_exitSlots_length` | every real nullifier reaches the output; the exit region has exactly `numExitSlots` slots |
-| **thm** `RPrivateBatch_settlement_fee_conservation`, `RPrivateBatch_settlement_le_input` | combine aggregate fee enforcement with grouping to bound the actually settled output |
-| **thm** `masked{Input,Output}Total_mul_feeDenominator_lt_modulus`, `privateBatchFeeRhs_lt_modulus` | scaled fee operands cannot wrap for ≤64 leaves with 32-bit amounts |
+| **thm** `RPrivateBatch_fee_conservation`, `RPrivateBatch_settlement_le_input` | the aggregate fee inequality and its unscaled corollary bound the settled output |
+| **thm** `maskedInputTotal_mul_feeDenominator_lt_modulus`, `slotsTotal_mul_feeDenominator_lt_modulus`, `privateBatchFeeRhs_lt_modulus` | scaled fee operands cannot wrap for ≤64 leaves / ≤64 slots with 32-bit amounts |
 | **thm** `privateBatchFeeRhs_lt_two_pow_52`, `privateBatchFeeLhs_add_two_pow_52_lt_modulus` | the two side conditions that make `range_check(rhs − lhs, 52)` sound: honest `rhs < 2^52`; wrapped `p − lhs > 2^52` |
-| **thm** `sentinel_gap_or_zero_preimage` / `sentinels_agree` / `rawOutputTotal_eq_maskedOutputTotal_of_Rleaf` | leaf vs private-batch dummy sentinels agree on valid leaves, or an `H` preimage of `0` is exhibited (`HasZeroPreimage`) |
+| **thm** `sentinels_agree` / `rawInputTotal_eq_maskedInputTotal_of_Rleaf` | leaf and private-batch dummy sentinels are the same predicate; on valid leaves a dummy burns nothing, so the wrapper's input mask is defense in depth |
 | output layout (`PrivateBatchOutput`) | `aggregated_output` — `private_batch/circuit/constants.rs` |
 | `RPublicBatch` forwarding + consistency | `build_public_batch_constraints` — `public_batch/circuit/circuit_logic.rs` |
 | `totalExitSlots = out.exitSlots.length`; **thm** `RPublicBatch_totalExitSlots` (= sum of inner slot counts) | `constant(n_inner * slots_per_inner)` — `public_batch/circuit/circuit_logic.rs` |
@@ -174,64 +174,51 @@ step is the Phase-4 preimage game, as for the other security theorems.
 ## Known gaps / TODOs (tracked for later phases)
 
 1. ~~Range-check set.~~ **Done.** Confirmed against `ZkLeaf::collect_32_bit_targets`:
-   `transfer_count` (both limbs), `asset_id`, `input_amount`, `output_amount_1`,
-   `output_amount_2`, `volume_fee_bps` (all unconditional 32-bit), plus
-   `block_number` in `BlockHeader::circuit_without_hash_binding`. `inputAmount`
-   is now part of `LeafPublic`, matching its appended 22nd intermediate PI;
-   `Rleaf` asserts the full range set but no longer enforces fees.
-2. ~~Exit grouping/dedup and aggregate fee relation.~~ **Done at the Phase-0
-   relation level.** `RPrivateBatch` pins the exact in-circuit grouping
-   (`groupExits` over dummy-masked `maskedChildPairs`) and includes
-   `privateBatchFeeOk` over `maskedInputTotal` / `maskedOutputTotal`. Thus value
-   can pool across real leaves, but each private segment satisfies exactly one
-   `sum_out·10000 ≤ sum_in·(10000−fee_bps)` check with `fee_bps ≤ 10000`.
-   Exit conservation remains the derived theorem
-   `RPrivateBatch_value_conservation`; the economically useful composed
-   consequences are `RPrivateBatch_settlement_fee_conservation` and
-   `RPrivateBatch_settlement_le_input`.
-   Dummy masking discharges zero-contribution structurally
-   (`rawOutputTotal_eq_maskedOutputTotal` remains as the leaf-side compatibility
-   statement, now discharged for valid leaves — see gap 4).
-   `numExitSlots = 2·N` is a clause of `RPrivateBatch`, and
-   `RPrivateBatch_exitSlots_length` proves the exit region has that length.
-   Remaining: the full per-account *multiset* characterization (which account
-   gets which sum) (Phase 3).
+   `transfer_count` (both limbs), `asset_id`, `input_amount` (all unconditional
+   32-bit), plus `block_number` in `BlockHeader::circuit_without_hash_binding`.
+   The leaf is a proof of burn, so `LeafPublic` has no output, exit-account or
+   fee fields; `Rleaf` additionally pins `isDummy → inputAmount = 0`.
+2. ~~Aggregate fee relation.~~ **Done at the Phase-0 relation level.** Exit slots
+   are prover-chosen witnesses of the private batch (`out.exitSlots`, each amount
+   32-bit range-checked), and `RPrivateBatch` includes `privateBatchFeeOk` over
+   `maskedInputTotal` and `outputExitTotal`. Thus value can pool across real
+   leaves and split across exits, and each private segment satisfies exactly one
+   `sum_out·10000 ≤ sum_in·(10000−fee_bps)` check with `fee_bps ≤ 10000`. The
+   economically useful consequences are `RPrivateBatch_fee_conservation` and
+   `RPrivateBatch_settlement_le_input`. There is no in-circuit exit grouping any
+   more (slots are forwarded verbatim; a prover that wants merged outputs merges
+   them before proving), so no per-account multiset characterization is owed.
+   `numExitSlots = out.exitSlots.length` is a clause of `RPrivateBatch`.
    **Field caveat:** aggregate fee arithmetic is stated over `Nat`; over
    `ZMod p`, both scaled operands and the checked difference must not wrap.
    `maskedInputTotal_mul_feeDenominator_lt_modulus`,
-   `maskedOutputTotal_mul_feeDenominator_lt_modulus`, and
+   `slotsTotal_mul_feeDenominator_lt_modulus`, and
    `privateBatchFeeRhs_lt_modulus` prove the operand bounds for the protocol cap
-   of 64 leaves and 32-bit amounts; `privateBatchFeeRhs_lt_two_pow_52` and
+   of 64 leaves / 64 slots and 32-bit amounts; `privateBatchFeeRhs_lt_two_pow_52` and
    `privateBatchFeeLhs_add_two_pow_52_lt_modulus` are the two-sided bounds the
-   in-circuit `range_check(rhs − lhs, 52)` actually rests on (note `lhs` itself may
-   exceed `2^52`; soundness comes from the wrapped difference landing above it).
-   The field-level lift of those bounds through the range-check gadget lives in
+   in-circuit `range_check(rhs − lhs, 52)` actually rests on. The field-level
+   lift of those bounds through the range-check gadget lives in
    `qp-plonky2/formal` (`Plonky2Spec.Wrapper`).
 3. ~~**public-batch accounting.**~~ **Done.** `totalExitSlots = out.exitSlots.length`
    is a clause of `RPublicBatch`; `RPublicBatch_totalExitSlots` equates it to the
    sum of inner slot counts. The aggregator address is a free witness bound by the
    `= addr` conjunct; its fee-recipient semantics are pallet-side, not a circuit
    constraint.
-4. ~~**Dummy-notion compatibility.**~~ **Done (as a reduction).** A valid leaf
-   (`Rleaf`) with `blockHash = 0` but non-zero outputs would have to supply a
-   block-header preimage of the zero digest (`sentinel_gap_or_zero_preimage`), so
-   under explicit zero-preimage resistance (`¬ HasZeroPreimage ro.H`) the two
-   sentinels coincide on valid leaves (`sentinels_agree`), and every private-batch
-   dummy carries zero outputs (`rawOutputTotal_eq_maskedOutputTotal_of_Rleaf`). The
-   ingress mask already made the exit region independent of the gap; this closes
-   the nullifier/metadata side too.
+4. ~~**Dummy-notion compatibility.**~~ **Done (definitionally).** Both layers use
+   `blockHash = 0` as the dummy sentinel (`sentinels_agree` is `Iff.rfl`), and
+   `Rleaf` forces a dummy's `inputAmount` to zero, so the wrapper's input mask is
+   defense in depth (`rawInputTotal_eq_maskedInputTotal_of_Rleaf`).
 8. **Real-nullifier uniqueness.** ~~Not modeled.~~ **Done.** `realNullifiersDistinct`
    is a clause of `RPrivateBatch` (and `PrivateBatchCircuit`), mirroring the
    circuit's pairwise `i < j` loop. `RPrivateBatch_settles_distinct_spends` is the
-   theorem the constraint exists for: the settled total is the output total of the
-   real children, whose nullifiers are `Nodup`. Not enforced (and not claimed): a
+   theorem the constraint exists for: the settled total is covered by the burns of
+   the real children, whose nullifiers are `Nodup`. Not enforced (and not claimed): a
    *dummy* nullifier `DNull(u)` colliding with a real one — dummies never settle, so
    the circuit exempts them.
-5. **`exit_account_1/2` are unconstrained at the leaf** — bound only at private-batch. The
-   spec reflects this (no `Rleaf` clause references them); the binding obligation
-   lives in `RPrivateBatch`, whose grouping masks dummy children's exits to the
-   canonical zero account (`maskedChildPairs`) so unconstrained dummy exit bytes
-   cannot mark padded slots in the aggregated output.
+5. ~~**`exit_account_1/2` are unconstrained at the leaf.**~~ **Moot.** The leaf no
+   longer carries exit accounts; exit slots are private-batch witnesses bound only
+   by `privateBatchFeeOk`, and the leaf layout gives a poisoned dummy template no
+   exit field to smuggle.
 6. **Game-based probabilistic accounting.** `Security.lean` proves the
    *deterministic* cores of one-time withdrawal and spend-path exclusivity as
    reductions to an `H` collision, clean under the `CollisionResistant` hypothesis.
@@ -283,13 +270,13 @@ step is the Phase-4 preimage game, as for the other security theorems.
 
 ## Intentionally-loose facts (must NOT be flagged as bugs)
 
-- Leaf exit accounts are free public inputs (above); for dummy children the
-  private-batch wrapper masks them to zero in the output.
+- Exit slots are free witnesses of the private batch (bound only by the 32-bit
+  range checks and `privateBatchFeeOk`); several slots may name the same account
+  and the circuit does not merge them.
 - Leaf `inputAmount` is an intermediate public input for recursive aggregation,
   but private/public aggregate proofs do not forward it or either aggregate
   total.
 - `asset_id` is constrained only via the Merkle leaf preimage, not a registry.
-- The two dummy notions differ by layer (above).
 - The `fake_leaf` test circuit does **not** implement the canonical `Rleaf`
   constraints and is not a
   verification target; only `WormholeCircuit` is.

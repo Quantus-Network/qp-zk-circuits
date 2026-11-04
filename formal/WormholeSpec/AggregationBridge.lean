@@ -19,10 +19,9 @@
     * nullifier permutation   private boolean adjacent-swap network — gadget-level,
                               surfaced here as the `nullsPerm` field of
                               `PrivateBatchCircuit`
-    * exit grouping/dedup     `select`/`matchSum`/`groupAux` over dummy-masked
-                              ingress (`select(is_dummy, 0, …)`, see `maskedChildPairs`)
-                              — `Plonky2Spec.Wrapper.{match_contribution, dedup_select}`
-    * aggregate fee           dummy-masked input/output sums plus one
+    * exit slots              forwarded verbatim from the witness, each amount
+                              32-bit range-checked
+    * aggregate fee           dummy-masked input sum, exit-slot sum, plus one
                               batch-safe comparison per private segment
     * block reference         first-real prefix scan             — `Plonky2Spec.Wrapper.scanFirst_correct`
     * metadata `or`-clause    `or(is_dummy, matches) = 1`        — `Plonky2Spec.Wrapper.{block_consistency, real_block_matches}`
@@ -37,9 +36,9 @@
     * `private_batch_bridge` does one piece of real work — relating the *functional*
       `buildNullifiers` the circuit computes to the *relational* `nullifiersReplaced`
       (`nullifiersReplaced_build`), witnessing it as the `raw` list the output
-      region permutes; its other conjuncts (`metaOk`, `ref`, `feeOk`, `exits`) are
-      shared verbatim with `RPrivateBatch`. So `private_batch_sound` is "the children's
-      `Rleaf` hypothesis + that one modest nullifier lemma".
+      region permutes; its other conjuncts (`metaOk`, `ref`, `feeOk`,
+      `slotsInRange`) are shared verbatim with `RPrivateBatch`. So `private_batch_sound`
+      is "the children's `Rleaf` hypothesis + that one modest nullifier lemma".
     * `public_batch_bridge` is the *identity*. The public-batch wrapper conditions are
       field-for-field `RPublicBatch`, so `PublicBatchCircuit` is *defined as* `RPublicBatch` (below) rather than
       restated, and the bridge carries no logical content. Consequently `public_batch_sound`
@@ -48,7 +47,7 @@
 
   This is the intended package boundary, not an oversight; the non-trivial content lives
   in `Plonky2Spec.Wrapper` (gadgets), `Plonky2Bridge/Trusted.lean` (proof-system soundness),
-  and the private-batch grouping/conservation proofs in `Aggregation.lean`.
+  and the private-batch fee-bound proofs in `Aggregation.lean`.
 -/
 import WormholeSpec.Basic
 import WormholeSpec.Hash
@@ -97,8 +96,9 @@ theorem buildNullifiers_length (ro : RandomOracle) :
     public inputs (`build_private_batch_constraints`). The metadata/reference clauses
     are the satisfied form of the `or(is_dummy, matches)` constraint and the first-real
     scan; the nullifier clause is the `select` output routed through the private
-    permutation network; the fee clause is the single comparison over
-    dummy-masked totals; the exit clause is the grouping output.
+    permutation network; the fee clause is the single comparison over the dummy-masked
+    input total and the exit-slot total; the exit slots themselves are witnesses,
+    constrained only by their 32-bit range checks.
 
     The nullifier field mirrors the permutation network's structural guarantee:
     each private boolean switch emits `{a, b}` as a multiset, so the output is
@@ -110,10 +110,10 @@ structure PrivateBatchCircuit (ro : RandomOracle) (leaves : List LeafPublic)
   /-- The output region is a permutation of the per-slot
       `select(is_dummy, H(H u), real)` selections. -/
   nullsPerm : out.nullifiers.Perm (buildNullifiers ro leaves us)
-  /-- One fee inequality over the dummy-masked totals of this private segment. -/
+  /-- Each exit amount passes `range_check(·, 32)`. -/
+  slotsInRange : ∀ s ∈ out.exitSlots, inRange 32 s.amount
+  /-- One fee inequality over this private segment. -/
   feeOk : privateBatchFeeOk leaves out
-  /-- The `2N` settled slots are the in-circuit group/dedup of every child's outputs. -/
-  exits : out.exitSlots = groupExits (maskedChildPairs leaves)
   /-- Each non-dummy child agrees with the aggregate header (the `or`-clause, satisfied). -/
   metaOk : metadataConsistent leaves out
   /-- The header is taken from the first non-dummy child (first-real scan result). -/
@@ -121,8 +121,8 @@ structure PrivateBatchCircuit (ro : RandomOracle) (leaves : List LeafPublic)
   /-- Real slots carry pairwise-distinct nullifiers (the satisfied form of the
       `and(both_real, digest_eq) = 0` loop over `i < j`). -/
   nullsDistinct : realNullifiersDistinct leaves
-  /-- The slot-count header is the constant `2 · n_leaf`. -/
-  numSlots : out.numExitSlots = 2 * leaves.length
+  /-- The slot-count header is the constant `num_exit_slots`, the exit region's length. -/
+  numSlots : out.numExitSlots = out.exitSlots.length
 
 /-- **Private-batch bridge.** The wrapper constraints imply the spec relation `RPrivateBatch`. -/
 theorem private_batch_bridge {ro : RandomOracle} {leaves : List LeafPublic}
@@ -131,7 +131,7 @@ theorem private_batch_bridge {ro : RandomOracle} {leaves : List LeafPublic}
   refine ⟨h.metaOk, h.ref,
     ⟨buildNullifiers ro leaves us, nullifiersReplaced_build ro leaves us h.uslen,
       h.nullsPerm⟩,
-    ?_, h.feeOk, h.exits, h.nullsDistinct, h.numSlots⟩
+    ?_, h.slotsInRange, h.feeOk, h.nullsDistinct, h.numSlots⟩
   exact h.nullsPerm.length_eq.trans (buildNullifiers_length ro leaves us h.uslen)
 
 /-- **Private-batch soundness (end to end).** A satisfied private-batch aggregation circuit each
