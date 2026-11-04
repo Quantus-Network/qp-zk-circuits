@@ -130,9 +130,10 @@ inside any circuit in this repository**. The layers split the work as follows.
   yields exactly one valid nullifier. (Dummy padding proofs — `block_hash == 0`, which
   forces `input_amount == 0` — are exempt from this binding; see below.)
 - **Private-batch circuit**: requires real nullifiers to be pairwise distinct within the
-  private segment. For dummy slots it substitutes the hash of a fresh random preimage, then
-  privately permutes the selected nullifiers into the aggregate public inputs. The switch
-  network proves exact multiset preservation without changing any nullifier contents.
+  private segment. For dummy slots it substitutes the hash of a fresh random preimage and
+  emits the nullifiers in leaf-slot order. The prover shuffles the leaf slots before
+  proving, and exit slots are independent witnesses, so the public order reveals nothing
+  about which slots are real or which burn funds which payout.
 - **Public-batch circuit**: forwards the private-batch public inputs (including all
   nullifiers) verbatim into its own public inputs.
 

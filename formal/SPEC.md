@@ -97,8 +97,7 @@ exit slots without exposing or forwarding the segment input total.
 |-------------|-------------|
 | `metadataConsistent` (asset/block hash across non-dummy; block *number* is forwarded from the first real slot, not checked per slot) | `build_private_batch_constraints` — `private_batch/circuit/circuit_logic.rs` |
 | `referenceFromFirstReal` (block ref = first non-dummy slot; all-dummy keeps the scan's zero hash/number) | prefix-scan selection — `private_batch/circuit/circuit_logic.rs` (the `illuzen/full-shuffle` fix) |
-| `nullifiersReplaced` `DNull(u)=H(H(u))`, held of the pre-permutation list (`∃ raw, … ∧ Perm` in `RPrivateBatch`) | `hash_dummy_nullifier_pre_image` + per-slot `select` — `circuit_logic.rs` |
-| `out.nullifiers.Perm raw` (exact selected-nullifier multiset, privately reordered) | `permute_digests4` over selected nullifiers — `circuit_logic.rs`; gadget in `common/src/gadgets.rs` |
+| `nullifiersReplaced` `DNull(u)=H(H(u))`, emitted in slot order | `hash_dummy_nullifier_pre_image` + per-slot `select` — `circuit_logic.rs` |
 | `isDummyPrivateBatch = blockHash=0` (same sentinel as the leaf) | dummy detection at private-batch — `circuit_logic.rs` |
 | `maskedInputTotal` | dummy-mask real leaf inputs before summing |
 | `∀ s ∈ out.exitSlots, inRange 32 s.amount` | `range_check(slot.amount, 32)` over the witnessed exit slots — `circuit_logic.rs` |

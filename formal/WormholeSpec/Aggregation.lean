@@ -13,10 +13,7 @@
     * one fee inequality over the dummy-masked input total of the whole private
       segment and the exit-slot total:
       `sum(amounts) · 10000 ≤ sum(real inputs) · (10000 − fee_bps)`;
-    * dummy-nullifier replacement `DNull(u) = H(H(u))`;
-    * the nullifier region emitted as a privately witnessed permutation of the
-      per-slot selections: every selected digest is preserved exactly, while
-      its public output position need not match its producing leaf slot;
+    * dummy-nullifier replacement `DNull(u) = H(H(u))`, emitted in slot order;
     * pairwise distinctness of the *real* slots' nullifiers
       (`realNullifiersDistinct`): the anti-replay constraint. One leaf proof
       replayed into `k` slots would count its burn `k` times in the fee sum
@@ -147,11 +144,9 @@ def referenceFromFirstReal (leaves : List LeafPublic) (out : PrivateBatchOutput)
   | none   => out.blockHash = Digest.zero ∧ out.blockNumber = 0
 
 /-- Per-slot nullifier output: real children forward `nullifier`; private-batch dummies
-    are replaced by `DNull(u)` for the witnessed preimage `u`.
-
-    This is the pre-permutation per-slot correspondence: slot `i` of the list
-    relates to leaf `i`. The circuit may emit any permutation of this list (the
-    `∃ raw, … ∧ Perm` conjunct of `RPrivateBatch`). -/
+    are replaced by `DNull(u)` for the witnessed preimage `u`. Slot `i` of the output
+    relates to leaf `i`; the local prover shuffles the leaf slots before proving, so the
+    public order carries no slot-specific information. -/
 def nullifiersReplaced (ro : RandomOracle) :
     List LeafPublic → List (List Felt) → List Digest → Prop
   | [],      [],      []      => True
@@ -185,12 +180,6 @@ witness layout exactly: `PrivateBatchCircuitTargets.dummy_nullifier_pre_images` 
 `Vec<[Target; 4]>` allocated once *per leaf slot*, not once per dummy. The wrapper
 reads slot `i`'s preimage only when slot `i` is a dummy (`select(is_dummy_i, …)`).
 
-NULLIFIER ORDERING. The circuit routes the per-slot selections through private
-boolean switches before registering them. The public output is therefore any
-permutation chosen by the local prover, while the `Perm` relation proves exact
-multiset preservation. The permutation witness is not part of the public
-output.
-
 The exit slots and the fee rate are the prover's witnesses (`exit_slots`,
 `volume_fee_bps` in `PrivateBatchCircuitTargets`); the relation constrains them only
 through the 32-bit amount range checks and `privateBatchFeeOk`.
@@ -199,7 +188,7 @@ def RPrivateBatch (ro : RandomOracle) (leaves : List LeafPublic) (us : List (Lis
     (out : PrivateBatchOutput) : Prop :=
   metadataConsistent leaves out ∧
   referenceFromFirstReal leaves out ∧
-  (∃ raw, nullifiersReplaced ro leaves us raw ∧ out.nullifiers.Perm raw) ∧
+  nullifiersReplaced ro leaves us out.nullifiers ∧
   out.nullifiers.length = leaves.length ∧
   -- Each exit amount is a 32-bit witness (`range_check(slot.amount, 32)`).
   (∀ s ∈ out.exitSlots, inRange 32 s.amount) ∧
@@ -250,7 +239,7 @@ theorem realNullifiersDistinct_nodup {leaves : List LeafPublic}
   rw [List.pairwise_map]
   exact realLeaves_pairwise_ne h
 
-/-- A real child's nullifier is forwarded verbatim into the pre-permutation list. -/
+/-- A real child's nullifier is forwarded verbatim into the output list. -/
 theorem nullifiersReplaced_real_mem (ro : RandomOracle) :
     ∀ (leaves : List LeafPublic) (us : List (List Felt)) (ns : List Digest),
       nullifiersReplaced ro leaves us ns →
@@ -266,13 +255,11 @@ theorem nullifiersReplaced_real_mem (ro : RandomOracle) :
   | _ :: _, [], _, h, _, _, _ => nomatch h
   | _ :: _, _ :: _, [], h, _, _, _ => nomatch h
 
-/-- A real child's nullifier reaches the output region (through the private permutation). -/
+/-- A real child's nullifier reaches the output region. -/
 theorem RPrivateBatch_real_nullifier_mem {ro : RandomOracle} {leaves : List LeafPublic}
     {us : List (List Felt)} {out : PrivateBatchOutput} (h : RPrivateBatch ro leaves us out) :
-    ∀ p ∈ leaves, ¬ isDummyPrivateBatch p → p.nullifier ∈ out.nullifiers := by
-  obtain ⟨raw, hrep, hperm⟩ := h.2.2.1
-  intro p hp hreal
-  exact hperm.symm.mem_iff.mp (nullifiersReplaced_real_mem ro leaves us raw hrep p hp hreal)
+    ∀ p ∈ leaves, ¬ isDummyPrivateBatch p → p.nullifier ∈ out.nullifiers :=
+  nullifiersReplaced_real_mem ro leaves us out.nullifiers h.2.2.1
 
 /-- The masked input total is the raw input total of the real children alone. -/
 theorem maskedInputTotal_eq_rawInputTotal_realLeaves (leaves : List LeafPublic) :

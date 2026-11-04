@@ -16,9 +16,6 @@
   over `Felt = ℕ` and does not import the plonky2 spec). Concretely:
 
     * nullifier per slot      `select(is_dummy, H(H u), real)`  — `Plonky2Spec.Wrapper.nullifier_replacement`
-    * nullifier permutation   private boolean adjacent-swap network — gadget-level,
-                              surfaced here as the `nullsPerm` field of
-                              `PrivateBatchCircuit`
     * exit slots              forwarded verbatim from the witness, each amount
                               32-bit range-checked
     * aggregate fee           dummy-masked input sum, exit-slot sum, plus one
@@ -35,8 +32,7 @@
 
     * `private_batch_bridge` does one piece of real work — relating the *functional*
       `buildNullifiers` the circuit computes to the *relational* `nullifiersReplaced`
-      (`nullifiersReplaced_build`), witnessing it as the `raw` list the output
-      region permutes; its other conjuncts (`metaOk`, `ref`, `feeOk`,
+      (`nullifiersReplaced_build`); its other conjuncts (`metaOk`, `ref`, `feeOk`,
       `slotsInRange`) are shared verbatim with `RPrivateBatch`. So `private_batch_sound`
       is "the children's `Rleaf` hypothesis + that one modest nullifier lemma".
     * `public_batch_bridge` is the *identity*. The public-batch wrapper conditions are
@@ -95,21 +91,16 @@ theorem buildNullifiers_length (ro : RandomOracle) :
 /-- The private-batch wrapper constraints, as the circuit enforces them on the decoded
     public inputs (`build_private_batch_constraints`). The metadata/reference clauses
     are the satisfied form of the `or(is_dummy, matches)` constraint and the first-real
-    scan; the nullifier clause is the `select` output routed through the private
-    permutation network; the fee clause is the single comparison over the dummy-masked
-    input total and the exit-slot total; the exit slots themselves are witnesses,
-    constrained only by their 32-bit range checks.
-
-    The nullifier field mirrors the permutation network's structural guarantee:
-    each private boolean switch emits `{a, b}` as a multiset, so the output is
-    exactly a permutation of the per-slot selections for every witness. -/
+    scan; the nullifier clause is the per-slot `select` output registered in slot
+    order; the fee clause is the single comparison over the dummy-masked input total
+    and the exit-slot total; the exit slots themselves are witnesses, constrained only
+    by their 32-bit range checks. -/
 structure PrivateBatchCircuit (ro : RandomOracle) (leaves : List LeafPublic)
     (us : List (List Felt)) (out : PrivateBatchOutput) : Prop where
   /-- One dummy-nullifier preimage per leaf slot. -/
   uslen : us.length = leaves.length
-  /-- The output region is a permutation of the per-slot
-      `select(is_dummy, H(H u), real)` selections. -/
-  nullsPerm : out.nullifiers.Perm (buildNullifiers ro leaves us)
+  /-- The output region is the per-slot `select(is_dummy, H(H u), real)` selections. -/
+  nulls : out.nullifiers = buildNullifiers ro leaves us
   /-- Each exit amount passes `range_check(·, 32)`. -/
   slotsInRange : ∀ s ∈ out.exitSlots, inRange 32 s.amount
   /-- One fee inequality over this private segment. -/
@@ -128,11 +119,9 @@ structure PrivateBatchCircuit (ro : RandomOracle) (leaves : List LeafPublic)
 theorem private_batch_bridge {ro : RandomOracle} {leaves : List LeafPublic}
     {us : List (List Felt)} {out : PrivateBatchOutput}
     (h : PrivateBatchCircuit ro leaves us out) : RPrivateBatch ro leaves us out := by
-  refine ⟨h.metaOk, h.ref,
-    ⟨buildNullifiers ro leaves us, nullifiersReplaced_build ro leaves us h.uslen,
-      h.nullsPerm⟩,
-    ?_, h.slotsInRange, h.feeOk, h.nullsDistinct, h.numSlots⟩
-  exact h.nullsPerm.length_eq.trans (buildNullifiers_length ro leaves us h.uslen)
+  refine ⟨h.metaOk, h.ref, ?_, ?_, h.slotsInRange, h.feeOk, h.nullsDistinct, h.numSlots⟩
+  · rw [h.nulls]; exact nullifiersReplaced_build ro leaves us h.uslen
+  · rw [h.nulls]; exact buildNullifiers_length ro leaves us h.uslen
 
 /-- **Private-batch soundness (end to end).** A satisfied private-batch aggregation circuit each
     of whose children satisfies the leaf relation `Rleaf` attests both the private-batch

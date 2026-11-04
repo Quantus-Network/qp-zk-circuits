@@ -14,7 +14,6 @@
 //!     the prover-chosen exit slots (`WormholeSpec.Aggregation.privateBatchFeeOk`)
 //!   * the block-reference prefix scan (`referenceFromFirstReal`)
 //!   * dummy-nullifier replacement `DNull(u)=H(H(u))` (`WormholeSpec.Hash.dummyNull`)
-//!   * private nullifier permutation preserves the exact selected multiset
 //!   * the block-header preimage order (`WormholeSpec.Leaf.headerPreimage`)
 //!
 //! The `hh`/`H` model is plonky2's `Poseidon2Hash`, the same hasher the spec's
@@ -347,28 +346,6 @@ proptest! {
         let spec_dummy = hh(&pre);
         prop_assert_eq!(circuit_dummy, spec_dummy);
         prop_assert_ne!(circuit_dummy, inner);
-    }
-
-    /// The private-batch relation constrains the public nullifier region only as
-    /// a `List.Perm` of the selected real/dummy values. Arbitrary private routing
-    /// therefore preserves multiplicity without imposing a digest order.
-    #[test]
-    fn nullifier_permutation_preserves_spec_multiset(
-        values in prop::collection::vec(
-            (prop::array::uniform4(0u64..GOLDILOCKS), any::<u64>()),
-            0..16,
-        ),
-    ) {
-        let mut routed = values.clone();
-        routed.sort_by_key(|(_, private_rank)| *private_rank);
-
-        let mut input_multiset: Vec<[u64; 4]> = values.into_iter().map(|(digest, _)| digest).collect();
-        let mut output_multiset: Vec<[u64; 4]> =
-            routed.into_iter().map(|(digest, _)| digest).collect();
-        input_multiset.sort();
-        output_multiset.sort();
-
-        prop_assert_eq!(output_multiset, input_multiset);
     }
 
     /// Block-header preimage order (`HeaderInputs::block_hash` ↔ `headerPreimage`):

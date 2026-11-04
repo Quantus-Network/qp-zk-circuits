@@ -9,7 +9,7 @@
 //! - enforce the volume fee once over the whole batch:
 //!   `sum(amounts) * 10_000 <= sum(real inputs) * (10_000 - volume_fee_bps)`
 //! - replace dummy nullifiers with hashes of externally provided random preimages
-//! - privately permute nullifiers and emit fixed-format aggregated public inputs
+//!   and emit fixed-format aggregated public inputs
 //!
 //! `N` (`shape.num_leaf_proofs`) and `M` (`shape.num_exit_slots`) are independent
 //! circuit parameters: a batch may split one burn across many outputs or pool
@@ -18,14 +18,15 @@
 //! The leaf verifier key is baked in as constants at circuit build time to prevent
 //! verifier key substitution attacks.
 //!
-//! # Nullifiers: selected and privately permuted
+//! # Nullifiers
 //!
 //! This circuit forwards one nullifier per leaf slot into the aggregated public
 //! inputs (dummy slots get the hash of a fresh random preimage instead, so
 //! padding never produces on-chain nullifier collisions and stays
-//! indistinguishable from real slots). The prover privately chooses a
-//! permutation for the emitted region. The circuit proves exact multiset
-//! preservation without exposing the permutation or comparing digest values.
+//! indistinguishable from real slots). Leaf slots are private to the batch
+//! proof and the prover shuffles them before proving, so the emitted order
+//! carries no information about which slots are real or which exit slot a
+//! burn funds.
 //!
 //! Real nullifiers are constrained to be pairwise DISTINCT across slots (dummy
 //! slots exempt). Replaying one leaf proof into several slots would otherwise
@@ -56,7 +57,7 @@ use qp_wormhole_inputs::PrivateBatchShape;
 use zk_circuits_common::{
     circuit::{validate_circuit_config, C, D, F},
     gadget_builder::GadgetBuilder,
-    gadgets::{bytes_digest_eq, limb1_at_offset, limbs4_at_offset, permute_digests4},
+    gadgets::{bytes_digest_eq, limb1_at_offset, limbs4_at_offset},
 };
 
 use crate::common::recursive::add_recursive_verifiers;
@@ -84,8 +85,6 @@ pub struct PrivateBatchCircuitTargets {
     pub exit_slots: Vec<ExitSlotTargets>,
     /// One dummy-nullifier preimage target (4 felts) per leaf slot.
     pub dummy_nullifier_pre_images: Vec<[Target; 4]>,
-    /// Private switch targets for the nullifier permutation network.
-    pub nullifier_permutation_switches: Vec<BoolTarget>,
 }
 
 impl PrivateBatchCircuitTargets {
@@ -110,7 +109,6 @@ impl PrivateBatchCircuitTargets {
             volume_fee_bps,
             exit_slots,
             dummy_nullifier_pre_images,
-            nullifier_permutation_switches: Vec::new(),
         }
     }
 
@@ -166,11 +164,10 @@ impl PrivateBatchCircuit {
             shape.num_leaf_proofs,
         )?;
 
-        let mut targets = PrivateBatchCircuitTargets::allocate(&mut builder, leaf_proofs, shape);
+        let targets = PrivateBatchCircuitTargets::allocate(&mut builder, leaf_proofs, shape);
 
         // Build the wormhole-specific wrapper logic directly in this circuit.
-        targets.nullifier_permutation_switches =
-            build_private_batch_constraints(&mut builder, &targets);
+        build_private_batch_constraints(&mut builder, &targets);
 
         Ok(Self { builder, targets })
     }
@@ -210,7 +207,7 @@ impl PrivateBatchCircuit {
 pub(crate) fn build_private_batch_constraints(
     builder: &mut impl GadgetBuilder<F, D>,
     targets: &PrivateBatchCircuitTargets,
-) -> Vec<BoolTarget> {
+) {
     let one = builder.one();
     let zero = builder.zero();
     let shape = targets.shape();
@@ -394,13 +391,7 @@ pub(crate) fn build_private_batch_constraints(
     // =========================================================================
     // Nullifiers (replace dummies with hashes of provided random preimages)
     // =========================================================================
-    //
-    // The selected nullifiers are routed through a privately witnessed
-    // permutation. Each network switch either passes through or swaps two
-    // complete four-limb digests, proving that the public region is exactly
-    // the selected multiset without modifying any nullifier contents.
 
-    let mut selected_nullifiers: Vec<[Target; 4]> = Vec::with_capacity(n_leaf);
     for i in 0..n_leaf {
         let real_null_i = real_nullifiers[i];
         let dummy_null_i =
@@ -408,18 +399,9 @@ pub(crate) fn build_private_batch_constraints(
         let is_dummy_i = is_dummy_flags[i];
 
         // selected = is_dummy ? hash(dummy_nullifier_pre_image[i]) : real_nullifier[i]
-        selected_nullifiers.push([
-            builder.select(is_dummy_i, dummy_null_i[0], real_null_i[0]),
-            builder.select(is_dummy_i, dummy_null_i[1], real_null_i[1]),
-            builder.select(is_dummy_i, dummy_null_i[2], real_null_i[2]),
-            builder.select(is_dummy_i, dummy_null_i[3], real_null_i[3]),
-        ]);
-    }
-
-    let (permuted_nullifiers, nullifier_permutation_switches) =
-        permute_digests4(builder, selected_nullifiers);
-    for nullifier in permuted_nullifiers {
-        output_pis.extend_from_slice(&nullifier);
+        for j in 0..4 {
+            output_pis.push(builder.select(is_dummy_i, dummy_null_i[j], real_null_i[j]));
+        }
     }
 
     debug_assert_eq!(output_pis.len(), aggregated_output::pi_len(shape));
@@ -431,8 +413,6 @@ pub(crate) fn build_private_batch_constraints(
     debug_assert_eq!(aggregated_output::VOLUME_FEE_BPS_OFFSET, 2);
     debug_assert_eq!(aggregated_output::BLOCK_HASH_OFFSET, 3);
     debug_assert_eq!(aggregated_output::BLOCK_NUMBER_OFFSET, 7);
-
-    nullifier_permutation_switches
 }
 
 fn hash_dummy_nullifier_pre_image(
