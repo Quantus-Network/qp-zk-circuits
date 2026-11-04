@@ -12,7 +12,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use plonky2::util::serialization::DefaultGateSerializer;
-use qp_wormhole_inputs::validate_proof_count;
+use qp_wormhole_inputs::{PrivateBatchShape, WithdrawalOutput};
 use std::{fs::create_dir_all, path::Path};
 use zk_circuits_common::circuit::{wormhole_private_batch_circuit_config, C, D, F};
 
@@ -31,17 +31,17 @@ use crate::private_batch::circuit::circuit_logic::PrivateBatchCircuit;
 /// pre-existing `dummy_private_batch_proof.bin` is removed.
 pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
-    num_leaf_proofs: usize,
+    shape: PrivateBatchShape,
     include_prover: bool,
 ) -> Result<()> {
     let output_path = output_dir.as_ref();
-    // Bound the per-layer count before any circuit construction (#97021, #97070).
-    validate_proof_count(num_leaf_proofs, "num_leaf_proofs")?;
+    // Bound the per-layer counts before any circuit construction (#97021, #97070).
+    shape.validate()?;
     create_dir_all(output_path)?;
 
     println!(
-        "Building prebuilt private-batch aggregation circuit (num_leaf_proofs={}, ZK row blinding)...",
-        num_leaf_proofs
+        "Building prebuilt private-batch aggregation circuit (num_leaf_proofs={}, num_exit_slots={}, ZK row blinding)...",
+        shape.num_leaf_proofs, shape.num_exit_slots
     );
 
     // Pin the leaf artifacts to the canonical Wormhole leaf circuit BEFORE baking
@@ -71,7 +71,7 @@ pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
         wormhole_private_batch_circuit_config(),
         &leaf.common,
         &leaf.verifier_only,
-        num_leaf_proofs,
+        shape,
     )?;
 
     let agg_targets = agg_circuit.targets();
@@ -88,7 +88,7 @@ pub fn generate_private_batch_circuit_binaries<P: AsRef<Path>>(
             &circuit_data,
             &agg_targets,
             dummy_leaf,
-            num_leaf_proofs,
+            shape,
         )?),
         None => None,
     };
@@ -166,24 +166,27 @@ fn generate_dummy_private_batch_proof(
     circuit_data: &plonky2::plonk::circuit_data::CircuitData<F, C, D>,
     targets: &crate::private_batch::circuit::circuit_logic::PrivateBatchCircuitTargets,
     dummy_leaf: plonky2::plonk::proof::ProofWithPublicInputs<F, C, D>,
-    num_leaf_proofs: usize,
+    shape: PrivateBatchShape,
 ) -> Result<Vec<u8>> {
     use plonky2::iop::witness::PartialWitness;
     use zk_circuits_common::utils::bytes_to_digest;
 
     println!("Generating dummy private-batch proof for public-batch padding...");
 
-    let proofs = vec![dummy_leaf; num_leaf_proofs];
-    let dummy_nullifier_pre_images: Vec<[F; 4]> = (0..num_leaf_proofs)
+    let proofs = vec![dummy_leaf; shape.num_leaf_proofs];
+    let outputs = vec![WithdrawalOutput::default(); shape.num_exit_slots];
+    let dummy_nullifier_pre_images: Vec<[F; 4]> = (0..shape.num_leaf_proofs)
         .map(|_| bytes_to_digest(crate::dummy_proof::generate_random_nullifier_preimage()))
         .collect();
-    let nullifier_permutation: Vec<usize> = (0..num_leaf_proofs).collect();
+    let nullifier_permutation: Vec<usize> = (0..shape.num_leaf_proofs).collect();
 
     let mut pw = PartialWitness::new();
     crate::private_batch::prover::fill_private_batch_witness(
         &mut pw,
         targets,
         &proofs,
+        &outputs,
+        0,
         &dummy_nullifier_pre_images,
         &nullifier_permutation,
     )?;
@@ -259,7 +262,8 @@ mod tests {
             .unwrap();
         std::fs::write(dir.join("dummy_proof.bin"), real_leaf.to_bytes()).unwrap();
 
-        let err = generate_private_batch_circuit_binaries(&dir, 1, true).unwrap_err();
+        let err = generate_private_batch_circuit_binaries(&dir, PrivateBatchShape::new(1, 1), true)
+            .unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("not a genuine all-dummy leaf template"),
@@ -290,7 +294,9 @@ mod tests {
             .unwrap();
         std::fs::write(dir.join("verifier.bin"), b"irrelevant").unwrap();
 
-        let err = generate_private_batch_circuit_binaries(&dir, 1, false).unwrap_err();
+        let err =
+            generate_private_batch_circuit_binaries(&dir, PrivateBatchShape::new(1, 1), false)
+                .unwrap_err();
         assert!(
             format!("{err:#}").contains("exceeds the"),
             "oversized artifact must be rejected by the size cap, got: {err:#}"

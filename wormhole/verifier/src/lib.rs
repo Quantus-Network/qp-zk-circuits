@@ -48,8 +48,9 @@ use tiny_keccak::{Hasher, Keccak};
 
 // Re-export input types from qp-wormhole-inputs
 pub use qp_wormhole_inputs::{
-    BlockData, BytesDigest, PrivateBatchPublicInputs, PublicBatchPublicInputs, PublicCircuitInputs,
-    PublicInputsByAccount, MIN_LEAF_SECURITY_BITS, PUBLIC_INPUTS_FELTS_LEN,
+    BlockData, BytesDigest, PrivateBatchPublicInputs, PrivateBatchShape, PublicBatchPublicInputs,
+    PublicCircuitInputs, PublicInputsByAccount, WithdrawalOutput, MIN_LEAF_SECURITY_BITS,
+    PUBLIC_INPUTS_FELTS_LEN,
 };
 
 /// Parse public inputs from a proof.
@@ -80,14 +81,18 @@ pub fn parse_private_batch_public_inputs(
 pub fn parse_public_batch_public_inputs(
     proof: &ProofWithPublicInputs<F, C, D>,
     num_private_batch_proofs: usize,
-    num_leaf_proofs: usize,
+    private_batch_shape: PrivateBatchShape,
 ) -> anyhow::Result<PublicBatchPublicInputs> {
     let u64s: Vec<u64> = proof
         .public_inputs
         .iter()
         .map(|f| f.to_canonical_u64())
         .collect();
-    PublicBatchPublicInputs::try_from_u64_slice(&u64s, num_private_batch_proofs, num_leaf_proofs)
+    PublicBatchPublicInputs::try_from_u64_slice(
+        &u64s,
+        num_private_batch_proofs,
+        private_batch_shape,
+    )
 }
 
 /// Verifier for Wormhole circuit proofs.

@@ -19,7 +19,9 @@ use plonky2::{
         proof::ProofWithPublicInputs,
     },
 };
-use qp_wormhole_inputs::{validate_proof_count, BytesDigest, PrivateBatchPublicInputs};
+use qp_wormhole_inputs::{
+    validate_proof_count, BytesDigest, PrivateBatchPublicInputs, PrivateBatchShape,
+};
 use std::sync::Arc;
 
 #[cfg(feature = "std")]
@@ -81,7 +83,7 @@ impl PublicBatchProver {
         private_batch_common: CommonCircuitData<F, D>,
         private_batch_verifier_only: &VerifierOnlyCircuitData<C, D>,
         num_private_batch_proofs: usize,
-        private_batch_num_leaves: usize,
+        private_batch_shape: PrivateBatchShape,
         dummy_proof_template: ProofWithPublicInputs<F, C, D>,
     ) -> Result<Self> {
         let private_batch_verifier_data = VerifierCircuitData {
@@ -95,7 +97,7 @@ impl PublicBatchProver {
             private_batch_common,
             private_batch_verifier_only,
             num_private_batch_proofs,
-            private_batch_num_leaves,
+            private_batch_shape,
         )?;
 
         let targets = public_batch_circuit.targets();
@@ -130,14 +132,13 @@ impl PublicBatchProver {
         private_batch_common_bytes: &[u8],
         private_batch_verifier_only_bytes: &[u8],
         dummy_private_batch_proof_bytes: &[u8],
-        config: (usize, usize), // (num_leaf_proofs, num_private_batch_proofs)
+        num_private_batch_proofs: usize,
+        private_batch_shape: PrivateBatchShape,
     ) -> Result<Self> {
-        let (num_leaf_proofs, num_private_batch_proofs) = config;
-
         // Validate batch counts at the public byte-loading boundary so a zero or
         // oversized config returns an error instead of panicking inside the
         // circuit builder (#97027, #97070).
-        validate_proof_count(num_leaf_proofs, "num_leaf_proofs")?;
+        private_batch_shape.validate()?;
         validate_proof_count(num_private_batch_proofs, "num_private_batch_proofs")?;
 
         // 1) Load and pin private-batch verifier data to the canonical circuit.
@@ -145,20 +146,20 @@ impl PublicBatchProver {
             private_batch_common_bytes,
             private_batch_verifier_only_bytes,
             &canonical_leaf_verifier_data(),
-            num_leaf_proofs,
+            private_batch_shape,
         )?;
 
         // Ensure the loaded private-batch artifact's public-input shape matches the
-        // caller-supplied leaf count before building the public-batch circuit, which
-        // indexes fixed offsets derived from that count (#97071).
-        let expected_l0_pi_len = private_batch_pi_len(num_leaf_proofs);
+        // caller-supplied shape before building the public-batch circuit, which
+        // indexes fixed offsets derived from that shape (#97071).
+        let expected_l0_pi_len = private_batch_pi_len(private_batch_shape);
         if private_batch_verifier_data.common.num_public_inputs != expected_l0_pi_len {
             bail!(
-                "private-batch common data has {} public inputs, expected {} for num_leaf_proofs={}; \
+                "private-batch common data has {} public inputs, expected {} for private_batch_shape={:?}; \
                  refusing to build a public-batch circuit over an inconsistent private-batch artifact",
                 private_batch_verifier_data.common.num_public_inputs,
                 expected_l0_pi_len,
-                num_leaf_proofs,
+                private_batch_shape,
             );
         }
 
@@ -169,7 +170,7 @@ impl PublicBatchProver {
             private_batch_verifier_data.common.clone(),
             &private_batch_verifier_data.verifier_only,
             num_private_batch_proofs,
-            num_leaf_proofs,
+            private_batch_shape,
         )?;
         let targets = circuit.targets();
         let circuit_data = circuit.build_circuit();
@@ -201,7 +202,8 @@ impl PublicBatchProver {
         private_batch_common_path: &Path,
         private_batch_verifier_path: &Path,
         dummy_private_batch_proof_path: &Path,
-        config: (usize, usize),
+        num_private_batch_proofs: usize,
+        private_batch_shape: PrivateBatchShape,
     ) -> Result<Self> {
         let private_batch_common_bytes = read_artifact_file(private_batch_common_path)
             .with_context(|| format!("Failed to read {:?}", private_batch_common_path))?;
@@ -214,7 +216,8 @@ impl PublicBatchProver {
             &private_batch_common_bytes,
             &private_batch_verifier_only_bytes,
             &dummy_private_batch_proof_bytes,
-            config,
+            num_private_batch_proofs,
+            private_batch_shape,
         )
     }
 
@@ -238,13 +241,13 @@ impl PublicBatchProver {
                 "config is missing num_private_batch_proofs. Regenerate binaries with num_private_batch_proofs set."
             )
         })?;
-        let config = (bins_config.num_leaf_proofs, num_private_batch_proofs);
 
         Self::new_from_files(
             &bins_dir.join("private_batch_common.bin"),
             &bins_dir.join("private_batch_verifier.bin"),
             &bins_dir.join("dummy_private_batch_proof.bin"),
-            config,
+            num_private_batch_proofs,
+            bins_config.private_batch_shape(),
         )
     }
 
@@ -567,11 +570,14 @@ pub(crate) fn verify_dummy_private_batch_template(
 pub(crate) mod tests {
     use super::*;
     use crate::private_batch::circuit::circuit_logic::PrivateBatchCircuit;
-    use crate::private_batch::prover::PrivateBatchProver;
+    use crate::private_batch::prover::{PrivateBatchInputs, PrivateBatchProver};
     use plonky2::field::types::Field;
-    use qp_wormhole_inputs::{MAX_PROOF_COUNT, PUBLIC_INPUTS_FELTS_LEN};
+    use qp_wormhole_inputs::{WithdrawalOutput, MAX_PROOF_COUNT, PUBLIC_INPUTS_FELTS_LEN};
     use test_helpers::fake_leaf::{build_fake_leaf_circuit, prove_fake_leaf};
     use zk_circuits_common::circuit::{wormhole_private_batch_circuit_config, F};
+
+    /// One leaf, one exit slot: the smallest private batch these tests need.
+    const SHAPE: PrivateBatchShape = PrivateBatchShape::new(1, 1);
 
     #[test]
     fn direct_constructors_reject_oversized_counts() {
@@ -582,7 +588,7 @@ pub(crate) mod tests {
             wormhole_private_batch_circuit_config(),
             leaf.common.clone(),
             &leaf.verifier_only,
-            MAX_PROOF_COUNT + 1,
+            PrivateBatchShape::new(MAX_PROOF_COUNT + 1, 1),
             fake_proof.clone(),
         )
         .expect_err("oversized direct private-batch prover count must be rejected");
@@ -593,7 +599,7 @@ pub(crate) mod tests {
             leaf.common.clone(),
             &leaf.verifier_only,
             MAX_PROOF_COUNT + 1,
-            1,
+            SHAPE,
             fake_proof,
         )
         .expect_err("oversized direct public-batch prover count must be rejected");
@@ -603,7 +609,7 @@ pub(crate) mod tests {
             wormhole_private_batch_circuit_config(),
             &leaf.common,
             &leaf.verifier_only,
-            MAX_PROOF_COUNT + 1,
+            PrivateBatchShape::new(MAX_PROOF_COUNT + 1, 1),
         )
         .err()
         .expect("oversized private-batch count must be rejected");
@@ -614,7 +620,7 @@ pub(crate) mod tests {
             leaf.common.clone(),
             &leaf.verifier_only,
             MAX_PROOF_COUNT + 1,
-            1,
+            SHAPE,
         )
         .err()
         .expect("oversized public-batch count must be rejected");
@@ -639,7 +645,7 @@ pub(crate) mod tests {
             wormhole_private_batch_circuit_config(),
             &leaf.common,
             &leaf.verifier_only,
-            1,
+            SHAPE,
         )
         .unwrap();
         let targets = circuit.targets();
@@ -654,6 +660,8 @@ pub(crate) mod tests {
             &mut pw,
             &targets,
             std::slice::from_ref(fake_leaf_proof),
+            &[WithdrawalOutput::default()],
+            0,
             &pre_images,
             &nullifier_permutation,
         )
@@ -669,7 +677,7 @@ pub(crate) mod tests {
             wormhole_private_batch_circuit_config(),
             &leaf.common,
             &leaf.verifier_only,
-            1,
+            SHAPE,
         )
         .unwrap()
         .build_verifier();
@@ -680,7 +688,7 @@ pub(crate) mod tests {
             private_batch.common.clone(),
             &private_batch.verifier_only,
             1,
-            1,
+            SHAPE,
             template,
         )
         .unwrap();
@@ -716,11 +724,15 @@ pub(crate) mod tests {
             wormhole_private_batch_circuit_config(),
             leaf.common.clone(),
             &leaf.verifier_only,
-            1,
+            SHAPE,
             dummy_leaf.clone(),
         )
         .unwrap()
-        .aggregate(vec![real_leaf])
+        .aggregate(PrivateBatchInputs {
+            leaf_proofs: vec![real_leaf],
+            outputs: vec![],
+            volume_fee_bps: 0,
+        })
         .unwrap()
     }
 
@@ -753,7 +765,7 @@ pub(crate) mod tests {
             wormhole_private_batch_circuit_config(),
             &leaf.common,
             &leaf.verifier_only,
-            1,
+            SHAPE,
         )
         .unwrap()
         .build_verifier();
@@ -771,7 +783,7 @@ pub(crate) mod tests {
             private_batch.common.clone(),
             &private_batch.verifier_only,
             num_private_batch_proofs,
-            1,
+            SHAPE,
             template,
         )
         .unwrap();
@@ -789,7 +801,7 @@ pub(crate) mod tests {
             wormhole_private_batch_circuit_config(),
             &leaf.common,
             &leaf.verifier_only,
-            1,
+            SHAPE,
         )
         .unwrap()
         .build_verifier();
@@ -800,7 +812,7 @@ pub(crate) mod tests {
             private_batch.common.clone(),
             &private_batch.verifier_only,
             1,
-            1,
+            SHAPE,
             template.clone(),
         )
         .unwrap();
@@ -841,7 +853,7 @@ pub(crate) mod tests {
             wormhole_private_batch_circuit_config(),
             &leaf.common,
             &leaf.verifier_only,
-            1,
+            SHAPE,
         )
         .unwrap()
         .build_verifier();
@@ -855,7 +867,7 @@ pub(crate) mod tests {
             private_batch.common.clone(),
             &private_batch.verifier_only,
             1,
-            1,
+            SHAPE,
             template,
         )
         .expect_err("padding template with a nonzero exit account must be rejected");
@@ -878,7 +890,7 @@ pub(crate) mod tests {
             wormhole_private_batch_circuit_config(),
             &leaf.common,
             &leaf.verifier_only,
-            1,
+            SHAPE,
         )
         .unwrap()
         .build_verifier();
@@ -889,7 +901,7 @@ pub(crate) mod tests {
             private_batch.common.clone(),
             &private_batch.verifier_only,
             2,
-            1,
+            SHAPE,
             template.clone(),
         )
         .unwrap();
@@ -916,7 +928,7 @@ pub(crate) mod tests {
             wormhole_private_batch_circuit_config(),
             &leaf.common,
             &leaf.verifier_only,
-            1,
+            SHAPE,
         )
         .unwrap()
         .build_verifier();
@@ -936,7 +948,7 @@ pub(crate) mod tests {
             private_batch.common.clone(),
             &private_batch.verifier_only,
             2,
-            1,
+            SHAPE,
             template,
         )
         .unwrap();
@@ -965,7 +977,7 @@ pub(crate) mod tests {
             wormhole_private_batch_circuit_config(),
             leaf.common.clone(),
             &leaf.verifier_only,
-            1,
+            SHAPE,
             real_leaf,
         )
         .expect_err("non-dummy leaf template must be rejected by the direct constructor");
@@ -980,7 +992,7 @@ pub(crate) mod tests {
             wormhole_private_batch_circuit_config(),
             &leaf.common,
             &leaf.verifier_only,
-            1,
+            SHAPE,
         )
         .unwrap()
         .build_verifier();
@@ -989,7 +1001,7 @@ pub(crate) mod tests {
             private_batch.common.clone(),
             &private_batch.verifier_only,
             1,
-            1,
+            SHAPE,
             dummy_leaf,
         )
         .expect_err("leaf proof as public-batch padding template must be rejected");
@@ -1023,7 +1035,7 @@ pub(crate) mod tests {
             wormhole_private_batch_circuit_config(),
             &leaf.common,
             &leaf.verifier_only,
-            1,
+            SHAPE,
         )
         .unwrap()
         .build_verifier();
@@ -1033,7 +1045,7 @@ pub(crate) mod tests {
             private_batch.common,
             &private_batch.verifier_only,
             1,
-            1,
+            SHAPE,
         )
         .unwrap()
         .targets();

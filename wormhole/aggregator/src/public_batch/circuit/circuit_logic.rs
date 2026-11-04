@@ -24,7 +24,7 @@ use plonky2::{
         proof::ProofWithPublicInputsTarget,
     },
 };
-use qp_wormhole_inputs::validate_proof_count;
+use qp_wormhole_inputs::{validate_proof_count, PrivateBatchShape};
 
 use zk_circuits_common::{
     circuit::{validate_circuit_config, C, D, F},
@@ -66,24 +66,24 @@ impl PublicBatchCircuit {
         private_batch_common: CommonCircuitData<F, D>,
         private_batch_verifier_only: &VerifierOnlyCircuitData<C, D>,
         n_inner: usize,
-        private_batch_num_leaves: usize,
+        private_batch_shape: PrivateBatchShape,
     ) -> Result<Self> {
         validate_circuit_config(&config)?;
         validate_proof_count(n_inner, "n_inner")?;
-        validate_proof_count(private_batch_num_leaves, "private_batch_num_leaves")?;
+        private_batch_shape.validate()?;
 
-        let expected_l0_pi_len = pbc::private_batch_pi_len(private_batch_num_leaves);
+        let expected_l0_pi_len = pbc::private_batch_pi_len(private_batch_shape);
 
         // Runtime (not debug-only) shape check: the public-batch circuit indexes
-        // fixed offsets derived from `private_batch_num_leaves` into each inner
+        // fixed offsets derived from `private_batch_shape` into each inner
         // proof's public inputs, so a mismatch must fail loudly instead of going
         // out of bounds in release builds (#97071).
         ensure!(
             private_batch_common.num_public_inputs == expected_l0_pi_len,
-            "private_batch_common.num_public_inputs ({}) != expected private_batch PI len ({}) for private_batch_num_leaves={}",
+            "private_batch_common.num_public_inputs ({}) != expected private_batch PI len ({}) for private_batch_shape={:?}",
             private_batch_common.num_public_inputs,
             expected_l0_pi_len,
-            private_batch_num_leaves,
+            private_batch_shape,
         );
 
         let mut builder = CircuitBuilder::<F, D>::new(config);
@@ -106,7 +106,7 @@ impl PublicBatchCircuit {
         };
 
         // Build wrapper constraints and register public inputs.
-        build_public_batch_constraints(&mut builder, &targets, n_inner, private_batch_num_leaves);
+        build_public_batch_constraints(&mut builder, &targets, n_inner, private_batch_shape);
 
         Ok(Self { builder, targets })
     }
@@ -171,16 +171,16 @@ pub(crate) fn build_public_batch_constraints(
     builder: &mut impl GadgetBuilder<F, D>,
     targets: &PublicBatchCircuitTargets,
     n_inner: usize,
-    private_batch_num_leaves: usize,
+    private_batch_shape: PrivateBatchShape,
 ) {
     let one = builder.one();
     let zero = builder.zero();
 
-    let private_batch_pi_len = pbc::private_batch_pi_len(private_batch_num_leaves);
+    let private_batch_pi_len = pbc::private_batch_pi_len(private_batch_shape);
     let private_batch_exit_slots_per_proof =
-        pbc::private_batch_exit_slots_count(private_batch_num_leaves);
+        pbc::private_batch_exit_slots_count(private_batch_shape);
     let private_batch_nullifiers_per_proof =
-        pbc::private_batch_nullifiers_count(private_batch_num_leaves);
+        pbc::private_batch_nullifiers_count(private_batch_shape);
 
     // Convenience: references to each child proof's PI slice
     let private_batch_pi_targets: Vec<&[Target]> = targets
@@ -190,7 +190,7 @@ pub(crate) fn build_public_batch_constraints(
         .collect();
 
     // Runtime shape check: each inner proof's PI slice must match the private-batch
-    // PI length derived from `private_batch_num_leaves` before fixed-offset indexing.
+    // PI length derived from `private_batch_shape` before fixed-offset indexing.
     assert!(private_batch_pi_targets
         .iter()
         .all(|pis| pis.len() == private_batch_pi_len));
@@ -304,7 +304,7 @@ pub(crate) fn build_public_batch_constraints(
     //    nullifiers. This lets the chain skip them (no storage bloat) and lets a
     //    single dummy proof template fill several slots without collisions. Real
     //    nullifiers are hash outputs and are never zero.
-    let nullifiers_start = pbc::private_batch_nullifiers_start(private_batch_num_leaves);
+    let nullifiers_start = pbc::private_batch_nullifiers_start(private_batch_shape);
     for (i, pis_i) in private_batch_pi_targets.iter().take(n_inner).enumerate() {
         for n_idx in 0..private_batch_nullifiers_per_proof {
             let base = nullifiers_start + n_idx * 4;
@@ -315,7 +315,7 @@ pub(crate) fn build_public_batch_constraints(
         }
     }
 
-    // Register output public inputs (fixed length for fixed n_inner and private_batch_num_leaves)
+    // Register output public inputs (fixed length for fixed n_inner and private_batch_shape)
     builder.register_public_inputs(&output_pis);
 }
 

@@ -6,9 +6,11 @@ use plonky2::{
     iop::witness::{PartialWitness, WitnessWrite},
     plonk::proof::ProofWithPublicInputs,
 };
+use qp_wormhole_inputs::WithdrawalOutput;
 
 use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::gadgets::permutation_switches;
+use zk_circuits_common::utils::bytes_to_digest;
 
 use crate::common::utils::ensure_proof_shape_matches_targets;
 use crate::private_batch::circuit::circuit_logic::PrivateBatchCircuitTargets;
@@ -18,6 +20,8 @@ pub fn fill_private_batch_witness(
     pw: &mut PartialWitness<F>,
     targets: &PrivateBatchCircuitTargets,
     proofs: &[ProofWithPublicInputs<F, C, D>],
+    outputs: &[WithdrawalOutput],
+    volume_fee_bps: u32,
     dummy_nullifier_pre_images: &[[F; 4]],
     nullifier_permutation: &[usize],
 ) -> Result<()> {
@@ -28,6 +32,14 @@ pub fn fill_private_batch_witness(
             "proof count mismatch: got {}, but circuit expects {} leaf proofs",
             proofs.len(),
             n_targets
+        );
+    }
+
+    if outputs.len() != targets.exit_slots.len() {
+        bail!(
+            "output count mismatch: got {}, but circuit expects {} exit slots",
+            outputs.len(),
+            targets.exit_slots.len()
         );
     }
 
@@ -76,6 +88,28 @@ pub fn fill_private_batch_witness(
         ensure_proof_shape_matches_targets(proof_t, proof, i, "leaf proof")?;
         pw.set_proof_with_pis_target(proof_t, proof)
             .map_err(|e| anyhow!("failed to set leaf proof target at slot {}: {}", i, e))?;
+    }
+
+    pw.set_target(
+        targets.volume_fee_bps,
+        F::from_canonical_u32(volume_fee_bps),
+    )
+    .map_err(|e| anyhow!("failed to set volume_fee_bps target: {}", e))?;
+
+    for (i, (slot_t, output)) in targets.exit_slots.iter().zip(outputs).enumerate() {
+        let account = bytes_to_digest(output.exit_account);
+        for (limb, (t, v)) in slot_t.exit_account.iter().zip(account).enumerate() {
+            pw.set_target(*t, v).map_err(|e| {
+                anyhow!(
+                    "failed to set exit account target at slot {}, limb {}: {}",
+                    i,
+                    limb,
+                    e
+                )
+            })?;
+        }
+        pw.set_target(slot_t.amount, F::from_canonical_u32(output.amount))
+            .map_err(|e| anyhow!("failed to set exit amount target at slot {}: {}", i, e))?;
     }
 
     for (i, (nullifier_targets, nullifier_vals)) in targets

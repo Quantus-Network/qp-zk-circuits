@@ -6,7 +6,7 @@
 
 use anyhow::Result;
 use clap::Parser;
-use qp_wormhole_circuit_builder::generate_all_circuit_binaries;
+use qp_wormhole_circuit_builder::{generate_all_circuit_binaries, PrivateBatchShape};
 use wormhole_aggregator::MAX_PROOF_COUNT;
 
 /// Value parser that validates proof count is in range 1..=MAX_PROOF_COUNT
@@ -38,6 +38,10 @@ struct Args {
     #[arg(long, value_parser = parse_proof_count)]
     num_leaf_proofs: usize,
 
+    /// Number of withdrawal output slots in each private-batch proof (must be 1-64)
+    #[arg(long, value_parser = parse_proof_count)]
+    num_exit_slots: usize,
+
     /// Number of inner private-batch proofs aggregated into a single public-batch proof (must be 1-64 if specified)
     /// Omit this flag to only generate private-batch artifacts.
     #[arg(long, value_parser = parse_proof_count)]
@@ -58,15 +62,16 @@ fn main() -> Result<()> {
     // 2. CircuitBinsConfig::new inside generate_all_circuit_binaries (full validation)
 
     println!(
-        "Generating circuit binaries (num_leaf_proofs={}, num_private_batch_proofs={})",
+        "Generating circuit binaries (num_leaf_proofs={}, num_exit_slots={}, num_private_batch_proofs={})",
         args.num_leaf_proofs,
+        args.num_exit_slots,
         args.num_private_batch_proofs.unwrap_or(0),
     );
 
     generate_all_circuit_binaries(
         &args.output,
         !args.skip_prover,
-        args.num_leaf_proofs,
+        PrivateBatchShape::new(args.num_leaf_proofs, args.num_exit_slots),
         args.num_private_batch_proofs,
     )
 }
