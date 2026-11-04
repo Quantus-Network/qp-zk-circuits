@@ -10,21 +10,15 @@
 //!   * `leafHash` preimage order (`WormholeSpec.Hash.leafHash`)
 //!   * `nodeHash` and the sort-vs-position-hint correspondence
 //!     (`WormholeSpec.Hash.nodeHash`, `WormholeSpec.Leaf.stepUp`)
-//!   * the private-batch exit grouping/dedup and its value-conservation theorem
-//!     (`WormholeSpec.Aggregation.groupExits` / `RPrivateBatch_value_conservation`)
-//!   * private-segment aggregate fee conservation
-//!     (`WormholeSpec.Aggregation.privateBatchFeeOk`)
+//!   * private-segment aggregate fee conservation over the dummy-masked burns and
+//!     the prover-chosen exit slots (`WormholeSpec.Aggregation.privateBatchFeeOk`)
 //!   * the block-reference prefix scan (`referenceFromFirstReal`)
 //!   * dummy-nullifier replacement `DNull(u)=H(H(u))` (`WormholeSpec.Hash.dummyNull`)
-//!   * private nullifier permutation preserves the exact selected multiset
-//!     (`WormholeSpec.Aggregation.RPrivateBatch`)
 //!   * the block-header preimage order (`WormholeSpec.Leaf.headerPreimage`)
 //!
 //! The `hh`/`H` model is plonky2's `Poseidon2Hash`, the same hasher the spec's
 //! `RandomOracle` abstracts; the node-hash and header tests therefore double as a
 //! cross-implementation check that the chain's `qp-poseidon` path agrees with it.
-
-use std::collections::{BTreeMap, BTreeSet};
 
 use plonky2::field::types::Field;
 use plonky2::hash::poseidon2::Poseidon2Hash;
@@ -76,48 +70,19 @@ fn digest_felts(limbs: [u64; 4]) -> [F; 4] {
     core::array::from_fn(|i| F::from_canonical_u64(limbs[i]))
 }
 
-/// Native reference for the private-batch exit grouping/dedup primitive
-/// (`build_private_batch_constraints`), mirroring the Lean `groupExits`
-/// (`WormholeSpec.Aggregation`): walking left→right, the *first* occurrence of a
-/// key receives the full group sum (every matching amount), and any later
-/// occurrence is zeroed — so duplicates are indistinguishable from unused slots.
-/// Returns `(sum, Some(key))` for a settled slot and `(0, None)` for a zeroed one.
-fn group_exits(pairs: &[(u64, u64)]) -> Vec<(u64, Option<u64>)> {
-    pairs
-        .iter()
-        .enumerate()
-        .map(|(i, &(key, _))| {
-            let seen_before = pairs[..i].iter().any(|&(k, _)| k == key);
-            if seen_before {
-                (0u64, None)
-            } else {
-                let sum = pairs
-                    .iter()
-                    .filter(|&&(k, _)| k == key)
-                    .map(|&(_, a)| a)
-                    .sum();
-                (sum, Some(key))
-            }
-        })
-        .collect()
-}
-
-fn private_batch_fee_ok(children: &[(u32, u32, u32, bool)], fee_bps: u32) -> bool {
+/// Native reference for the private-batch fee predicate
+/// (`privateBatchFeeOk` in `WormholeSpec.Aggregation`): `leaves` are
+/// `(input_amount, is_dummy)` burns, `outputs` the prover-chosen exit amounts.
+fn private_batch_fee_ok(leaves: &[(u32, bool)], outputs: &[u32], fee_bps: u32) -> bool {
     if fee_bps > 10_000 {
         return false;
     }
-    let (total_input, total_output) = children
+    let total_input: u128 = leaves
         .iter()
-        .filter(|(_, _, _, is_dummy)| !is_dummy)
-        .fold(
-            (0u128, 0u128),
-            |(sum_in, sum_out), (input, output_1, output_2, _)| {
-                (
-                    sum_in + *input as u128,
-                    sum_out + *output_1 as u128 + *output_2 as u128,
-                )
-            },
-        );
+        .filter(|(_, is_dummy)| !is_dummy)
+        .map(|(input, _)| *input as u128)
+        .sum();
+    let total_output: u128 = outputs.iter().map(|&o| o as u128).sum();
     total_output * 10_000 <= total_input * (10_000 - fee_bps as u128)
 }
 
@@ -307,38 +272,18 @@ proptest! {
         prop_assert_eq!(hash_node_presorted(&sorted), hash_node(&children));
     }
 
-    /// Exit grouping conserves value (whitepaper §6.1 / `RPrivateBatch_value_conservation`):
-    /// the settled slot sums total exactly the input amounts.
-    #[test]
-    fn grouping_conserves_value(
-        pairs in prop::collection::vec((0u64..5, 0u64..1_000_000), 0..16),
-    ) {
-        let grouped = group_exits(&pairs);
-        let total_in: u64 = pairs.iter().map(|&(_, a)| a).sum();
-        let total_out: u64 = grouped.iter().map(|&(s, _)| s).sum();
-        prop_assert_eq!(total_in, total_out);
-    }
-
     #[test]
     fn aggregate_fee_matches_one_runtime_ceiling(
-        children in prop::collection::vec(
-            (any::<u32>(), any::<u32>(), any::<u32>(), any::<bool>()),
-            1..65,
-        ),
+        leaves in prop::collection::vec((any::<u32>(), any::<bool>()), 1..65),
+        outputs in prop::collection::vec(any::<u32>(), 1..65),
         fee_bps in 0u32..=10_000,
     ) {
-        let (total_input, total_output) = children
+        let total_input: u128 = leaves
             .iter()
-            .filter(|(_, _, _, is_dummy)| !is_dummy)
-            .fold(
-                (0u128, 0u128),
-                |(sum_in, sum_out), (input, output_1, output_2, _)| {
-                    (
-                        sum_in + *input as u128,
-                        sum_out + *output_1 as u128 + *output_2 as u128,
-                    )
-                },
-            );
+            .filter(|(_, is_dummy)| !is_dummy)
+            .map(|(input, _)| *input as u128)
+            .sum();
+        let total_output: u128 = outputs.iter().map(|&o| o as u128).sum();
         let ceiling_rule = if fee_bps == 10_000 {
             total_output == 0
         } else {
@@ -348,40 +293,9 @@ proptest! {
         };
 
         prop_assert_eq!(
-            private_batch_fee_ok(&children, fee_bps),
+            private_batch_fee_ok(&leaves, &outputs, fee_bps),
             ceiling_rule,
         );
-    }
-
-    /// The grouping matches an independent group-by oracle: each distinct key is
-    /// settled exactly once — at its first slot, carrying that key's full total —
-    /// and every later occurrence is a zeroed slot.
-    #[test]
-    fn grouping_matches_group_by_oracle(
-        pairs in prop::collection::vec((0u64..5, 0u64..1_000_000), 0..16),
-    ) {
-        let grouped = group_exits(&pairs);
-
-        let mut totals: BTreeMap<u64, u64> = BTreeMap::new();
-        for &(k, a) in &pairs {
-            *totals.entry(k).or_default() += a;
-        }
-
-        let mut emitted: BTreeSet<u64> = BTreeSet::new();
-        for (i, &(sum, key)) in grouped.iter().enumerate() {
-            let (k, _) = pairs[i];
-            let is_first = !pairs[..i].iter().any(|&(kk, _)| kk == k);
-            if is_first {
-                prop_assert_eq!(key, Some(k));
-                prop_assert_eq!(sum, totals[&k]);
-                emitted.insert(k);
-            } else {
-                prop_assert_eq!(key, None);
-                prop_assert_eq!(sum, 0);
-            }
-        }
-        // Every distinct key is settled exactly once.
-        prop_assert_eq!(emitted.len(), totals.len());
     }
 
     /// The block reference is the first non-dummy slot (`referenceFromFirstReal`).
@@ -432,28 +346,6 @@ proptest! {
         let spec_dummy = hh(&pre);
         prop_assert_eq!(circuit_dummy, spec_dummy);
         prop_assert_ne!(circuit_dummy, inner);
-    }
-
-    /// The private-batch relation constrains the public nullifier region only as
-    /// a `List.Perm` of the selected real/dummy values. Arbitrary private routing
-    /// therefore preserves multiplicity without imposing a digest order.
-    #[test]
-    fn nullifier_permutation_preserves_spec_multiset(
-        values in prop::collection::vec(
-            (prop::array::uniform4(0u64..GOLDILOCKS), any::<u64>()),
-            0..16,
-        ),
-    ) {
-        let mut routed = values.clone();
-        routed.sort_by_key(|(_, private_rank)| *private_rank);
-
-        let mut input_multiset: Vec<[u64; 4]> = values.into_iter().map(|(digest, _)| digest).collect();
-        let mut output_multiset: Vec<[u64; 4]> =
-            routed.into_iter().map(|(digest, _)| digest).collect();
-        input_multiset.sort();
-        output_multiset.sort();
-
-        prop_assert_eq!(output_multiset, input_multiset);
     }
 
     /// Block-header preimage order (`HeaderInputs::block_hash` ↔ `headerPreimage`):
