@@ -42,6 +42,7 @@ mod tests {
     use super::*;
     use crate::private_batch::circuit::circuit_logic::PrivateBatchCircuit;
     use crate::public_batch::circuit::circuit_logic::PublicBatchCircuit;
+    use qp_wormhole_inputs::PrivateBatchShape;
     use test_helpers::fake_leaf::build_fake_leaf_circuit_data_only;
     use zk_circuits_common::circuit::{
         wormhole_private_batch_circuit_config, wormhole_public_batch_circuit_config,
@@ -73,7 +74,7 @@ mod tests {
                 wormhole_private_batch_circuit_config(),
                 &leaf_common,
                 &leaf_verifier_only,
-                num_leaves,
+                PrivateBatchShape::new(num_leaves, num_leaves),
             )
             .unwrap();
 
@@ -111,7 +112,8 @@ mod tests {
         println!("========================================\n");
 
         // Fixed private_batch leaf count for public_batch testing
-        let private_batch_num_leaves = 4;
+        let private_batch_shape = PrivateBatchShape::new(4, 4);
+        let private_batch_num_leaves = private_batch_shape.num_leaf_proofs;
 
         // Build fake leaf circuit to get common data for private_batch
         let leaf_data = build_fake_leaf_circuit_data_only();
@@ -121,7 +123,7 @@ mod tests {
             wormhole_private_batch_circuit_config(),
             &leaf_data.common,
             &leaf_data.verifier_only,
-            private_batch_num_leaves,
+            private_batch_shape,
         )
         .unwrap();
         let private_batch_data = private_batch_circuit.build_circuit();
@@ -148,7 +150,7 @@ mod tests {
                 private_batch_common.clone(),
                 &private_batch_verifier_only,
                 num_l0_proofs,
-                private_batch_num_leaves,
+                private_batch_shape,
             )
             .unwrap();
 
@@ -208,7 +210,7 @@ mod tests {
                 wormhole_private_batch_circuit_config(),
                 &leaf_common,
                 &leaf_verifier_only,
-                num_leaves,
+                PrivateBatchShape::new(num_leaves, num_leaves),
             )
             .unwrap();
             let private_batch_data = private_batch_circuit.build_circuit();

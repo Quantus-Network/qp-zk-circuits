@@ -19,7 +19,8 @@ use wormhole_aggregator::common::utils::{
     load_canonical_leaf_verifier_data, load_canonical_private_batch_verifier_data,
 };
 use wormhole_aggregator::pool::BatchKey;
-use wormhole_aggregator::private_batch::prover::PrivateBatchProver;
+use wormhole_aggregator::private_batch::prover::{PrivateBatchInputs, PrivateBatchProver};
+use wormhole_aggregator::{PrivateBatchShape, WithdrawalOutput};
 use wormhole_circuit::inputs::{CircuitInputs, ParsePublicInputs, PrivateCircuitInputs};
 use wormhole_circuit::nullifier::Nullifier;
 use wormhole_circuit::unspendable_account::UnspendableAccount;
@@ -30,8 +31,8 @@ use zk_circuits_common::zk_merkle::{hash_node, Hash256, SIBLINGS_PER_LEVEL};
 
 use crate::aggregator::circuit_config;
 
-/// Leaves per private batch in the client-side test artifacts.
-const PRIVATE_NUM_LEAVES: usize = 2;
+/// Leaves and exit slots per private batch in the client-side test artifacts.
+const PRIVATE_SHAPE: PrivateBatchShape = PrivateBatchShape::new(2, 2);
 
 static TEST_INIT: Once = Once::new();
 static PUBLIC_TEST_INIT: Once = Once::new();
@@ -67,7 +68,7 @@ extern "C" fn cleanup_test_bins_root() {
 
 fn setup_test_binaries() {
     TEST_INIT.call_once(|| {
-        generate_all_circuit_binaries(private_bins_dir(), true, PRIVATE_NUM_LEAVES, None)
+        generate_all_circuit_binaries(private_bins_dir(), true, PRIVATE_SHAPE, None)
             .expect("Failed to generate test circuit binaries");
 
         // Register a process-exit cleanup so the directory is removed once all tests finish.
@@ -80,10 +81,15 @@ fn setup_test_binaries() {
 
 fn setup_public_test_binaries() {
     PUBLIC_TEST_INIT.call_once(|| {
-        // Smallest public-batch circuit (1 inner private-batch of 1 leaf) to keep
-        // artifact generation fast.
-        generate_all_circuit_binaries(public_bins_dir(), true, 1, Some(1))
-            .expect("Failed to generate public-batch test circuit binaries");
+        // Smallest public-batch circuit (1 inner private-batch of 1 leaf and 1
+        // exit slot) to keep artifact generation fast.
+        generate_all_circuit_binaries(
+            public_bins_dir(),
+            true,
+            PrivateBatchShape::new(1, 1),
+            Some(1),
+        )
+        .expect("Failed to generate public-batch test circuit binaries");
 
         unsafe {
             let _ = libc::atexit(cleanup_test_bins_root);
@@ -120,7 +126,7 @@ fn private_batch_verifier() -> VerifierCircuitData<F, C, D> {
         &std::fs::read(dir.join("private_batch_common.bin")).unwrap(),
         &std::fs::read(dir.join("private_batch_verifier.bin")).unwrap(),
         &leaf,
-        PRIVATE_NUM_LEAVES,
+        PRIVATE_SHAPE,
     )
     .expect("Failed to load private-batch verifier data")
 }
@@ -192,16 +198,12 @@ fn two_real_leaves_same_block(asset_id: u32) -> (CircuitInputs, CircuitInputs) {
     two_real_leaves_same_block_with_amounts(
         asset_id,
         [DEFAULT_INPUT_AMOUNTS[0], DEFAULT_INPUT_AMOUNTS[1]],
-        [(0, 0), (0, 0)],
-        DEFAULT_VOLUME_FEE_BPS,
     )
 }
 
 fn two_real_leaves_same_block_with_amounts(
     asset_id: u32,
     input_amounts: [u32; 2],
-    output_amounts: [(u32, u32); 2],
-    volume_fee_bps: u32,
 ) -> (CircuitInputs, CircuitInputs) {
     let mut leaf_hashes = [[0u8; 32]; 4];
     let mut accounts = [BytesDigest::default(); 2];
@@ -232,9 +234,9 @@ fn two_real_leaves_same_block_with_amounts(
         let inputs = CircuitInputs {
             public: PublicCircuitInputs {
                 asset_id,
-                output_amount_1: output_amounts[i].0,
-                output_amount_2: output_amounts[i].1,
-                volume_fee_bps,
+                output_amount_1: 0,
+                output_amount_2: 0,
+                volume_fee_bps: DEFAULT_VOLUME_FEE_BPS,
                 nullifier: nullifiers[i],
                 exit_account_1: exit_account,
                 exit_account_2: BytesDigest::default(),
@@ -262,6 +264,24 @@ fn two_real_leaves_same_block_with_amounts(
     (out.remove(0), out.remove(0))
 }
 
+/// Private-batch inputs with no withdrawals: every burn is fully consumed by
+/// the (zero-output) batch, which is all these tests need to exercise
+/// aggregation itself.
+fn burns_only(leaf_proofs: Vec<ProofWithPublicInputs<F, C, D>>) -> PrivateBatchInputs {
+    PrivateBatchInputs {
+        leaf_proofs,
+        outputs: Vec::new(),
+        volume_fee_bps: 0,
+    }
+}
+
+fn withdrawal(amount: u32) -> WithdrawalOutput {
+    WithdrawalOutput {
+        exit_account: BytesDigest::try_from(DEFAULT_EXIT_ACCOUNT).unwrap(),
+        amount,
+    }
+}
+
 // ============================================================================
 // Client-side (private batch): one-shot aggregation, no queue
 // ============================================================================
@@ -272,7 +292,7 @@ fn aggregate_single_proof() {
 
     // A single proof in a 2-slot batch exercises dummy padding.
     let aggregated = make_private_batch_prover()
-        .aggregate(vec![proof])
+        .aggregate(burns_only(vec![proof]))
         .expect("aggregation must succeed");
     private_batch_verifier()
         .verify(aggregated)
@@ -293,7 +313,7 @@ fn aggregate_proofs_into_tree() {
     assert_ne!(pi0.nullifier, pi1.nullifier);
 
     let aggregated = make_private_batch_prover()
-        .aggregate(vec![proof_0, proof_1])
+        .aggregate(burns_only(vec![proof_0, proof_1]))
         .expect("aggregation must succeed");
     private_batch_verifier()
         .verify(aggregated)
@@ -302,23 +322,27 @@ fn aggregate_proofs_into_tree() {
 
 #[test]
 fn real_leaf_aggregate_fee_boundary_is_enforced() {
-    let outputs = [(50, 0), (30, 20)];
-    let (valid_0, valid_1) = two_real_leaves_same_block_with_amounts(0, [100, 1], outputs, 4);
+    let outputs = || vec![withdrawal(50), withdrawal(50)];
+    let (valid_0, valid_1) = two_real_leaves_same_block_with_amounts(0, [100, 1]);
     let valid = make_private_batch_prover()
-        .aggregate(vec![make_leaf_proof(&valid_0), make_leaf_proof(&valid_1)])
+        .aggregate(PrivateBatchInputs {
+            leaf_proofs: vec![make_leaf_proof(&valid_0), make_leaf_proof(&valid_1)],
+            outputs: outputs(),
+            volume_fee_bps: 4,
+        })
         .expect("101 input quanta must cover 100 output quanta at 4 bps");
     private_batch_verifier()
         .verify(valid)
         .expect("boundary-valid real-leaf aggregate must verify");
 
-    let (underpaid_0, underpaid_1) =
-        two_real_leaves_same_block_with_amounts(0, [100, 0], outputs, 4);
+    let (underpaid_0, underpaid_1) = two_real_leaves_same_block_with_amounts(0, [100, 0]);
     assert!(
         make_private_batch_prover()
-            .aggregate(vec![
-                make_leaf_proof(&underpaid_0),
-                make_leaf_proof(&underpaid_1),
-            ])
+            .aggregate(PrivateBatchInputs {
+                leaf_proofs: vec![make_leaf_proof(&underpaid_0), make_leaf_proof(&underpaid_1),],
+                outputs: outputs(),
+                volume_fee_bps: 4,
+            })
             .is_err(),
         "100 input quanta must not cover 100 output quanta at 4 bps"
     );
@@ -333,7 +357,7 @@ fn commit_rejects_nonzero_asset_id_when_dummy_padding_is_needed() {
     let proof = make_leaf_proof(&with_real_block(test_inputs_with_asset(5)));
 
     let prover = make_private_batch_prover();
-    let err = prover.aggregate(vec![proof]).unwrap_err();
+    let err = prover.aggregate(burns_only(vec![proof])).unwrap_err();
     assert!(
         err.to_string().contains("dummy proofs use asset_id=0"),
         "got: {err}"
@@ -346,7 +370,9 @@ fn aggregate_rejects_empty_batch() {
     // template and prove an all-dummy private batch that settles nothing.
     // The client entry point must reject that instead (the intentional
     // all-dummy template is built on the circuit-build path, not here).
-    let err = make_private_batch_prover().aggregate(vec![]).unwrap_err();
+    let err = make_private_batch_prover()
+        .aggregate(burns_only(vec![]))
+        .unwrap_err();
     assert!(err.to_string().contains("no leaf proofs"), "got: {err}");
 }
 
@@ -360,7 +386,7 @@ fn commit_rejects_batch_incompatible_proofs() {
 
     let prover = make_private_batch_prover();
     let err = prover
-        .aggregate(vec![proof_asset_0, proof_asset_5])
+        .aggregate(burns_only(vec![proof_asset_0, proof_asset_5]))
         .unwrap_err();
     assert!(err.to_string().contains("asset"), "got: {err}");
 }
@@ -376,7 +402,7 @@ fn full_batch_of_same_nonzero_asset_aggregates() {
     let proof_1 = make_leaf_proof(&inputs_1);
 
     let aggregated = make_private_batch_prover()
-        .aggregate(vec![proof_0, proof_1])
+        .aggregate(burns_only(vec![proof_0, proof_1]))
         .expect("full same-asset batch must aggregate");
     private_batch_verifier()
         .verify(aggregated)
@@ -422,7 +448,7 @@ fn aggregate_proofs_from_separate_prover_instances_hex_serialized() {
             .expect("Failed to deserialize proof 2");
 
     let aggregated = make_private_batch_prover()
-        .aggregate(vec![proof_1_deserialized, proof_2_deserialized])
+        .aggregate(burns_only(vec![proof_1_deserialized, proof_2_deserialized]))
         .expect("Aggregation failed");
 
     private_batch_verifier()
@@ -440,7 +466,9 @@ fn private_batch_commit_rejects_malformed_full_batch_at_api_boundary() {
     let valid = make_leaf_proof(&CircuitInputs::test_inputs_0());
 
     let prover = make_private_batch_prover();
-    let err = prover.aggregate(vec![malformed, valid]).unwrap_err();
+    let err = prover
+        .aggregate(burns_only(vec![malformed, valid]))
+        .unwrap_err();
     assert!(
         err.to_string()
             .contains("leaf proof public input length mismatch"),
@@ -545,7 +573,7 @@ fn private_batch_prover_ignores_prover_artifact() {
         let proof = make_leaf_proof(&test_inputs_with_real_block());
         let aggregated = PrivateBatchProver::new_from_binaries_dir(bins)
             .expect("prover must load without a trusted prover artifact")
-            .aggregate(vec![proof])
+            .aggregate(burns_only(vec![proof]))
             .expect("aggregation must succeed");
         private_batch_verifier()
             .verify(aggregated)
@@ -594,7 +622,7 @@ fn private_batch_build_rejects_substituted_leaf_artifacts() {
     )
     .unwrap();
 
-    let err = generate_private_batch_circuit_binaries(&dir, 1, false)
+    let err = generate_private_batch_circuit_binaries(&dir, PrivateBatchShape::new(1, 1), false)
         .expect_err("substituted leaf artifacts must be rejected before circuit construction");
     assert!(
         err.to_string().contains("does not match the canonical"),
@@ -627,7 +655,7 @@ fn public_batch_build_rejects_substituted_private_batch_artifacts() {
     vk_bytes[last] ^= 0x01;
     std::fs::write(dir.join("private_batch_verifier.bin"), vk_bytes).unwrap();
 
-    let err = generate_public_batch_circuit_binaries(&dir, 1, PRIVATE_NUM_LEAVES)
+    let err = generate_public_batch_circuit_binaries(&dir, 1, PRIVATE_SHAPE)
         .expect_err("substituted private-batch artifacts must be rejected before baking");
     // `{err:#}` prints the whole context chain; the canonical mismatch is the cause.
     let chain = format!("{err:#}");
@@ -655,7 +683,7 @@ fn make_private_batch_proof_in_public_dir() -> ProofWithPublicInputs<F, C, D> {
             let leaf = make_leaf_proof(&test_inputs_with_real_block());
             PrivateBatchProver::new_from_binaries_dir(&dir)
                 .expect("load private-batch prover from public test binaries")
-                .aggregate(vec![leaf])
+                .aggregate(burns_only(vec![leaf]))
                 .expect("private aggregate")
         })
         .clone()

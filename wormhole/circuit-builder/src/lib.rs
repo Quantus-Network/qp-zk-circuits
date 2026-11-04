@@ -23,7 +23,7 @@ use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use zk_circuits_common::circuit::wormhole_leaf_circuit_config;
 
 // Re-export CircuitBinsConfig from aggregator so users of circuit-builder can access it
-pub use wormhole_aggregator::CircuitBinsConfig;
+pub use wormhole_aggregator::{CircuitBinsConfig, PrivateBatchShape};
 
 /// Generate only the leaf wormhole circuit binaries.
 ///
@@ -106,7 +106,7 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(output_dir: P) -> Result<()> {
 ///   public-batch padding (requires a private-batch proving run). No circuit emits a
 ///   prover binary: provers always rebuild their circuits from source (see
 ///   [`generate_circuit_binaries`])
-/// * `num_leaf_proofs` - Number of leaf proofs aggregated into a single proof (must be > 0)
+/// * `shape` - Number of leaf proofs and exit slots per private-batch proof (each 1..=64)
 /// * `num_private_batch_proofs` - Optional param for number of inner proofs (for public-batch circuit). Set to none if you only want private-batch aggregation.
 ///
 /// # Errors
@@ -115,11 +115,11 @@ pub fn generate_circuit_binaries<P: AsRef<Path>>(output_dir: P) -> Result<()> {
 pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
     include_prover: bool,
-    num_leaf_proofs: usize,
+    shape: PrivateBatchShape,
     num_private_batch_proofs: Option<usize>,
 ) -> Result<()> {
     // Validate proof counts upfront before any writes to avoid partial artifact generation
-    let config = CircuitBinsConfig::new(num_leaf_proofs, num_private_batch_proofs)?;
+    let config = CircuitBinsConfig::new(shape, num_private_batch_proofs)?;
 
     let output_path = output_dir.as_ref();
     let staging_path = create_staging_dir(output_path)?;
@@ -129,19 +129,11 @@ pub fn generate_all_circuit_binaries<P: AsRef<Path>>(
         generate_circuit_binaries(&staging_path)?;
 
         // Generate aggregated circuit binaries
-        generate_private_batch_circuit_binaries(
-            &staging_path,
-            config.num_leaf_proofs,
-            include_prover,
-        )?;
+        generate_private_batch_circuit_binaries(&staging_path, shape, include_prover)?;
 
         // If num_private_batch_proofs is specified, generate public-batch aggregation circuit binaries
         if let Some(num_private_batch_proofs) = config.num_private_batch_proofs {
-            generate_public_batch_circuit_binaries(
-                &staging_path,
-                num_private_batch_proofs,
-                config.num_leaf_proofs,
-            )?;
+            generate_public_batch_circuit_binaries(&staging_path, num_private_batch_proofs, shape)?;
         }
 
         // Save config file alongside binaries. Written last: its presence marks
@@ -596,7 +588,10 @@ mod tests {
         write(output.join("existing.bin"), b"keep me").unwrap();
 
         // Invalid count: fails validation before any staging.
-        assert!(generate_all_circuit_binaries(&output, false, 0, None).is_err());
+        assert!(
+            generate_all_circuit_binaries(&output, false, PrivateBatchShape::new(0, 1), None)
+                .is_err()
+        );
         assert!(output.join("existing.bin").exists());
 
         fs::remove_dir_all(&root).unwrap();
@@ -623,7 +618,8 @@ mod tests {
             return;
         }
 
-        let result = generate_all_circuit_binaries(&output, false, 1, None);
+        let result =
+            generate_all_circuit_binaries(&output, false, PrivateBatchShape::new(1, 1), None);
         fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
 
         let err = result.unwrap_err();

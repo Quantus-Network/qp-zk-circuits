@@ -13,5 +13,6 @@ pub use config::{validate_proof_count, CircuitBinsConfig, MAX_PROOF_COUNT};
 pub use dummy_proof::{
     build_dummy_circuit_inputs, generate_dummy_proof, DUMMY_BLOCK_HASH, DUMMY_EXIT_ACCOUNT,
 };
+pub use qp_wormhole_inputs::{PrivateBatchShape, WithdrawalOutput};
 #[cfg(feature = "gpu")]
 mod profiling;

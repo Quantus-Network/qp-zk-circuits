@@ -11,15 +11,14 @@ use zk_circuits_common::utils::{try_4_felts_to_bytes, BytesDigest};
 use zk_circuits_common::zk_merkle::SIBLINGS_PER_LEVEL;
 
 // Import public input types and constants from wormhole_inputs (single source of truth)
-use qp_wormhole_inputs::{
-    validate_proof_count, ASSET_ID_INDEX, BLOCK_HASH_END_INDEX, BLOCK_HASH_START_INDEX,
-    BLOCK_NUMBER_INDEX, EXIT_ACCOUNT_1_END_INDEX, EXIT_ACCOUNT_1_START_INDEX,
-    EXIT_ACCOUNT_2_END_INDEX, EXIT_ACCOUNT_2_START_INDEX, INPUT_AMOUNT_INDEX, NULLIFIER_END_INDEX,
-    NULLIFIER_START_INDEX, OUTPUT_AMOUNT_1_INDEX, OUTPUT_AMOUNT_2_INDEX, PUBLIC_INPUTS_FELTS_LEN,
-    VOLUME_FEE_BPS_INDEX,
-};
 pub use qp_wormhole_inputs::{
     BlockData, PrivateBatchPublicInputs, PublicCircuitInputs, PublicInputsByAccount,
+};
+use qp_wormhole_inputs::{
+    ASSET_ID_INDEX, BLOCK_HASH_END_INDEX, BLOCK_HASH_START_INDEX, BLOCK_NUMBER_INDEX,
+    EXIT_ACCOUNT_1_END_INDEX, EXIT_ACCOUNT_1_START_INDEX, EXIT_ACCOUNT_2_END_INDEX,
+    EXIT_ACCOUNT_2_START_INDEX, INPUT_AMOUNT_INDEX, NULLIFIER_END_INDEX, NULLIFIER_START_INDEX,
+    OUTPUT_AMOUNT_1_INDEX, OUTPUT_AMOUNT_2_INDEX, PUBLIC_INPUTS_FELTS_LEN, VOLUME_FEE_BPS_INDEX,
 };
 
 /// Inputs required to commit to the wormhole circuit.
@@ -210,88 +209,8 @@ pub trait ParsePrivateBatchPublicInputs {
 
 impl ParsePrivateBatchPublicInputs for PrivateBatchPublicInputs {
     fn try_from_felts(pis: &[GoldilocksField]) -> anyhow::Result<PrivateBatchPublicInputs> {
-        // Layout: [num_exit_slots, asset_id, volume_fee_bps, block_hash(4), block_number,
-        //          [output_sum(1), exit_account(4)] * 2*N, nullifiers(4) * N, padding...]
-
-        // Validate layout: total length must be 8 + N * PUBLIC_INPUTS_FELTS_LEN
-        let payload_len = pis
-            .len()
-            .checked_sub(8)
-            .filter(|len| len % PUBLIC_INPUTS_FELTS_LEN == 0)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "AggregatedPI: malformed length {} - expected 8 + N*{} felts",
-                    pis.len(),
-                    PUBLIC_INPUTS_FELTS_LEN
-                )
-            })?;
-
-        let n_leaf = payload_len / PUBLIC_INPUTS_FELTS_LEN;
-        validate_proof_count(n_leaf, "AggregatedPI: n_leaf")?;
-
-        // Helper to read a u32 from a felt
-        let read_u32 = |f: GoldilocksField| -> anyhow::Result<u32> {
-            f.to_canonical_u64().try_into().map_err(Into::into)
-        };
-
-        // Helper to read 4 felts as a BytesDigest
-        let read_digest = |slice: &[GoldilocksField]| -> anyhow::Result<BytesDigest> {
-            try_4_felts_to_bytes(slice).context("failed to deserialize digest")
-        };
-
-        // Parse header (indices 0-7)
-        let num_exit_slots = read_u32(pis[0]).context("num_exit_slots")?;
-        // The circuit provably writes the structural constant 2*N (total exit
-        // slots, two per leaf) at index 0; any other value means these felts
-        // did not come from the private-batch aggregation circuit.
-        if num_exit_slots as usize != n_leaf * 2 {
-            anyhow::bail!(
-                "AggregatedPI: num_exit_slots at index 0 is {}, but the layout implies {} \
-                 exit slots ({} leaves); these are not private-batch aggregation PIs",
-                num_exit_slots,
-                n_leaf * 2,
-                n_leaf
-            );
-        }
-        let asset_id = read_u32(pis[1]).context("asset_id")?;
-        let volume_fee_bps = read_u32(pis[2]).context("volume_fee_bps")?;
-        let block_data = BlockData {
-            block_hash: read_digest(&pis[3..7]).context("block_hash")?,
-            block_number: read_u32(pis[7]).context("block_number")?,
-        };
-
-        // Parse 2*N exit accounts (after header at index 8)
-        let account_data = pis[8..]
-            .chunks(5)
-            .take(n_leaf * 2)
-            .enumerate()
-            .map(|(i, chunk)| {
-                Ok(PublicInputsByAccount {
-                    summed_output_amount: read_u32(chunk[0])
-                        .with_context(|| format!("account[{}].amount", i))?,
-                    exit_account: read_digest(&chunk[1..5])
-                        .with_context(|| format!("account[{}].address", i))?,
-                })
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-
-        // Parse N nullifiers (after exit accounts)
-        let nullifier_start = 8 + n_leaf * 2 * 5;
-        let nullifiers = pis[nullifier_start..]
-            .chunks(4)
-            .take(n_leaf)
-            .enumerate()
-            .map(|(i, chunk)| read_digest(chunk).with_context(|| format!("nullifier[{}]", i)))
-            .collect::<anyhow::Result<Vec<_>>>()?;
-
-        Ok(PrivateBatchPublicInputs {
-            num_exit_slots,
-            asset_id,
-            volume_fee_bps,
-            block_data,
-            account_data,
-            nullifiers,
-        })
+        let u64s: Vec<u64> = pis.iter().map(|f| f.to_canonical_u64()).collect();
+        PrivateBatchPublicInputs::try_from_u64_slice(&u64s)
     }
 }
 
@@ -301,95 +220,48 @@ mod tests {
     use plonky2::field::goldilocks_field::GoldilocksField;
     use plonky2::field::types::Field;
 
-    #[test]
-    fn aggregated_try_from_felts_rejects_empty_slice() {
-        let result =
-            <PrivateBatchPublicInputs as ParsePrivateBatchPublicInputs>::try_from_felts(&[]);
-        assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(
-            err_msg.contains("malformed length"),
-            "Expected 'malformed length' error, got: {}",
-            err_msg
-        );
+    fn parse(pis: &[GoldilocksField]) -> anyhow::Result<PrivateBatchPublicInputs> {
+        <PrivateBatchPublicInputs as ParsePrivateBatchPublicInputs>::try_from_felts(pis)
     }
 
     #[test]
-    fn aggregated_try_from_felts_rejects_short_slice() {
-        // Only 5 elements when at least 8 are required for header
-        let short_slice: Vec<GoldilocksField> = vec![GoldilocksField::ZERO; 5];
-        let result = <PrivateBatchPublicInputs as ParsePrivateBatchPublicInputs>::try_from_felts(
-            &short_slice,
-        );
-        assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(
-            err_msg.contains("malformed length"),
-            "Expected 'malformed length' error, got: {}",
-            err_msg
-        );
+    fn aggregated_try_from_felts_rejects_short_slices() {
+        for len in [0, 5] {
+            let err = parse(&vec![GoldilocksField::ZERO; len]).unwrap_err();
+            assert!(err.to_string().contains("too few"), "got: {err}");
+        }
     }
 
     #[test]
     fn aggregated_try_from_felts_rejects_malformed_length() {
-        // 9 elements: 8 header + 1 extra (not a multiple of PUBLIC_INPUTS_FELTS_LEN)
-        let malformed_slice: Vec<GoldilocksField> = vec![GoldilocksField::ZERO; 9];
-        let result = <PrivateBatchPublicInputs as ParsePrivateBatchPublicInputs>::try_from_felts(
-            &malformed_slice,
-        );
-        assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(
-            err_msg.contains("malformed length"),
-            "Expected 'malformed length' error, got: {}",
-            err_msg
-        );
-    }
-
-    #[test]
-    fn aggregated_try_from_felts_rejects_header_only() {
-        // Exactly 8 elements (header only, n_leaf would be 0)
-        let header_only: Vec<GoldilocksField> = vec![GoldilocksField::ZERO; 8];
-        let result = <PrivateBatchPublicInputs as ParsePrivateBatchPublicInputs>::try_from_felts(
-            &header_only,
-        );
-        assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(
-            err_msg.contains("must be > 0"),
-            "Expected a 'must be > 0' error, got: {}",
-            err_msg
-        );
+        // M = 1 exit slot: 8 + 5 = 13 header+slot felts, then the nullifier
+        // region must be a non-empty multiple of 4.
+        for len in [13, 14, 19] {
+            let mut pis = vec![GoldilocksField::ZERO; len];
+            pis[0] = GoldilocksField::ONE;
+            assert!(parse(&pis).is_err(), "length {len} must be rejected");
+        }
     }
 
     #[test]
     fn aggregated_try_from_felts_accepts_valid_input() {
-        // Valid input: 8 header + 21 (one leaf worth of data)
-        let mut valid_slice: Vec<GoldilocksField> =
-            vec![GoldilocksField::ZERO; 8 + PUBLIC_INPUTS_FELTS_LEN];
-        valid_slice[0] = GoldilocksField::from_canonical_u64(2); // 2*N exit slots for N = 1
-        let result = <PrivateBatchPublicInputs as ParsePrivateBatchPublicInputs>::try_from_felts(
-            &valid_slice,
-        );
-        assert!(result.is_ok(), "Expected valid input to parse successfully");
-        let parsed = result.unwrap();
+        // M = 2 exit slots, N = 1 leaf: 8 + 2*5 + 1*4 = 22 felts.
+        let mut pis = vec![GoldilocksField::ZERO; 22];
+        pis[0] = GoldilocksField::from_canonical_u64(2);
+        let parsed = parse(&pis).expect("valid input must parse");
         assert_eq!(parsed.num_exit_slots, 2);
-        assert_eq!(parsed.account_data.len(), 2); // 2 outputs per leaf
-        assert_eq!(parsed.nullifiers.len(), 1); // 1 nullifier per leaf
+        assert_eq!(parsed.account_data.len(), 2);
+        assert_eq!(parsed.nullifiers.len(), 1);
     }
 
-    /// The aggregation circuit provably writes the structural constant `2*N`
-    /// (total exit slots, two per leaf) at index 0; any other value means the
-    /// felts did not come from that circuit and must be rejected (audit
-    /// finding: aggregated public input mislabels exit-slot count).
+    /// The exit-slot count at index 0 is a structural constant of the
+    /// aggregation circuit and must be in `1..=MAX_PROOF_COUNT`.
     #[test]
-    fn aggregated_try_from_felts_rejects_header_slot_count_mismatch() {
-        let mut pis = vec![GoldilocksField::ZERO; 8 + PUBLIC_INPUTS_FELTS_LEN];
-        pis[0] = GoldilocksField::from_canonical_u64(1); // must be 2 for one leaf
-        let result =
-            <PrivateBatchPublicInputs as ParsePrivateBatchPublicInputs>::try_from_felts(&pis);
-        let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("exit slot"), "got: {err_msg}");
+    fn aggregated_try_from_felts_rejects_out_of_range_slot_count() {
+        let mut pis = vec![GoldilocksField::ZERO; 22];
+        assert!(parse(&pis).is_err(), "zero exit slots must be rejected");
+        pis[0] = GoldilocksField::from_canonical_u64(65);
+        assert!(parse(&pis).is_err(), "65 exit slots must be rejected");
     }
 
     #[test]

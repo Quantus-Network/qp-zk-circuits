@@ -14,7 +14,7 @@ use std::path::Path;
 use plonky2::plonk::circuit_data::VerifierCircuitData;
 use plonky2::util::serialization::DefaultGateSerializer;
 
-use qp_wormhole_inputs::validate_proof_count;
+use qp_wormhole_inputs::{validate_proof_count, PrivateBatchShape};
 use zk_circuits_common::circuit::{wormhole_public_batch_circuit_config, C, D, F};
 
 use crate::common::utils::{
@@ -29,25 +29,25 @@ use crate::public_batch::circuit::circuit_logic::PublicBatchCircuit;
 /// `generate_all_circuit_binaries` for production regenerates
 /// (`wormhole/THREAT_MODEL.md`).
 ///
-/// `num_leaf_proofs` is the private-batch leaf count the on-disk
-/// `private_batch_*.bin` artifacts were built for (caller-supplied;
-/// typically [`crate::config::CircuitBinsConfig`]).
+/// `private_batch_shape` is the shape the on-disk `private_batch_*.bin`
+/// artifacts were built for (caller-supplied; typically
+/// [`crate::config::CircuitBinsConfig`]).
 pub fn generate_public_batch_circuit_binaries<P: AsRef<Path>>(
     output_dir: P,
     num_private_batch_proofs: usize,
-    num_leaf_proofs: usize,
+    private_batch_shape: PrivateBatchShape,
 ) -> Result<()> {
     let output_dir = output_dir.as_ref();
     // Bound the per-layer counts before any circuit construction (#97021, #97070).
     validate_proof_count(num_private_batch_proofs, "num_private_batch_proofs")?;
-    validate_proof_count(num_leaf_proofs, "num_leaf_proofs")?;
+    private_batch_shape.validate()?;
     create_dir_all(output_dir)
         .with_context(|| format!("Failed to create output dir {}", output_dir.display()))?;
 
     // Pin the private-batch artifacts to the canonical private-batch circuit
     // BEFORE baking their verifier key into the public-batch circuit as
     // constants. Pinning compares the raw artifact bytes to a canonical
-    // rebuild for `num_leaf_proofs` and never deserializes the untrusted
+    // rebuild for `private_batch_shape` and never deserializes the untrusted
     // common data (see `load_canonical_private_batch_verifier_data`).
     let private_batch_common_bytes =
         read_artifact_file(&output_dir.join("private_batch_common.bin")).with_context(|| {
@@ -68,7 +68,7 @@ pub fn generate_public_batch_circuit_binaries<P: AsRef<Path>>(
         &private_batch_common_bytes,
         &private_batch_verifier_bytes,
         &canonical_leaf_verifier_data(),
-        num_leaf_proofs,
+        private_batch_shape,
     )
     .context("Failed to load private-batch verifier data")?;
 
@@ -79,17 +79,17 @@ pub fn generate_public_batch_circuit_binaries<P: AsRef<Path>>(
         private_batch.common,
         &private_batch.verifier_only,
         num_private_batch_proofs,
-        num_leaf_proofs,
+        private_batch_shape,
     )?;
 
     let verifier_data = public_batch_circuit.build_verifier();
     write_verifier_artifacts(output_dir, &verifier_data)?;
 
     println!(
-        "Public-batch circuit artifacts written to {} (num_private_batch_proofs={}, private_batch_num_leaves={})",
+        "Public-batch circuit artifacts written to {} (num_private_batch_proofs={}, private_batch_shape={:?})",
         output_dir.display(),
         num_private_batch_proofs,
-        num_leaf_proofs
+        private_batch_shape
     );
 
     Ok(())
@@ -151,7 +151,8 @@ mod tests {
             .unwrap();
         std::fs::write(dir.join("private_batch_verifier.bin"), b"irrelevant").unwrap();
 
-        let err = generate_public_batch_circuit_binaries(&dir, 1, 1).unwrap_err();
+        let err = generate_public_batch_circuit_binaries(&dir, 1, PrivateBatchShape::new(1, 1))
+            .unwrap_err();
         assert!(
             format!("{err:#}").contains("exceeds the"),
             "oversized artifact must be rejected by the size cap, got: {err:#}"
@@ -176,7 +177,8 @@ mod tests {
         std::fs::write(dir.join("private_batch_common.bin"), &poisoned).unwrap();
         std::fs::write(dir.join("private_batch_verifier.bin"), &poisoned[..128]).unwrap();
 
-        let err = generate_public_batch_circuit_binaries(&dir, 1, 1).unwrap_err();
+        let err = generate_public_batch_circuit_binaries(&dir, 1, PrivateBatchShape::new(1, 1))
+            .unwrap_err();
         let chain = format!("{err:#}");
         assert!(
             chain.contains("does not match the canonical"),

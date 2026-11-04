@@ -75,7 +75,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, ensure, Result};
 use plonky2::field::types::PrimeField64;
 use plonky2::plonk::{circuit_data::VerifierCircuitData, proof::ProofWithPublicInputs};
-use qp_wormhole_inputs::{validate_proof_count, BytesDigest};
+use qp_wormhole_inputs::{validate_proof_count, BytesDigest, PrivateBatchShape};
 use zk_circuits_common::{
     circuit::{C, D, F},
     utils::try_4_felts_to_bytes,
@@ -216,8 +216,8 @@ struct Bucket {
 pub struct ProofPool {
     /// Canonical-pinned private-batch verifier data used for admission.
     verifier: VerifierCircuitData<F, C, D>,
-    /// Leaves per inner private-batch proof (fixes the PI layout).
-    inner_num_leaves: usize,
+    /// Shape of each inner private-batch proof (fixes the PI layout).
+    inner_shape: PrivateBatchShape,
     /// Proofs per bucket (= public-batch size).
     batch_size: usize,
     limits: PoolLimits,
@@ -241,23 +241,23 @@ pub struct ProofPool {
 impl ProofPool {
     /// Create a pool admitting proofs valid under `verifier`.
     ///
-    /// `inner_num_leaves` is the number of leaves aggregated per private-batch
-    /// proof and `batch_size` the number of private-batch proofs per public
-    /// batch; both must match the circuit shapes pinned into `verifier` and the
-    /// public-batch prover this pool feeds. Both are per-layer proof counts and
-    /// are validated against `MAX_PROOF_COUNT` before any layout arithmetic,
-    /// so callers can pass untrusted dimensions here.
+    /// `inner_shape` is the leaf/exit-slot shape of each private-batch proof
+    /// and `batch_size` the number of private-batch proofs per public batch;
+    /// both must match the circuit shapes pinned into `verifier` and the
+    /// public-batch prover this pool feeds. All dimensions are validated
+    /// against `MAX_PROOF_COUNT` before any layout arithmetic, so callers can
+    /// pass untrusted dimensions here.
     pub fn new(
         verifier: VerifierCircuitData<F, C, D>,
-        inner_num_leaves: usize,
+        inner_shape: PrivateBatchShape,
         batch_size: usize,
         limits: PoolLimits,
     ) -> Result<Self> {
-        // Bound both counts before the layout helpers below: pi_len does
+        // Bound every count before the layout helpers below: pi_len does
         // unchecked arithmetic that would wrap on astronomical counts, and the
         // repo invariant is that every externally supplied batch dimension is
         // checked with validate_proof_count before allocation or arithmetic.
-        validate_proof_count(inner_num_leaves, "inner_num_leaves")?;
+        inner_shape.validate()?;
         validate_proof_count(batch_size, "batch_size")?;
         ensure!(
             limits.max_proofs >= batch_size,
@@ -274,17 +274,17 @@ impl ProofPool {
             !limits.verify_window.is_zero(),
             "verify_window must be positive"
         );
-        let expected_pi_len = aggregated_output::pi_len(inner_num_leaves);
+        let expected_pi_len = aggregated_output::pi_len(inner_shape);
         ensure!(
             verifier.common.num_public_inputs == expected_pi_len,
-            "verifier public-input length {} does not match private-batch layout for {} leaves ({})",
+            "verifier public-input length {} does not match private-batch layout for {:?} ({})",
             verifier.common.num_public_inputs,
-            inner_num_leaves,
+            inner_shape,
             expected_pi_len
         );
         Ok(Self {
             verifier,
-            inner_num_leaves,
+            inner_shape,
             batch_size,
             limits,
             buckets: BTreeMap::new(),
@@ -622,8 +622,8 @@ impl ProofPool {
             volume_fee_bps: pis[aggregated_output::VOLUME_FEE_BPS_OFFSET].to_canonical_u64(),
         };
 
-        let nullifiers_start = aggregated_output::nullifiers_start(self.inner_num_leaves);
-        let nullifiers = (0..aggregated_output::nullifiers_count(self.inner_num_leaves))
+        let nullifiers_start = aggregated_output::nullifiers_start(self.inner_shape);
+        let nullifiers = (0..aggregated_output::nullifiers_count(self.inner_shape))
             .map(|i| {
                 let start = nullifiers_start + i * 4;
                 try_4_felts_to_bytes(&pis[start..start + 4]).map_err(|e| {
@@ -633,7 +633,7 @@ impl ProofPool {
             .collect::<Result<Vec<_>>>()?;
 
         let exit_slots_start = aggregated_output::exit_slots_start();
-        let volume = (0..aggregated_output::exit_slots_count(self.inner_num_leaves))
+        let volume = (0..aggregated_output::exit_slots_count(self.inner_shape))
             .map(|i| {
                 pis[exit_slots_start + i * aggregated_output::EXIT_SLOT_LEN].to_canonical_u64()
             })
@@ -654,10 +654,10 @@ mod tests {
         circuit_data::{CircuitConfig, CircuitData},
     };
 
-    const NUM_LEAVES: usize = 1;
+    const SHAPE: PrivateBatchShape = PrivateBatchShape::new(1, 2);
 
     fn pi_len() -> usize {
-        aggregated_output::pi_len(NUM_LEAVES)
+        aggregated_output::pi_len(SHAPE)
     }
 
     /// A minimal circuit whose public inputs mimic the private-batch layout,
@@ -689,8 +689,7 @@ mod tests {
             values[aggregated_output::exit_slots_start() + i * aggregated_output::EXIT_SLOT_LEN] =
                 F::from_canonical_u64(p.exit_sums[i]);
         }
-        values[aggregated_output::nullifiers_start(NUM_LEAVES)] =
-            F::from_canonical_u64(p.nullifier);
+        values[aggregated_output::nullifiers_start(SHAPE)] = F::from_canonical_u64(p.nullifier);
 
         let mut pw = PartialWitness::new();
         for (t, v) in targets.iter().zip(values.iter()) {
@@ -709,7 +708,7 @@ mod tests {
         limits: PoolLimits,
     ) -> (ProofPool, CircuitData<F, C, D>, Vec<Target>) {
         let (data, targets) = build_fake_private_batch_circuit();
-        let pool = ProofPool::new(data.verifier_data(), NUM_LEAVES, batch_size, limits).unwrap();
+        let pool = ProofPool::new(data.verifier_data(), SHAPE, batch_size, limits).unwrap();
         (pool, data, targets)
     }
 
@@ -733,15 +732,28 @@ mod tests {
 
         let (data, _) = build_fake_private_batch_circuit();
 
-        for bad_leaves in [0, MAX_PROOF_COUNT + 1, usize::MAX / LEAF_PI_LEN + 1] {
-            let err = ProofPool::new(data.verifier_data(), bad_leaves, 2, PoolLimits::default())
-                .expect_err("out-of-range inner_num_leaves must be rejected");
-            assert!(err.to_string().contains("inner_num_leaves"), "got: {err}");
+        for bad in [0, MAX_PROOF_COUNT + 1, usize::MAX / LEAF_PI_LEN + 1] {
+            let err = ProofPool::new(
+                data.verifier_data(),
+                PrivateBatchShape::new(bad, 2),
+                2,
+                PoolLimits::default(),
+            )
+            .expect_err("out-of-range num_leaf_proofs must be rejected");
+            assert!(err.to_string().contains("num_leaf_proofs"), "got: {err}");
+            let err = ProofPool::new(
+                data.verifier_data(),
+                PrivateBatchShape::new(1, bad),
+                2,
+                PoolLimits::default(),
+            )
+            .expect_err("out-of-range num_exit_slots must be rejected");
+            assert!(err.to_string().contains("num_exit_slots"), "got: {err}");
         }
         for bad_batch in [0, MAX_PROOF_COUNT + 1] {
             let err = ProofPool::new(
                 data.verifier_data(),
-                NUM_LEAVES,
+                SHAPE,
                 bad_batch,
                 PoolLimits::default(),
             )
@@ -782,7 +794,7 @@ mod tests {
     /// First public-input felt of a proof's nullifier (test proofs use
     /// single-felt nullifiers), to assert snapshot ordering.
     fn nullifier_felt(proof: &Proof) -> u64 {
-        proof.public_inputs[aggregated_output::nullifiers_start(NUM_LEAVES)].to_canonical_u64()
+        proof.public_inputs[aggregated_output::nullifiers_start(SHAPE)].to_canonical_u64()
     }
 
     #[test]

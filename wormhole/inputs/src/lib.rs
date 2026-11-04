@@ -69,6 +69,77 @@ pub fn validate_proof_count(count: usize, label: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Circuit-build-time shape of a private batch: how many leaf proofs it
+/// verifies and how many exit (output) slots it exposes. The two are
+/// independent: a batch may split one burn across many outputs or pool many
+/// burns into one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PrivateBatchShape {
+    pub num_leaf_proofs: usize,
+    pub num_exit_slots: usize,
+}
+
+impl PrivateBatchShape {
+    pub const fn new(num_leaf_proofs: usize, num_exit_slots: usize) -> Self {
+        Self {
+            num_leaf_proofs,
+            num_exit_slots,
+        }
+    }
+
+    /// Validate both dimensions against the canonical `1..=MAX_PROOF_COUNT` range.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        validate_proof_count(self.num_leaf_proofs, "num_leaf_proofs")?;
+        validate_proof_count(self.num_exit_slots, "num_exit_slots")
+    }
+}
+
+/// One requested payout of a private batch: `amount` (quantized, 0.01 units)
+/// to `exit_account`. Unused slots are `(zero account, 0)`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct WithdrawalOutput {
+    pub exit_account: BytesDigest,
+    pub amount: u32,
+}
+
+/// Private-batch PI layout.
+///
+/// ```text
+/// [num_exit_slots(1), asset_id(1), volume_fee_bps(1), block_hash(4), block_number(1),
+///  [amount(1), exit_account(4)] * num_exit_slots,
+///  nullifier(4) * num_leaf_proofs]
+/// ```
+pub mod private_batch_pi {
+    use super::PrivateBatchShape;
+
+    pub const NUM_EXIT_SLOTS_INDEX: usize = 0;
+    pub const ASSET_ID_INDEX: usize = 1;
+    pub const VOLUME_FEE_BPS_INDEX: usize = 2;
+    pub const BLOCK_HASH_START_INDEX: usize = 3;
+    pub const BLOCK_NUMBER_INDEX: usize = 7;
+    pub const HEADER_LEN: usize = 8;
+    /// Each exit slot is `[amount(1), exit_account(4)]`.
+    pub const EXIT_SLOT_LEN: usize = 5;
+    pub const NULLIFIER_LEN: usize = 4;
+
+    #[inline]
+    pub const fn exit_slots_start() -> usize {
+        HEADER_LEN
+    }
+
+    #[inline]
+    pub const fn nullifiers_start(shape: PrivateBatchShape) -> usize {
+        HEADER_LEN + shape.num_exit_slots * EXIT_SLOT_LEN
+    }
+
+    /// Total PI length. Unchecked arithmetic: callers must have validated
+    /// `shape` ([`PrivateBatchShape::validate`]) first.
+    #[inline]
+    pub const fn pi_len(shape: PrivateBatchShape) -> usize {
+        nullifiers_start(shape) + shape.num_leaf_proofs * NULLIFIER_LEN
+    }
+}
+
 // Index constants for parsing public inputs
 pub const ASSET_ID_INDEX: usize = 0;
 pub const OUTPUT_AMOUNT_1_INDEX: usize = 1;
@@ -268,12 +339,11 @@ pub struct BlockData {
 /// Aggregated public inputs from multiple wormhole proofs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrivateBatchPublicInputs {
-    /// Total number of exit slots in the batch: the structural constant
-    /// `2 * n_leaf` (two outputs per leaf) that the aggregation circuit writes
-    /// at index 0, always equal to `account_data.len()`. NOT a deduplicated
-    /// unique-account count: the circuit zeroes duplicate and dummy slots
-    /// inside `account_data` instead of shrinking it. The parser validates
-    /// this felt against the length-derived leaf count.
+    /// Number of exit slots in the batch: the structural constant
+    /// `PrivateBatchShape::num_exit_slots` that the aggregation circuit writes
+    /// at index 0, always equal to `account_data.len()`. Unused slots are
+    /// `(zero account, 0)`; the parser derives the leaf count from this felt
+    /// and the total length.
     pub num_exit_slots: u32,
     /// The asset ID of the set (0 for native token).
     pub asset_id: u32,
@@ -312,41 +382,40 @@ pub struct PublicBatchPublicInputs {
 
 /// Public-batch PI layout constants (mirrors `public_batch/circuit/constants.rs`).
 pub mod public_batch_pi {
+    use super::PrivateBatchShape;
+
     pub const AGGREGATOR_ADDRESS_LEN: usize = 4;
     pub const HEADER_LEN: usize = 12; // 4 + 1 + 1 + 4 + 1 + 1
     pub const EXIT_SLOT_LEN: usize = 5; // sum(1) + exit_account(4)
 
     #[inline]
-    pub const fn exit_slots_per_inner(num_leaf_proofs: usize) -> usize {
-        num_leaf_proofs * 2
+    pub const fn exit_slots_per_inner(shape: PrivateBatchShape) -> usize {
+        shape.num_exit_slots
     }
 
     #[inline]
-    pub const fn nullifiers_per_inner(num_leaf_proofs: usize) -> usize {
-        num_leaf_proofs
+    pub const fn nullifiers_per_inner(shape: PrivateBatchShape) -> usize {
+        shape.num_leaf_proofs
     }
 
     #[inline]
-    pub const fn pi_len(num_private_batch_proofs: usize, num_leaf_proofs: usize) -> usize {
+    pub const fn pi_len(num_private_batch_proofs: usize, shape: PrivateBatchShape) -> usize {
         HEADER_LEN
-            + num_private_batch_proofs * exit_slots_per_inner(num_leaf_proofs) * EXIT_SLOT_LEN
-            + num_private_batch_proofs * nullifiers_per_inner(num_leaf_proofs) * 4
+            + num_private_batch_proofs * exit_slots_per_inner(shape) * EXIT_SLOT_LEN
+            + num_private_batch_proofs * nullifiers_per_inner(shape) * 4
     }
 
     /// Checked variant of [`pi_len`]: returns `None` on overflow instead of wrapping.
     ///
-    /// Use this (plus [`super::validate_proof_count`]) when the dimensions come
+    /// Use this (plus [`PrivateBatchShape::validate`]) when the dimensions come
     /// from untrusted input; [`pi_len`] is unchecked and may wrap for huge counts.
     #[inline]
     pub const fn try_pi_len(
         num_private_batch_proofs: usize,
-        num_leaf_proofs: usize,
+        shape: PrivateBatchShape,
     ) -> Option<usize> {
-        let slots = match num_leaf_proofs.checked_mul(2) {
-            Some(s) => s,
-            None => return None,
-        };
-        let nulls = num_leaf_proofs;
+        let slots = exit_slots_per_inner(shape);
+        let nulls = nullifiers_per_inner(shape);
         let exit_felts = match num_private_batch_proofs.checked_mul(slots) {
             Some(v) => match v.checked_mul(EXIT_SLOT_LEN) {
                 Some(e) => e,
@@ -446,65 +515,68 @@ impl PublicCircuitInputs {
     }
 }
 
+/// Recover the [`PrivateBatchShape`] a private-batch public-input vector was
+/// produced for: the exit-slot count is the header felt at index 0, and the
+/// leaf count is what remains of the length after the header and exit slots.
+/// Both are validated against `MAX_PROOF_COUNT` before any other work.
+pub fn private_batch_shape_from_pis(pis: &[u64]) -> anyhow::Result<PrivateBatchShape> {
+    use private_batch_pi::{EXIT_SLOT_LEN, HEADER_LEN, NULLIFIER_LEN, NUM_EXIT_SLOTS_INDEX};
+
+    if pis.len() < HEADER_LEN {
+        bail!(
+            "AggregatedPI: too few elements, need at least {} for header, got {}",
+            HEADER_LEN,
+            pis.len()
+        );
+    }
+    let num_exit_slots = usize::try_from(pis[NUM_EXIT_SLOTS_INDEX])
+        .context("AggregatedPI: num_exit_slots at index 0 exceeds usize range")?;
+    validate_proof_count(num_exit_slots, "AggregatedPI: num_exit_slots")?;
+
+    let nullifier_felts = pis
+        .len()
+        .checked_sub(HEADER_LEN + num_exit_slots * EXIT_SLOT_LEN)
+        .filter(|len| len.is_multiple_of(NULLIFIER_LEN))
+        .ok_or_else(|| {
+            anyhow!(
+                "AggregatedPI: malformed length {} - expected {} + {}*{} + N*{} felts",
+                pis.len(),
+                HEADER_LEN,
+                num_exit_slots,
+                EXIT_SLOT_LEN,
+                NULLIFIER_LEN
+            )
+        })?;
+    let num_leaf_proofs = nullifier_felts / NULLIFIER_LEN;
+    validate_proof_count(num_leaf_proofs, "AggregatedPI: n_leaf")?;
+
+    Ok(PrivateBatchShape::new(num_leaf_proofs, num_exit_slots))
+}
+
 impl PrivateBatchPublicInputs {
     /// Parse aggregated public inputs from a slice of u64 values.
     pub fn try_from_u64_slice(pis: &[u64]) -> anyhow::Result<Self> {
-        // Layout in the FINAL (deduped) wrapper proof PIs:
-        // [num_exit_slots, asset_id, volume_fee_bps, block_data(5),
-        //  [output_sum(1), exit_account(4)] * 2*N,  <-- 2 outputs per leaf
-        //  nullifiers(4) * N, padding...]
-        //
-        // IMPORTANT: With 2 outputs per leaf, we have 2*N exit slots.
-        // The parser validates shape/layout only. Circuit-level semantic constraints such as
-        // same-block and same-asset consistency remain enforced by the proving circuit.
+        // Layout: see [`private_batch_pi`]. The parser validates shape/layout
+        // only. Circuit-level semantic constraints such as same-block and
+        // same-asset consistency remain enforced by the proving circuit.
+        let shape = private_batch_shape_from_pis(pis)?;
+        let total_slots = shape.num_exit_slots;
+        let n_leaf = shape.num_leaf_proofs;
 
-        if pis.len() < 8 {
-            bail!(
-                "AggregatedPI: too few elements, need at least 8 for header, got {}",
-                pis.len()
-            );
-        }
-
-        let payload_len = pis.len() - 8;
-        if !payload_len.is_multiple_of(PUBLIC_INPUTS_FELTS_LEN) {
-            bail!(
-                "AggregatedPI: malformed length {} - expected 8 + N*{} felts for the padded aggregated layout",
-                pis.len(),
-                PUBLIC_INPUTS_FELTS_LEN
-            );
-        }
-
-        let num_exit_slots: u32 = pis[0]
-            .try_into()
-            .context("AggregatedPI: num_exit_slots at index 0 exceeds u32 range")?;
-
-        let asset_id: u32 = pis[1]
+        let num_exit_slots = total_slots as u32;
+        let asset_id: u32 = pis[private_batch_pi::ASSET_ID_INDEX]
             .try_into()
             .context("AggregatedPI: asset_id at index 1 exceeds u32 range")?;
-        let volume_fee_bps: u32 = pis[2]
+        let volume_fee_bps: u32 = pis[private_batch_pi::VOLUME_FEE_BPS_INDEX]
             .try_into()
             .context("AggregatedPI: volume_fee_bps at index 2 exceeds u32 range")?;
 
-        // Number of leaf proofs (N) is derived from the padded total PI length.
-        let n_leaf = payload_len / PUBLIC_INPUTS_FELTS_LEN;
-        validate_proof_count(n_leaf, "AggregatedPI: n_leaf")?;
-
-        // The circuit provably writes the structural constant 2*N (total exit
-        // slots, two per leaf) at index 0; any other value means these PIs
-        // did not come from the private-batch aggregation circuit.
-        if num_exit_slots as usize != n_leaf * 2 {
-            bail!(
-                "AggregatedPI: num_exit_slots at index 0 is {}, but the layout implies {} \
-                 exit slots ({} leaves); these are not private-batch aggregation PIs",
-                num_exit_slots,
-                n_leaf * 2,
-                n_leaf
-            );
-        }
-
-        let block_hash = hash_u64s_to_bytes_digest(&pis[3..7])
-            .context("AggregatedPI: parsing block_hash from indices 3..7")?;
-        let block_number: u32 = pis[7]
+        let block_hash = hash_u64s_to_bytes_digest(
+            &pis[private_batch_pi::BLOCK_HASH_START_INDEX
+                ..private_batch_pi::BLOCK_HASH_START_INDEX + 4],
+        )
+        .context("AggregatedPI: parsing block_hash from indices 3..7")?;
+        let block_number: u32 = pis[private_batch_pi::BLOCK_NUMBER_INDEX]
             .try_into()
             .context("AggregatedPI: parsing block_number from index 7")?;
 
@@ -513,11 +585,8 @@ impl PrivateBatchPublicInputs {
             block_number,
         };
 
-        let mut cursor = 8usize;
+        let mut cursor = private_batch_pi::exit_slots_start();
 
-        // Read 2*N exit account slots (two outputs per leaf proof); validated
-        // above to equal the num_exit_slots header felt.
-        let total_slots = n_leaf * 2;
         let mut account_data = Vec::with_capacity(total_slots);
         for i in 0..total_slots {
             if cursor >= pis.len() {
@@ -581,9 +650,7 @@ impl PrivateBatchPublicInputs {
             nullifiers.push(n);
         }
 
-        // Verify we consumed expected number of felts
-        // 8 metadata + 2*N*5 exit slots (1 sum + 4 account) + N*4 nullifiers
-        let expected_felts = 8 + total_slots * 5 + n_leaf * 4;
+        let expected_felts = private_batch_pi::pi_len(shape);
         if cursor != expected_felts {
             bail!(
                 "AggregatedPI: cursor mismatch - consumed {} felts, expected {} (n_leaf={}, num_exit_slots={})",
@@ -608,12 +675,12 @@ impl PrivateBatchPublicInputs {
 impl PublicBatchPublicInputs {
     /// Parse public-batch public inputs from a slice of u64 values.
     ///
-    /// `num_private_batch_proofs` and `num_leaf_proofs` must match the circuit
+    /// `num_private_batch_proofs` and `shape` must match the circuit
     /// parameters used to generate the proof (embedded in the on-chain verifier).
     pub fn try_from_u64_slice(
         pis: &[u64],
         num_private_batch_proofs: usize,
-        num_leaf_proofs: usize,
+        shape: PrivateBatchShape,
     ) -> anyhow::Result<Self> {
         use public_batch_pi::{
             exit_slots_per_inner, nullifiers_per_inner, try_pi_len, AGGREGATOR_ADDRESS_LEN,
@@ -621,28 +688,27 @@ impl PublicBatchPublicInputs {
         };
 
         validate_proof_count(num_private_batch_proofs, "num_private_batch_proofs")?;
-        validate_proof_count(num_leaf_proofs, "num_leaf_proofs")?;
+        shape.validate()?;
 
-        let expected_len =
-            try_pi_len(num_private_batch_proofs, num_leaf_proofs).ok_or_else(|| {
-                anyhow!(
-                    "PublicBatchPI: layout length overflow (n_inner={}, n_leaves={})",
-                    num_private_batch_proofs,
-                    num_leaf_proofs
-                )
-            })?;
+        let expected_len = try_pi_len(num_private_batch_proofs, shape).ok_or_else(|| {
+            anyhow!(
+                "PublicBatchPI: layout length overflow (n_inner={}, shape={:?})",
+                num_private_batch_proofs,
+                shape
+            )
+        })?;
         if pis.len() != expected_len {
             bail!(
-                "PublicBatchPI: expected {} felts (n_inner={}, n_leaves={}), got {}",
+                "PublicBatchPI: expected {} felts (n_inner={}, shape={:?}), got {}",
                 expected_len,
                 num_private_batch_proofs,
-                num_leaf_proofs,
+                shape,
                 pis.len()
             );
         }
 
-        let slots_per_inner = exit_slots_per_inner(num_leaf_proofs);
-        let nulls_per_inner = nullifiers_per_inner(num_leaf_proofs);
+        let slots_per_inner = exit_slots_per_inner(shape);
+        let nulls_per_inner = nullifiers_per_inner(shape);
         let total_exit_slots_expected = u32::try_from(
             num_private_batch_proofs
                 .checked_mul(slots_per_inner)
@@ -736,10 +802,11 @@ impl PublicBatchPublicInputs {
 
 #[cfg(test)]
 mod tests {
-    use super::public_batch_pi;
+    use super::{private_batch_pi, public_batch_pi};
     use super::{
-        validate_proof_count, PrivateBatchPublicInputs, PublicBatchPublicInputs,
-        PublicCircuitInputs, INPUT_AMOUNT_INDEX, MAX_PROOF_COUNT, PUBLIC_INPUTS_FELTS_LEN,
+        private_batch_shape_from_pis, validate_proof_count, PrivateBatchPublicInputs,
+        PrivateBatchShape, PublicBatchPublicInputs, PublicCircuitInputs, INPUT_AMOUNT_INDEX,
+        MAX_PROOF_COUNT, PUBLIC_INPUTS_FELTS_LEN,
     };
 
     #[test]
@@ -751,50 +818,66 @@ mod tests {
         assert!(!format!("{parsed:?}").contains("42"));
     }
 
-    #[test]
-    fn aggregated_public_inputs_reject_malformed_padded_length() {
-        let err = PrivateBatchPublicInputs::try_from_u64_slice(&[0u64; 9]).unwrap_err();
-        assert!(err.to_string().contains(&format!(
-            "malformed length 9 - expected 8 + N*{} felts",
-            PUBLIC_INPUTS_FELTS_LEN
-        )));
+    fn private_batch_pis(shape: PrivateBatchShape) -> Vec<u64> {
+        let mut pis = vec![0u64; private_batch_pi::pi_len(shape)];
+        pis[private_batch_pi::NUM_EXIT_SLOTS_INDEX] = shape.num_exit_slots as u64;
+        pis
     }
 
     #[test]
-    fn aggregated_public_inputs_parse_header() {
-        let mut pis = vec![0u64; 8 + PUBLIC_INPUTS_FELTS_LEN];
-        pis[0] = 2; // num_exit_slots: structural constant 2*N for N = 1 leaf
-        pis[7] = 42; // block_number
+    fn aggregated_public_inputs_reject_malformed_length() {
+        let shape = PrivateBatchShape::new(1, 3);
+        let mut pis = private_batch_pis(shape);
+        pis.push(0);
+        let err = PrivateBatchPublicInputs::try_from_u64_slice(&pis).unwrap_err();
+        assert!(err.to_string().contains("malformed length"), "got: {err}");
 
+        let err = PrivateBatchPublicInputs::try_from_u64_slice(&[0u64; 7]).unwrap_err();
+        assert!(err.to_string().contains("too few elements"), "got: {err}");
+    }
+
+    #[test]
+    fn aggregated_public_inputs_parse_header_and_shape() {
+        let shape = PrivateBatchShape::new(3, 5);
+        let mut pis = private_batch_pis(shape);
+        pis[private_batch_pi::BLOCK_NUMBER_INDEX] = 42;
+
+        assert_eq!(private_batch_shape_from_pis(&pis).unwrap(), shape);
         let parsed = PrivateBatchPublicInputs::try_from_u64_slice(&pis).unwrap();
-        assert_eq!(parsed.num_exit_slots, 2);
-        assert_eq!(parsed.num_exit_slots as usize, parsed.account_data.len());
+        assert_eq!(parsed.num_exit_slots, 5);
+        assert_eq!(parsed.account_data.len(), 5);
+        assert_eq!(parsed.nullifiers.len(), 3);
         assert_eq!(parsed.block_data.block_number, 42);
-        assert_eq!(parsed.account_data.len(), 2);
-        assert_eq!(parsed.nullifiers.len(), 1);
     }
 
-    /// The aggregation circuit provably writes the structural constant `2*N`
-    /// (total exit slots, two per leaf) at index 0; any other value means the
-    /// public inputs did not come from that circuit and the parser must not
-    /// hand the mismatched header on as truth (audit finding: aggregated
-    /// public input mislabels exit-slot count).
+    /// A zero exit-slot count or one that leaves no room for a whole number
+    /// of nullifiers cannot come from the circuit.
     #[test]
-    fn aggregated_public_inputs_reject_header_slot_count_mismatch() {
-        let mut pis = vec![0u64; 8 + PUBLIC_INPUTS_FELTS_LEN];
-        pis[0] = 1; // one leaf means 2 exit slots; 1 is impossible
+    fn aggregated_public_inputs_reject_inconsistent_slot_count() {
+        let shape = PrivateBatchShape::new(2, 4);
+        let mut pis = private_batch_pis(shape);
+        pis[private_batch_pi::NUM_EXIT_SLOTS_INDEX] = 0;
         let err = PrivateBatchPublicInputs::try_from_u64_slice(&pis).unwrap_err();
-        assert!(err.to_string().contains("exit slot"), "got: {err}");
+        assert!(err.to_string().contains("must be > 0"), "got: {err}");
+
+        pis[private_batch_pi::NUM_EXIT_SLOTS_INDEX] = 3;
+        let err = PrivateBatchPublicInputs::try_from_u64_slice(&pis).unwrap_err();
+        assert!(err.to_string().contains("malformed length"), "got: {err}");
     }
 
     #[test]
-    fn aggregated_public_inputs_reject_oversized_leaf_count() {
-        // A length-derived n_leaf above MAX_PROOF_COUNT must be rejected rather than
+    fn aggregated_public_inputs_reject_oversized_counts() {
+        // Dimensions above MAX_PROOF_COUNT must be rejected rather than
         // driving unbounded allocation (#97052, #97070).
-        let n = MAX_PROOF_COUNT + 1;
-        let pis = vec![0u64; 8 + n * PUBLIC_INPUTS_FELTS_LEN];
-        let err = PrivateBatchPublicInputs::try_from_u64_slice(&pis).unwrap_err();
+        let shape = PrivateBatchShape::new(MAX_PROOF_COUNT + 1, 1);
+        let err =
+            PrivateBatchPublicInputs::try_from_u64_slice(&private_batch_pis(shape)).unwrap_err();
         assert!(err.to_string().contains("exceeds maximum"), "got: {err}");
+
+        let mut pis = vec![0u64; private_batch_pi::HEADER_LEN];
+        pis[private_batch_pi::NUM_EXIT_SLOTS_INDEX] = u64::MAX;
+        let err = PrivateBatchPublicInputs::try_from_u64_slice(&pis).unwrap_err();
+        assert!(err.to_string().contains("exceeds"), "got: {err}");
     }
 
     #[test]
@@ -802,9 +885,21 @@ mod tests {
         // Counts whose product would wrap the layout arithmetic must be rejected by
         // the MAX_PROOF_COUNT cap instead of panicking or wrapping to an empty batch.
         let header = vec![0u64; public_batch_pi::HEADER_LEN];
-        let err = PublicBatchPublicInputs::try_from_u64_slice(&header, 1usize << 63, 1)
+        let shape = PrivateBatchShape::new(1, 2);
+        let err = PublicBatchPublicInputs::try_from_u64_slice(&header, 1usize << 63, shape)
             .expect_err("oversized inner count must be rejected");
         assert!(err.to_string().contains("exceeds maximum"), "got: {err}");
+    }
+
+    #[test]
+    fn public_batch_parser_round_trips_shape() {
+        let shape = PrivateBatchShape::new(2, 3);
+        let n_inner = 2;
+        let mut pis = vec![0u64; public_batch_pi::pi_len(n_inner, shape)];
+        pis[11] = (n_inner * shape.num_exit_slots) as u64;
+        let parsed = PublicBatchPublicInputs::try_from_u64_slice(&pis, n_inner, shape).unwrap();
+        assert_eq!(parsed.account_data.len(), 6);
+        assert_eq!(parsed.nullifiers.len(), 4);
     }
 
     #[test]

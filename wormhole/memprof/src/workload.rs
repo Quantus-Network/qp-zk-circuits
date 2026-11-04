@@ -16,7 +16,10 @@ use plonky2::plonk::circuit_data::{
 use plonky2::plonk::config::Hasher;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use wormhole_aggregator::dummy_proof::load_dummy_proof;
-use wormhole_aggregator::private_batch::prover::{PrivateBatchBuildMetrics, PrivateBatchProver};
+use wormhole_aggregator::private_batch::prover::{
+    PrivateBatchBuildMetrics, PrivateBatchInputs, PrivateBatchProver,
+};
+use wormhole_aggregator::PrivateBatchShape;
 use wormhole_aggregator::{build_dummy_circuit_inputs, generate_dummy_proof};
 use wormhole_circuit::block_header::header::HeaderInputs;
 use wormhole_circuit::circuit::circuit_logic::{CircuitTargets, WormholeCircuit};
@@ -156,14 +159,18 @@ pub fn aggregate_fresh(
         agg_config,
         leaf.common.clone(),
         &leaf.verifier_only,
-        num_leaf_proofs,
+        PrivateBatchShape::new(num_leaf_proofs, num_leaf_proofs),
         leaf.dummy_proof.clone(),
     )?;
     print_private_batch_metrics(num_leaf_proofs, metrics);
     report.phase_end()?;
 
     report.phase_start("agg_prove")?;
-    let proof = prover.aggregate(leaf_proofs)?;
+    let proof = prover.aggregate(PrivateBatchInputs {
+        leaf_proofs,
+        outputs: Vec::new(),
+        volume_fee_bps: 0,
+    })?;
     report.phase_end()?;
 
     if release_after {
@@ -183,7 +190,7 @@ pub fn build_agg_circuit_only(
         agg_config,
         leaf.common.clone(),
         &leaf.verifier_only,
-        num_leaf_proofs,
+        PrivateBatchShape::new(num_leaf_proofs, num_leaf_proofs),
         leaf.dummy_proof.clone(),
     )?;
     print_private_batch_metrics(num_leaf_proofs, metrics);

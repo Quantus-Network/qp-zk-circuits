@@ -10,6 +10,7 @@ use qp_wormhole_aggregator::config::CircuitBinsConfig;
 use qp_wormhole_aggregator::private_batch::circuit::build::generate_private_batch_circuit_binaries;
 use qp_wormhole_aggregator::public_batch::circuit::build::generate_public_batch_circuit_binaries;
 use qp_wormhole_aggregator::public_batch::prover::{PublicBatchInputs, PublicBatchProver};
+use qp_wormhole_aggregator::PrivateBatchShape;
 use qp_wormhole_inputs::BytesDigest;
 use std::path::Path;
 
@@ -26,11 +27,17 @@ macro_rules! aggregate_proofs_benchmark {
 
             // Call "generate_private_batch_circuit_binaries" before we instantiate a new prover,
             // to ensure the binaries represent the circuit with the correct number of leaf proofs.
-            generate_private_batch_circuit_binaries(bins_dir(), $num_leaf_proofs, true).expect(
-                "Failed to generate private_batch circuit binaries for aggregation benchmark",
-            );
-            let config = CircuitBinsConfig::new($num_leaf_proofs, None)
-                .expect("Failed to create circuit bins config for aggregation benchmark");
+            generate_private_batch_circuit_binaries(
+                bins_dir(),
+                PrivateBatchShape::new($num_leaf_proofs, $num_leaf_proofs),
+                true,
+            )
+            .expect("Failed to generate private_batch circuit binaries for aggregation benchmark");
+            let config = CircuitBinsConfig::new(
+                PrivateBatchShape::new($num_leaf_proofs, $num_leaf_proofs),
+                None,
+            )
+            .expect("Failed to create circuit bins config for aggregation benchmark");
             config
                 .save(bins_dir())
                 .expect("Failed to save circuit bins config for aggregation benchmark");
@@ -44,9 +51,9 @@ macro_rules! aggregate_proofs_benchmark {
             // the pairwise-distinct-nullifier check.
             c.bench_function(&bench_name, |b| {
                 b.iter_batched(
-                    || vec![proof.clone()],
-                    |proofs| {
-                        prover.aggregate(proofs).unwrap();
+                    || single_leaf_inputs(proof.clone()),
+                    |inputs| {
+                        prover.aggregate(inputs).unwrap();
                     },
                     criterion::BatchSize::SmallInput,
                 );
@@ -65,11 +72,17 @@ macro_rules! verify_aggregate_proof_benchmark {
             ensure_canonical_leaf_artifacts();
             let proof = generate_real_leaf_proof();
 
-            generate_private_batch_circuit_binaries(bins_dir(), $num_leaf_proofs, true).expect(
-                "Failed to generate private_batch circuit binaries for aggregation benchmark",
-            );
-            let config = CircuitBinsConfig::new($num_leaf_proofs, None)
-                .expect("Failed to create circuit bins config for aggregation benchmark");
+            generate_private_batch_circuit_binaries(
+                bins_dir(),
+                PrivateBatchShape::new($num_leaf_proofs, $num_leaf_proofs),
+                true,
+            )
+            .expect("Failed to generate private_batch circuit binaries for aggregation benchmark");
+            let config = CircuitBinsConfig::new(
+                PrivateBatchShape::new($num_leaf_proofs, $num_leaf_proofs),
+                None,
+            )
+            .expect("Failed to create circuit bins config for aggregation benchmark");
             config
                 .save(bins_dir())
                 .expect("Failed to save circuit bins config for aggregation benchmark");
@@ -81,7 +94,7 @@ macro_rules! verify_aggregate_proof_benchmark {
                 &std::fs::read(format!("{}/private_batch_verifier.bin", bins_dir()))
                     .expect("Failed to read private_batch verifier bytes"),
                 &leaf,
-                $num_leaf_proofs,
+                PrivateBatchShape::new($num_leaf_proofs, $num_leaf_proofs),
             )
             .expect("Failed to load private-batch verifier data");
 
@@ -91,7 +104,7 @@ macro_rules! verify_aggregate_proof_benchmark {
                 b.iter_batched(
                     || {
                         // One real leaf, dummy-padded (see aggregate_proofs_*).
-                        prover.aggregate(vec![proof.clone()]).unwrap()
+                        prover.aggregate(single_leaf_inputs(proof.clone())).unwrap()
                     },
                     |aggregated_proof| {
                         verifier.verify(aggregated_proof).unwrap();
@@ -114,25 +127,21 @@ macro_rules! prove_public_batch_benchmark {
                 return;
             }
             ensure_canonical_leaf_artifacts();
-            generate_private_batch_circuit_binaries(
-                bins_dir(),
-                PUBLIC_BATCH_INNER_NUM_LEAVES,
-                true,
-            )
-            .expect("Failed to generate private_batch circuit binaries for public_batch benchmark");
+            generate_private_batch_circuit_binaries(bins_dir(), PUBLIC_BATCH_INNER_SHAPE, true)
+                .expect(
+                    "Failed to generate private_batch circuit binaries for public_batch benchmark",
+                );
 
             generate_public_batch_circuit_binaries(
                 bins_dir(),
                 $num_private_batch_proofs,
-                PUBLIC_BATCH_INNER_NUM_LEAVES,
+                PUBLIC_BATCH_INNER_SHAPE,
             )
             .expect("Failed to generate public_batch circuit binaries for public_batch benchmark");
 
-            let config = CircuitBinsConfig::new(
-                PUBLIC_BATCH_INNER_NUM_LEAVES,
-                Some($num_private_batch_proofs),
-            )
-            .expect("Failed to create circuit bins config for aggregation benchmark");
+            let config =
+                CircuitBinsConfig::new(PUBLIC_BATCH_INNER_SHAPE, Some($num_private_batch_proofs))
+                    .expect("Failed to create circuit bins config for aggregation benchmark");
             config
                 .save(bins_dir())
                 .expect("Failed to save circuit bins config for aggregation benchmark");
@@ -186,25 +195,21 @@ macro_rules! verify_public_batch_benchmark {
                 return;
             }
             ensure_canonical_leaf_artifacts();
-            generate_private_batch_circuit_binaries(
-                bins_dir(),
-                PUBLIC_BATCH_INNER_NUM_LEAVES,
-                true,
-            )
-            .expect("Failed to generate private_batch circuit binaries for public_batch benchmark");
+            generate_private_batch_circuit_binaries(bins_dir(), PUBLIC_BATCH_INNER_SHAPE, true)
+                .expect(
+                    "Failed to generate private_batch circuit binaries for public_batch benchmark",
+                );
 
             generate_public_batch_circuit_binaries(
                 bins_dir(),
                 $num_private_batch_proofs,
-                PUBLIC_BATCH_INNER_NUM_LEAVES,
+                PUBLIC_BATCH_INNER_SHAPE,
             )
             .expect("Failed to generate public_batch circuit binaries for public_batch benchmark");
 
-            let config = CircuitBinsConfig::new(
-                PUBLIC_BATCH_INNER_NUM_LEAVES,
-                Some($num_private_batch_proofs),
-            )
-            .expect("Failed to create circuit bins config for aggregation benchmark");
+            let config =
+                CircuitBinsConfig::new(PUBLIC_BATCH_INNER_SHAPE, Some($num_private_batch_proofs))
+                    .expect("Failed to create circuit bins config for aggregation benchmark");
             config
                 .save(bins_dir())
                 .expect("Failed to save circuit bins config for aggregation benchmark");

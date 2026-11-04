@@ -39,5 +39,7 @@ pub mod lib;
 pub(crate) mod witness;
 
 pub(crate) use lib::verify_dummy_leaf_template;
-pub use lib::{PrivateBatchBuildMetrics, PrivateBatchProver};
+pub use lib::{
+    PrivateBatchBuildMetrics, PrivateBatchInputs, PrivateBatchProver, MAX_VOLUME_FEE_BPS,
+};
 pub(crate) use witness::fill_private_batch_witness;

@@ -15,12 +15,12 @@ use std::{fs, path::Path, time::Instant};
 
 use test_helpers::TestInputs as _;
 use wormhole_aggregator::{
-    private_batch::prover::PrivateBatchProver,
+    private_batch::prover::{PrivateBatchInputs, PrivateBatchProver},
     public_batch::{
         circuit::generate_public_batch_circuit_binaries,
         prover::{PublicBatchInputs, PublicBatchProver},
     },
-    CircuitBinsConfig,
+    CircuitBinsConfig, PrivateBatchShape,
 };
 use wormhole_circuit::{block_header::header::HeaderInputs, inputs::CircuitInputs};
 use zk_circuits_common::circuit::{
@@ -29,6 +29,8 @@ use zk_circuits_common::circuit::{
 };
 
 const NUM_LEAF_PROOFS: usize = 7;
+const PRIVATE_BATCH_SHAPE: PrivateBatchShape =
+    PrivateBatchShape::new(NUM_LEAF_PROOFS, NUM_LEAF_PROOFS);
 
 fn zk_label(zero_knowledge: bool) -> &'static str {
     if zero_knowledge {
@@ -75,7 +77,7 @@ fn main() -> anyhow::Result<()> {
     qp_wormhole_circuit_builder::generate_circuit_binaries(&dir)?;
     wormhole_aggregator::private_batch::circuit::build::generate_private_batch_circuit_binaries(
         &dir,
-        NUM_LEAF_PROOFS,
+        PRIVATE_BATCH_SHAPE,
         true,
     )?;
     println!(
@@ -89,14 +91,18 @@ fn main() -> anyhow::Result<()> {
     // circuit doesn't depend on M.
     println!("== One-time setup: real private-batch proof ==");
     let proof_start = Instant::now();
-    CircuitBinsConfig::new(NUM_LEAF_PROOFS, None)?.save(&dir)?;
+    CircuitBinsConfig::new(PRIVATE_BATCH_SHAPE, None)?.save(&dir)?;
     let real_private_batch = {
         let mut inputs = CircuitInputs::test_inputs_0();
         inputs.public.block_hash = HeaderInputs::try_from(&inputs)
             .expect("header inputs from test inputs")
             .block_hash();
         let real_leaf = wormhole_prover::build_fresh().commit(&inputs)?.prove()?;
-        PrivateBatchProver::new_from_binaries_dir(&dir)?.aggregate(vec![real_leaf])?
+        PrivateBatchProver::new_from_binaries_dir(&dir)?.aggregate(PrivateBatchInputs {
+            leaf_proofs: vec![real_leaf],
+            outputs: Vec::new(),
+            volume_fee_bps: 0,
+        })?
     };
     println!(
         "Real private-batch proof done in {:.1}s\n",
@@ -110,9 +116,9 @@ fn main() -> anyhow::Result<()> {
 
         // 1) Build + serialize the public-batch verifier artifacts.
         let build_start = Instant::now();
-        generate_public_batch_circuit_binaries(&dir, m, NUM_LEAF_PROOFS)?;
+        generate_public_batch_circuit_binaries(&dir, m, PRIVATE_BATCH_SHAPE)?;
         let build_time = build_start.elapsed();
-        CircuitBinsConfig::new(NUM_LEAF_PROOFS, Some(m))?.save(&dir)?;
+        CircuitBinsConfig::new(PRIVATE_BATCH_SHAPE, Some(m))?.save(&dir)?;
         let verifier_bins_size = file_size(&dir.join("public_batch_common.bin"))
             + file_size(&dir.join("public_batch_verifier.bin"));
         println!(

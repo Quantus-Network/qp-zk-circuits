@@ -118,7 +118,12 @@ fn gpu_backend_proves_through_aggregator_and_cloned_workers() -> Result<()> {
     };
     let cpu_proof = proving.prove_batch(vec![inner.clone()])?;
     let mut aggregator = PublicBatchAggregator {
-        pool: ProofPool::new(private_batch_verifier, 1, 1, PoolLimits::default())?,
+        pool: ProofPool::new(
+            private_batch_verifier,
+            PrivateBatchShape::new(1, 1),
+            1,
+            PoolLimits::default(),
+        )?,
         proving,
     };
     let key = aggregator.push_proof(inner.clone())?;
