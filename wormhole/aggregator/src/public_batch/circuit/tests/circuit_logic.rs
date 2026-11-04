@@ -609,11 +609,11 @@ fn public_batch_rejects_proofs_from_substituted_private_batch_circuit() {
         let pis: Vec<Target> = (0..LEAF_PI_LEN)
             .map(|_| builder.add_virtual_target())
             .collect();
-        // Match the legitimate fake leaf's four 32-bit checks, but wire the
-        // fourth check to asset_id instead of input_amount. This preserves
-        // CommonCircuitData while changing the verifier key and leaves the
-        // claimed input amount unconstrained.
-        for index in [0, 1, 2, 3] {
+        // Match the legitimate fake leaf's three 32-bit checks, but wire the
+        // third check to a nullifier limb instead of input_amount. This
+        // preserves CommonCircuitData while changing the verifier key and
+        // leaves the claimed input amount unconstrained.
+        for index in [ASSET_ID_INDEX, BLOCK_NUMBER_INDEX, NULLIFIER_START_INDEX] {
             builder.range_check(pis[index], 32);
         }
         builder.register_public_inputs(&pis);

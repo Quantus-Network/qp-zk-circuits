@@ -1,15 +1,11 @@
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::proof::ProofWithPublicInputs;
-use qp_wormhole_inputs::{
-    EXIT_ACCOUNT_1_END_INDEX, EXIT_ACCOUNT_1_START_INDEX, PUBLIC_INPUTS_FELTS_LEN,
-};
+use qp_wormhole_inputs::PUBLIC_INPUTS_FELTS_LEN;
 use test_helpers::{fake_leaf::build_fake_leaf_circuit, TestInputs};
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use wormhole_circuit::inputs::CircuitInputs;
-use wormhole_circuit::substrate_account::SubstrateAccount;
 use wormhole_prover::WormholeProver;
 use wormhole_verifier::WormholeVerifier;
-use zk_circuits_common::codec::FieldElementCodec;
 
 #[cfg(test)]
 const CIRCUIT_CONFIG: CircuitConfig = CircuitConfig::standard_recursion_config();
@@ -83,24 +79,6 @@ fn verifier_loader_rejects_same_profile_substituted_circuit() {
     let err = WormholeVerifier::new_from_bytes(&verifier_bytes, &common_bytes)
         .expect_err("same-profile substituted circuit must be rejected");
     assert!(err.to_string().contains("does not match the canonical"));
-}
-
-#[test]
-fn cannot_verify_with_modified_exit_account() {
-    let prover = WormholeProver::new(CIRCUIT_CONFIG).expect("valid circuit config");
-    let inputs = CircuitInputs::test_inputs_0();
-    let mut proof = prover.commit(&inputs).unwrap().prove().unwrap();
-
-    let modified_exit_account = SubstrateAccount::new(&[8u8; 32]).unwrap();
-    proof.public_inputs[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX]
-        .copy_from_slice(&modified_exit_account.to_field_elements());
-
-    let verifier_data = build_test_verifier();
-    let result = verifier_data.verify(proof);
-    assert!(
-        result.is_err(),
-        "Expected proof to fail with modified exit_account"
-    );
 }
 
 #[test]

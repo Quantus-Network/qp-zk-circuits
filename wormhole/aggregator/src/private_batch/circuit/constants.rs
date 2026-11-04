@@ -1,32 +1,22 @@
 //! Private-batch aggregation constants and public-input layout helpers.
 
-/// Public inputs per leaf proof (Bitcoin-style 2-output layout)
+/// Public inputs per leaf proof (proof of burn).
 ///
 /// Layout:
 /// - asset_id(1)
-/// - output_amount_1(1)
-/// - output_amount_2(1)
-/// - volume_fee_bps(1)
 /// - nullifier(4)
-/// - exit_account_1(4) - 4 felts (8 bytes/felt) for hash-derived accounts
-/// - exit_account_2(4) - 4 felts (8 bytes/felt) for hash-derived accounts
-/// - block_hash(4)
+/// - block_hash(4) - all zeros marks a dummy
 /// - block_number(1)
 /// - input_amount(1) - intermediate only, not forwarded by aggregation
 ///
-/// Total = 22 felts
-pub const LEAF_PI_LEN: usize = 22;
+/// Total = 11 felts
+pub const LEAF_PI_LEN: usize = qp_wormhole_inputs::PUBLIC_INPUTS_FELTS_LEN;
 
-pub const ASSET_ID_START: usize = 0; // 1 felt
-pub const OUTPUT_AMOUNT_1_START: usize = 1; // 1 felt
-pub const OUTPUT_AMOUNT_2_START: usize = 2; // 1 felt
-pub const VOLUME_FEE_BPS_START: usize = 3; // 1 felt
-pub const NULLIFIER_START: usize = 4; // 4 felts
-pub const EXIT_1_START: usize = 8; // 4 felts
-pub const EXIT_2_START: usize = 12; // 4 felts
-pub const BLOCK_HASH_START: usize = 16; // 4 felts
-pub const BLOCK_NUMBER_START: usize = 20; // 1 felt
-pub const INPUT_AMOUNT_START: usize = 21; // 1 felt
+pub const ASSET_ID_START: usize = qp_wormhole_inputs::ASSET_ID_INDEX; // 1 felt
+pub const NULLIFIER_START: usize = qp_wormhole_inputs::NULLIFIER_START_INDEX; // 4 felts
+pub const BLOCK_HASH_START: usize = qp_wormhole_inputs::BLOCK_HASH_START_INDEX; // 4 felts
+pub const BLOCK_NUMBER_START: usize = qp_wormhole_inputs::BLOCK_NUMBER_INDEX; // 1 felt
+pub const INPUT_AMOUNT_START: usize = qp_wormhole_inputs::INPUT_AMOUNT_INDEX; // 1 felt
 
 /// Private-batch aggregated proof output layout.
 ///

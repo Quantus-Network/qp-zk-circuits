@@ -22,20 +22,22 @@ pub const DIGEST_BYTES_LEN: usize = 32;
 /// Used to validate that bytes can be represented as field elements
 const GOLDILOCKS_ORDER: u64 = 0xFFFFFFFF00000001;
 
-/// The total size of the public inputs field element vector.
-/// Layout: asset_id(1) + output_amount_1(1) + output_amount_2(1) + volume_fee_bps(1) +
-///         nullifier(4) + exit_account_1(4) + exit_account_2(4) + block_hash(4) +
-///         block_number(1) + input_amount(1)
-/// = 1 + 1 + 1 + 1 + 4 + 4 + 4 + 4 + 1 + 1 = 22
+/// The total size of the leaf public inputs field element vector.
+/// Layout: asset_id(1) + nullifier(4) + block_hash(4) + block_number(1) + input_amount(1)
+/// = 1 + 4 + 4 + 1 + 1 = 11
 ///
-/// Note: exit accounts use 4 felts (8 bytes/felt) for hash-derived accounts.
+/// A leaf proof is a proof of burn: it authenticates that `input_amount` of
+/// `asset_id` was deposited to an unspendable account in the block `block_hash`
+/// and binds the spend to `nullifier`. Where the value goes (exit accounts,
+/// amounts, fee) is decided by the private batch that consumes the leaf.
+///
 /// parent_hash is a private input to the leaf circuit (used to compute block_hash)
 /// but is not exposed as a public input since block_hash already commits to it.
 ///
 /// `input_amount` is exposed only by the intermediate leaf proof so the private
 /// batch can enforce value conservation over the whole segment. Private- and
 /// public-batch proofs do not forward it.
-pub const PUBLIC_INPUTS_FELTS_LEN: usize = 22;
+pub const PUBLIC_INPUTS_FELTS_LEN: usize = 11;
 
 /// Minimum acceptable security level (bits) for the canonical leaf circuit config.
 /// Guards against a qp-plonky2 upgrade silently weakening
@@ -140,21 +142,14 @@ pub mod private_batch_pi {
     }
 }
 
-// Index constants for parsing public inputs
+// Index constants for parsing leaf public inputs
 pub const ASSET_ID_INDEX: usize = 0;
-pub const OUTPUT_AMOUNT_1_INDEX: usize = 1;
-pub const OUTPUT_AMOUNT_2_INDEX: usize = 2;
-pub const VOLUME_FEE_BPS_INDEX: usize = 3;
-pub const NULLIFIER_START_INDEX: usize = 4;
-pub const NULLIFIER_END_INDEX: usize = 8;
-pub const EXIT_ACCOUNT_1_START_INDEX: usize = 8;
-pub const EXIT_ACCOUNT_1_END_INDEX: usize = 12;
-pub const EXIT_ACCOUNT_2_START_INDEX: usize = 12;
-pub const EXIT_ACCOUNT_2_END_INDEX: usize = 16;
-pub const BLOCK_HASH_START_INDEX: usize = 16;
-pub const BLOCK_HASH_END_INDEX: usize = 20;
-pub const BLOCK_NUMBER_INDEX: usize = 20;
-pub const INPUT_AMOUNT_INDEX: usize = 21;
+pub const NULLIFIER_START_INDEX: usize = 1;
+pub const NULLIFIER_END_INDEX: usize = 5;
+pub const BLOCK_HASH_START_INDEX: usize = 5;
+pub const BLOCK_HASH_END_INDEX: usize = 9;
+pub const BLOCK_NUMBER_INDEX: usize = 9;
+pub const INPUT_AMOUNT_INDEX: usize = 10;
 
 /// A 32-byte digest that can be converted to/from field elements.
 #[derive(Hash, Default, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
@@ -258,24 +253,11 @@ impl AsRef<[u8]> for BytesDigest {
     }
 }
 
-/// All of the public inputs required for a single wormhole proof.
-/// Supports two outputs (spend + change) from a single input.
+/// All of the public inputs of a single wormhole leaf proof (a proof of burn).
 #[derive(Clone, PartialEq, Eq)]
 pub struct PublicCircuitInputs {
     /// The asset ID (0 for native token).
     pub asset_id: u32,
-    /// Amount to be received by the first exit account (spend).
-    /// This value is quantized with 0.01 units of precision.
-    ///
-    /// **DEV NOTE**: The output amount unit on chain is still u128 with 12 decimals so we will need to
-    /// scale by 10^10 when constructing the output amount during on-chain verification.
-    pub output_amount_1: u32,
-    /// Amount to be received by the second exit account (change).
-    /// Set to 0 if only one output is needed.
-    pub output_amount_2: u32,
-    /// Volume fee rate in basis points (1 basis point = 0.01%).
-    /// This is verified on-chain to match the runtime configuration.
-    pub volume_fee_bps: u32,
     /// The nullifier: `H(H(salt || secret || transfer_count))`.
     ///
     /// The circuit only proves this value is *well-formed* (bound to the deposit
@@ -285,16 +267,12 @@ pub struct PublicCircuitInputs {
     /// checks uniqueness; see "Nullifiers and Double-Spend Prevention" in
     /// `wormhole/README.md`.
     pub nullifier: BytesDigest,
-    /// The address of the first exit account (spend destination).
-    pub exit_account_1: BytesDigest,
-    /// The address of the second exit account (change destination).
-    /// Set to all zeros if only one output is needed.
-    pub exit_account_2: BytesDigest,
-    /// The hash of the block header.
+    /// The hash of the block header. All zeros marks a dummy (padding) proof.
     pub block_hash: BytesDigest,
     /// The block number, parsed from the block header.
     pub block_number: u32,
-    /// Amount authenticated by the spent ZK-tree leaf, in quantized units.
+    /// Amount authenticated by the spent ZK-tree leaf, in quantized units
+    /// (0.01 units of precision).
     ///
     /// This is an intermediate leaf-proof public input consumed by the local
     /// private-batch wrapper. Aggregate proofs do not reveal it.
@@ -305,12 +283,7 @@ impl fmt::Debug for PublicCircuitInputs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PublicCircuitInputs")
             .field("asset_id", &self.asset_id)
-            .field("output_amount_1", &self.output_amount_1)
-            .field("output_amount_2", &self.output_amount_2)
-            .field("volume_fee_bps", &self.volume_fee_bps)
             .field("nullifier", &self.nullifier)
-            .field("exit_account_1", &self.exit_account_1)
-            .field("exit_account_2", &self.exit_account_2)
             .field("block_hash", &self.block_hash)
             .field("block_number", &self.block_number)
             .field("input_amount", &"[REDACTED]")
@@ -471,24 +444,9 @@ impl PublicCircuitInputs {
         let asset_id: u32 = pis[ASSET_ID_INDEX]
             .try_into()
             .context("failed to convert asset_id to u32")?;
-        let output_amount_1: u32 = pis[OUTPUT_AMOUNT_1_INDEX]
-            .try_into()
-            .context("failed to convert output_amount_1 to u32")?;
-        let output_amount_2: u32 = pis[OUTPUT_AMOUNT_2_INDEX]
-            .try_into()
-            .context("failed to convert output_amount_2 to u32")?;
-        let volume_fee_bps: u32 = pis[VOLUME_FEE_BPS_INDEX]
-            .try_into()
-            .context("failed to convert volume_fee_bps to u32")?;
 
         let nullifier = hash_u64s_to_bytes_digest(&pis[NULLIFIER_START_INDEX..NULLIFIER_END_INDEX])
             .context("failed to parse nullifier")?;
-        let exit_account_1 =
-            hash_u64s_to_bytes_digest(&pis[EXIT_ACCOUNT_1_START_INDEX..EXIT_ACCOUNT_1_END_INDEX])
-                .context("failed to parse exit_account_1")?;
-        let exit_account_2 =
-            hash_u64s_to_bytes_digest(&pis[EXIT_ACCOUNT_2_START_INDEX..EXIT_ACCOUNT_2_END_INDEX])
-                .context("failed to parse exit_account_2")?;
         let block_hash =
             hash_u64s_to_bytes_digest(&pis[BLOCK_HASH_START_INDEX..BLOCK_HASH_END_INDEX])
                 .context("failed to parse block_hash")?;
@@ -502,12 +460,7 @@ impl PublicCircuitInputs {
 
         Ok(PublicCircuitInputs {
             asset_id,
-            output_amount_1,
-            output_amount_2,
-            volume_fee_bps,
             nullifier,
-            exit_account_1,
-            exit_account_2,
             block_hash,
             block_number,
             input_amount,
