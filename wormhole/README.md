@@ -205,7 +205,10 @@ entirely, the pallet's nullifier set would still prevent any double spend.
 
 The aggregator combines `N` leaf proofs and `M` exit slots into a single proof with a fixed public input layout
 `[M, asset_id, volume_fee_bps, block_hash(4), block_number] ++ M × (amount, exit_account(4)) ++ N × nullifier(4)`.
-`N` (`--num-leaf-proofs`) and `M` (`--num-exit-slots`) are independent circuit parameters. Key behaviors:
+`N` (`--num-leaf-proofs`) and `M` (`--num-exit-slots`) are independent circuit parameters; the production shape is `N = 7`, `M = 16`.
+The leaf verifiers dominate the private-batch circuit (about 3.3k gates per leaf), while each exit slot costs roughly one gate plus
+five public inputs, so `M` can be raised up to the cap of 64 without changing the circuit degree. Measured degree by `N` with the
+production config: `N <= 2` fits `2^14`, `3..=7` fits `2^15`, `8..=16` fits `2^16`, `17+` needs `2^17`. Key behaviors:
 
 - **Single-block storage proof constraint**: All real proofs (non-zero `block_hash`) must reference the same block for storage proofs.
 - **Outputs on the batch**: Exit slots are prover-chosen witnesses bound by the batch-wide fee inequality, not per-leaf fields. Slots are forwarded verbatim; unused slots are `(0, zero account)` and several slots may name the same account.
@@ -222,12 +225,12 @@ To run the tests for this circuit, please follow the instructions in the [tests]
 The circuit builder generates leaf and aggregated circuit binaries alongside a `config.json` with aggregation configuration.
 Re-run this after any circuit changes.
 
-The `--num-leaf-proofs` and `--num-private-batch-proofs` flags control the number of proofs aggregated at each layer, and `--num-exit-slots` sets the number of exit slots per private batch (`scripts/build-circuits.sh` defaults it to the leaf count). For example, if you want to aggregate 16 leaf proofs per private-batch proof, and then aggregate 4 private-batch proofs per public-batch proof, you would set `--num-leaf-proofs` to 16 and `--num-private-batch-proofs` to 4. The `--num-private-batch-proofs` flag is optional if you only need private-batch aggregation support.
+The `--num-leaf-proofs` and `--num-private-batch-proofs` flags control the number of proofs aggregated at each layer, and `--num-exit-slots` sets the number of exit slots per private batch (default 16; `scripts/build-circuits.sh` defaults to `7 16`). For example, if you want to aggregate 16 leaf proofs per private-batch proof, and then aggregate 4 private-batch proofs per public-batch proof, you would set `--num-leaf-proofs` to 16 and `--num-private-batch-proofs` to 4. The `--num-private-batch-proofs` flag is optional if you only need private-batch aggregation support.
 
 To build the circuit binary, run the following command from the root of the workspace:
 
 ```sh
-cargo run --release -p qp-wormhole-circuit-builder -- --num-leaf-proofs <N> --num-exit-slots <M> [--num-private-batch-proofs <N>] --output generated-bins
+cargo run --release -p qp-wormhole-circuit-builder -- --num-leaf-proofs <N> [--num-exit-slots <M>] [--num-private-batch-proofs <N>] --output generated-bins
 ```
 
 This creates `common.bin`, `verifier.bin`, `private_batch_common.bin`, `private_batch_verifier.bin`, `dummy_proof.bin`,
