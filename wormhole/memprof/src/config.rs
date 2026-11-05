@@ -99,7 +99,7 @@ pub struct AggConfigArgs {
     pub num_query_rounds: Option<usize>,
 
     /// Target security bits. Lowering this WEAKENS soundness/ZK security.
-    /// Requires `--allow-weakening-security`. Production: 100.
+    /// Requires `--allow-weakening-security`. Production: 128.
     #[arg(long)]
     pub security_bits: Option<usize>,
 

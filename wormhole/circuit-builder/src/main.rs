@@ -39,7 +39,7 @@ struct Args {
     num_leaf_proofs: usize,
 
     /// Number of withdrawal output slots in each private-batch proof (must be 1-64)
-    #[arg(long, value_parser = parse_proof_count)]
+    #[arg(long, default_value_t = 16, value_parser = parse_proof_count)]
     num_exit_slots: usize,
 
     /// Number of inner private-batch proofs aggregated into a single public-batch proof (must be 1-64 if specified)

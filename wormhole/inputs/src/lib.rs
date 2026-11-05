@@ -40,9 +40,26 @@ const GOLDILOCKS_ORDER: u64 = 0xFFFFFFFF00000001;
 pub const PUBLIC_INPUTS_FELTS_LEN: usize = 11;
 
 /// Minimum acceptable security level (bits) for the canonical leaf circuit config.
-/// Guards against a qp-plonky2 upgrade silently weakening
-/// `CircuitConfig::standard_recursion_config()` below this floor.
-pub const MIN_LEAF_SECURITY_BITS: usize = 100;
+/// Guards against a qp-plonky2 upgrade silently weakening the config below
+/// this floor.
+pub const MIN_LEAF_SECURITY_BITS: usize = 128;
+
+/// FRI and wire parameters of the canonical leaf circuit config.
+///
+/// Shared by the circuit side (`zk_circuits_common::circuit::wormhole_leaf_circuit_config`)
+/// and the `no_std` verifier, which cannot depend on the circuit crates. The
+/// leaf is a 2^8-degree circuit, so a large blowup is nearly free for the
+/// prover while every query it saves removes ~110 gates from each recursive
+/// verification in the private batch. `16 * 7 + 16 = 128` conjectured bits.
+pub mod leaf_config {
+    pub const NUM_WIRES: usize = 135;
+    pub const NUM_ROUTED_WIRES: usize = 60;
+    pub const SECURITY_BITS: usize = 128;
+    pub const FRI_RATE_BITS: usize = 7;
+    pub const FRI_CAP_HEIGHT: usize = 4;
+    pub const FRI_PROOF_OF_WORK_BITS: u32 = 16;
+    pub const FRI_NUM_QUERY_ROUNDS: usize = 16;
+}
 
 /// Maximum number of proofs aggregated per layer. Bounds circuit-construction,
 /// proving, and public-input parsing work to the documented practical per-layer

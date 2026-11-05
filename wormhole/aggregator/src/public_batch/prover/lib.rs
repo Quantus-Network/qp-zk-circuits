@@ -721,7 +721,6 @@ pub(crate) mod tests {
         let pre_images = (0..shape.num_leaf_proofs)
             .map(|_| bytes_to_digest(crate::dummy_proof::generate_random_nullifier_preimage()))
             .collect::<Vec<_>>();
-        let nullifier_permutation = (0..shape.num_leaf_proofs).collect::<Vec<_>>();
         let mut pw = PartialWitness::new();
         crate::private_batch::prover::fill_private_batch_witness(
             &mut pw,
@@ -730,7 +729,6 @@ pub(crate) mod tests {
             &vec![WithdrawalOutput::default(); shape.num_exit_slots],
             0,
             &pre_images,
-            &nullifier_permutation,
         )
         .unwrap();
         circuit_data.prove(pw).unwrap()

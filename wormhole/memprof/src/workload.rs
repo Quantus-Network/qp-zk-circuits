@@ -42,11 +42,12 @@ pub struct LeafContext {
     pub targets: CircuitTargets,
 }
 
-fn print_private_batch_metrics(num_leaf_proofs: usize, metrics: PrivateBatchBuildMetrics) {
+fn print_private_batch_metrics(shape: PrivateBatchShape, metrics: PrivateBatchBuildMetrics) {
     eprintln!(
-        "[metrics] private_batch n={} leaf_degree_bits={} unpadded_gates={} \
+        "[metrics] private_batch n={} m={} leaf_degree_bits={} unpadded_gates={} \
          degree_bits={} padded_gates={}",
-        num_leaf_proofs,
+        shape.num_leaf_proofs,
+        shape.num_exit_slots,
         metrics.leaf_degree_bits,
         metrics.unpadded_gates,
         metrics.degree_bits,
@@ -147,7 +148,7 @@ pub fn generate_leaf_proof(
 pub fn aggregate_fresh(
     leaf: &LeafContext,
     leaf_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
-    num_leaf_proofs: usize,
+    shape: PrivateBatchShape,
     agg_config: CircuitConfig,
     release_after: bool,
     report: &mut PhaseReport,
@@ -157,10 +158,10 @@ pub fn aggregate_fresh(
         agg_config,
         leaf.common.clone(),
         &leaf.verifier_only,
-        PrivateBatchShape::new(num_leaf_proofs, num_leaf_proofs),
+        shape,
         leaf.dummy_proof.clone(),
     )?;
-    print_private_batch_metrics(num_leaf_proofs, metrics);
+    print_private_batch_metrics(shape, metrics);
     report.phase_end()?;
 
     report.phase_start("agg_prove")?;
@@ -179,7 +180,7 @@ pub fn aggregate_fresh(
 
 pub fn build_agg_circuit_only(
     leaf: &LeafContext,
-    num_leaf_proofs: usize,
+    shape: PrivateBatchShape,
     agg_config: CircuitConfig,
     report: &mut PhaseReport,
 ) -> Result<()> {
@@ -188,10 +189,10 @@ pub fn build_agg_circuit_only(
         agg_config,
         leaf.common.clone(),
         &leaf.verifier_only,
-        PrivateBatchShape::new(num_leaf_proofs, num_leaf_proofs),
+        shape,
         leaf.dummy_proof.clone(),
     )?;
-    print_private_batch_metrics(num_leaf_proofs, metrics);
+    print_private_batch_metrics(shape, metrics);
     report.phase_end()?;
     Ok(())
 }
