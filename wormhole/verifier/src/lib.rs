@@ -48,9 +48,9 @@ use tiny_keccak::{Hasher, Keccak};
 
 // Re-export input types from qp-wormhole-inputs
 pub use qp_wormhole_inputs::{
-    BlockData, BytesDigest, PrivateBatchPublicInputs, PrivateBatchShape, PublicBatchPublicInputs,
-    PublicCircuitInputs, PublicInputsByAccount, WithdrawalOutput, MIN_LEAF_SECURITY_BITS,
-    PUBLIC_INPUTS_FELTS_LEN,
+    leaf_config, BlockData, BytesDigest, PrivateBatchPublicInputs, PrivateBatchShape,
+    PublicBatchPublicInputs, PublicCircuitInputs, PublicInputsByAccount, WithdrawalOutput,
+    MIN_LEAF_SECURITY_BITS, PUBLIC_INPUTS_FELTS_LEN,
 };
 
 /// Parse public inputs from a proof.
@@ -104,16 +104,15 @@ pub struct WormholeVerifier {
 }
 
 // Keccak-256 commitments to the byte-exact canonical leaf artifacts produced by
-// `WormholeCircuit::new(CircuitConfig::standard_recursion_config())` with
-// qp-plonky2 1.6.0. The integration tests rebuild the circuit and fail if a
+// `WormholeCircuit::new(wormhole_leaf_circuit_config())` with qp-plonky2 1.6.0. The integration tests rebuild the circuit and fail if a
 // deliberate circuit change requires these commitments to be updated.
 const CANONICAL_LEAF_VERIFIER_KECCAK256: [u8; 32] = [
-    0x85, 0x6a, 0x93, 0x20, 0x2a, 0x91, 0xc0, 0xe0, 0x7a, 0xa4, 0x72, 0xb6, 0x95, 0xb2, 0x18, 0xc6,
-    0x98, 0x3c, 0x8c, 0xc6, 0xff, 0xc6, 0x8d, 0x18, 0x2a, 0x30, 0xfa, 0x04, 0xc6, 0x3f, 0x92, 0x8a,
+    0xbd, 0x0c, 0x5a, 0xf3, 0x8f, 0x9f, 0x90, 0xa2, 0xe6, 0x90, 0x6f, 0x00, 0x5d, 0x9b, 0xe8, 0x89,
+    0x4a, 0x08, 0xf0, 0x4a, 0x55, 0xa7, 0x89, 0x0d, 0x0c, 0xa2, 0x96, 0x17, 0xb2, 0x4d, 0xec, 0x94,
 ];
 const CANONICAL_LEAF_COMMON_KECCAK256: [u8; 32] = [
-    0x9f, 0x12, 0x0c, 0xa2, 0x71, 0x97, 0xbb, 0x09, 0xa1, 0x00, 0xa1, 0xd2, 0x00, 0x06, 0xb5, 0xcf,
-    0x64, 0x03, 0xb3, 0x44, 0x21, 0xf3, 0x7a, 0xe7, 0x6a, 0xd7, 0x8b, 0xd4, 0x2e, 0x10, 0x51, 0xbd,
+    0x31, 0xa7, 0x38, 0xdb, 0x9f, 0xa0, 0x62, 0xfc, 0x8d, 0x05, 0x16, 0x05, 0xe8, 0xf7, 0xc7, 0x5c,
+    0x4f, 0xa4, 0x0a, 0xe5, 0xfb, 0xc5, 0x9d, 0x73, 0xd5, 0x8d, 0x37, 0x19, 0x91, 0x0f, 0xef, 0x44,
 ];
 
 /// Maximum size accepted for a serialized verifier artifact, whether loaded
@@ -217,10 +216,27 @@ impl WormholeVerifier {
         Ok(Self { circuit_data })
     }
 
+    /// The canonical leaf config, mirroring
+    /// `zk_circuits_common::circuit::wormhole_leaf_circuit_config()` from the shared
+    /// [`leaf_config`] parameters (this crate is `no_std` and cannot depend on the
+    /// circuit crates). The keccak pins above catch any drift between the two.
+    pub fn canonical_leaf_circuit_config() -> CircuitConfig {
+        let mut config = CircuitConfig::standard_recursion_config();
+        config.num_wires = leaf_config::NUM_WIRES;
+        config.num_routed_wires = leaf_config::NUM_ROUTED_WIRES;
+        config.security_bits = leaf_config::SECURITY_BITS;
+        config.zero_knowledge = false;
+        config.fri_config.rate_bits = leaf_config::FRI_RATE_BITS;
+        config.fri_config.cap_height = leaf_config::FRI_CAP_HEIGHT;
+        config.fri_config.proof_of_work_bits = leaf_config::FRI_PROOF_OF_WORK_BITS;
+        config.fri_config.num_query_rounds = leaf_config::FRI_NUM_QUERY_ROUNDS;
+        config
+    }
+
     fn ensure_loaded_matches_canonical_leaf_profile(
         common: &CommonCircuitData<F, D>,
     ) -> anyhow::Result<()> {
-        let expected = CircuitConfig::standard_recursion_config();
+        let expected = Self::canonical_leaf_circuit_config();
 
         if expected.security_bits < MIN_LEAF_SECURITY_BITS {
             return Err(anyhow!(

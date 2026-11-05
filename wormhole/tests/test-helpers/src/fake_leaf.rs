@@ -7,19 +7,18 @@
 use plonky2::{
     iop::{target::Target, witness::WitnessWrite},
     plonk::{
-        circuit_builder::CircuitBuilder, circuit_data::CircuitConfig, circuit_data::CircuitData,
-        proof::ProofWithPublicInputs,
+        circuit_builder::CircuitBuilder, circuit_data::CircuitData, proof::ProofWithPublicInputs,
     },
 };
 use qp_wormhole_inputs::PUBLIC_INPUTS_FELTS_LEN as LEAF_PI_LEN;
 use qp_wormhole_inputs::{ASSET_ID_INDEX, BLOCK_NUMBER_INDEX, INPUT_AMOUNT_INDEX};
-use zk_circuits_common::circuit::{C, D, F};
+use zk_circuits_common::circuit::{wormhole_leaf_circuit_config, C, D, F};
 
 /// Build a fake leaf circuit whose public inputs match the Wormhole leaf PI layout.
 ///
 /// Returns the circuit data and the public input targets.
 pub fn build_fake_leaf_circuit() -> (CircuitData<F, C, D>, [Target; LEAF_PI_LEN]) {
-    let config = CircuitConfig::standard_recursion_config();
+    let config = wormhole_leaf_circuit_config();
     let mut builder = CircuitBuilder::<F, D>::new(config);
 
     let pis_vec = builder.add_virtual_targets(LEAF_PI_LEN);

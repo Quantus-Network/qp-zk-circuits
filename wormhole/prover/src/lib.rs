@@ -26,7 +26,7 @@
 //! use wormhole_circuit::nullifier::Nullifier;
 //! use wormhole_circuit::unspendable_account::UnspendableAccount;
 //! use qp_wormhole_prover::WormholeProver;
-//! use plonky2::plonk::circuit_data::CircuitConfig;
+//! use zk_circuits_common::circuit::wormhole_leaf_circuit_config;
 //!
 //! # fn main() -> anyhow::Result<()> {
 //! // Create inputs. In practice, each input would be gathered from the real node.
@@ -53,7 +53,7 @@
 //!     },
 //! };
 //!
-//! let config = CircuitConfig::standard_recursion_config();
+//! let config = wormhole_leaf_circuit_config();
 //! let prover = WormholeProver::new(config)?;
 //! let prover_next = prover.commit(&inputs)?;
 //! let _proof = prover_next.prove()?;

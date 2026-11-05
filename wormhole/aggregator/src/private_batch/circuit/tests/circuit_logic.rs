@@ -17,7 +17,9 @@ use qp_wormhole_inputs::{BytesDigest, PrivateBatchShape, WithdrawalOutput};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use zk_circuits_common::circuit::{wormhole_private_batch_circuit_config, C, D, F};
+use zk_circuits_common::circuit::{
+    wormhole_leaf_circuit_config, wormhole_private_batch_circuit_config, C, D, F,
+};
 use zk_circuits_common::utils::bytes_to_digest;
 
 use crate::private_batch::{
@@ -778,7 +780,7 @@ fn nullifier_region_follows_slot_order() {
 
 /// Build a MALICIOUS circuit - same PI count as leaf, but NO security constraints.
 fn build_malicious_leaf_circuit() -> (CircuitData<F, C, D>, Vec<Target>) {
-    let config = CircuitConfig::standard_recursion_config();
+    let config = wormhole_leaf_circuit_config();
     let mut builder = CircuitBuilder::<F, D>::new(config);
 
     let pis: Vec<_> = (0..LEAF_PI_LEN)
