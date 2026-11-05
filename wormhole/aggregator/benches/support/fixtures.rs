@@ -3,8 +3,9 @@
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_aggregator::config::CircuitBinsConfig;
 use qp_wormhole_aggregator::private_batch::circuit::build::generate_private_batch_circuit_binaries;
-use qp_wormhole_aggregator::private_batch::prover::PrivateBatchProver;
+use qp_wormhole_aggregator::private_batch::prover::{PrivateBatchInputs, PrivateBatchProver};
 use qp_wormhole_aggregator::public_batch::circuit::build::generate_public_batch_circuit_binaries;
+use qp_wormhole_aggregator::PrivateBatchShape;
 use std::path::Path;
 use std::sync::Once;
 use zk_circuits_common::circuit::{C, D, F};
@@ -36,6 +37,8 @@ pub fn bins_dir() -> &'static str {
 // public_batch benchmarks. 7 matches the production bins quantus-cli generates
 // (num_leaf_proofs=7, num_private_batch_proofs=53).
 pub const PUBLIC_BATCH_INNER_NUM_LEAVES: usize = 7;
+pub const PUBLIC_BATCH_INNER_SHAPE: PrivateBatchShape =
+    PrivateBatchShape::new(PUBLIC_BATCH_INNER_NUM_LEAVES, PUBLIC_BATCH_INNER_NUM_LEAVES);
 pub const LAYER1_AGGREGATOR_ADDRESS: [u8; 32] = [42u8; 32];
 
 /// The batch-circuit generators load the leaf artifacts (`common.bin`,
@@ -102,8 +105,18 @@ pub fn generate_real_leaf_proof() -> Proof {
 /// leaves; see [`generate_real_leaf_proof`].
 pub fn generate_real_private_batch_proof() -> Proof {
     make_private_prover()
-        .aggregate(vec![generate_real_leaf_proof()])
+        .aggregate(single_leaf_inputs(generate_real_leaf_proof()))
         .expect("Failed to aggregate real leaf into a private batch")
+}
+
+/// Private-batch inputs for one real leaf with no withdrawals (the prover
+/// pads the remaining leaf and exit slots). Proving cost is witness-independent.
+pub fn single_leaf_inputs(leaf: Proof) -> PrivateBatchInputs {
+    PrivateBatchInputs {
+        leaf_proofs: vec![leaf],
+        outputs: Vec::new(),
+        volume_fee_bps: 0,
+    }
 }
 
 /// Regenerate the private- and public-batch artifacts in `bins_dir()` for a
@@ -114,20 +127,17 @@ pub fn generate_real_private_batch_proof() -> Proof {
 /// proof is generated only after the config is saved.
 pub fn prepare_public_batch_fixture(num_private_batch_proofs: usize) -> Proof {
     ensure_canonical_leaf_artifacts();
-    generate_private_batch_circuit_binaries(bins_dir(), PUBLIC_BATCH_INNER_NUM_LEAVES, true)
+    generate_private_batch_circuit_binaries(bins_dir(), PUBLIC_BATCH_INNER_SHAPE, true)
         .expect("Failed to generate private_batch circuit binaries for public_batch benchmark");
     generate_public_batch_circuit_binaries(
         bins_dir(),
         num_private_batch_proofs,
-        PUBLIC_BATCH_INNER_NUM_LEAVES,
+        PUBLIC_BATCH_INNER_SHAPE,
     )
     .expect("Failed to generate public_batch circuit binaries for public_batch benchmark");
-    CircuitBinsConfig::new(
-        PUBLIC_BATCH_INNER_NUM_LEAVES,
-        Some(num_private_batch_proofs),
-    )
-    .expect("Failed to create circuit bins config for public_batch benchmark")
-    .save(bins_dir())
-    .expect("Failed to save circuit bins config for public_batch benchmark");
+    CircuitBinsConfig::new(PUBLIC_BATCH_INNER_SHAPE, Some(num_private_batch_proofs))
+        .expect("Failed to create circuit bins config for public_batch benchmark")
+        .save(bins_dir())
+        .expect("Failed to save circuit bins config for public_batch benchmark");
     generate_real_private_batch_proof()
 }

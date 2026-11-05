@@ -1,20 +1,13 @@
 //! Universal dummy proof for padding aggregation batches.
 //!
-//! Dummy proofs use `block_hash = 0` AND `output_amounts = 0` as sentinel values.
-//! The leaf circuit skips all validation (storage proof, block header, nullifier)
-//! for proofs with these sentinels, allowing a single universal dummy proof to be
+//! Dummy proofs use `block_hash = 0` as the sentinel value. The leaf circuit
+//! skips all validation (storage proof, block header, nullifier) for proofs
+//! with this sentinel and forces their `input_amount` to zero, so a dummy
+//! authenticates no value. This allows a single universal dummy proof to be
 //! used for all aggregation batches.
 //!
-//! # Sentinel Values
-//!
-//! - `block_hash = [0u8; 32]` AND `output_amount_1 = 0` AND `output_amount_2 = 0`:
-//!   Triggers bypass of all validation. Both conditions must be met to prevent
-//!   an attacker from slipping funds through with a zero block hash.
-//! - `exit_account = [0u8; 32]`: Dummies form their own exit group, contributing 0 to sums.
-//!   Enforced by the template validators (`verify_dummy_leaf_template`,
-//!   `verify_dummy_private_batch_template`) and masked in-circuit by the
-//!   private-batch wrapper, since the leaf circuit leaves exit accounts
-//!   unconstrained and its dummy sentinel does not cover them.
+//! The private-batch circuit additionally masks dummy inputs out of its fee
+//! check and replaces dummy nullifiers with hashes of fresh random preimages.
 //!
 //! # Usage
 //!
@@ -46,20 +39,14 @@ use zk_circuits_common::zk_merkle::SIBLINGS_PER_LEVEL;
 /// The leaf circuit skips all validation when block_hash == 0.
 pub const DUMMY_BLOCK_HASH: [u8; 32] = [0u8; 32];
 
-/// Exit account used by dummy proofs (all zeros).
-/// Dummies form their own exit-account group but contribute 0 to the sum; this batching
-/// constraint is intentional so padding cannot influence any real payout bucket.
-pub const DUMMY_EXIT_ACCOUNT: [u8; 32] = [0u8; 32];
-
 // ============================================================================
 // Internal constants for dummy proof generation
 // ============================================================================
 
 const DEFAULT_SECRET: &str = "4c8587bd422e01d961acdc75e7d66f6761b7af7c9b1864a492f369c9d6724f05";
 const DEFAULT_TRANSFER_COUNT: u64 = 4;
-const DEFAULT_INPUT_AMOUNT: u32 = 100;
-const DEFAULT_OUTPUT_AMOUNT: u32 = 0;
-const DEFAULT_VOLUME_FEE_BPS: u32 = 10;
+// The leaf circuit forces a dummy's input amount to zero.
+const DEFAULT_INPUT_AMOUNT: u32 = 0;
 
 // Block data - all zeros for dummy sentinel
 const DEFAULT_PARENT_HASH: [u8; 32] = [0u8; 32];
@@ -131,10 +118,9 @@ pub fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
     let nullifier = BytesDigest::try_from(DEFAULT_NULLIFIER)?;
 
     let unspendable_account = digest_to_bytes(UnspendableAccount::from_secret(secret).account_id);
-    let exit_account = BytesDigest::try_from(DUMMY_EXIT_ACCOUNT)?;
 
     // For dummy proofs, we use an empty ZK Merkle proof (depth 0)
-    // The circuit skips validation when block_hash == 0 and outputs == 0
+    // The circuit skips validation when block_hash == 0
     let zk_tree_root = [0u8; 32];
     let zk_merkle_siblings: Vec<[[u8; 32]; SIBLINGS_PER_LEVEL]> = vec![];
     let zk_merkle_positions: Vec<u8> = vec![];
@@ -142,12 +128,7 @@ pub fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
     Ok(CircuitInputs {
         public: PublicCircuitInputs {
             asset_id: 0u32,
-            output_amount_1: DEFAULT_OUTPUT_AMOUNT, // Dummy proofs output 0
-            output_amount_2: 0u32,                  // No second output for dummies
-            volume_fee_bps: DEFAULT_VOLUME_FEE_BPS,
             nullifier,
-            exit_account_1: exit_account,
-            exit_account_2: BytesDigest::default(), // No second exit account
             // Sentinel: block_hash = 0 triggers validation bypass
             block_hash: BytesDigest::try_from(DUMMY_BLOCK_HASH)?,
             block_number: DEFAULT_BLOCK_NUMBER,

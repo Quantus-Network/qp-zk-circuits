@@ -16,7 +16,10 @@ use plonky2::plonk::circuit_data::{
 use plonky2::plonk::config::Hasher;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use wormhole_aggregator::dummy_proof::load_dummy_proof;
-use wormhole_aggregator::private_batch::prover::{PrivateBatchBuildMetrics, PrivateBatchProver};
+use wormhole_aggregator::private_batch::prover::{
+    PrivateBatchBuildMetrics, PrivateBatchInputs, PrivateBatchProver,
+};
+use wormhole_aggregator::PrivateBatchShape;
 use wormhole_aggregator::{build_dummy_circuit_inputs, generate_dummy_proof};
 use wormhole_circuit::block_header::header::HeaderInputs;
 use wormhole_circuit::circuit::circuit_logic::{CircuitTargets, WormholeCircuit};
@@ -39,11 +42,12 @@ pub struct LeafContext {
     pub targets: CircuitTargets,
 }
 
-fn print_private_batch_metrics(num_leaf_proofs: usize, metrics: PrivateBatchBuildMetrics) {
+fn print_private_batch_metrics(shape: PrivateBatchShape, metrics: PrivateBatchBuildMetrics) {
     eprintln!(
-        "[metrics] private_batch n={} leaf_degree_bits={} unpadded_gates={} \
+        "[metrics] private_batch n={} m={} leaf_degree_bits={} unpadded_gates={} \
          degree_bits={} padded_gates={}",
-        num_leaf_proofs,
+        shape.num_leaf_proofs,
+        shape.num_exit_slots,
         metrics.leaf_degree_bits,
         metrics.unpadded_gates,
         metrics.degree_bits,
@@ -53,9 +57,7 @@ fn print_private_batch_metrics(num_leaf_proofs: usize, metrics: PrivateBatchBuil
 
 fn build_profile_circuit_inputs() -> Result<CircuitInputs> {
     let mut inputs = build_dummy_circuit_inputs()?;
-    let fee_denominator = 10_000u64 - u64::from(inputs.public.volume_fee_bps);
-    inputs.public.output_amount_1 =
-        (u64::from(inputs.public.input_amount) * fee_denominator / 10_000) as u32;
+    inputs.public.input_amount = 100;
     inputs.public.nullifier = digest_to_bytes(
         Nullifier::from_preimage(
             inputs.private.secret.expose_digest(),
@@ -146,7 +148,7 @@ pub fn generate_leaf_proof(
 pub fn aggregate_fresh(
     leaf: &LeafContext,
     leaf_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
-    num_leaf_proofs: usize,
+    shape: PrivateBatchShape,
     agg_config: CircuitConfig,
     release_after: bool,
     report: &mut PhaseReport,
@@ -156,14 +158,18 @@ pub fn aggregate_fresh(
         agg_config,
         leaf.common.clone(),
         &leaf.verifier_only,
-        num_leaf_proofs,
+        shape,
         leaf.dummy_proof.clone(),
     )?;
-    print_private_batch_metrics(num_leaf_proofs, metrics);
+    print_private_batch_metrics(shape, metrics);
     report.phase_end()?;
 
     report.phase_start("agg_prove")?;
-    let proof = prover.aggregate(leaf_proofs)?;
+    let proof = prover.aggregate(PrivateBatchInputs {
+        leaf_proofs,
+        outputs: Vec::new(),
+        volume_fee_bps: 0,
+    })?;
     report.phase_end()?;
 
     if release_after {
@@ -174,7 +180,7 @@ pub fn aggregate_fresh(
 
 pub fn build_agg_circuit_only(
     leaf: &LeafContext,
-    num_leaf_proofs: usize,
+    shape: PrivateBatchShape,
     agg_config: CircuitConfig,
     report: &mut PhaseReport,
 ) -> Result<()> {
@@ -183,10 +189,10 @@ pub fn build_agg_circuit_only(
         agg_config,
         leaf.common.clone(),
         &leaf.verifier_only,
-        num_leaf_proofs,
+        shape,
         leaf.dummy_proof.clone(),
     )?;
-    print_private_batch_metrics(num_leaf_proofs, metrics);
+    print_private_batch_metrics(shape, metrics);
     report.phase_end()?;
     Ok(())
 }

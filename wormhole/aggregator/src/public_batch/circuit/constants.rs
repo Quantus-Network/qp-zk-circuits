@@ -1,22 +1,23 @@
 //! Constants and layout helpers for the public-batch aggregation circuit.
 
+use qp_wormhole_inputs::PrivateBatchShape;
+
 use crate::private_batch::circuit::constants::aggregated_output;
 
 // -----------------------------------------------------------------------------
 // Private-batch aggregated proof PI layout (input to public-batch)
 // -----------------------------------------------------------------------------
 //
-// Private-batch output layout (per proof):
+// Private-batch output layout (per proof), for `shape = (N leaves, M exit slots)`:
 // [ num_exit_slots(1),
 //   asset_id(1),
 //   volume_fee_bps(1),
 //   block_hash(4),
 //   block_number(1),
-//   [sum(1), exit(8)] * (2 * private_batch_num_leaves),
-//   nullifier(4) * private_batch_num_leaves,
-//   padding ... ]
+//   [amount(1), exit_account(4)] * M,
+//   nullifier(4) * N ]
 //
-// Total length = private_batch_num_leaves * LEAF_PI_LEN + 8
+// Total length = 8 + 5M + 4N
 // -----------------------------------------------------------------------------
 
 // Re-export private-batch aggregated output constants for use in public-batch circuit.
@@ -31,29 +32,28 @@ pub use aggregated_output::{
 };
 
 #[inline]
-pub const fn private_batch_exit_slots_count(private_batch_num_leaves: usize) -> usize {
-    aggregated_output::exit_slots_count(private_batch_num_leaves)
+pub const fn private_batch_exit_slots_count(shape: PrivateBatchShape) -> usize {
+    aggregated_output::exit_slots_count(shape)
 }
 
 #[inline]
-pub const fn private_batch_nullifiers_count(private_batch_num_leaves: usize) -> usize {
-    aggregated_output::nullifiers_count(private_batch_num_leaves)
+pub const fn private_batch_nullifiers_count(shape: PrivateBatchShape) -> usize {
+    aggregated_output::nullifiers_count(shape)
 }
 
 #[inline]
 pub const fn private_batch_exit_slots_start() -> usize {
-    PRIVATE_BATCH_HEADER_LEN
+    aggregated_output::exit_slots_start()
 }
 
 #[inline]
-pub const fn private_batch_nullifiers_start(private_batch_num_leaves: usize) -> usize {
-    PRIVATE_BATCH_HEADER_LEN
-        + private_batch_exit_slots_count(private_batch_num_leaves) * PRIVATE_BATCH_EXIT_SLOT_LEN
+pub const fn private_batch_nullifiers_start(shape: PrivateBatchShape) -> usize {
+    aggregated_output::nullifiers_start(shape)
 }
 
 #[inline]
-pub const fn private_batch_pi_len(private_batch_num_leaves: usize) -> usize {
-    aggregated_output::pi_len(private_batch_num_leaves)
+pub const fn private_batch_pi_len(shape: PrivateBatchShape) -> usize {
+    aggregated_output::pi_len(shape)
 }
 
 // -----------------------------------------------------------------------------
@@ -66,8 +66,8 @@ pub const fn private_batch_pi_len(private_batch_num_leaves: usize) -> usize {
 //   block_hash(4),
 //   block_number(1),
 //   total_exit_slots(1),
-//   [sum(1), exit(4)] * (n_inner * 2 * private_batch_num_leaves),
-//   nullifier(4) * (n_inner * private_batch_num_leaves)
+//   [amount(1), exit_account(4)] * (n_inner * M),
+//   nullifier(4) * (n_inner * N)
 // ]
 // -----------------------------------------------------------------------------
 
@@ -82,19 +82,13 @@ pub const TOTAL_EXIT_SLOTS_START: usize = BLOCK_NUMBER_START + 1; // 11
 pub const PUBLIC_BATCH_HEADER_LEN: usize = TOTAL_EXIT_SLOTS_START + 1; // 12 = 4 + 1 + 1 + 4 + 1 + 1
 
 #[inline]
-pub const fn public_batch_total_exit_slots(
-    n_inner: usize,
-    private_batch_num_leaves: usize,
-) -> usize {
-    n_inner * private_batch_exit_slots_count(private_batch_num_leaves)
+pub const fn public_batch_total_exit_slots(n_inner: usize, shape: PrivateBatchShape) -> usize {
+    n_inner * private_batch_exit_slots_count(shape)
 }
 
 #[inline]
-pub const fn public_batch_total_nullifiers(
-    n_inner: usize,
-    private_batch_num_leaves: usize,
-) -> usize {
-    n_inner * private_batch_nullifiers_count(private_batch_num_leaves)
+pub const fn public_batch_total_nullifiers(n_inner: usize, shape: PrivateBatchShape) -> usize {
+    n_inner * private_batch_nullifiers_count(shape)
 }
 
 #[inline]
@@ -103,19 +97,14 @@ pub const fn public_batch_exit_slots_start() -> usize {
 }
 
 #[inline]
-pub const fn public_batch_nullifiers_start(
-    n_inner: usize,
-    private_batch_num_leaves: usize,
-) -> usize {
+pub const fn public_batch_nullifiers_start(n_inner: usize, shape: PrivateBatchShape) -> usize {
     PUBLIC_BATCH_HEADER_LEN
-        + public_batch_total_exit_slots(n_inner, private_batch_num_leaves)
-            * PRIVATE_BATCH_EXIT_SLOT_LEN
+        + public_batch_total_exit_slots(n_inner, shape) * PRIVATE_BATCH_EXIT_SLOT_LEN
 }
 
 #[inline]
-pub const fn public_batch_pi_len(n_inner: usize, private_batch_num_leaves: usize) -> usize {
+pub const fn public_batch_pi_len(n_inner: usize, shape: PrivateBatchShape) -> usize {
     PUBLIC_BATCH_HEADER_LEN
-        + public_batch_total_exit_slots(n_inner, private_batch_num_leaves)
-            * PRIVATE_BATCH_EXIT_SLOT_LEN
-        + public_batch_total_nullifiers(n_inner, private_batch_num_leaves) * 4
+        + public_batch_total_exit_slots(n_inner, shape) * PRIVATE_BATCH_EXIT_SLOT_LEN
+        + public_batch_total_nullifiers(n_inner, shape) * 4
 }

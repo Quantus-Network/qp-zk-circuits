@@ -21,7 +21,7 @@ mod workload;
 
 use anyhow::Result;
 use clap::Parser;
-use wormhole_aggregator::validate_proof_count;
+use wormhole_aggregator::PrivateBatchShape;
 
 use crate::config::{default_agg_config, default_leaf_config, print_config_summary, AggConfigArgs};
 use crate::report::PhaseReport;
@@ -36,6 +36,10 @@ struct Args {
     /// the on-chain verifier's expected batch size.
     #[arg(long, default_value_t = 7)]
     num_leaf_proofs: usize,
+
+    /// Number of withdrawal output slots the aggregation circuit is built for.
+    #[arg(long, default_value_t = 16)]
+    num_exit_slots: usize,
 
     /// How many real leaf proofs to actually generate before aggregation.
     /// Must be <= num_leaf_proofs. The aggregator pads the rest with dummy
@@ -113,13 +117,13 @@ fn parse_rayon_threads(s: &str) -> Result<usize, String> {
     Ok(n)
 }
 
-fn validate_workload_counts(num_leaf_proofs: usize, real_proofs: usize) -> Result<()> {
-    validate_proof_count(num_leaf_proofs, "num_leaf_proofs")?;
-    if real_proofs > num_leaf_proofs {
+fn validate_workload_counts(shape: PrivateBatchShape, real_proofs: usize) -> Result<()> {
+    shape.validate()?;
+    if real_proofs > shape.num_leaf_proofs {
         anyhow::bail!(
             "--real-proofs ({}) must be <= --num-leaf-proofs ({})",
             real_proofs,
-            num_leaf_proofs
+            shape.num_leaf_proofs
         );
     }
     Ok(())
@@ -143,12 +147,12 @@ fn main() -> Result<()> {
     print_config_summary("leaf", &leaf_cfg);
     print_config_summary("agg", &agg_cfg);
 
-    let num_leaf_proofs = args.num_leaf_proofs;
-    let real_proofs = args.real_proofs.unwrap_or(num_leaf_proofs);
+    let shape = PrivateBatchShape::new(args.num_leaf_proofs, args.num_exit_slots);
+    let real_proofs = args.real_proofs.unwrap_or(shape.num_leaf_proofs);
     // Bound the circuit dimension before construction while permitting an
     // all-dummy profiling run (`real_proofs == 0`). Validated before the
     // thread-pool setup so a rejected workload never spawns worker threads.
-    validate_workload_counts(num_leaf_proofs, real_proofs)?;
+    validate_workload_counts(shape, real_proofs)?;
 
     if args.rayon_threads > 0 {
         eprintln!("Configuring rayon with {} threads", args.rayon_threads);
@@ -171,7 +175,7 @@ fn main() -> Result<()> {
     }
 
     if args.circuit_only {
-        workload::build_agg_circuit_only(&leaf_ctx, num_leaf_proofs, agg_cfg, &mut report)?;
+        workload::build_agg_circuit_only(&leaf_ctx, shape, agg_cfg, &mut report)?;
         report.finish_and_print(args.peak_target_mb)?;
         return Ok(());
     }
@@ -201,7 +205,7 @@ fn main() -> Result<()> {
     let _agg = workload::aggregate_fresh(
         &leaf_ctx,
         leaf_proofs,
-        num_leaf_proofs,
+        shape,
         agg_cfg,
         args.release_after_each,
         &mut report,
@@ -215,6 +219,7 @@ fn main() -> Result<()> {
 mod tests {
     use super::{validate_workload_counts, Args};
     use clap::Parser;
+    use wormhole_aggregator::PrivateBatchShape;
 
     /// `--rayon-threads` exists to LIMIT the pool; values beyond the host's
     /// available parallelism have no legitimate use and only serve to exhaust
@@ -284,12 +289,13 @@ mod tests {
 
     #[test]
     fn zero_real_proofs_is_valid_for_all_dummy_profile() {
-        validate_workload_counts(7, 0).unwrap();
+        validate_workload_counts(PrivateBatchShape::new(7, 16), 0).unwrap();
     }
 
     #[test]
     fn invalid_circuit_dimension_or_real_count_is_rejected() {
-        assert!(validate_workload_counts(0, 0).is_err());
-        assert!(validate_workload_counts(7, 8).is_err());
+        assert!(validate_workload_counts(PrivateBatchShape::new(0, 16), 0).is_err());
+        assert!(validate_workload_counts(PrivateBatchShape::new(7, 0), 0).is_err());
+        assert!(validate_workload_counts(PrivateBatchShape::new(7, 16), 8).is_err());
     }
 }

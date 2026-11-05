@@ -1,4 +1,4 @@
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 use plonky2::{
     field::extension::Extendable,
     hash::hash_types::RichField,
@@ -229,79 +229,10 @@ fn split_canonical_u32_halves<F: RichField + Extendable<D>, const D: usize>(
     (lo, hi)
 }
 
-/// Route 4-limb digests through an odd-even adjacent-swap network.
-///
-/// Each switch is a private boolean target. Both complete digests are either
-/// passed through or swapped, so every output is structurally an exact
-/// permutation of the inputs for every valid witness. The circuit does not
-/// constrain which permutation is chosen.
-pub fn permute_digests4<F: RichField + Extendable<D>, const D: usize>(
-    b: &mut impl GadgetBuilder<F, D>,
-    values: Vec<[Target; 4]>,
-) -> (Vec<[Target; 4]>, Vec<BoolTarget>) {
-    let n = values.len();
-    if n <= 1 {
-        return (values, Vec::new());
-    }
-
-    let mut routed = values;
-    let mut switches = Vec::with_capacity(n * (n - 1) / 2);
-
-    for round in 0..n {
-        let mut i = round % 2;
-        while i + 1 < n {
-            let swap = b.add_virtual_bool_target_safe();
-            let lhs = routed[i];
-            let rhs = routed[i + 1];
-            for j in 0..4 {
-                routed[i][j] = b.select(swap, rhs[j], lhs[j]);
-                routed[i + 1][j] = b.select(swap, lhs[j], rhs[j]);
-            }
-            switches.push(swap);
-            i += 2;
-        }
-    }
-
-    (routed, switches)
-}
-
-/// Compute switch witnesses that route input indices into `permutation`,
-/// where `permutation[output_index]` is the input index for that output.
-///
-/// Returns `None` unless the slice is an exact permutation of `0..len`.
-pub fn permutation_switches(permutation: &[usize]) -> Option<Vec<bool>> {
-    let n = permutation.len();
-    let mut destination = vec![usize::MAX; n];
-    for (output_index, &input_index) in permutation.iter().enumerate() {
-        if input_index >= n || destination[input_index] != usize::MAX {
-            return None;
-        }
-        destination[input_index] = output_index;
-    }
-
-    let mut current: Vec<usize> = (0..n).collect();
-    let mut switches = Vec::with_capacity(n.saturating_mul(n.saturating_sub(1)) / 2);
-    for round in 0..n {
-        let mut i = round % 2;
-        while i + 1 < n {
-            let swap = destination[current[i]] > destination[current[i + 1]];
-            switches.push(swap);
-            if swap {
-                current.swap(i, i + 1);
-            }
-            i += 2;
-        }
-    }
-
-    debug_assert_eq!(current, permutation);
-    Some(switches)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::circuit::{wormhole_private_batch_circuit_config, C, D, F};
-    use alloc::vec;
+    use crate::circuit::{C, D, F};
     use plonky2::field::types::{Field, PrimeField64};
     use plonky2::iop::witness::{PartialWitness, WitnessWrite};
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
@@ -384,116 +315,5 @@ mod tests {
         let mut b = CircuitBuilder::<F, D>::new(config);
         let right_t = b.add_virtual_target();
         let _ = is_const_less_than(&mut b, 0, right_t, 65);
-    }
-
-    /// Gates added by `permute_digests4` over `n` virtual digests under the
-    /// production private-batch circuit config.
-    fn permutation_gate_cost(n: usize) -> usize {
-        let mut b = CircuitBuilder::<F, D>::new(wormhole_private_batch_circuit_config());
-        let values: Vec<[Target; 4]> = (0..n)
-            .map(|_| core::array::from_fn(|_| b.add_virtual_target()))
-            .collect();
-        let before = b.num_gates();
-        let _ = permute_digests4(&mut b, values);
-        b.num_gates() - before
-    }
-
-    #[test]
-    fn permute_digests4_gate_cost_stays_small() {
-        for (n, budget) in [(7usize, 30), (64usize, 2_500)] {
-            let cost = permutation_gate_cost(n);
-            assert!(
-                cost <= budget,
-                "n={n}: {cost} gates exceeds budget {budget}"
-            );
-        }
-    }
-
-    #[test]
-    fn permute_digests4_routes_complete_digests() {
-        let inputs: Vec<[u64; 4]> = vec![
-            [10, 11, 12, 13],
-            [20, 21, 22, 23],
-            [30, 31, 32, 33],
-            [40, 41, 42, 43],
-        ];
-        let config = plonky2::plonk::circuit_data::CircuitConfig::standard_recursion_config();
-        let mut b = CircuitBuilder::<F, D>::new(config);
-        let targets: Vec<[Target; 4]> = (0..inputs.len())
-            .map(|_| core::array::from_fn(|_| b.add_virtual_target()))
-            .collect();
-        let (permuted, switches) = permute_digests4(&mut b, targets.clone());
-        for digest in permuted {
-            for t in digest {
-                b.register_public_input(t);
-            }
-        }
-        let data = b.build::<C>();
-
-        for permutation in [
-            vec![0, 1, 2, 3],
-            vec![3, 2, 1, 0],
-            vec![2, 0, 3, 1],
-            vec![1, 3, 0, 2],
-        ] {
-            let mut pw = PartialWitness::new();
-            for (digest_t, digest_v) in targets.iter().zip(&inputs) {
-                for (t, v) in digest_t.iter().zip(digest_v) {
-                    pw.set_target(*t, F::from_canonical_u64(*v)).unwrap();
-                }
-            }
-            for (target, value) in switches
-                .iter()
-                .zip(permutation_switches(&permutation).unwrap())
-            {
-                pw.set_target(target.target, F::from_bool(value)).unwrap();
-            }
-            let proof = data.prove(pw).unwrap();
-            data.verify(proof.clone()).unwrap();
-
-            let expected: Vec<[u64; 4]> = permutation.iter().map(|&i| inputs[i]).collect();
-            let proved: Vec<[u64; 4]> = proof
-                .public_inputs
-                .chunks_exact(4)
-                .map(|c| core::array::from_fn(|i| c[i].to_canonical_u64()))
-                .collect();
-            assert_eq!(proved, expected);
-        }
-    }
-
-    #[test]
-    fn permutation_switches_rejects_invalid_indices() {
-        assert!(permutation_switches(&[0, 0]).is_none());
-        assert!(permutation_switches(&[0, 2]).is_none());
-    }
-
-    #[test]
-    fn permutation_switches_routes_every_four_element_permutation() {
-        for a in 0..4 {
-            for b in 0..4 {
-                for c in 0..4 {
-                    for d in 0..4 {
-                        let permutation = [a, b, c, d];
-                        let Some(switches) = permutation_switches(&permutation) else {
-                            continue;
-                        };
-
-                        let mut current = vec![0, 1, 2, 3];
-                        let mut switch_index = 0;
-                        for round in 0..4 {
-                            let mut i = round % 2;
-                            while i + 1 < 4 {
-                                if switches[switch_index] {
-                                    current.swap(i, i + 1);
-                                }
-                                switch_index += 1;
-                                i += 2;
-                            }
-                        }
-                        assert_eq!(current, permutation);
-                    }
-                }
-            }
-        }
     }
 }

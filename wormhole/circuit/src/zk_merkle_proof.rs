@@ -65,23 +65,15 @@ pub struct ZkLeafTargets {
     pub transfer_count: [Target; 2],
     /// Asset ID (1 felt)
     pub asset_id: Target,
-    /// Amount stored in the leaf (quantized, private input)
+    /// Amount stored in the leaf (quantized). Registered as the last leaf
+    /// public input by `CircuitTargets::new`.
     pub input_amount: Target,
-    /// Output amount 1 (public input)
-    pub output_amount_1: Target,
-    /// Output amount 2 (public input, for change)
-    pub output_amount_2: Target,
-    /// Volume fee in basis points (public input)
-    pub volume_fee_bps: Target,
 }
 
 impl ZkLeafTargets {
     pub fn new(builder: &mut impl GadgetBuilder<F, D>) -> Self {
-        // Public inputs (registered first for consistent ordering)
+        // Public input (registered first for consistent ordering)
         let asset_id = builder.add_virtual_public_input();
-        let output_amount_1 = builder.add_virtual_public_input();
-        let output_amount_2 = builder.add_virtual_public_input();
-        let volume_fee_bps = builder.add_virtual_public_input();
 
         // Private inputs
         let to_account = AccountTargets::new(builder);
@@ -93,9 +85,6 @@ impl ZkLeafTargets {
             transfer_count,
             asset_id,
             input_amount,
-            output_amount_1,
-            output_amount_2,
-            volume_fee_bps,
         }
     }
 
@@ -119,9 +108,6 @@ impl ZkLeafTargets {
             .copied()
             .chain(core::iter::once(self.asset_id))
             .chain(core::iter::once(self.input_amount))
-            .chain(core::iter::once(self.output_amount_1))
-            .chain(core::iter::once(self.output_amount_2))
-            .chain(core::iter::once(self.volume_fee_bps))
             .collect()
     }
 }
@@ -193,12 +179,6 @@ pub struct ZkLeafData {
     pub asset_id: F,
     /// Input amount (quantized)
     pub input_amount: F,
-    /// Output amount 1
-    pub output_amount_1: F,
-    /// Output amount 2
-    pub output_amount_2: F,
-    /// Volume fee in bps
-    pub volume_fee_bps: F,
 }
 
 /// Redacting `Debug`: `to_account` (the unspendable deposit account — the
@@ -212,9 +192,6 @@ impl core::fmt::Debug for ZkLeafData {
             .field("transfer_count", &"[REDACTED]")
             .field("asset_id", &self.asset_id)
             .field("input_amount", &"[REDACTED]")
-            .field("output_amount_1", &self.output_amount_1)
-            .field("output_amount_2", &self.output_amount_2)
-            .field("volume_fee_bps", &self.volume_fee_bps)
             .finish()
     }
 }
@@ -225,9 +202,6 @@ impl ZkLeafData {
         transfer_count: u64,
         asset_id: u32,
         input_amount: u32,
-        output_amount_1: u32,
-        output_amount_2: u32,
-        volume_fee_bps: u32,
     ) -> Self {
         use zk_circuits_common::serialization::bytes_to_digest;
         use zk_circuits_common::utils::u64_to_felts;
@@ -237,9 +211,6 @@ impl ZkLeafData {
             transfer_count: u64_to_felts(transfer_count),
             asset_id: F::from_canonical_u32(asset_id),
             input_amount: F::from_canonical_u32(input_amount),
-            output_amount_1: F::from_canonical_u32(output_amount_1),
-            output_amount_2: F::from_canonical_u32(output_amount_2),
-            volume_fee_bps: F::from_canonical_u32(volume_fee_bps),
         }
     }
 
@@ -446,19 +417,14 @@ impl TryFrom<&CircuitInputs> for ZkMerkleProofData {
             );
         }
 
-        // Detect dummy proofs (block_hash == 0 and outputs == 0)
-        let is_not_dummy = !(inputs.public.block_hash.as_ref() == [0u8; 32]
-            && inputs.public.output_amount_1 == 0
-            && inputs.public.output_amount_2 == 0);
+        // Detect dummy proofs (block_hash == 0)
+        let is_not_dummy = inputs.public.block_hash.as_ref() != [0u8; 32];
 
         let leaf = ZkLeafData::new(
             *inputs.private.unspendable_account,
             inputs.private.transfer_count,
             inputs.public.asset_id,
             inputs.public.input_amount,
-            inputs.public.output_amount_1,
-            inputs.public.output_amount_2,
-            inputs.public.volume_fee_bps,
         );
 
         Ok(Self::new(
@@ -689,9 +655,6 @@ impl CircuitFragment for ZkMerkleProofData {
         pw.set_target_arr(&targets.leaf.transfer_count, &self.leaf.transfer_count)?;
         pw.set_target(targets.leaf.asset_id, self.leaf.asset_id)?;
         pw.set_target(targets.leaf.input_amount, self.leaf.input_amount)?;
-        pw.set_target(targets.leaf.output_amount_1, self.leaf.output_amount_1)?;
-        pw.set_target(targets.leaf.output_amount_2, self.leaf.output_amount_2)?;
-        pw.set_target(targets.leaf.volume_fee_bps, self.leaf.volume_fee_bps)?;
 
         Ok(())
     }
@@ -703,7 +666,7 @@ mod tests {
     use alloc::vec;
 
     #[test]
-    fn leaf_fragment_allows_output_above_its_input_for_batch_pooling() {
+    fn leaf_fragment_proves_depth_zero_leaf() {
         use plonky2::{
             hash::poseidon2::Poseidon2Hash,
             iop::witness::PartialWitness,
@@ -721,7 +684,7 @@ mod tests {
         ZkMerkleProofData::circuit(&targets, &mut builder);
         let circuit = builder.build::<C>();
 
-        let leaf = ZkLeafData::new([9u8; 32], 0, 0, 1, 20, 0, 4);
+        let leaf = ZkLeafData::new([9u8; 32], 0, 0, 1);
         let root = Poseidon2Hash::hash_no_pad(&leaf.collect_for_hash()).elements;
         let data = ZkMerkleProofData::new(digest_to_bytes(&root), vec![], vec![], leaf, true);
         let mut pw = PartialWitness::new();
@@ -734,15 +697,7 @@ mod tests {
     /// debug output even though `input_amount` is an intermediate leaf PI.
     #[test]
     fn zk_leaf_data_debug_redacts_private_fields() {
-        let leaf = ZkLeafData::new(
-            [0xCD; 32],
-            0x0BAD_CAFE_DEAD_BEEF,
-            7,
-            313_131_313,
-            50,
-            49,
-            10,
-        );
+        let leaf = ZkLeafData::new([0xCD; 32], 0x0BAD_CAFE_DEAD_BEEF, 7, 313_131_313);
         let dump = alloc::format!("{:?}", leaf);
         // to_account felts: each 8-byte chunk of [0xCD; 32].
         assert!(!dump.contains("14829735431805717965"));
@@ -759,7 +714,7 @@ mod tests {
     /// depth limit in proof normalization).
     #[test]
     fn from_unsorted_rejects_oversized_depth() {
-        let leaf = ZkLeafData::new([0xCD; 32], 1, 0, 100, 50, 49, 10);
+        let leaf = ZkLeafData::new([0xCD; 32], 1, 0, 100);
         let levels = vec![[[0xABu8; 32]; SIBLINGS_PER_LEVEL]; MAX_DEPTH + 1];
         let err = ZkMerkleProofData::from_unsorted([0x11; 32], levels, [0x42; 32], leaf, true)
             .unwrap_err();
@@ -769,7 +724,7 @@ mod tests {
     /// Proofs at exactly MAX_DEPTH must still construct.
     #[test]
     fn from_unsorted_accepts_max_depth() {
-        let leaf = ZkLeafData::new([0xCD; 32], 1, 0, 100, 50, 49, 10);
+        let leaf = ZkLeafData::new([0xCD; 32], 1, 0, 100);
         let levels = vec![[[0xABu8; 32]; SIBLINGS_PER_LEVEL]; MAX_DEPTH];
         ZkMerkleProofData::from_unsorted([0x11; 32], levels, [0x42; 32], leaf, true)
             .expect("MAX_DEPTH proof must construct");
@@ -781,7 +736,7 @@ mod tests {
     #[test]
     fn from_unsorted_rejects_noncanonical_bytes() {
         // Every limb of 0xff..ff exceeds the Goldilocks modulus.
-        let leaf = ZkLeafData::new([0xCD; 32], 1, 0, 100, 50, 49, 10);
+        let leaf = ZkLeafData::new([0xCD; 32], 1, 0, 100);
         let levels = vec![[[0xABu8; 32]; SIBLINGS_PER_LEVEL]];
 
         let err = ZkMerkleProofData::from_unsorted(
@@ -825,13 +780,8 @@ mod tests {
             },
             public: PublicCircuitInputs {
                 asset_id: 0,
-                output_amount_1: 900,
-                output_amount_2: 99,
-                volume_fee_bps: 10,
                 nullifier: [1u8; 32].try_into().unwrap(),
                 block_hash: [0u8; 32].try_into().unwrap(),
-                exit_account_1: [2u8; 32].try_into().unwrap(),
-                exit_account_2: [3u8; 32].try_into().unwrap(),
                 block_number: 1,
                 input_amount: 1000,
             },
@@ -861,7 +811,7 @@ mod tests {
     /// them, so the felt-encoded copies here must not be printable.
     #[test]
     fn zk_merkle_proof_data_debug_redacts_path_material() {
-        let leaf = ZkLeafData::new([0xCD; 32], 1, 0, 100, 50, 49, 10);
+        let leaf = ZkLeafData::new([0xCD; 32], 1, 0, 100);
         let siblings = vec![[[0xAB; 32]; SIBLINGS_PER_LEVEL]];
         let proof_data = ZkMerkleProofData::new([0x11; 32], siblings, vec![2], leaf, true);
 

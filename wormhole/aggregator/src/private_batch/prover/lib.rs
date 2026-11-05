@@ -9,7 +9,7 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use plonky2::{
-    field::types::PrimeField64,
+    field::types::{Field, PrimeField64},
     iop::witness::PartialWitness,
     plonk::{
         circuit_data::{
@@ -24,7 +24,7 @@ use rand::seq::SliceRandom;
 #[cfg(feature = "std")]
 use std::path::Path;
 
-use qp_wormhole_inputs::{validate_proof_count, BytesDigest, PublicCircuitInputs};
+use qp_wormhole_inputs::{BytesDigest, PrivateBatchShape, PublicCircuitInputs, WithdrawalOutput};
 use zk_circuits_common::{
     circuit::{wormhole_private_batch_circuit_config, C, D, F},
     utils::bytes_to_digest,
@@ -46,11 +46,27 @@ use crate::{
     },
 };
 
+/// Maximum `volume_fee_bps`: a fee of 100% leaves nothing to pay out.
+pub const MAX_VOLUME_FEE_BPS: u32 = 10_000;
+
+/// Everything a client supplies to prove one private batch.
+#[derive(Debug, Clone)]
+pub struct PrivateBatchInputs {
+    /// Leaf (proof-of-burn) proofs to spend; padded with the dummy template up
+    /// to the circuit's `num_leaf_proofs`.
+    pub leaf_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
+    /// Requested payouts; padded with zero outputs up to the circuit's
+    /// `num_exit_slots`.
+    pub outputs: Vec<WithdrawalOutput>,
+    /// Volume fee in basis points applied to the whole batch.
+    pub volume_fee_bps: u32,
+}
+
 #[derive(Debug)]
 pub struct PrivateBatchProver {
     pub circuit_data: ProverCircuitData<F, C, D>,
     targets: PrivateBatchCircuitTargets,
-    num_leaf_proofs: usize,
+    shape: PrivateBatchShape,
     dummy_proof_template: ProofWithPublicInputs<F, C, D>,
     /// Leaf verifier data, kept so [`Self::aggregate`] can cheaply verify each
     /// supplied leaf proof before starting the expensive recursive proving run
@@ -71,23 +87,19 @@ impl PrivateBatchProver {
     /// Build a fresh private-batch aggregation prover from circuit definitions.
     ///
     /// In production, prefer `new_from_binaries_dir(...)` to load prebuilt circuits.
-    /// Returns an error when `num_leaf_proofs` is outside the supported range,
+    /// Returns an error when `shape` is outside the supported range,
     /// or when `dummy_proof_template` is not a valid leaf proof carrying the
     /// strong dummy sentinel (zero block hash, zero outputs, and zero asset_id).
     pub fn new(
         agg_circuit_config: CircuitConfig,
         leaf_common: CommonCircuitData<F, D>,
         leaf_verifier_only: &VerifierOnlyCircuitData<C, D>,
-        num_leaf_proofs: usize,
+        shape: PrivateBatchShape,
         dummy_proof_template: ProofWithPublicInputs<F, C, D>,
     ) -> Result<Self> {
-        // Proof-count bounds are enforced by PrivateBatchCircuit::new.
-        let agg_circuit = PrivateBatchCircuit::new(
-            agg_circuit_config,
-            &leaf_common,
-            leaf_verifier_only,
-            num_leaf_proofs,
-        )?;
+        // Shape bounds are enforced by PrivateBatchCircuit::new.
+        let agg_circuit =
+            PrivateBatchCircuit::new(agg_circuit_config, &leaf_common, leaf_verifier_only, shape)?;
 
         let targets = agg_circuit.targets();
         let circuit_data = agg_circuit.build_prover();
@@ -96,7 +108,7 @@ impl PrivateBatchProver {
             targets,
             leaf_common,
             leaf_verifier_only,
-            num_leaf_proofs,
+            shape,
             dummy_proof_template,
         )
     }
@@ -106,16 +118,12 @@ impl PrivateBatchProver {
         agg_circuit_config: CircuitConfig,
         leaf_common: CommonCircuitData<F, D>,
         leaf_verifier_only: &VerifierOnlyCircuitData<C, D>,
-        num_leaf_proofs: usize,
+        shape: PrivateBatchShape,
         dummy_proof_template: ProofWithPublicInputs<F, C, D>,
     ) -> Result<(Self, PrivateBatchBuildMetrics)> {
-        // Proof-count bounds are enforced by PrivateBatchCircuit::new.
-        let agg_circuit = PrivateBatchCircuit::new(
-            agg_circuit_config,
-            &leaf_common,
-            leaf_verifier_only,
-            num_leaf_proofs,
-        )?;
+        // Shape bounds are enforced by PrivateBatchCircuit::new.
+        let agg_circuit =
+            PrivateBatchCircuit::new(agg_circuit_config, &leaf_common, leaf_verifier_only, shape)?;
 
         let unpadded_gates = agg_circuit.num_gates();
         let targets = agg_circuit.targets();
@@ -132,7 +140,7 @@ impl PrivateBatchProver {
             targets,
             leaf_common,
             leaf_verifier_only,
-            num_leaf_proofs,
+            shape,
             dummy_proof_template,
         )?;
         Ok((prover, metrics))
@@ -143,7 +151,7 @@ impl PrivateBatchProver {
         targets: PrivateBatchCircuitTargets,
         leaf_common: CommonCircuitData<F, D>,
         leaf_verifier_only: &VerifierOnlyCircuitData<C, D>,
-        num_leaf_proofs: usize,
+        shape: PrivateBatchShape,
         dummy_proof_template: ProofWithPublicInputs<F, C, D>,
     ) -> Result<Self> {
         // Enforce the same template invariant as the byte-loading constructors:
@@ -159,7 +167,7 @@ impl PrivateBatchProver {
         Ok(Self {
             circuit_data,
             targets,
-            num_leaf_proofs,
+            shape,
             dummy_proof_template,
             leaf_verifier,
         })
@@ -182,17 +190,17 @@ impl PrivateBatchProver {
     /// - `leaf_common_bytes`: leaf circuit common data (`common.bin`)
     /// - `leaf_verifier_only_bytes`: leaf verifier-only data (`verifier.bin`)
     /// - `dummy_proof_bytes`: serialized dummy leaf proof (`dummy_proof.bin`)
-    /// - `num_leaf_proofs`: number of leaf proofs aggregated by this private-batch prover
+    /// - `shape`: leaf-proof and exit-slot counts of this private-batch prover
     pub fn new_from_bytes(
         leaf_common_bytes: &[u8],
         leaf_verifier_only_bytes: &[u8],
         dummy_proof_bytes: &[u8],
-        num_leaf_proofs: usize,
+        shape: PrivateBatchShape,
     ) -> Result<Self> {
-        // Validate the batch count at the public byte-loading boundary so a zero
+        // Validate the batch shape at the public byte-loading boundary so a zero
         // or oversized count returns an error instead of panicking inside the
         // circuit builder (#97027, #97070).
-        validate_proof_count(num_leaf_proofs, "num_leaf_proofs")?;
+        shape.validate()?;
 
         // 1) Load and pin leaf verifier data to the canonical Wormhole leaf circuit.
         let leaf_verifier_data =
@@ -206,7 +214,7 @@ impl PrivateBatchProver {
             wormhole_private_batch_circuit_config(),
             &leaf_verifier_data.common,
             &leaf_verifier_data.verifier_only,
-            num_leaf_proofs,
+            shape,
         )?;
         let targets = circuit.targets();
         let circuit_data = circuit.build_prover();
@@ -226,7 +234,7 @@ impl PrivateBatchProver {
         Ok(Self {
             circuit_data,
             targets,
-            num_leaf_proofs,
+            shape,
             dummy_proof_template,
             leaf_verifier: leaf_verifier_data,
         })
@@ -238,7 +246,7 @@ impl PrivateBatchProver {
         leaf_common_path: &Path,
         leaf_verifier_path: &Path,
         dummy_proof_path: &Path,
-        num_leaf_proofs: usize,
+        shape: PrivateBatchShape,
     ) -> Result<Self> {
         let leaf_common_bytes = read_artifact_file(leaf_common_path)
             .with_context(|| format!("Failed to read leaf common file {:?}", leaf_common_path))?;
@@ -253,7 +261,7 @@ impl PrivateBatchProver {
             &leaf_common_bytes,
             &leaf_verifier_only_bytes,
             &dummy_proof_bytes,
-            num_leaf_proofs,
+            shape,
         )
     }
 
@@ -272,13 +280,12 @@ impl PrivateBatchProver {
     pub fn new_from_binaries_dir(bins_dir: &Path) -> Result<Self> {
         let bins_config = crate::config::CircuitBinsConfig::load(bins_dir)
             .with_context(|| format!("Failed to load config.json from {}", bins_dir.display()))?;
-        let num_leaf_proofs = bins_config.num_leaf_proofs;
 
         Self::new_from_files(
             &bins_dir.join("common.bin"),
             &bins_dir.join("verifier.bin"),
             &bins_dir.join("dummy_proof.bin"),
-            num_leaf_proofs,
+            bins_config.private_batch_shape(),
         )
     }
 
@@ -286,24 +293,38 @@ impl PrivateBatchProver {
     // Proving API
     // -------------------------------------------------------------------------
 
-    /// Number of leaf proofs aggregated by this private-batch prover.
-    pub fn num_leaf_proofs(&self) -> usize {
-        self.num_leaf_proofs
+    /// Leaf-proof and exit-slot counts of this private-batch prover.
+    pub fn shape(&self) -> PrivateBatchShape {
+        self.shape
     }
 
-    /// Fill a fresh witness with a leaf-proof batch.
+    /// Number of leaf proofs aggregated by this private-batch prover.
+    pub fn num_leaf_proofs(&self) -> usize {
+        self.shape.num_leaf_proofs
+    }
+
+    /// Number of exit slots exposed by this private-batch prover.
+    pub fn num_exit_slots(&self) -> usize {
+        self.shape.num_exit_slots
+    }
+
+    /// Fill a fresh witness for one private batch.
     ///
     /// Fails fast (milliseconds, before the recursive proving run) on inputs
     /// the private-batch circuit could never prove: each supplied leaf is
     /// cryptographically verified against the pinned leaf verifier, batches
     /// that would fail the circuit's cross-slot constraints (mixed block
-    /// hashes, asset ids, or fee rates) are rejected, and an all-dummy batch
-    /// is refused. Then pads with the dummy template, shuffles, and fills the
-    /// witness.
-    fn build_witness(
-        &self,
-        mut proofs: Vec<ProofWithPublicInputs<F, C, D>>,
-    ) -> Result<PartialWitness<F>> {
+    /// hashes or asset ids) are rejected, an all-dummy batch is refused, and
+    /// the requested outputs are checked against the fee-adjusted burned
+    /// total. Then pads with the dummy template / zero outputs, shuffles the
+    /// leaves, and fills the witness.
+    fn build_witness(&self, inputs: PrivateBatchInputs) -> Result<PartialWitness<F>> {
+        let PrivateBatchInputs {
+            leaf_proofs: mut proofs,
+            mut outputs,
+            volume_fee_bps,
+        } = inputs;
+
         // An empty batch would be padded into an all-dummy proof that settles
         // nothing; a client asking for that is a caller bug. (The intentional
         // all-dummy padding template is built on the circuit-build path, which
@@ -311,18 +332,25 @@ impl PrivateBatchProver {
         if proofs.is_empty() {
             bail!("no leaf proofs to aggregate");
         }
-        if proofs.len() > self.num_leaf_proofs {
+        if proofs.len() > self.shape.num_leaf_proofs {
             bail!(
                 "too many proofs: got {}, expected at most {}",
                 proofs.len(),
-                self.num_leaf_proofs
+                self.shape.num_leaf_proofs
+            );
+        }
+        if outputs.len() > self.shape.num_exit_slots {
+            bail!(
+                "too many outputs: got {}, expected at most {}",
+                outputs.len(),
+                self.shape.num_exit_slots
             );
         }
 
         // If we're going to pad with dummy proofs (asset_id = 0), real proofs must
         // also use asset_id = 0 because the private-batch circuit enforces asset_id
         // equality across all proofs.
-        let num_dummies_needed = self.num_leaf_proofs.saturating_sub(proofs.len());
+        let num_dummies_needed = self.shape.num_leaf_proofs.saturating_sub(proofs.len());
 
         // Validate shape and cryptography up front so a malformed or invalid
         // leaf is rejected at the API boundary instead of panicking inside
@@ -352,26 +380,22 @@ impl PrivateBatchProver {
         }
 
         ensure_leaf_batch_compatible(&proofs)?;
+        ensure_outputs_covered_by_burns(&proofs, &outputs, volume_fee_bps)?;
 
-        // Pad with dummy proofs
+        // Pad with dummy proofs and zero outputs.
         for _ in 0..num_dummies_needed {
             proofs.push(self.dummy_proof_template.clone());
         }
+        outputs.resize(self.shape.num_exit_slots, WithdrawalOutput::default());
 
         let mut rng = rand::thread_rng();
 
         // Uniformly shuffle proofs to hide dummy positions. The circuit selects its block
         // reference from the first non-dummy slot in-circuit, so no position is special.
+        // Nullifiers are emitted in slot order, so this shuffle also randomises the
+        // public nullifier order.
         if proofs.len() > 1 {
             proofs.shuffle(&mut rng);
-        }
-
-        // Independently permute only the emitted nullifier region. The permutation
-        // network proves exact multiset preservation while keeping the mapping from
-        // leaf/exit slots to public nullifier positions private.
-        let mut nullifier_permutation: Vec<usize> = (0..proofs.len()).collect();
-        if nullifier_permutation.len() > 1 {
-            nullifier_permutation.shuffle(&mut rng);
         }
 
         // Generate one dummy nullifier preimage per slot.
@@ -384,28 +408,28 @@ impl PrivateBatchProver {
             &mut partial_witness,
             &self.targets,
             &proofs,
+            &outputs,
+            volume_fee_bps,
             &dummy_nullifier_pre_images,
-            &nullifier_permutation,
         )?;
 
         Ok(partial_witness)
     }
 
-    /// Aggregate a full leaf-proof set into one private-batch proof.
+    /// Aggregate a full leaf-proof set and its requested payouts into one
+    /// private-batch proof.
     ///
     /// This is the intended client (CLI / mobile) entry point: a client knows
-    /// its complete leaf set up front, so there is no queue — pass everything
-    /// at once. Leaf verification and cross-proof compatibility are checked
-    /// fail-fast before the recursive proving run.
+    /// its complete leaf set and payouts up front, so there is no queue — pass
+    /// everything at once. Leaf verification, cross-proof compatibility and
+    /// the fee-adjusted output total are checked fail-fast before the
+    /// recursive proving run.
     ///
     /// Non-consuming: each call fills a fresh witness against the circuit
     /// built at construction, so one prover instance can aggregate any number
     /// of batches without paying the circuit build again.
-    pub fn aggregate(
-        &self,
-        proofs: Vec<ProofWithPublicInputs<F, C, D>>,
-    ) -> Result<ProofWithPublicInputs<F, C, D>> {
-        let partial_witness = self.build_witness(proofs)?;
+    pub fn aggregate(&self, inputs: PrivateBatchInputs) -> Result<ProofWithPublicInputs<F, C, D>> {
+        let partial_witness = self.build_witness(inputs)?;
         self.circuit_data
             .prove(partial_witness)
             .map_err(|e| anyhow!("Failed to prove private-batch aggregation circuit: {}", e))
@@ -422,8 +446,8 @@ impl PrivateBatchProver {
 /// (potentially minutes on the phone-class hardware clients prove on):
 ///
 /// - `asset_id` must match across ALL proofs (dummies included),
-/// - `block_hash` and `volume_fee_bps` must match between non-dummy proofs
-///   (`block_hash == 0` slots are exempt),
+/// - `block_hash` must match between non-dummy proofs (`block_hash == 0`
+///   slots are exempt),
 /// - non-dummy nullifiers must be pairwise DISTINCT, mirroring the circuit's
 ///   real-nullifier uniqueness constraint (dummy slots are exempt: the circuit
 ///   replaces their nullifiers with hashes of fresh random preimages). Without
@@ -440,13 +464,12 @@ impl PrivateBatchProver {
 /// this only improves failure latency and error quality.
 fn ensure_leaf_batch_compatible(proofs: &[ProofWithPublicInputs<F, C, D>]) -> Result<()> {
     use crate::private_batch::circuit::constants::{
-        ASSET_ID_START, BLOCK_HASH_START, NULLIFIER_START, VOLUME_FEE_BPS_START,
+        ASSET_ID_START, BLOCK_HASH_START, NULLIFIER_START,
     };
     use std::collections::HashMap;
 
     struct LeafMeta {
         asset_id: u64,
-        volume_fee_bps: u64,
         block_hash: [u64; 4],
         nullifier: [u64; 4],
     }
@@ -455,7 +478,6 @@ fn ensure_leaf_batch_compatible(proofs: &[ProofWithPublicInputs<F, C, D>]) -> Re
         .iter()
         .map(|proof| LeafMeta {
             asset_id: proof.public_inputs[ASSET_ID_START].to_canonical_u64(),
-            volume_fee_bps: proof.public_inputs[VOLUME_FEE_BPS_START].to_canonical_u64(),
             block_hash: core::array::from_fn(|i| {
                 proof.public_inputs[BLOCK_HASH_START + i].to_canonical_u64()
             }),
@@ -483,7 +505,7 @@ fn ensure_leaf_batch_compatible(proofs: &[ProofWithPublicInputs<F, C, D>]) -> Re
     let mut seen_nullifiers: HashMap<[u64; 4], usize> = HashMap::new();
     for (idx, meta) in metas.iter().enumerate() {
         if meta.block_hash == [0u64; 4] {
-            continue; // dummy sentinel: exempt from block/fee/nullifier consistency
+            continue; // dummy sentinel: exempt from block/nullifier consistency
         }
         match reference {
             None => reference = Some((idx, meta)),
@@ -494,16 +516,6 @@ fn ensure_leaf_batch_compatible(proofs: &[ProofWithPublicInputs<F, C, D>]) -> Re
                          all non-dummy proofs in a private batch must share one block hash",
                         idx,
                         ref_idx
-                    );
-                }
-                if meta.volume_fee_bps != reference.volume_fee_bps {
-                    bail!(
-                        "leaf proof {} has volume_fee_bps={}, but proof {} has volume_fee_bps={}; \
-                         all non-dummy proofs in a private batch must share one fee rate",
-                        idx,
-                        meta.volume_fee_bps,
-                        ref_idx,
-                        reference.volume_fee_bps
                     );
                 }
             }
@@ -528,15 +540,56 @@ fn ensure_leaf_batch_compatible(proofs: &[ProofWithPublicInputs<F, C, D>]) -> Re
     Ok(())
 }
 
+/// Mirror of the circuit's fee constraint,
+/// `sum(outputs) * 10_000 <= sum(real inputs) * (10_000 - volume_fee_bps)`,
+/// so an over-spending batch is rejected before the proving run. Dummy slots
+/// (`block_hash == 0`) contribute no input, exactly as in-circuit.
+fn ensure_outputs_covered_by_burns(
+    proofs: &[ProofWithPublicInputs<F, C, D>],
+    outputs: &[WithdrawalOutput],
+    volume_fee_bps: u32,
+) -> Result<()> {
+    use crate::private_batch::circuit::constants::{BLOCK_HASH_START, INPUT_AMOUNT_START};
+
+    if volume_fee_bps > MAX_VOLUME_FEE_BPS {
+        bail!(
+            "volume_fee_bps {} exceeds the maximum {}",
+            volume_fee_bps,
+            MAX_VOLUME_FEE_BPS
+        );
+    }
+    let total_input: u128 = proofs
+        .iter()
+        .filter(|proof| {
+            proof.public_inputs[BLOCK_HASH_START..BLOCK_HASH_START + 4]
+                .iter()
+                .any(|f| !f.is_zero())
+        })
+        .map(|proof| u128::from(proof.public_inputs[INPUT_AMOUNT_START].to_canonical_u64()))
+        .sum();
+    let total_output: u128 = outputs.iter().map(|o| u128::from(o.amount)).sum();
+    let max_output_scaled = total_input * u128::from(MAX_VOLUME_FEE_BPS - volume_fee_bps);
+    if total_output * u128::from(MAX_VOLUME_FEE_BPS) > max_output_scaled {
+        bail!(
+            "requested outputs total {} but the burned inputs total {} only cover {} after \
+             a {} bps fee",
+            total_output,
+            total_input,
+            max_output_scaled / u128::from(MAX_VOLUME_FEE_BPS),
+            volume_fee_bps
+        );
+    }
+    Ok(())
+}
+
 /// Verify that the dummy leaf proof template is a valid leaf proof carrying the
-/// strong dummy sentinel: `block_hash == 0`, both output amounts zero,
-/// `asset_id == 0`, AND both exit accounts all-zero.
+/// dummy sentinel: `block_hash == 0`, `input_amount == 0` and `asset_id == 0`.
 ///
-/// The private-batch circuit only treats `block_hash == 0` slots as dummies, and
-/// its exit-dedup gadget sums output amounts across matching exit accounts. If a
+/// The private-batch circuit only treats `block_hash == 0` slots as dummies. If a
 /// poisoned `dummy_proof.bin` contained a *real* proof (non-zero block hash or
-/// outputs), every empty slot in a partial batch would replay that payout. This
-/// mirrors `verify_dummy_private_batch_template` at the public-batch layer (#97026).
+/// burn), every empty slot in a partial batch would count that burn towards the
+/// fee check. This mirrors `verify_dummy_private_batch_template` at the
+/// public-batch layer (#97026).
 ///
 /// `asset_id` must be zero because `commit` pads native-asset (`asset_id = 0`)
 /// batches with this template and the circuit enforces asset_id equality across
@@ -565,12 +618,12 @@ pub(crate) fn verify_dummy_leaf_template(
             pis.block_hash
         );
     }
-    if pis.output_amount_1 != 0 || pis.output_amount_2 != 0 {
+    if pis.input_amount != 0 {
         bail!(
-            "dummy leaf proof template has non-zero output amounts ({}, {}); \
-             padding templates must contribute zero to every exit slot",
-            pis.output_amount_1,
-            pis.output_amount_2
+            "dummy leaf proof template has non-zero input_amount {}; padding templates \
+             must authenticate no value (the leaf circuit forces this for the zero \
+             block-hash sentinel, and the wrapper masks dummy inputs as defense in depth)",
+            pis.input_amount
         );
     }
     if pis.asset_id != 0 {
@@ -579,16 +632,6 @@ pub(crate) fn verify_dummy_leaf_template(
              must use the native asset (asset_id = 0) because the circuit enforces \
              asset_id equality across all slots, dummies included",
             pis.asset_id
-        );
-    }
-    if pis.exit_account_1 != BytesDigest::default() || pis.exit_account_2 != BytesDigest::default()
-    {
-        bail!(
-            "dummy leaf proof template has non-zero exit account(s); padding templates \
-             must use the canonical all-zero exit account: the leaf circuit leaves exit \
-             accounts unconstrained, and marked exits would make padded slots \
-             distinguishable in the aggregated output (the wrapper circuit also masks \
-             dummy exits to zero as defense in depth)"
         );
     }
 
@@ -613,15 +656,32 @@ fn generate_dummy_nullifier_pre_images_for_slots(n_slots: usize) -> Vec<[F; 4]> 
 mod tests {
     use super::*;
     use crate::private_batch::circuit::constants::{
-        ASSET_ID_START, BLOCK_HASH_START, NULLIFIER_START as LEAF_NULLIFIER_START,
-        VOLUME_FEE_BPS_START,
+        ASSET_ID_START, BLOCK_HASH_START, INPUT_AMOUNT_START,
+        NULLIFIER_START as LEAF_NULLIFIER_START,
     };
     use plonky2::field::types::Field;
     use qp_wormhole_inputs::{
-        BLOCK_HASH_START_INDEX, EXIT_ACCOUNT_1_START_INDEX, EXIT_ACCOUNT_2_START_INDEX,
-        NULLIFIER_START_INDEX, OUTPUT_AMOUNT_1_INDEX, PUBLIC_INPUTS_FELTS_LEN,
+        BLOCK_HASH_START_INDEX, INPUT_AMOUNT_INDEX, NULLIFIER_START_INDEX, PUBLIC_INPUTS_FELTS_LEN,
     };
     use test_helpers::fake_leaf::{build_fake_leaf_circuit, prove_fake_leaf};
+
+    fn inputs(
+        leaf_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
+        outputs: Vec<WithdrawalOutput>,
+    ) -> PrivateBatchInputs {
+        PrivateBatchInputs {
+            leaf_proofs,
+            outputs,
+            volume_fee_bps: 10,
+        }
+    }
+
+    fn output(amount: u32) -> WithdrawalOutput {
+        WithdrawalOutput {
+            exit_account: BytesDigest::try_from([4u8; 32]).unwrap(),
+            amount,
+        }
+    }
 
     #[test]
     fn dummy_template_with_zero_sentinel_is_accepted() {
@@ -640,7 +700,7 @@ mod tests {
             wormhole_private_batch_circuit_config(),
             leaf.common,
             &leaf.verifier_only,
-            1,
+            PrivateBatchShape::new(1, 2),
             template,
         )
         .unwrap();
@@ -677,43 +737,18 @@ mod tests {
         assert!(err.to_string().contains("non-zero asset_id"), "got: {err}");
     }
 
+    /// The leaf circuit forces a zero-block-hash leaf to burn nothing; a
+    /// template claiming otherwise could only come from a different circuit
+    /// and must be rejected before the cryptographic check.
     #[test]
-    fn dummy_template_with_nonzero_payout_is_rejected() {
+    fn dummy_template_with_nonzero_input_amount_is_rejected() {
         let (leaf, targets) = build_fake_leaf_circuit();
         let mut pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
-        pis[OUTPUT_AMOUNT_1_INDEX] = F::from_canonical_u32(5);
+        pis[INPUT_AMOUNT_INDEX] = F::from_canonical_u32(5);
         let template = prove_fake_leaf(&leaf, &targets, pis);
         let err = verify_dummy_leaf_template(&template, &leaf.verifier_data()).unwrap_err();
         assert!(
-            err.to_string().contains("non-zero output amounts"),
-            "got: {err}"
-        );
-    }
-
-    /// The leaf circuit leaves exit accounts unconstrained and its dummy
-    /// sentinel does not cover them, so a proof can be fully dummy (zero
-    /// block hash, zero amounts) yet carry attacker-chosen exit accounts
-    /// that mark every padded slot in the aggregated output (audit finding:
-    /// incomplete dummy sentinel).
-    #[test]
-    fn dummy_template_with_nonzero_exit_account_is_rejected() {
-        let (leaf, targets) = build_fake_leaf_circuit();
-
-        let mut pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
-        pis[EXIT_ACCOUNT_1_START_INDEX] = F::ONE;
-        let template = prove_fake_leaf(&leaf, &targets, pis);
-        let err = verify_dummy_leaf_template(&template, &leaf.verifier_data()).unwrap_err();
-        assert!(
-            err.to_string().contains("non-zero exit account"),
-            "got: {err}"
-        );
-
-        let mut pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
-        pis[EXIT_ACCOUNT_2_START_INDEX] = F::ONE;
-        let template = prove_fake_leaf(&leaf, &targets, pis);
-        let err = verify_dummy_leaf_template(&template, &leaf.verifier_data()).unwrap_err();
-        assert!(
-            err.to_string().contains("non-zero exit account"),
+            err.to_string().contains("non-zero input_amount"),
             "got: {err}"
         );
     }
@@ -736,10 +771,10 @@ mod tests {
     // Cross-proof batch-compatibility preflight
     // -------------------------------------------------------------------------
 
-    fn leaf_pis(asset_id: u64, volume_fee_bps: u64, block: u64) -> [F; PUBLIC_INPUTS_FELTS_LEN] {
+    fn leaf_pis(asset_id: u64, input_amount: u64, block: u64) -> [F; PUBLIC_INPUTS_FELTS_LEN] {
         let mut pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
         pis[ASSET_ID_START] = F::from_canonical_u64(asset_id);
-        pis[VOLUME_FEE_BPS_START] = F::from_canonical_u64(volume_fee_bps);
+        pis[INPUT_AMOUNT_START] = F::from_canonical_u64(input_amount);
         pis[BLOCK_HASH_START] = F::from_canonical_u64(block);
         pis
     }
@@ -768,13 +803,13 @@ mod tests {
             wormhole_private_batch_circuit_config(),
             leaf.common.clone(),
             &leaf.verifier_only,
-            1,
+            PrivateBatchShape::new(1, 1),
             dummy,
         )
         .unwrap();
 
         let err = prover
-            .build_witness(vec![real])
+            .build_witness(inputs(vec![real], vec![]))
             .expect_err("tampered leaf proof must be rejected at the witness boundary");
         assert!(
             err.to_string().contains("failed verification"),
@@ -841,13 +876,13 @@ mod tests {
             wormhole_private_batch_circuit_config(),
             leaf.common.clone(),
             &leaf.verifier_only,
-            2,
+            PrivateBatchShape::new(2, 1),
             dummy,
         )
         .unwrap();
 
         let err = prover
-            .build_witness(vec![replayed.clone(), replayed])
+            .build_witness(inputs(vec![replayed.clone(), replayed], vec![]))
             .expect_err("replayed leaf proof must be rejected at the witness boundary");
         assert!(err.to_string().contains("same nullifier"), "got: {err}");
     }
@@ -863,15 +898,49 @@ mod tests {
         assert!(err.to_string().contains("different block"), "got: {err}");
     }
 
+    /// Mirror of the in-circuit fee constraint at the commit boundary: outputs
+    /// may claim at most the fee-adjusted burned total; dummy slots burn nothing.
     #[test]
-    fn mixed_fee_leaf_batch_is_rejected() {
+    fn outputs_exceeding_fee_adjusted_burns_are_rejected() {
         let (leaf, targets) = build_fake_leaf_circuit();
         let proofs = vec![
-            prove_fake_leaf(&leaf, &targets, leaf_pis(0, 10, 1)),
-            prove_fake_leaf(&leaf, &targets, leaf_pis(0, 20, 1)),
+            prove_fake_leaf(&leaf, &targets, leaf_pis(0, 1_000, 1)),
+            // Dummy slot carrying a nonzero input_amount must not count.
+            prove_fake_leaf(&leaf, &targets, leaf_pis(0, 1_000, 0)),
         ];
-        let err = ensure_leaf_batch_compatible(&proofs).unwrap_err();
-        assert!(err.to_string().contains("volume_fee_bps"), "got: {err}");
+
+        ensure_outputs_covered_by_burns(&proofs, &[output(500), output(499)], 10)
+            .expect("999 <= 1000 * 0.999");
+        let err =
+            ensure_outputs_covered_by_burns(&proofs, &[output(500), output(500)], 10).unwrap_err();
+        assert!(err.to_string().contains("only cover 999"), "got: {err}");
+
+        let err =
+            ensure_outputs_covered_by_burns(&proofs, &[], MAX_VOLUME_FEE_BPS + 1).unwrap_err();
+        assert!(
+            err.to_string().contains("exceeds the maximum"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn too_many_outputs_are_rejected_before_proving() {
+        let (leaf, targets) = build_fake_leaf_circuit();
+        let dummy = prove_fake_leaf(&leaf, &targets, [F::ZERO; PUBLIC_INPUTS_FELTS_LEN]);
+        let real = prove_fake_leaf(&leaf, &targets, leaf_pis(0, 10, 1));
+        let prover = PrivateBatchProver::new(
+            wormhole_private_batch_circuit_config(),
+            leaf.common.clone(),
+            &leaf.verifier_only,
+            PrivateBatchShape::new(1, 1),
+            dummy,
+        )
+        .unwrap();
+
+        let err = prover
+            .build_witness(inputs(vec![real], vec![output(1), output(1)]))
+            .expect_err("more outputs than exit slots must be rejected");
+        assert!(err.to_string().contains("too many outputs"), "got: {err}");
     }
 
     /// A non-empty batch of only dummy leaf proofs (block_hash == 0) settles

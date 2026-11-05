@@ -12,9 +12,11 @@
 
   Everything else (range checks, C2 wormhole-address derivation, the leaf-hash
   computation, the Merkle walk, and the shared-target equalities) holds for dummy
-  and non-dummy proofs alike. Fee conservation is deliberately absent: it is
-  enforced once over the dummy-masked totals of each private batch in
-  `RPrivateBatch`. `R_leaf` mirrors that split exactly. Shared-target equalities
+  and non-dummy proofs alike, and a dummy additionally burns nothing
+  (`isDummy → inputAmount = 0`). The leaf is a proof of burn: it carries no
+  outputs and no fee. Those are prover-chosen witnesses of the private batch,
+  bound there by one aggregate fee inequality (`RPrivateBatch`). `R_leaf` mirrors
+  that split exactly. Shared-target equalities
   (`nullifier.secret == account.secret`, `transfer_count` agreement,
   `to_account == account_id`) are encoded structurally by reusing the same
   witness fields rather than as separate clauses.
@@ -33,21 +35,14 @@ structure MerkleLevel where
   s2 : Digest
   deriving Repr
 
-/-- The 22-felt intermediate public input vector of a leaf proof (see
-    `qp-wormhole-inputs`).
-    `exitAccount1/2` are public but *unconstrained* at the leaf — they are bound
-    only by the private-batch aggregator — so they deliberately appear here yet are
-    referenced by no clause of `R_leaf`. `inputAmount` is the appended 22nd felt:
-    the private-batch wrapper consumes it for aggregate fee conservation, but it is
-    not forwarded by private- or public-batch proofs. -/
+/-- The 11-felt intermediate public input vector of a leaf proof (see
+    `qp-wormhole-inputs`): `asset_id ‖ nullifier ‖ block_hash ‖ block_number ‖
+    input_amount`. `inputAmount` is the authenticated burn: the private-batch
+    wrapper consumes it for aggregate fee conservation, but it is not forwarded by
+    private- or public-batch proofs. -/
 structure LeafPublic where
   assetId : Felt
-  outputAmount1 : Felt
-  outputAmount2 : Felt
-  volumeFeeBps : Felt
   nullifier : Digest
-  exitAccount1 : Digest
-  exitAccount2 : Digest
   blockHash : Digest
   blockNumber : Felt
   inputAmount : Felt
@@ -74,9 +69,10 @@ structure LeafWitness where
 /-- Maximum ZK-tree depth (`MAX_DEPTH`). -/
 def maxDepth : Nat := 16
 
-/-- `is_dummy` at the *leaf*: `block_hash == 0` AND both outputs `== 0`. -/
-def LeafPublic.isDummy (p : LeafPublic) : Prop :=
-  p.blockHash = Digest.zero ∧ p.outputAmount1 = 0 ∧ p.outputAmount2 = 0
+/-- `is_dummy` at the *leaf*: `block_hash == 0`. The same sentinel the private batch
+    uses (`isDummyPrivateBatch`), so the two layers agree by definition.
+    `abbrev` (reducible) so `Decidable` resolves through it via `DecidableEq Digest`. -/
+abbrev LeafPublic.isDummy (p : LeafPublic) : Prop := p.blockHash = Digest.zero
 
 /-- C4 — block-header preimage, order per `HeaderTargets::collect_to_vec`:
     `parent_hash ‖ block_number ‖ state_root ‖ extrinsics_root ‖ zk_tree_root ‖ digest`. -/
@@ -103,22 +99,20 @@ def computeRoot (ro : RandomOracle) (leaf : Digest) (levels : List MerkleLevel) 
 inputs `p`.
 
 RANGE-CHECK SET (confirmed against `ZkLeaf::collect_32_bit_targets`): the
-unconditional 32-bit checks cover `transfer_count` (both limbs), `asset_id`,
-`input_amount`, `output_amount_1`, `output_amount_2`, and `volume_fee_bps`.
-`block_number`'s 32-bit check lives separately in
-`BlockHeader::circuit_without_hash_binding` (also
-unconditional). The leaf does not impose the binding `volume_fee_bps ≤ 10000`
-check: the private-batch relation imposes it once together with the aggregate fee
-inequality.
+unconditional 32-bit checks cover `transfer_count` (both limbs), `asset_id` and
+`input_amount`. `block_number`'s 32-bit check lives separately in
+`BlockHeader::circuit_without_hash_binding` (also unconditional).
+
+DUMMY BURN. `is_dummy * input_amount = 0` (`build_leaf_constraints`): a padding
+proof authenticates no value. The private batch additionally masks dummy inputs
+out of its fee sum, so this clause is defense in depth there, but it is what makes
+the leaf's `input_amount` trustworthy on its own.
 -/
 def Rleaf (ro : RandomOracle) (p : LeafPublic) (w : LeafWitness) : Prop :=
   -- ── Always-on constraints ────────────────────────────────────────────────
   -- 32-bit range checks (`collect_32_bit_targets` + the block-header check).
-  inRange 32 p.outputAmount1 ∧
-  inRange 32 p.outputAmount2 ∧
   inRange 32 p.inputAmount ∧
   inRange 32 p.assetId ∧
-  inRange 32 p.volumeFeeBps ∧
   inRange 32 p.blockNumber ∧
   w.transferCount.length = 2 ∧
   (∀ t ∈ w.transferCount, inRange 32 t) ∧
@@ -128,6 +122,8 @@ def Rleaf (ro : RandomOracle) (p : LeafPublic) (w : LeafWitness) : Prop :=
   w.levels.length = w.depth ∧
   w.depth ≤ maxDepth ∧
   (∀ lvl ∈ w.levels, lvl.pos < 4) ∧
+  -- A dummy burns nothing (`is_dummy * input_amount = 0`).
+  (p.isDummy → p.inputAmount = 0) ∧
   -- ── Constraints gated on `is_not_dummy` ──────────────────────────────────
   (¬ p.isDummy →
     -- C1 nullifier.

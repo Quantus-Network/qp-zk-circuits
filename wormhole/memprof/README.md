@@ -49,8 +49,8 @@ cargo run -p wormhole-memprof --release -- --num-leaf-proofs 4
 # Force single-threaded to compare against rayon-parallel
 cargo run -p wormhole-memprof --release -- --rayon-threads 1
 
-# CI guard: fail if peak > 1.6 GB
-cargo run -p wormhole-memprof --release -- --peak-target-mb 1600
+# CI guard: fail if peak > 2.4 GB
+cargo run -p wormhole-memprof --release -- --peak-target-mb 2400
 ```
 
 ## Output
@@ -86,7 +86,8 @@ overall peak rss:      1498.3 MB
 | flag | effect |
 | --- | --- |
 | `--num-leaf-proofs N` | Width of the aggregation circuit (production default = 7). |
-| `--real-proofs M` | Real proofs to generate; rest are dummy padding. |
+| `--num-exit-slots M` | Exit slots in the aggregation circuit (production default = 16). |
+| `--real-proofs R` | Real proofs to generate; rest are dummy padding. |
 | `--rayon-threads T` | Limit plonky2's parallel FFT pool. `0` = system default. |
 | `--skip-leaf-gen` | Use cloned dummy proofs; isolates aggregation cost. |
 | `--circuit-only` | Build agg circuit only, don't prove. |

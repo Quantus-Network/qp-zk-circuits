@@ -8,6 +8,7 @@ use test_helpers::TestInputs;
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use wormhole_circuit::inputs::CircuitInputs;
 use wormhole_verifier::WormholeVerifier;
+use zk_circuits_common::circuit::wormhole_leaf_circuit_config;
 
 /// The circuit crate must not expose a deserializer for the full leaf
 /// `CircuitData`. A full `CircuitData` carries prover-only data (witness
@@ -26,7 +27,7 @@ use wormhole_verifier::WormholeVerifier;
 fn full_circuit_data_loader_is_not_exposed() {
     // `wormhole_circuit::circuit` intentionally only exposes `circuit_logic`.
     // Building from source is the only way to obtain leaf CircuitData.
-    let config = CircuitConfig::standard_recursion_config();
+    let config = wormhole_leaf_circuit_config();
     let circuit_data = WormholeCircuit::new(config)
         .expect("valid circuit config")
         .build_circuit();
@@ -77,7 +78,7 @@ fn test_prover_and_verifier_from_file_e2e() -> Result<()> {
     fs::create_dir_all(temp_dir)?;
 
     // Generate circuit and write component files to the temporary directory.
-    let config = CircuitConfig::standard_recursion_config();
+    let config = wormhole_leaf_circuit_config();
     let circuit_data = WormholeCircuit::new(config)
         .expect("valid circuit config")
         .build_circuit();

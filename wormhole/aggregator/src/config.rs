@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 pub use qp_wormhole_inputs::validate_proof_count;
+use qp_wormhole_inputs::PrivateBatchShape;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -18,7 +19,10 @@ pub use qp_wormhole_inputs::MAX_PROOF_COUNT;
 /// aggregator (to load config when aggregating proofs).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CircuitBinsConfig {
+    /// Number of leaf proofs per private batch.
     pub num_leaf_proofs: usize,
+    /// Number of exit (output) slots per private batch.
+    pub num_exit_slots: usize,
     /// Number of private-batch proofs per public batch (None = private batch only).
     /// Accepts the legacy `num_layer0_proofs` key when loading older config.json files.
     #[serde(alias = "num_layer0_proofs")]
@@ -30,15 +34,21 @@ impl CircuitBinsConfig {
     ///
     /// # Errors
     /// Returns an error if:
-    /// - `num_leaf_proofs` is 0 or exceeds `MAX_PROOF_COUNT`
+    /// - `shape.num_leaf_proofs` or `shape.num_exit_slots` is 0 or exceeds `MAX_PROOF_COUNT`
     /// - `num_private_batch_proofs` is `Some(0)` or exceeds `MAX_PROOF_COUNT`
-    pub fn new(num_leaf_proofs: usize, num_private_batch_proofs: Option<usize>) -> Result<Self> {
+    pub fn new(shape: PrivateBatchShape, num_private_batch_proofs: Option<usize>) -> Result<Self> {
         let config = Self {
-            num_leaf_proofs,
+            num_leaf_proofs: shape.num_leaf_proofs,
+            num_exit_slots: shape.num_exit_slots,
             num_private_batch_proofs,
         };
         config.validate()?;
         Ok(config)
+    }
+
+    /// Leaf-proof and exit-slot counts of the private-batch circuit.
+    pub fn private_batch_shape(&self) -> PrivateBatchShape {
+        PrivateBatchShape::new(self.num_leaf_proofs, self.num_exit_slots)
     }
 
     /// Validate the config values.
@@ -46,7 +56,7 @@ impl CircuitBinsConfig {
     /// # Errors
     /// Returns an error if proof counts are zero or exceed `MAX_PROOF_COUNT`.
     pub fn validate(&self) -> Result<()> {
-        validate_proof_count(self.num_leaf_proofs, "num_leaf_proofs")?;
+        self.private_batch_shape().validate()?;
         if let Some(n) = self.num_private_batch_proofs {
             validate_proof_count(n, "num_private_batch_proofs")?;
         }
@@ -89,7 +99,7 @@ impl CircuitBinsConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{CircuitBinsConfig, MAX_PROOF_COUNT};
+    use super::{CircuitBinsConfig, PrivateBatchShape, MAX_PROOF_COUNT};
     use std::{
         fs,
         path::PathBuf,
@@ -110,11 +120,11 @@ mod tests {
     fn config_round_trip() {
         let dir = temp_dir("round-trip");
 
-        let config = CircuitBinsConfig::new(7, Some(4)).unwrap();
+        let config = CircuitBinsConfig::new(PrivateBatchShape::new(7, 3), Some(4)).unwrap();
         config.save(&dir).unwrap();
 
         let loaded = CircuitBinsConfig::load(&dir).unwrap();
-        assert_eq!(loaded.num_leaf_proofs, 7);
+        assert_eq!(loaded.private_batch_shape(), PrivateBatchShape::new(7, 3));
         assert_eq!(loaded.num_private_batch_proofs, Some(4));
 
         fs::remove_dir_all(dir).unwrap();
@@ -124,11 +134,12 @@ mod tests {
     fn config_without_public_batch() {
         let dir = temp_dir("no-public_batch");
 
-        let config = CircuitBinsConfig::new(8, None).unwrap();
+        let config = CircuitBinsConfig::new(PrivateBatchShape::new(8, 8), None).unwrap();
         config.save(&dir).unwrap();
 
         let loaded = CircuitBinsConfig::load(&dir).unwrap();
         assert_eq!(loaded.num_leaf_proofs, 8);
+        assert_eq!(loaded.num_exit_slots, 8);
         assert_eq!(loaded.num_private_batch_proofs, None);
 
         fs::remove_dir_all(dir).unwrap();
@@ -136,13 +147,19 @@ mod tests {
 
     #[test]
     fn new_rejects_zero_num_leaf_proofs() {
-        let err = CircuitBinsConfig::new(0, Some(4)).unwrap_err();
+        let err = CircuitBinsConfig::new(PrivateBatchShape::new(0, 4), Some(4)).unwrap_err();
         assert!(err.to_string().contains("num_leaf_proofs must be > 0"));
     }
 
     #[test]
+    fn new_rejects_zero_num_exit_slots() {
+        let err = CircuitBinsConfig::new(PrivateBatchShape::new(4, 0), Some(4)).unwrap_err();
+        assert!(err.to_string().contains("num_exit_slots must be > 0"));
+    }
+
+    #[test]
     fn new_rejects_zero_num_private_batch_proofs() {
-        let err = CircuitBinsConfig::new(16, Some(0)).unwrap_err();
+        let err = CircuitBinsConfig::new(PrivateBatchShape::new(16, 16), Some(0)).unwrap_err();
         assert!(err
             .to_string()
             .contains("num_private_batch_proofs must be > 0"));
@@ -150,13 +167,15 @@ mod tests {
 
     #[test]
     fn new_rejects_excessive_num_leaf_proofs() {
-        let err = CircuitBinsConfig::new(MAX_PROOF_COUNT + 1, None).unwrap_err();
+        let err = CircuitBinsConfig::new(PrivateBatchShape::new(MAX_PROOF_COUNT + 1, 1), None)
+            .unwrap_err();
         assert!(err.to_string().contains("exceeds maximum"));
     }
 
     #[test]
     fn new_rejects_excessive_num_private_batch_proofs() {
-        let err = CircuitBinsConfig::new(16, Some(MAX_PROOF_COUNT + 1)).unwrap_err();
+        let err = CircuitBinsConfig::new(PrivateBatchShape::new(16, 16), Some(MAX_PROOF_COUNT + 1))
+            .unwrap_err();
         assert!(err.to_string().contains("exceeds maximum"));
     }
 
@@ -164,11 +183,24 @@ mod tests {
     fn load_rejects_invalid_config() {
         let dir = temp_dir("invalid-config");
         // Write a config with zero num_leaf_proofs directly (bypassing new())
-        let invalid_json = r#"{"num_leaf_proofs": 0, "num_private_batch_proofs": 4}"#;
+        let invalid_json =
+            r#"{"num_leaf_proofs": 0, "num_exit_slots": 4, "num_private_batch_proofs": 4}"#;
         fs::write(dir.join("config.json"), invalid_json).unwrap();
 
         let err = CircuitBinsConfig::load(&dir).unwrap_err();
         assert!(err.to_string().contains("num_leaf_proofs must be > 0"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn load_rejects_config_without_num_exit_slots() {
+        let dir = temp_dir("legacy-config");
+        let legacy_json = r#"{"num_leaf_proofs": 4, "num_private_batch_proofs": 4}"#;
+        fs::write(dir.join("config.json"), legacy_json).unwrap();
+
+        let err = CircuitBinsConfig::load(&dir).unwrap_err();
+        assert!(err.to_string().contains("num_exit_slots"), "got: {err}");
 
         fs::remove_dir_all(dir).unwrap();
     }

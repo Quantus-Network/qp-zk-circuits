@@ -1,97 +1,63 @@
 //! Private-batch aggregation constants and public-input layout helpers.
 
-/// Public inputs per leaf proof (Bitcoin-style 2-output layout)
+/// Public inputs per leaf proof (proof of burn).
 ///
 /// Layout:
 /// - asset_id(1)
-/// - output_amount_1(1)
-/// - output_amount_2(1)
-/// - volume_fee_bps(1)
 /// - nullifier(4)
-/// - exit_account_1(4) - 4 felts (8 bytes/felt) for hash-derived accounts
-/// - exit_account_2(4) - 4 felts (8 bytes/felt) for hash-derived accounts
-/// - block_hash(4)
+/// - block_hash(4) - all zeros marks a dummy
 /// - block_number(1)
 /// - input_amount(1) - intermediate only, not forwarded by aggregation
 ///
-/// Total = 22 felts
-pub const LEAF_PI_LEN: usize = 22;
+/// Total = 11 felts
+pub const LEAF_PI_LEN: usize = qp_wormhole_inputs::PUBLIC_INPUTS_FELTS_LEN;
 
-pub const ASSET_ID_START: usize = 0; // 1 felt
-pub const OUTPUT_AMOUNT_1_START: usize = 1; // 1 felt
-pub const OUTPUT_AMOUNT_2_START: usize = 2; // 1 felt
-pub const VOLUME_FEE_BPS_START: usize = 3; // 1 felt
-pub const NULLIFIER_START: usize = 4; // 4 felts
-pub const EXIT_1_START: usize = 8; // 4 felts
-pub const EXIT_2_START: usize = 12; // 4 felts
-pub const BLOCK_HASH_START: usize = 16; // 4 felts
-pub const BLOCK_NUMBER_START: usize = 20; // 1 felt
-pub const INPUT_AMOUNT_START: usize = 21; // 1 felt
+pub const ASSET_ID_START: usize = qp_wormhole_inputs::ASSET_ID_INDEX; // 1 felt
+pub const NULLIFIER_START: usize = qp_wormhole_inputs::NULLIFIER_START_INDEX; // 4 felts
+pub const BLOCK_HASH_START: usize = qp_wormhole_inputs::BLOCK_HASH_START_INDEX; // 4 felts
+pub const BLOCK_NUMBER_START: usize = qp_wormhole_inputs::BLOCK_NUMBER_INDEX; // 1 felt
+pub const INPUT_AMOUNT_START: usize = qp_wormhole_inputs::INPUT_AMOUNT_INDEX; // 1 felt
 
-/// Private-batch aggregated proof output layout constants.
+/// Private-batch aggregated proof output layout.
 ///
-/// Output layout:
 /// ```text
 /// [num_exit_slots(1), asset_id(1), volume_fee_bps(1),
 ///  block_hash(4), block_number(1),
-///  [sum(1), exit_account(4)] * (2*N),
-///  nullifier(4) * N,
-///  padding...]
+///  [amount(1), exit_account(4)] * M,
+///  nullifier(4) * N]
 /// ```
 ///
-/// The `num_leaves`-parameterized helpers use UNCHECKED arithmetic and assume
-/// the count was already bounded with
-/// [`validate_proof_count`](qp_wormhole_inputs::validate_proof_count)
-/// (`1..=MAX_PROOF_COUNT`), per the repo-wide invariant that every externally
-/// supplied batch dimension is validated at its API boundary before any
-/// allocation or arithmetic. Do not feed them raw untrusted counts: an
-/// astronomical value would wrap in release builds.
+/// where `M = shape.num_exit_slots` and `N = shape.num_leaf_proofs`.
+///
+/// The shape-parameterized helpers use UNCHECKED arithmetic and assume the
+/// shape was already bounded with
+/// [`PrivateBatchShape::validate`](qp_wormhole_inputs::PrivateBatchShape::validate),
+/// per the repo-wide invariant that every externally supplied batch dimension
+/// is validated at its API boundary before any allocation or arithmetic.
 pub mod aggregated_output {
-    use super::LEAF_PI_LEN;
+    pub use qp_wormhole_inputs::private_batch_pi::{
+        exit_slots_start, nullifiers_start, pi_len, EXIT_SLOT_LEN, HEADER_LEN, NULLIFIER_LEN,
+    };
+    use qp_wormhole_inputs::{private_batch_pi, PrivateBatchShape};
 
     /// Offset of `num_exit_slots` in the output PIs.
-    pub const NUM_EXIT_SLOTS_OFFSET: usize = 0;
+    pub const NUM_EXIT_SLOTS_OFFSET: usize = private_batch_pi::NUM_EXIT_SLOTS_INDEX;
     /// Offset of `asset_id` in the output PIs.
-    pub const ASSET_ID_OFFSET: usize = 1;
+    pub const ASSET_ID_OFFSET: usize = private_batch_pi::ASSET_ID_INDEX;
     /// Offset of `volume_fee_bps` in the output PIs.
-    pub const VOLUME_FEE_BPS_OFFSET: usize = 2;
+    pub const VOLUME_FEE_BPS_OFFSET: usize = private_batch_pi::VOLUME_FEE_BPS_INDEX;
     /// Offset of `block_hash` (4 felts) in the output PIs.
-    pub const BLOCK_HASH_OFFSET: usize = 3;
+    pub const BLOCK_HASH_OFFSET: usize = private_batch_pi::BLOCK_HASH_START_INDEX;
     /// Offset of `block_number` in the output PIs.
-    pub const BLOCK_NUMBER_OFFSET: usize = 7;
+    pub const BLOCK_NUMBER_OFFSET: usize = private_batch_pi::BLOCK_NUMBER_INDEX;
 
-    /// Length of fixed header before exit-slot data.
-    pub const HEADER_LEN: usize = 8;
-
-    /// Each exit slot is [sum(1), exit_account(4)] = 5 felts.
-    pub const EXIT_SLOT_LEN: usize = 5;
-
-    /// Number of exit slots for N leaves (2 outputs per leaf).
-    pub const fn exit_slots_count(num_leaves: usize) -> usize {
-        num_leaves * 2
+    /// Number of exit slots in the output.
+    pub const fn exit_slots_count(shape: PrivateBatchShape) -> usize {
+        shape.num_exit_slots
     }
 
-    /// Number of nullifiers for N leaves (one per leaf proof).
-    pub const fn nullifiers_count(num_leaves: usize) -> usize {
-        num_leaves
-    }
-
-    /// Offset where exit-slot region starts.
-    pub const fn exit_slots_start() -> usize {
-        HEADER_LEN
-    }
-
-    /// Offset where nullifier region starts.
-    pub const fn nullifiers_start(num_leaves: usize) -> usize {
-        HEADER_LEN + exit_slots_count(num_leaves) * EXIT_SLOT_LEN
-    }
-
-    /// Total public-input length for the private-batch aggregation circuit.
-    ///
-    /// We intentionally pad to `N * LEAF_PI_LEN + 8` to match the legacy wrapper sizing:
-    /// - merged root PI length = `N * LEAF_PI_LEN`
-    /// - wrapper output length = `merged_root_len + 8`
-    pub const fn pi_len(num_leaves: usize) -> usize {
-        LEAF_PI_LEN * num_leaves + 8
+    /// Number of nullifiers in the output (one per leaf proof).
+    pub const fn nullifiers_count(shape: PrivateBatchShape) -> usize {
+        shape.num_leaf_proofs
     }
 }

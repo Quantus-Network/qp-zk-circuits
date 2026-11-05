@@ -9,16 +9,15 @@ wormhole transactions.
 
 **Public Inputs:**
 
+The leaf circuit is a proof of burn: it authenticates that a deposit of `input_amount` was
+made at the committed block and that the prover knows its spend credential. It carries no
+outputs; payouts are chosen at the private-batch layer.
+
 - `asset_id`: The asset ID (0 for native token).
-- `output_amount_1`: The spend amount, exposed as a `u32` quantized with 0.01 units of precision (human-readable amount × 10^2). On-chain, the amount is stored as a `u128` with 12 decimal places; during on-chain verification, we reconstruct this `u128` by multiplying `output_amount_1` by 10^10 (so that 10^2 × 10^10 = 10^12 total decimal precision).
-- `output_amount_2`: The optional change amount, also quantized with 0.01 units of precision (set to 0 if unused).
-- `volume_fee_bps`: The fee rate in basis points (1 bps = 0.01%). Verified on-chain to match runtime configuration.
 - `nullifier`: A transaction-specific value derived from private information (`H(H(salt || secret || transfer_count))`). The circuit proves it is *well-formed* — bound to the deposit being spent — so each deposit event yields exactly one valid nullifier. Actual double-spend prevention (rejecting a nullifier that was already settled) happens **on-chain in the wormhole pallet**, not in the proof; see [Nullifiers and Double-Spend Prevention](#nullifiers-and-double-spend-prevention-security-model).
-- `exit_account_1`: The public address where `output_amount_1` is intended to be sent.
-- `exit_account_2`: The public address where `output_amount_2` is intended to be sent (set to all zeros if unused).
-- `block_hash`: A commitment (Poseidon2 hash) to the block header fields used inside the circuit.
+- `block_hash`: A commitment (Poseidon2 hash) to the block header fields used inside the circuit. All zeros marks a dummy padding proof.
 - `block_number`: The block height corresponding to `block_hash`. This is public so the verifier/aggregator can check that it matches the associated header and enforce the single-block storage proof constraint in aggregation.
-- `input_amount`: The amount authenticated by the spent ZK-tree leaf, quantized with 0.01 units of precision. This final leaf PI is consumed by the local private-batch wrapper and is not forwarded by private- or public-batch proofs.
+- `input_amount`: The amount authenticated by the spent ZK-tree leaf, exposed as a `u32` quantized with 0.01 units of precision (human-readable amount × 10^2). On-chain, amounts are stored as `u128` with 12 decimal places; the chain reconstructs this by multiplying by 10^10. This final leaf PI is consumed by the local private-batch wrapper and is not forwarded by private- or public-batch proofs.
 
 **Private Inputs:**
 
@@ -42,7 +41,7 @@ wormhole transactions.
 
 1. **Dummy Proof Detection**
 
-   - If `block_hash == 0` and both `output_amount_1 == 0` and `output_amount_2 == 0`, the circuit treats the proof as a dummy and skips the storage proof, header, and nullifier checks. This enables universal dummy proofs for aggregation padding.
+   - If `block_hash == 0`, the circuit treats the proof as a dummy and skips the storage proof, header, and nullifier checks, and constrains `input_amount == 0`. This enables universal dummy proofs for aggregation padding.
 
 2. **Nullifier Derivation**
 
@@ -61,13 +60,13 @@ wormhole transactions.
      1. Compares the expected hash against the hash of the current node (verifies inclusion).
      2. Updates the expected hash to be equal to the hash of the current node.
      3. If this node is the leaf node: additionally verifies that it includes the hash of the leaf inputs (transfer event).
-   - The authenticated `input_amount` is appended to the intermediate leaf public inputs. The leaf does not impose a per-input output cap.
+   - The authenticated `input_amount` is appended to the intermediate leaf public inputs.
 
-5. **Private-Batch Fee Constraint**
+5. **Private-Batch Outputs and Fee Constraint**
 
-   - The first aggregation layer masks dummy inputs and outputs, sums every real leaf, and enforces one settlement-segment inequality:
+   - The first aggregation layer takes `M` prover-chosen `(exit_account, amount)` exit slots and the batch `volume_fee_bps` as witnesses, exposes them as public inputs, masks dummy inputs, sums every real leaf, and enforces one settlement-segment inequality:
      `(sum_outputs * 10000) <= (sum_inputs * (10000 - volume_fee_bps))`.
-   - This permits value pooling across leaves while preserving the two output slots per leaf. The input total remains internal to the wrapper.
+   - Outputs are decoupled from inputs: one burn may be split across many exit slots and many burns may be pooled into one. The input total remains internal to the wrapper.
 
 6. **Block Header Commitment Verification**
 
@@ -128,12 +127,13 @@ inside any circuit in this repository**. The layers split the work as follows.
   unspendable (deposit) account, and the same `transfer_count` that appears in the storage
   proof leaf. This binds the nullifier to exactly one funded deposit event: a prover cannot
   choose the nullifier independently of the deposit it is spending, and one deposit event
-  yields exactly one valid nullifier. (Dummy padding proofs — `block_hash == 0` and zero
-  outputs — are exempt from this binding; see below.)
+  yields exactly one valid nullifier. (Dummy padding proofs — `block_hash == 0`, which
+  forces `input_amount == 0` — are exempt from this binding; see below.)
 - **Private-batch circuit**: requires real nullifiers to be pairwise distinct within the
-  private segment. For dummy slots it substitutes the hash of a fresh random preimage, then
-  privately permutes the selected nullifiers into the aggregate public inputs. The switch
-  network proves exact multiset preservation without changing any nullifier contents.
+  private segment. For dummy slots it substitutes the hash of a fresh random preimage and
+  emits the nullifiers in leaf-slot order. The prover shuffles the leaf slots before
+  proving, and exit slots are independent witnesses, so the public order reveals nothing
+  about which slots are real or which burn funds which payout.
 - **Public-batch circuit**: forwards the private-batch public inputs (including all
   nullifiers) verbatim into its own public inputs.
 
@@ -203,12 +203,24 @@ entirely, the pallet's nullifier set would still prevent any double spend.
 
 ## Aggregation System
 
-The aggregator combines `N` leaf proofs into a single proof with a fixed public input layout. Key behaviors:
+The aggregator combines `N` leaf proofs and `M` exit slots into a single proof with a fixed public input layout
+`[M, asset_id, volume_fee_bps, block_hash(4), block_number] ++ M × (amount, exit_account(4)) ++ N × nullifier(4)`.
+`N` (`--num-leaf-proofs`) and `M` (`--num-exit-slots`) are independent circuit parameters; the production shape is `N = 7`, `M = 16`.
+The leaf verifiers dominate the private-batch circuit (about 2.4k gates per leaf), while each exit slot costs roughly one gate plus
+five public inputs, so `M` can be raised up to the cap of 64 without changing the circuit degree. Measured degree by `N` with the
+production config: `N <= 3` fits `2^14`, `4..=10` fits `2^15`, `11..=23` fits `2^16`, `24+` needs `2^17`.
+
+The leaf and private batch target 128 conjectured bits (`num_query_rounds * rate_bits + proof_of_work_bits`). The leaf uses a
+large FRI blowup (`rate_bits = 7`, 16 queries) because its 2^8-row circuit makes the blowup nearly free while every query it saves
+removes ~110 gates from each recursive verification in the private batch; the private batch uses `rate_bits = 4`, 27 queries and 20
+proof-of-work bits so that its proofs cost the public batch the same per-proof gates as the previous 100-bit config. The public
+batch still uses Plonky2's `standard_recursion_config` (28 queries, `rate_bits = 3`, 16 proof-of-work bits: 100 conjectured bits);
+raising it is deferred to the GPU public-batch prover work. Key behaviors:
 
 - **Single-block storage proof constraint**: All real proofs (non-zero `block_hash`) must reference the same block for storage proofs.
-- **Two outputs per proof**: Each leaf supports `exit_account_1`/`output_amount_1` and `exit_account_2`/`output_amount_2`. Aggregation outputs 2\*`N` exit slots.
-- **Privacy via dummy hiding**: Proofs are uniformly shuffled before aggregation; the circuit selects reference values from the first non-dummy slot in-circuit, so no slot position is special. Duplicate exit slots are zeroed (both sum and `exit_account`), making them indistinguishable from dummy padding slots.
-- **Dynamic dummy proofs**: Dummy proofs are generated on-the-fly for padding. They use sentinel values (`block_hash = 0`, `output_amount_1 = 0`, `output_amount_2 = 0`, `exit_account = 0`) so the leaf circuit can bypass validation. No dummy proof binaries are checked in.
+- **Outputs on the batch**: Exit slots are prover-chosen witnesses bound by the batch-wide fee inequality, not per-leaf fields. Slots are forwarded verbatim; unused slots are `(0, zero account)` and several slots may name the same account.
+- **Privacy via dummy hiding**: Proofs are uniformly shuffled before aggregation; the circuit selects reference values from the first non-dummy slot in-circuit, so no slot position is special.
+- **Dynamic dummy proofs**: Dummy proofs are generated on-the-fly for padding. They use the sentinel `block_hash = 0` (which forces `input_amount = 0`) so the leaf circuit can bypass validation. No dummy proof binaries are checked in.
 - **Public input types**: Public input parsing and aggregated outputs live in `wormhole/inputs` (`qp-wormhole-inputs`) and are shared by the circuit, prover, verifier, and aggregator.
 
 ## Testing
@@ -220,12 +232,12 @@ To run the tests for this circuit, please follow the instructions in the [tests]
 The circuit builder generates leaf and aggregated circuit binaries alongside a `config.json` with aggregation configuration.
 Re-run this after any circuit changes.
 
-The `--num-leaf-proofs` and `--num-private-batch-proofs` flags control the number of proofs aggregated at each layer. For example, if you want to aggregate 16 leaf proofs per public-batch proof, and then aggregate 4 public-batch proofs per layer-2 proof, you would set `--num-leaf-proofs` to 16 and `--num-private-batch-proofs` to 4. The `--num-private-batch-proofs` flag is optional if you only need private-batch aggregation support.
+The `--num-leaf-proofs` and `--num-private-batch-proofs` flags control the number of proofs aggregated at each layer, and `--num-exit-slots` sets the number of exit slots per private batch (default 16; `scripts/build-circuits.sh` defaults to `7 16`). For example, if you want to aggregate 16 leaf proofs per private-batch proof, and then aggregate 4 private-batch proofs per public-batch proof, you would set `--num-leaf-proofs` to 16 and `--num-private-batch-proofs` to 4. The `--num-private-batch-proofs` flag is optional if you only need private-batch aggregation support.
 
 To build the circuit binary, run the following command from the root of the workspace:
 
 ```sh
-cargo run --release -p qp-wormhole-circuit-builder -- --num-leaf-proofs <N> [--num-private-batch-proofs <N>] --output generated-bins
+cargo run --release -p qp-wormhole-circuit-builder -- --num-leaf-proofs <N> [--num-exit-slots <M>] [--num-private-batch-proofs <N>] --output generated-bins
 ```
 
 This creates `common.bin`, `verifier.bin`, `private_batch_common.bin`, `private_batch_verifier.bin`, `dummy_proof.bin`,

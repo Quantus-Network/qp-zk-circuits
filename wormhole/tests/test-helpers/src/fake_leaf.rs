@@ -7,19 +7,18 @@
 use plonky2::{
     iop::{target::Target, witness::WitnessWrite},
     plonk::{
-        circuit_builder::CircuitBuilder, circuit_data::CircuitConfig, circuit_data::CircuitData,
-        proof::ProofWithPublicInputs,
+        circuit_builder::CircuitBuilder, circuit_data::CircuitData, proof::ProofWithPublicInputs,
     },
 };
-use qp_wormhole_inputs::INPUT_AMOUNT_INDEX;
 use qp_wormhole_inputs::PUBLIC_INPUTS_FELTS_LEN as LEAF_PI_LEN;
-use zk_circuits_common::circuit::{C, D, F};
+use qp_wormhole_inputs::{ASSET_ID_INDEX, BLOCK_NUMBER_INDEX, INPUT_AMOUNT_INDEX};
+use zk_circuits_common::circuit::{wormhole_leaf_circuit_config, C, D, F};
 
 /// Build a fake leaf circuit whose public inputs match the Wormhole leaf PI layout.
 ///
 /// Returns the circuit data and the public input targets.
 pub fn build_fake_leaf_circuit() -> (CircuitData<F, C, D>, [Target; LEAF_PI_LEN]) {
-    let config = CircuitConfig::standard_recursion_config();
+    let config = wormhole_leaf_circuit_config();
     let mut builder = CircuitBuilder::<F, D>::new(config);
 
     let pis_vec = builder.add_virtual_targets(LEAF_PI_LEN);
@@ -28,10 +27,9 @@ pub fn build_fake_leaf_circuit() -> (CircuitData<F, C, D>, [Target; LEAF_PI_LEN]
         .try_into()
         .expect("exactly LEAF_PI_LEN targets");
 
-    // Minimal constraints to mimic real leaf circuit
-    builder.range_check(pis[1], 32); // output_amount_1
-    builder.range_check(pis[2], 32); // output_amount_2
-    builder.range_check(pis[3], 32); // volume_fee_bps
+    // Minimal constraints to mimic the real leaf circuit's 32-bit fields.
+    builder.range_check(pis[ASSET_ID_INDEX], 32);
+    builder.range_check(pis[BLOCK_NUMBER_INDEX], 32);
     builder.range_check(pis[INPUT_AMOUNT_INDEX], 32);
 
     builder.register_public_inputs(&pis_vec);

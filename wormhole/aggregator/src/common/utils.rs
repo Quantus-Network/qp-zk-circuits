@@ -11,7 +11,7 @@ use plonky2::{
     },
     util::serialization::DefaultGateSerializer,
 };
-use qp_wormhole_inputs::validate_proof_count;
+use qp_wormhole_inputs::{private_batch_shape_from_pis, PrivateBatchShape};
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use zk_circuits_common::circuit::{
     wormhole_leaf_circuit_config, wormhole_private_batch_circuit_config,
@@ -20,7 +20,7 @@ use zk_circuits_common::circuit::{
 
 use crate::private_batch::circuit::{
     circuit_logic::PrivateBatchCircuit,
-    constants::{aggregated_output, ASSET_ID_START, LEAF_PI_LEN},
+    constants::{ASSET_ID_START, LEAF_PI_LEN},
 };
 use crate::public_batch::circuit::circuit_logic::PublicBatchCircuit;
 
@@ -168,7 +168,7 @@ pub fn load_canonical_leaf_verifier_data(
 }
 
 /// Load private-batch verifier data pinned to the canonical private-batch circuit for
-/// `num_leaf_proofs`. `leaf` must be canonical leaf verifier data (loaded pinned or rebuilt).
+/// `shape`. `leaf` must be canonical leaf verifier data (loaded pinned or rebuilt).
 ///
 /// The untrusted artifact bytes are compared to the canonical serialization
 /// without deserializing them — see [`ensure_artifact_bytes_match_canonical`].
@@ -176,9 +176,9 @@ pub fn load_canonical_private_batch_verifier_data(
     common_bytes: &[u8],
     verifier_only_bytes: &[u8],
     leaf: &VerifierCircuitData<F, C, D>,
-    num_leaf_proofs: usize,
+    shape: PrivateBatchShape,
 ) -> Result<VerifierCircuitData<F, C, D>> {
-    let canonical = canonical_private_batch_verifier_data(leaf, num_leaf_proofs)?;
+    let canonical = canonical_private_batch_verifier_data(leaf, shape)?;
     ensure_artifact_bytes_match_canonical(
         common_bytes,
         verifier_only_bytes,
@@ -270,13 +270,13 @@ pub fn canonical_leaf_verifier_data() -> VerifierCircuitData<F, C, D> {
 
 pub fn canonical_private_batch_verifier_data(
     leaf: &VerifierCircuitData<F, C, D>,
-    num_leaf_proofs: usize,
+    shape: PrivateBatchShape,
 ) -> Result<VerifierCircuitData<F, C, D>> {
     Ok(PrivateBatchCircuit::new(
         wormhole_private_batch_circuit_config(),
         &leaf.common,
         &leaf.verifier_only,
-        num_leaf_proofs,
+        shape,
     )?
     .build_verifier())
 }
@@ -284,14 +284,14 @@ pub fn canonical_private_batch_verifier_data(
 pub fn canonical_public_batch_verifier_data(
     private_batch: &VerifierCircuitData<F, C, D>,
     num_private_batch_proofs: usize,
-    num_leaf_proofs: usize,
+    shape: PrivateBatchShape,
 ) -> Result<VerifierCircuitData<F, C, D>> {
     Ok(PublicBatchCircuit::new(
         wormhole_public_batch_circuit_config(),
         private_batch.common.clone(),
         &private_batch.verifier_only,
         num_private_batch_proofs,
-        num_leaf_proofs,
+        shape,
     )?
     .build_verifier())
 }
@@ -565,41 +565,22 @@ pub fn leaf_proof_asset_id(proof: &ProofWithPublicInputs<F, C, D>) -> Result<u32
         .map_err(|_| anyhow!("leaf proof asset_id exceeds u32 range"))
 }
 
-pub fn private_batch_num_leaves_from_padded_pi_len(pi_len: usize) -> Result<usize> {
-    if pi_len < aggregated_output::HEADER_LEN {
-        return Err(anyhow!(
-            "private-batch aggregated public input length {} is smaller than the fixed header {}",
-            pi_len,
-            aggregated_output::HEADER_LEN
-        ));
-    }
-
-    let payload_len = pi_len - aggregated_output::HEADER_LEN;
-    if !payload_len.is_multiple_of(LEAF_PI_LEN) {
-        return Err(anyhow!(
-            "private-batch aggregated public input length {} is malformed: expected {} + N*{}",
-            pi_len,
-            aggregated_output::HEADER_LEN,
-            LEAF_PI_LEN
-        ));
-    }
-
-    let num_leaves = payload_len / LEAF_PI_LEN;
-    validate_proof_count(num_leaves, "private-batch num_leaves")?;
-
-    Ok(num_leaves)
+/// Recover the [`PrivateBatchShape`] a private-batch proof was produced for
+/// from its public inputs (header exit-slot count + total length).
+pub fn private_batch_shape_from_proof(
+    proof: &ProofWithPublicInputs<F, C, D>,
+) -> Result<PrivateBatchShape> {
+    let u64s: Vec<u64> = proof
+        .public_inputs
+        .iter()
+        .map(|f| f.to_canonical_u64())
+        .collect();
+    private_batch_shape_from_pis(&u64s)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::private_batch_num_leaves_from_padded_pi_len;
     use super::{commit_artifact_set, read_artifact_file, MAX_ARTIFACT_FILE_BYTES};
-
-    #[test]
-    fn private_batch_num_leaves_from_padded_pi_len_rejects_malformed_lengths() {
-        let err = private_batch_num_leaves_from_padded_pi_len(9).unwrap_err();
-        assert!(err.to_string().contains("malformed"));
-    }
 
     /// Pinning must compare raw artifact bytes to a canonical rebuild and never
     /// feed untrusted common data into `CommonCircuitData::from_bytes`.
@@ -612,8 +593,13 @@ mod tests {
             poisoned[i..i + 8].copy_from_slice(&(usize::MAX / 16).to_le_bytes());
         }
         let leaf = canonical_leaf_verifier_data();
-        let err = load_canonical_private_batch_verifier_data(&poisoned, &poisoned[..128], &leaf, 1)
-            .unwrap_err();
+        let err = load_canonical_private_batch_verifier_data(
+            &poisoned,
+            &poisoned[..128],
+            &leaf,
+            super::PrivateBatchShape::new(1, 1),
+        )
+        .unwrap_err();
         assert!(
             err.to_string().contains("does not match the canonical"),
             "poisoned common must fail the byte pin, got: {err}"

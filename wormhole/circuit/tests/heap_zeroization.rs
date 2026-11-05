@@ -232,13 +232,8 @@ fn serialization_never_frees_heap_memory_containing_the_secret() {
         },
         public: PublicCircuitInputs {
             asset_id: 0,
-            output_amount_1: 900,
-            output_amount_2: 99,
-            volume_fee_bps: 10,
             nullifier: BytesDigest::try_from([1u8; 32]).unwrap(),
             block_hash: BytesDigest::try_from([0u8; 32]).unwrap(),
-            exit_account_1: BytesDigest::try_from([2u8; 32]).unwrap(),
-            exit_account_2: BytesDigest::try_from([3u8; 32]).unwrap(),
             block_number: 1,
             input_amount: 1000,
         },

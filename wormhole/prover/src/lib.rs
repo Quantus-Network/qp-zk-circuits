@@ -24,10 +24,9 @@
 //! ```no_run
 //! use wormhole_circuit::inputs::{CircuitInputs, PrivateCircuitInputs, PublicCircuitInputs};
 //! use wormhole_circuit::nullifier::Nullifier;
-//! use wormhole_circuit::substrate_account::SubstrateAccount;
 //! use wormhole_circuit::unspendable_account::UnspendableAccount;
 //! use qp_wormhole_prover::WormholeProver;
-//! use plonky2::plonk::circuit_data::CircuitConfig;
+//! use zk_circuits_common::circuit::wormhole_leaf_circuit_config;
 //!
 //! # fn main() -> anyhow::Result<()> {
 //! // Create inputs. In practice, each input would be gathered from the real node.
@@ -47,19 +46,14 @@
 //!     },
 //!     public: PublicCircuitInputs {
 //!         asset_id: 0_u32,
-//!         output_amount_1: 900,  // Spend amount after fee
-//!         output_amount_2: 99,   // Change amount (1000 - 900 - fee)
-//!         volume_fee_bps: 10,    // 0.1% = 10 basis points
 //!         nullifier: [1u8; 32].try_into().unwrap(),
 //!         block_hash: [0u8; 32].try_into().unwrap(),
-//!         exit_account_1: [2u8; 32].try_into().unwrap(),  // Spend destination
-//!         exit_account_2: [3u8; 32].try_into().unwrap(),  // Change destination
 //!         block_number: 1,
-//!         input_amount: 1000, // Intermediate PI consumed by the private batch
+//!         input_amount: 0, // Dummy sentinel (block_hash == 0) forces a zero burn
 //!     },
 //! };
 //!
-//! let config = CircuitConfig::standard_recursion_config();
+//! let config = wormhole_leaf_circuit_config();
 //! let prover = WormholeProver::new(config)?;
 //! let prover_next = prover.commit(&inputs)?;
 //! let _proof = prover_next.prove()?;
@@ -81,15 +75,11 @@ use plonky2::{
 use zk_circuits_common::circuit::{CircuitFragment, C, D, F};
 use zk_circuits_common::zk_merkle::MAX_DEPTH;
 
+use wormhole_circuit::inputs::CircuitInputs;
 use wormhole_circuit::nullifier::Nullifier;
-use wormhole_circuit::ByteCodec;
 use wormhole_circuit::{
     block_header::BlockHeader,
     circuit::circuit_logic::{CircuitTargets, WormholeCircuit},
-};
-use wormhole_circuit::{
-    inputs::CircuitInputs,
-    substrate_account::{DualExitAccount, SubstrateAccount},
 };
 use wormhole_circuit::{
     unspendable_account::UnspendableAccount, zk_merkle_proof::ZkMerkleProofData,
@@ -201,20 +191,11 @@ pub fn fill_witness(
     let nullifier = Nullifier::from(circuit_inputs);
     let zk_merkle_proof = ZkMerkleProofData::try_from(circuit_inputs)?;
     let unspendable_account = UnspendableAccount::from(circuit_inputs);
-    let exit_accounts = DualExitAccount {
-        exit_account_1: SubstrateAccount::from_bytes(
-            circuit_inputs.public.exit_account_1.as_slice(),
-        )?,
-        exit_account_2: SubstrateAccount::from_bytes(
-            circuit_inputs.public.exit_account_2.as_slice(),
-        )?,
-    };
     let block_header = BlockHeader::try_from(circuit_inputs)?;
 
     nullifier.fill_targets(pw, targets.nullifier.clone())?;
     unspendable_account.fill_targets(pw, targets.unspendable_account.clone())?;
     zk_merkle_proof.fill_targets(pw, targets.zk_merkle_proof.clone())?;
-    exit_accounts.fill_targets(pw, targets.exit_accounts)?;
     block_header.fill_targets(pw, targets.block_header.clone())?;
 
     Ok(())
@@ -245,15 +226,10 @@ mod tests {
             },
             public: PublicCircuitInputs {
                 asset_id: 0,
-                output_amount_1: 900,
-                output_amount_2: 99,
-                volume_fee_bps: 10,
                 nullifier: [1u8; 32].try_into().unwrap(),
                 block_hash: [0u8; 32].try_into().unwrap(),
-                exit_account_1: [2u8; 32].try_into().unwrap(),
-                exit_account_2: [3u8; 32].try_into().unwrap(),
                 block_number: 1,
-                input_amount: 1000,
+                input_amount: 0,
             },
         };
 

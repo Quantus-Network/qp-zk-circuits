@@ -67,7 +67,7 @@ use plonky2::plonk::{
     circuit_data::{CommonCircuitData, VerifierCircuitData},
     proof::ProofWithPublicInputs,
 };
-use qp_wormhole_inputs::{public_batch_pi::AGGREGATOR_ADDRESS_LEN, BytesDigest};
+use qp_wormhole_inputs::{public_batch_pi::AGGREGATOR_ADDRESS_LEN, BytesDigest, PrivateBatchShape};
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -101,14 +101,14 @@ fn read_bin(bins_dir: &Path, file: &str) -> Result<Vec<u8>> {
 
 fn load_private_batch_verifier_from_bins(
     bins_dir: &Path,
-    num_leaf_proofs: usize,
+    shape: PrivateBatchShape,
 ) -> Result<VerifierCircuitData<F, C, D>> {
     let leaf = canonical_leaf_verifier_data();
     load_canonical_private_batch_verifier_data(
         &read_bin(bins_dir, "private_batch_common.bin")?,
         &read_bin(bins_dir, "private_batch_verifier.bin")?,
         &leaf,
-        num_leaf_proofs,
+        shape,
     )
 }
 
@@ -276,10 +276,10 @@ impl PublicBatchAggregator {
         let num_private_batch_proofs = config
             .num_private_batch_proofs
             .ok_or_else(|| anyhow!("config is missing num_private_batch_proofs. Please regenerate the binaries and set \"num_private_batch_proofs\""))?;
-        let num_leaf_proofs = config.num_leaf_proofs;
+        let private_batch_shape = config.private_batch_shape();
 
         let private_batch_verifier =
-            load_private_batch_verifier_from_bins(bins_dir, num_leaf_proofs)?;
+            load_private_batch_verifier_from_bins(bins_dir, private_batch_shape)?;
 
         let dummy_proof_template = Proof::from_bytes(
             read_bin(bins_dir, "dummy_private_batch_proof.bin")?,
@@ -297,7 +297,7 @@ impl PublicBatchAggregator {
                 private_batch_verifier.common.clone(),
                 &private_batch_verifier.verifier_only,
                 num_private_batch_proofs,
-                num_leaf_proofs,
+                private_batch_shape,
                 dummy_proof_template,
             )
             .context("failed to build public-batch prover from pinned artifacts")?,
@@ -306,7 +306,7 @@ impl PublicBatchAggregator {
 
         let pool = ProofPool::new(
             private_batch_verifier.clone(),
-            num_leaf_proofs,
+            private_batch_shape,
             num_private_batch_proofs,
             limits,
         )?;

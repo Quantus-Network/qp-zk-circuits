@@ -10,4 +10,5 @@ pub mod lib;
 /// all-dummy batches occupy a proving window).
 pub(crate) mod witness;
 
+pub(crate) use lib::ensure_private_batch_shape;
 pub use lib::{PublicBatchInputs, PublicBatchProver};
