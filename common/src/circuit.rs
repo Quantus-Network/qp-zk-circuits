@@ -390,11 +390,13 @@ pub fn wormhole_leaf_circuit_config() -> CircuitConfig {
 /// - num_wires = 135 (minimum for PoseidonGate)
 /// - num_routed_wires = 60 (optimal for degree_bits=15 circuits)
 ///
-/// Current `wormhole-memprof` measurements with this config:
+/// Measured degree with this config (the leaf verifiers dominate; the exit-slot
+/// count `M` costs about one gate per slot and does not move the degree for any
+/// `M <= 64`):
 /// - 1-2 leaves: degree_bits=14, ~0.8 GB peak
 /// - 3-7 leaves: degree_bits=15; N=7 full proving peaks at ~1.52 GB
-/// - 8-15 leaves: degree_bits=16
-/// - 16 leaves: degree_bits=17
+/// - 8-16 leaves: degree_bits=16
+/// - 17+ leaves: degree_bits=17
 pub fn wormhole_private_batch_circuit_config() -> CircuitConfig {
     CircuitConfig {
         num_wires: 135,
