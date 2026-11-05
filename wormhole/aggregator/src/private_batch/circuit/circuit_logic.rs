@@ -330,7 +330,12 @@ pub(crate) fn build_private_batch_constraints(
         total_output = builder.add(total_output, slot.amount);
     }
 
+    // `volume_fee_bps` is a prover-chosen witness, so bound it directly as well
+    // as through its complement: a wrapped fee `p - k` has a complement
+    // `10_000 + k`, which fits 14 bits for small `k`. Both checks together force
+    // `0 <= fee <= 10_000` in the integers.
     let ten_thousand = builder.constant(F::from_canonical_u32(10_000));
+    builder.range_check(targets.volume_fee_bps, 14);
     let fee_complement = builder.sub(ten_thousand, targets.volume_fee_bps);
     builder.range_check(fee_complement, 14);
     let lhs = builder.mul(total_output, ten_thousand);

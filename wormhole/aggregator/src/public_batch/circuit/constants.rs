@@ -14,7 +14,7 @@ use crate::private_batch::circuit::constants::aggregated_output;
 //   volume_fee_bps(1),
 //   block_hash(4),
 //   block_number(1),
-//   [sum(1), exit(4)] * M,
+//   [amount(1), exit_account(4)] * M,
 //   nullifier(4) * N ]
 //
 // Total length = 8 + 5M + 4N
@@ -66,7 +66,7 @@ pub const fn private_batch_pi_len(shape: PrivateBatchShape) -> usize {
 //   block_hash(4),
 //   block_number(1),
 //   total_exit_slots(1),
-//   [sum(1), exit(4)] * (n_inner * M),
+//   [amount(1), exit_account(4)] * (n_inner * M),
 //   nullifier(4) * (n_inner * N)
 // ]
 // -----------------------------------------------------------------------------
