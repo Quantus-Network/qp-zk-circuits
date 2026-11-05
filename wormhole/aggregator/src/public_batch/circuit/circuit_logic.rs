@@ -163,7 +163,7 @@ impl PublicBatchCircuit {
 ///  block_hash(4),
 ///  block_number(1),
 ///  total_exit_slots(1),
-///  [sum(1), exit(4)] * total_exit_slots,
+///  [amount(1), exit_account(4)] * total_exit_slots,
 ///  nullifier(4) * total_nullifiers]
 /// The wrapper logic, written against [`GadgetBuilder`] so the `formal-export` tracing
 /// builder can record the exact gadget calls the production `CircuitBuilder` receives.
@@ -292,7 +292,7 @@ pub(crate) fn build_public_batch_constraints(
     for (i, pis_i) in private_batch_pi_targets.iter().take(n_inner).enumerate() {
         for slot_idx in 0..private_batch_exit_slots_per_proof {
             let slot_base = exit_slots_start + slot_idx * pbc::PRIVATE_BATCH_EXIT_SLOT_LEN;
-            // [sum(1), exit_account(4)]
+            // [amount(1), exit_account(4)]
             for j in 0..pbc::PRIVATE_BATCH_EXIT_SLOT_LEN {
                 let forwarded = builder.select(is_dummy_flags[i], zero, pis_i[slot_base + j]);
                 output_pis.push(forwarded);

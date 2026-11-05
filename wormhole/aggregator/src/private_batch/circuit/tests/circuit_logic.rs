@@ -320,11 +320,47 @@ fn exit_amount_above_u32_fails() {
         &mut pw,
         &targets,
         &[F::from_canonical_u64(1 << 32), F::ZERO],
+        F::ZERO,
     );
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| data.prove(pw)));
     assert!(
         result.is_err() || result.unwrap().is_err(),
         "a 2^32 exit amount must fail the 32-bit range check"
+    );
+}
+
+/// `volume_fee_bps` is a prover-chosen witness. A wrapped fee `p - k` has the
+/// complement `10_000 + k`, which still fits the 14-bit complement check for
+/// `k <= 6383`; the fee itself must therefore be range-checked too, or the
+/// inequality would admit `sum(outputs) <= sum(inputs) * (10_000 + k) / 10_000`.
+#[test]
+fn wrapped_fee_rate_fails() {
+    const SHAPE: PrivateBatchShape = PrivateBatchShape::new(1, 1);
+
+    let (leaf_data, leaf_targets) = build_fake_leaf_circuit();
+    let (data, targets) = build_private_batch(&leaf_data, SHAPE);
+    let proof = prove_fake_leaf(
+        &leaf_data,
+        &leaf_targets,
+        real_leaf_pis(0, 10_000, nullifier(0), block_hash(0)),
+    );
+
+    // fee = p - 6383, complement = 16383 = 2^14 - 1: the most favourable wrap.
+    // 16_000 out of 10_000 in satisfies `16_000 * 10_000 <= 10_000 * 16_383`.
+    let wrapped_fee = F::ZERO - F::from_canonical_u64(6_383);
+    let mut pw = PartialWitness::new();
+    pw.set_proof_with_pis_target(&targets.leaf_proofs[0], &proof)
+        .unwrap();
+    set_batch_witnesses(
+        &mut pw,
+        &targets,
+        &[F::from_canonical_u64(16_000)],
+        wrapped_fee,
+    );
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| data.prove(pw)));
+    assert!(
+        result.is_err() || result.unwrap().is_err(),
+        "a wrapped fee rate must not pay out more than was burned"
     );
 }
 
@@ -788,9 +824,11 @@ fn set_batch_witnesses(
     pw: &mut PartialWitness<F>,
     targets: &PrivateBatchCircuitTargets,
     amounts: &[F],
+    volume_fee_bps: F,
 ) {
     assert!(targets.nullifier_permutation_switches.is_empty());
-    pw.set_target(targets.volume_fee_bps, F::ZERO).unwrap();
+    pw.set_target(targets.volume_fee_bps, volume_fee_bps)
+        .unwrap();
     for (slot, amount) in targets.exit_slots.iter().zip(amounts) {
         pw.set_target(slot.amount, *amount).unwrap();
         for t in slot.exit_account {
@@ -833,7 +871,7 @@ fn private_batch_rejects_malicious_circuit_proofs() {
     let mut pw = PartialWitness::new();
     pw.set_proof_with_pis_target(&private_batch_targets.leaf_proofs[0], &malicious_proof)
         .unwrap();
-    set_batch_witnesses(&mut pw, &private_batch_targets, &[F::ZERO]);
+    set_batch_witnesses(&mut pw, &private_batch_targets, &[F::ZERO], F::ZERO);
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         private_batch_data.prove(pw)
@@ -868,7 +906,7 @@ fn private_batch_accepts_legitimate_proofs_after_fix() {
     let mut pw = PartialWitness::new();
     pw.set_proof_with_pis_target(&private_batch_targets.leaf_proofs[0], &legit_proof)
         .unwrap();
-    set_batch_witnesses(&mut pw, &private_batch_targets, &[F::ZERO]);
+    set_batch_witnesses(&mut pw, &private_batch_targets, &[F::ZERO], F::ZERO);
 
     let private_batch_proof = private_batch_data
         .prove(pw)

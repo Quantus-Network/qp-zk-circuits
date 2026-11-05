@@ -114,8 +114,9 @@ def feeDenominator : Felt := 10000
 
 /-- One fee/value-conservation check for an entire private segment. Dummy child
     inputs do not contribute. The bound on `volumeFeeBps` makes the `Nat`
-    subtraction agree with the intended nonnegative field complement
-    (`range_check(10000 − fee_bps, 14)`). -/
+    subtraction agree with the intended nonnegative field complement; the
+    circuit enforces it with `range_check(fee_bps, 14)` together with
+    `range_check(10000 − fee_bps, 14)`, since the fee is a free witness. -/
 def privateBatchFeeOk (leaves : List LeafPublic) (out : PrivateBatchOutput) : Prop :=
   out.volumeFeeBps ≤ feeDenominator ∧
   outputExitTotal out * feeDenominator ≤
