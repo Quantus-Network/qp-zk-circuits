@@ -210,10 +210,12 @@ The leaf verifiers dominate the private-batch circuit (about 2.4k gates per leaf
 five public inputs, so `M` can be raised up to the cap of 64 without changing the circuit degree. Measured degree by `N` with the
 production config: `N <= 3` fits `2^14`, `4..=10` fits `2^15`, `11..=23` fits `2^16`, `24+` needs `2^17`.
 
-All three layers target 128 conjectured bits (`num_query_rounds * rate_bits + proof_of_work_bits`). The leaf uses a large FRI
-blowup (`rate_bits = 7`, 16 queries) because its 2^8-row circuit makes the blowup nearly free while every query it saves removes
-~110 gates from each recursive verification in the private batch; the private batch uses `rate_bits = 4`, 27 queries and 20
-proof-of-work bits so that its proofs cost the public batch the same per-proof gates as the previous 100-bit config. Key behaviors:
+The leaf and private batch target 128 conjectured bits (`num_query_rounds * rate_bits + proof_of_work_bits`). The leaf uses a
+large FRI blowup (`rate_bits = 7`, 16 queries) because its 2^8-row circuit makes the blowup nearly free while every query it saves
+removes ~110 gates from each recursive verification in the private batch; the private batch uses `rate_bits = 4`, 27 queries and 20
+proof-of-work bits so that its proofs cost the public batch the same per-proof gates as the previous 100-bit config. The public
+batch still uses Plonky2's `standard_recursion_config` (28 queries, `rate_bits = 3`, 16 proof-of-work bits: 100 conjectured bits);
+raising it is deferred to the GPU public-batch prover work. Key behaviors:
 
 - **Single-block storage proof constraint**: All real proofs (non-zero `block_hash`) must reference the same block for storage proofs.
 - **Outputs on the batch**: Exit slots are prover-chosen witnesses bound by the batch-wide fee inequality, not per-leaf fields. Slots are forwarded verbatim; unused slots are `(0, zero account)` and several slots may name the same account.
