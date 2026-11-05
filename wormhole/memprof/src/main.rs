@@ -190,9 +190,15 @@ fn main() -> Result<()> {
             leaf_proofs.push(leaf_ctx.dummy_proof.clone());
         }
     } else {
-        for i in 0..real_proofs {
-            let p =
-                workload::generate_leaf_proof(&leaf_ctx, i, args.release_after_each, &mut report)?;
+        let inputs = workload::build_profile_circuit_inputs(real_proofs)?;
+        for (i, leaf_inputs) in inputs.iter().enumerate() {
+            let p = workload::generate_leaf_proof(
+                &leaf_ctx,
+                i,
+                leaf_inputs,
+                args.release_after_each,
+                &mut report,
+            )?;
             leaf_proofs.push(p);
         }
     }
