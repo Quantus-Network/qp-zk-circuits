@@ -588,8 +588,13 @@ def RPublicBatch (_ro : RandomOracle) (inner : List PrivateBatchOutput) (addr : 
       o.blockHash = out.blockHash) ∧
   out.exitSlots = (inner.map forwardedSlots).flatten ∧
   out.nullifiers = (inner.map forwardedNullifiers).flatten ∧
+  -- Each inner's slot-count header is `connect`ed to the configured `slots_per_inner`,
+  -- the length of its exit region. The inner PI length alone does not identify the
+  -- shape (`(N=1, M=5)` and `(N=6, M=1)` are both 37 felts), so without this binding a
+  -- same-length inner of another shape would have its exits forwarded as nullifiers.
+  (∀ o ∈ inner, o.numExitSlots = o.exitSlots.length) ∧
   -- Slot-count header: `constant(n_inner · slots_per_inner)`, which is the length of
-  -- the forwarded region (every inner has the shape-checked `slots_per_inner`).
+  -- the forwarded region.
   out.totalExitSlots = out.exitSlots.length
   -- NOTE: the wrapper does not constrain per-inner `blockNumber` equality; it
   -- forwards the first non-dummy inner's number. Hash equality pins the number
@@ -609,7 +614,7 @@ theorem forwardedSlots_length (o : PrivateBatchOutput) :
 theorem RPublicBatch_totalExitSlots {ro : RandomOracle} {inner : List PrivateBatchOutput}
     {addr : Digest} {out : PublicBatchOutput} (h : RPublicBatch ro inner addr out) :
     out.totalExitSlots = (inner.map fun o => o.exitSlots.length).sum := by
-  rw [h.2.2.2.2.2, h.2.2.2.1, List.length_flatten, List.map_map]
+  rw [h.2.2.2.2.2.2, h.2.2.2.1, List.length_flatten, List.map_map]
   congr 1
   apply List.map_congr_left
   intro o _

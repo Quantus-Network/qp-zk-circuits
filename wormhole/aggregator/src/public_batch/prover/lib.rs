@@ -61,6 +61,7 @@ pub struct PublicBatchProver {
     backend: ProvingBackend,
     targets: PublicBatchCircuitTargets,
     num_private_batch_proofs: usize,
+    private_batch_shape: PrivateBatchShape,
     /// Dummy private-batch proof (over all-dummy leaves, `block_hash == 0`) used to
     /// pad partial public batches. The circuit zeroes dummy inners' exit slots and
     /// nullifiers, so one template can fill several slots without collisions.
@@ -86,10 +87,26 @@ impl PublicBatchProver {
         private_batch_shape: PrivateBatchShape,
         dummy_proof_template: ProofWithPublicInputs<F, C, D>,
     ) -> Result<Self> {
+        private_batch_shape.validate()?;
+        validate_proof_count(num_private_batch_proofs, "num_private_batch_proofs")?;
+
         let private_batch_verifier_data = VerifierCircuitData {
             verifier_only: private_batch_verifier_only.clone(),
             common: private_batch_common.clone(),
         };
+
+        // Enforce the same template invariant as the byte-loading constructors:
+        // `prove_batch` clones this template into every padded slot, and the
+        // circuit only zeroes a slot's exits/nullifiers when its block_hash is
+        // the zero sentinel — a caller-supplied REAL proof here would be
+        // forwarded as a legitimate batch member (#97026). The template is a
+        // genuine proof of the inner circuit, so its decoded shape also pins
+        // `private_batch_shape` to the verifier before the circuit is built.
+        verify_dummy_private_batch_template(
+            &dummy_proof_template,
+            &private_batch_verifier_data,
+            private_batch_shape,
+        )?;
 
         // Proof-count bounds are enforced by PublicBatchCircuit::new.
         let public_batch_circuit = PublicBatchCircuit::new(
@@ -103,18 +120,12 @@ impl PublicBatchProver {
         let targets = public_batch_circuit.targets();
         let circuit_data = public_batch_circuit.build_circuit();
 
-        // Enforce the same template invariant as the byte-loading constructors:
-        // `prove_batch` clones this template into every padded slot, and the
-        // circuit only zeroes a slot's exits/nullifiers when its block_hash is
-        // the zero sentinel — a caller-supplied REAL proof here would be
-        // forwarded as a legitimate batch member (#97026).
-        verify_dummy_private_batch_template(&dummy_proof_template, &private_batch_verifier_data)?;
-
         Ok(Self {
             circuit_data: Arc::new(circuit_data),
             backend: ProvingBackend::Cpu,
             targets,
             num_private_batch_proofs,
+            private_batch_shape,
             dummy_proof_template,
             private_batch_verifier: private_batch_verifier_data,
         })
@@ -163,7 +174,25 @@ impl PublicBatchProver {
             );
         }
 
-        // 2) Rebuild the canonical public-batch circuit from source. Its prover
+        // 2) Load the dummy private-batch proof template used to pad partial batches
+        let dummy_proof_template = ProofWithPublicInputs::<F, C, D>::from_bytes(
+            dummy_private_batch_proof_bytes.to_vec(),
+            &private_batch_verifier_data.common,
+        )
+        .map_err(|e| anyhow!("failed to deserialize dummy private-batch proof: {}", e))?;
+
+        // Verify the template is a valid all-dummy private-batch proof (zero
+        // block-hash sentinel and zero forwarded payouts) so a poisoned padding
+        // template cannot inject real exits into partial public batches (#97026).
+        // Its decoded shape also pins `private_batch_shape` to the verifier,
+        // which the PI length check above cannot do on its own.
+        verify_dummy_private_batch_template(
+            &dummy_proof_template,
+            &private_batch_verifier_data,
+            private_batch_shape,
+        )?;
+
+        // 3) Rebuild the canonical public-batch circuit from source. Its prover
         // data is used directly instead of loading a serialized prover artifact.
         let circuit = PublicBatchCircuit::new(
             wormhole_public_batch_circuit_config(),
@@ -175,23 +204,12 @@ impl PublicBatchProver {
         let targets = circuit.targets();
         let circuit_data = circuit.build_circuit();
 
-        // 3) Load the dummy private-batch proof template used to pad partial batches
-        let dummy_proof_template = ProofWithPublicInputs::<F, C, D>::from_bytes(
-            dummy_private_batch_proof_bytes.to_vec(),
-            &private_batch_verifier_data.common,
-        )
-        .map_err(|e| anyhow!("failed to deserialize dummy private-batch proof: {}", e))?;
-
-        // Verify the template is a valid all-dummy private-batch proof (zero
-        // block-hash sentinel and zero forwarded payouts) so a poisoned padding
-        // template cannot inject real exits into partial public batches (#97026).
-        verify_dummy_private_batch_template(&dummy_proof_template, &private_batch_verifier_data)?;
-
         Ok(Self {
             circuit_data: Arc::new(circuit_data),
             backend: ProvingBackend::Cpu,
             targets,
             num_private_batch_proofs,
+            private_batch_shape,
             dummy_proof_template,
             private_batch_verifier: private_batch_verifier_data,
         })
@@ -339,6 +357,7 @@ impl PublicBatchProver {
             &proofs,
             self.num_private_batch_proofs,
             &self.private_batch_verifier,
+            self.private_batch_shape,
         )?;
 
         // Pad partial batches with the dummy template. No shuffle: forwarding is
@@ -381,6 +400,7 @@ pub(crate) fn preflight_private_batch_proofs(
     proofs: &[ProofWithPublicInputs<F, C, D>],
     num_private_batch_proofs: usize,
     private_batch_verifier: &VerifierCircuitData<F, C, D>,
+    private_batch_shape: PrivateBatchShape,
 ) -> Result<()> {
     if proofs.is_empty() {
         bail!("no private-batch proofs to aggregate");
@@ -398,6 +418,8 @@ pub(crate) fn preflight_private_batch_proofs(
     let expected_pi_len = private_batch_verifier.common.num_public_inputs;
     for (index, proof) in proofs.iter().enumerate() {
         ensure_proof_public_input_len(proof, expected_pi_len, "private-batch proof")
+            .with_context(|| format!("private-batch proof {} is malformed", index))?;
+        ensure_private_batch_shape(&proof.public_inputs, private_batch_shape)
             .with_context(|| format!("private-batch proof {} is malformed", index))?;
         private_batch_verifier.verify(proof.clone()).map_err(|e| {
             anyhow!(
@@ -502,10 +524,33 @@ fn ensure_private_batch_compatible(proofs: &[ProofWithPublicInputs<F, C, D>]) ->
     Ok(())
 }
 
+/// Check that a private-batch proof's public inputs decode to exactly the
+/// configured shape. The PI length alone does not identify the shape (e.g.
+/// `(N=1, M=5)` and `(N=6, M=1)` both have 37 felts), so a proof from a
+/// same-length private-batch circuit of a different shape would otherwise
+/// have its exit slots reinterpreted as nullifiers. The public-batch circuit
+/// enforces the same header binding; this rejects the mismatch before proving.
+pub(crate) fn ensure_private_batch_shape(
+    public_inputs: &[F],
+    expected: PrivateBatchShape,
+) -> Result<()> {
+    let u64s: Vec<u64> = public_inputs.iter().map(|f| f.to_canonical_u64()).collect();
+    let actual = qp_wormhole_inputs::private_batch_shape_from_pis(&u64s)
+        .context("failed to decode private-batch proof shape")?;
+    if actual != expected {
+        bail!(
+            "private-batch proof has shape {:?}, but the public batch is configured for {:?}",
+            actual,
+            expected
+        );
+    }
+    Ok(())
+}
+
 /// Verify that the dummy private-batch proof template is a valid all-dummy
-/// private-batch proof carrying the zero block-hash sentinel and zero forwarded
-/// payouts, so poisoned padding cannot inject real exits into partial public
-/// batches (#97026).
+/// private-batch proof of the configured shape, carrying the zero block-hash
+/// sentinel and zero forwarded payouts, so poisoned padding cannot inject real
+/// exits into partial public batches (#97026).
 ///
 /// `pub(crate)` so [`crate::aggregator::PublicBatchAggregator`] can validate the
 /// template once at construction and pin it for every later `prove_batch`,
@@ -513,6 +558,7 @@ fn ensure_private_batch_compatible(proofs: &[ProofWithPublicInputs<F, C, D>]) ->
 pub(crate) fn verify_dummy_private_batch_template(
     template: &ProofWithPublicInputs<F, C, D>,
     private_batch_verifier: &VerifierCircuitData<F, C, D>,
+    private_batch_shape: PrivateBatchShape,
 ) -> Result<()> {
     // Check the sentinel first (cheap, independently testable, and
     // attributable), mirroring `verify_dummy_leaf_template`; a template is
@@ -525,6 +571,19 @@ pub(crate) fn verify_dummy_private_batch_template(
         .collect();
     let pis = PrivateBatchPublicInputs::try_from_u64_slice(&u64s)
         .context("failed to parse dummy private-batch proof public inputs")?;
+
+    // The template is a genuine proof of the inner circuit, so its decoded
+    // shape pins the configured shape to the verifier: the PI length alone
+    // cannot (e.g. (N=1, M=5) and (N=6, M=1) are both 37 felts).
+    let template_shape = PrivateBatchShape::new(pis.nullifiers.len(), pis.account_data.len());
+    if template_shape != private_batch_shape {
+        bail!(
+            "dummy private-batch proof template has shape {:?}, but the public batch is \
+             configured for {:?}",
+            template_shape,
+            private_batch_shape
+        );
+    }
 
     if pis.block_data.block_hash != BytesDigest::default() {
         bail!(
@@ -638,6 +697,14 @@ pub(crate) mod tests {
         leaf: &plonky2::plonk::circuit_data::CircuitData<F, C, D>,
         fake_leaf_proof: &ProofWithPublicInputs<F, C, D>,
     ) -> ProofWithPublicInputs<F, C, D> {
+        make_all_dummy_private_batch_template_of_shape(leaf, fake_leaf_proof, SHAPE)
+    }
+
+    fn make_all_dummy_private_batch_template_of_shape(
+        leaf: &plonky2::plonk::circuit_data::CircuitData<F, C, D>,
+        fake_leaf_proof: &ProofWithPublicInputs<F, C, D>,
+        shape: PrivateBatchShape,
+    ) -> ProofWithPublicInputs<F, C, D> {
         use plonky2::iop::witness::PartialWitness;
         use zk_circuits_common::utils::bytes_to_digest;
 
@@ -645,22 +712,22 @@ pub(crate) mod tests {
             wormhole_private_batch_circuit_config(),
             &leaf.common,
             &leaf.verifier_only,
-            SHAPE,
+            shape,
         )
         .unwrap();
         let targets = circuit.targets();
         let circuit_data = circuit.build_circuit();
 
-        let pre_images = vec![bytes_to_digest(
-            crate::dummy_proof::generate_random_nullifier_preimage(),
-        )];
-        let nullifier_permutation = vec![0];
+        let pre_images = (0..shape.num_leaf_proofs)
+            .map(|_| bytes_to_digest(crate::dummy_proof::generate_random_nullifier_preimage()))
+            .collect::<Vec<_>>();
+        let nullifier_permutation = (0..shape.num_leaf_proofs).collect::<Vec<_>>();
         let mut pw = PartialWitness::new();
         crate::private_batch::prover::fill_private_batch_witness(
             &mut pw,
             &targets,
-            std::slice::from_ref(fake_leaf_proof),
-            &[WithdrawalOutput::default()],
+            &vec![fake_leaf_proof.clone(); shape.num_leaf_proofs],
+            &vec![WithdrawalOutput::default(); shape.num_exit_slots],
             0,
             &pre_images,
             &nullifier_permutation,
@@ -960,6 +1027,85 @@ pub(crate) mod tests {
             })
             .expect_err("cross-block private-batch proofs must be rejected before proving");
         assert!(err.to_string().contains("different block"), "got: {err}");
+    }
+
+    /// `(N=1, M=5)` and `(N=6, M=1)` private batches have the same PI length,
+    /// so neither the constructor's length check nor the circuit's PI-count
+    /// assertion distinguishes them. Both the padding template at construction
+    /// and every submitted proof at commit must be decoded against the
+    /// configured shape, before any verification or proving work.
+    #[test]
+    fn prover_rejects_equal_length_private_batch_shape_mismatch() {
+        use crate::private_batch::circuit::constants::aggregated_output;
+
+        const PROVED: PrivateBatchShape = PrivateBatchShape::new(1, 5);
+        const DECLARED: PrivateBatchShape = PrivateBatchShape::new(6, 1);
+        assert_eq!(
+            aggregated_output::pi_len(PROVED),
+            aggregated_output::pi_len(DECLARED)
+        );
+
+        let (leaf, leaf_targets) = build_fake_leaf_circuit();
+        let dummy_leaf = prove_fake_leaf(&leaf, &leaf_targets, [F::ZERO; PUBLIC_INPUTS_FELTS_LEN]);
+        let private_batch_prover = PrivateBatchProver::new(
+            wormhole_private_batch_circuit_config(),
+            leaf.common.clone(),
+            &leaf.verifier_only,
+            PROVED,
+            dummy_leaf.clone(),
+        )
+        .unwrap();
+        let private_batch = PrivateBatchCircuit::new(
+            wormhole_private_batch_circuit_config(),
+            &leaf.common,
+            &leaf.verifier_only,
+            PROVED,
+        )
+        .unwrap()
+        .build_verifier();
+        let template = make_all_dummy_private_batch_template_of_shape(&leaf, &dummy_leaf, PROVED);
+
+        let err = PublicBatchProver::new(
+            wormhole_public_batch_circuit_config(),
+            private_batch.common.clone(),
+            &private_batch.verifier_only,
+            1,
+            DECLARED,
+            template.clone(),
+        )
+        .expect_err("padding template of another equal-length shape must be rejected");
+        assert!(err.to_string().contains("shape"), "got: {err}");
+
+        let prover = PublicBatchProver::new(
+            wormhole_public_batch_circuit_config(),
+            private_batch.common.clone(),
+            &private_batch.verifier_only,
+            1,
+            PROVED,
+            template,
+        )
+        .unwrap();
+
+        let mut real_pis = [F::ZERO; PUBLIC_INPUTS_FELTS_LEN];
+        real_pis[crate::private_batch::circuit::constants::BLOCK_HASH_START] = F::ONE;
+        let real_leaf = prove_fake_leaf(&leaf, &leaf_targets, real_pis);
+        let mut inner = private_batch_prover
+            .aggregate(PrivateBatchInputs {
+                leaf_proofs: vec![real_leaf],
+                outputs: vec![],
+                volume_fee_bps: 0,
+            })
+            .unwrap();
+        inner.public_inputs[aggregated_output::NUM_EXIT_SLOTS_OFFSET] =
+            F::from_canonical_usize(DECLARED.num_exit_slots);
+
+        let err = prover
+            .prove_batch(PublicBatchInputs {
+                proofs: vec![inner],
+                aggregator_address: BytesDigest::default(),
+            })
+            .expect_err("proof declaring another equal-length shape must be rejected at commit");
+        assert!(format!("{err:#}").contains("shape"), "got: {err:#}");
     }
 
     #[test]

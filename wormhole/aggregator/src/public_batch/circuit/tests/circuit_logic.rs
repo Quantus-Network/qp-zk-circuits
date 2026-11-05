@@ -107,6 +107,106 @@ fn new_rejects_inner_circuit_with_mismatched_shape() {
     assert!(err.to_string().contains("num_public_inputs"), "got: {err}");
 }
 
+/// The PI length does not identify the private-batch shape: `(N=1, M=5)` and
+/// `(N=6, M=1)` are both 37 felts, so the constructor's length check accepts a
+/// `(1, 5)` verifier declared as `(6, 1)`. Forwarding under the wrong shape
+/// would reinterpret four exit slots as nullifiers (one exit of 19 instead of
+/// five totaling 95). The wrapper must bind each inner's exit-slot header to
+/// the configured `M` so such a proof cannot be aggregated.
+#[test]
+fn public_batch_rejects_inner_proof_of_equal_length_different_shape() {
+    const PROVED: PrivateBatchShape = PrivateBatchShape::new(1, 5);
+    const DECLARED: PrivateBatchShape = PrivateBatchShape::new(6, 1);
+    assert_eq!(
+        pbc::private_batch_pi_len(PROVED),
+        pbc::private_batch_pi_len(DECLARED),
+        "test precondition: the two shapes must have equal PI length"
+    );
+
+    let (leaf_data, leaf_targets) = build_fake_leaf_circuit();
+    let private_batch = PrivateBatchCircuit::new(
+        CircuitConfig::standard_recursion_config(),
+        &leaf_data.common,
+        &leaf_data.verifier_only,
+        PROVED,
+    )
+    .unwrap();
+    let private_batch_targets = private_batch.targets();
+    let private_batch_data = private_batch.build_circuit();
+
+    let leaf = prove_fake_leaf(
+        &leaf_data,
+        &leaf_targets,
+        make_leaf_pi(100, [1, 2, 3, 4], BLOCK_A, BLOCK_NUMBER),
+    );
+    let outputs: Vec<WithdrawalOutput> = (1..=5).map(|i| output(i, 19)).collect();
+    let pre_images = vec![[F::from_canonical_u64(7); 4]];
+    let mut pw = PartialWitness::new();
+    fill_private_batch_witness(
+        &mut pw,
+        &private_batch_targets,
+        &[leaf],
+        &outputs,
+        TEST_VOLUME_FEE_BPS,
+        &pre_images,
+        &[0],
+    )
+    .unwrap();
+    let inner = private_batch_data.prove(pw).unwrap();
+    assert_eq!(
+        inner.public_inputs[pbc::PRIVATE_BATCH_NUM_EXIT_SLOTS_OFFSET].to_canonical_u64(),
+        PROVED.num_exit_slots as u64
+    );
+
+    let build = |shape: PrivateBatchShape| {
+        let circuit = PublicBatchCircuit::new(
+            CircuitConfig::standard_recursion_config(),
+            private_batch_data.common.clone(),
+            &private_batch_data.verifier_only,
+            1,
+            shape,
+        )
+        .expect("equal PI length passes the constructor's length check");
+        let targets = circuit.targets();
+        (circuit.build_circuit(), targets)
+    };
+    let prove = |data: &CircuitData<F, C, D>, targets: &PublicBatchCircuitTargets| {
+        let mut pw = PartialWitness::new();
+        pw.set_proof_with_pis_target(&targets.private_batch_proofs[0], &inner)
+            .unwrap();
+        for (i, limb) in AGGREGATOR_ADDRESS.iter().enumerate() {
+            pw.set_target(targets.aggregator_address[i], F::from_canonical_u64(*limb))
+                .unwrap();
+        }
+        data.prove(pw)
+    };
+
+    // Control: under the proved shape the proof aggregates and forwards all five exits.
+    let (data, targets) = build(PROVED);
+    let proof = prove(&data, &targets).expect("matching shape must prove");
+    data.verify(proof.clone()).unwrap();
+    assert_eq!(
+        proof.public_inputs[pbc::TOTAL_EXIT_SLOTS_START].to_canonical_u64(),
+        5
+    );
+    let exits_start = pbc::public_batch_exit_slots_start();
+    let settled: u64 = (0..5)
+        .map(|i| {
+            proof.public_inputs[exits_start + i * pbc::PRIVATE_BATCH_EXIT_SLOT_LEN]
+                .to_canonical_u64()
+        })
+        .sum();
+    assert_eq!(settled, 95);
+
+    // Under the colliding declared shape the header binding must reject the proof.
+    let (data, targets) = build(DECLARED);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| prove(&data, &targets)));
+    assert!(
+        result.is_err() || result.unwrap().is_err(),
+        "public batch must reject an inner proof whose exit-slot header differs from the configured shape"
+    );
+}
+
 // ---------------- Leaf PI helpers ----------------
 
 fn make_leaf_pi(

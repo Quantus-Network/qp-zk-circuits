@@ -195,6 +195,19 @@ pub(crate) fn build_public_batch_constraints(
         .iter()
         .all(|pis| pis.len() == private_batch_pi_len));
 
+    // Bind each inner proof's exit-slot header to the configured shape. The PI
+    // length alone does not identify the shape (e.g. (N=1, M=5) and (N=6, M=1)
+    // are both 37 felts), and a mismatch would reinterpret exit slots as
+    // nullifiers in the forwarded regions below.
+    let expected_exit_slots =
+        builder.constant(F::from_canonical_usize(private_batch_exit_slots_per_proof));
+    for pis_i in private_batch_pi_targets.iter().take(n_inner) {
+        builder.connect(
+            pis_i[pbc::PRIVATE_BATCH_NUM_EXIT_SLOTS_OFFSET],
+            expected_exit_slots,
+        );
+    }
+
     // -------------------------------------------------------------------------
     // Dummy detection (sentinel: inner block_hash == 0, i.e. an all-dummy
     // private batch, mirroring the leaf-level sentinel one layer down)

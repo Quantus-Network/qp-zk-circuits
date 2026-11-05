@@ -113,6 +113,7 @@ exit slots without exposing or forwarding the segment input total.
 | **thm** `sentinels_agree` / `rawInputTotal_eq_maskedInputTotal_of_Rleaf` | leaf and private-batch dummy sentinels are the same predicate; on valid leaves a dummy burns nothing, so the wrapper's input mask is defense in depth |
 | output layout (`PrivateBatchOutput`) | `aggregated_output` — `private_batch/circuit/constants.rs` |
 | `RPublicBatch` forwarding + consistency | `build_public_batch_constraints` — `public_batch/circuit/circuit_logic.rs` |
+| `∀ o ∈ inner, o.numExitSlots = o.exitSlots.length` (inner shape binding) | `connect(inner_pis[0], constant(slots_per_inner))` per inner — `public_batch/circuit/circuit_logic.rs` |
 | `totalExitSlots = out.exitSlots.length`; **thm** `RPublicBatch_totalExitSlots` (= sum of inner slot counts) | `constant(n_inner * slots_per_inner)` — `public_batch/circuit/circuit_logic.rs` |
 
 ### Security reductions (`Security.lean`)

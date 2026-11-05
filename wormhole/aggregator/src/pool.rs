@@ -611,6 +611,7 @@ impl ProofPool {
                 pis.len()
             );
         }
+        crate::public_batch::prover::ensure_private_batch_shape(pis, self.inner_shape)?;
 
         let block_hash = try_4_felts_to_bytes(
             &pis[aggregated_output::BLOCK_HASH_OFFSET..aggregated_output::BLOCK_HASH_OFFSET + 4],
@@ -1380,6 +1381,54 @@ mod tests {
             .push(prove_fake(&data, &targets, &fake(3, 11)))
             .unwrap();
         assert!(!key.is_dummy());
+        assert_eq!(pool.len(), 1);
+    }
+
+    /// The PI length does not identify the private-batch shape: `(N=1, M=5)`
+    /// and `(N=6, M=1)` are both 37 felts, so the constructor's length check
+    /// alone would admit a `(1, 5)` proof into a pool configured for `(6, 1)`
+    /// and parse four of its exit slots as nullifiers. Admission must decode
+    /// the proof's own shape from its header and reject the mismatch.
+    #[test]
+    fn equal_length_shape_mismatch_is_rejected_at_admission() {
+        const PROVED: PrivateBatchShape = PrivateBatchShape::new(1, 5);
+        const DECLARED: PrivateBatchShape = PrivateBatchShape::new(6, 1);
+        let len = aggregated_output::pi_len(PROVED);
+        assert_eq!(len, aggregated_output::pi_len(DECLARED));
+
+        let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+        let targets = builder.add_virtual_targets(len);
+        builder.range_check(targets[0], 32);
+        builder.register_public_inputs(&targets);
+        let data = builder.build::<C>();
+
+        let prove = |num_exit_slots: usize| {
+            let mut values = vec![F::ZERO; len];
+            values[aggregated_output::NUM_EXIT_SLOTS_OFFSET] =
+                F::from_canonical_usize(num_exit_slots);
+            values[aggregated_output::BLOCK_HASH_OFFSET] = F::from_canonical_u64(7);
+            values[aggregated_output::exit_slots_start()] = F::from_canonical_u64(20);
+            // Distinct non-zero nullifiers under the `(6, 1)` layout; under the
+            // `(1, 5)` layout these felts sit inside the other four exit slots.
+            let nullifiers_start = aggregated_output::nullifiers_start(DECLARED);
+            for i in 0..DECLARED.num_leaf_proofs {
+                values[nullifiers_start + i * 4] = F::from_canonical_usize(100 + i);
+            }
+            let mut pw = PartialWitness::new();
+            for (t, v) in targets.iter().zip(values.iter()) {
+                pw.set_target(*t, *v).unwrap();
+            }
+            data.prove(pw).unwrap()
+        };
+
+        let mut pool =
+            ProofPool::new(data.verifier_data(), DECLARED, 2, PoolLimits::default()).unwrap();
+        let err = pool.push(prove(PROVED.num_exit_slots)).unwrap_err();
+        assert!(err.to_string().contains("shape"), "got: {err}");
+        assert!(pool.is_empty());
+
+        // Control: a proof whose header matches the configured shape is admitted.
+        pool.push(prove(DECLARED.num_exit_slots)).unwrap();
         assert_eq!(pool.len(), 1);
     }
 }
