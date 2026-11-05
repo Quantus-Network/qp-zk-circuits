@@ -3,17 +3,20 @@ use core::fmt;
 use core::marker::PhantomData;
 use plonky2::{
     field::goldilocks_field::GoldilocksField,
+    fri::{FriConfig, FriReductionStrategy},
     iop::witness::PartialWitness,
     plonk::{
         circuit_builder::CircuitBuilder, circuit_data::CircuitConfig,
         config::PoseidonGoldilocksConfig,
     },
 };
+use qp_wormhole_inputs::leaf_config;
 use serde::de::{self, Deserializer, Error, SeqAccess, Visitor};
 use serde::Deserialize;
 
 // Plonky2 setup parameters.
-pub const D: usize = 2; // D=2 provides 100-bits of security
+// D=2 (Goldilocks^2, ~2^128) caps the conjectured FRI security at 128 bits.
+pub const D: usize = 2;
 pub type C = PoseidonGoldilocksConfig;
 pub type F = GoldilocksField; // Goldilocks field
 
@@ -369,17 +372,38 @@ where
     deserialize_bounded_vec(deserializer, MAX_MERKLE_INDICES, "indices")
 }
 
-/// Circuit config for leaf wormhole proofs (non-ZK).
+/// Circuit config for leaf wormhole proofs (non-ZK, 128 conjectured bits).
 ///
 /// Since the chain only verifies aggregated proofs (not individual leaf proofs), there's no
 /// privacy benefit from using ZK on the leaves. Disabling ZK gives faster proving and smaller
 /// proofs without compromising security - the aggregator that verifies these proofs runs in a
 /// trusted environment anyway.
+///
+/// The leaf is a 2^8-degree circuit, so its FRI blowup is cheap (`rate_bits = 7` is a
+/// 2^15-row LDE) and buys 128 bits with only 16 query rounds. The private batch verifies
+/// one leaf per slot recursively, and that cost scales with the leaf's query count, so
+/// this halves the per-leaf gate cost relative to `standard_recursion_config()`.
+/// The parameters live in [`qp_wormhole_inputs::leaf_config`] so the `no_std` verifier
+/// can pin the same config.
 pub fn wormhole_leaf_circuit_config() -> CircuitConfig {
-    CircuitConfig::standard_recursion_config() // zero_knowledge: false
+    CircuitConfig {
+        num_wires: leaf_config::NUM_WIRES,
+        num_routed_wires: leaf_config::NUM_ROUTED_WIRES,
+        security_bits: leaf_config::SECURITY_BITS,
+        zero_knowledge: false,
+        fri_config: FriConfig {
+            rate_bits: leaf_config::FRI_RATE_BITS,
+            cap_height: leaf_config::FRI_CAP_HEIGHT,
+            proof_of_work_bits: leaf_config::FRI_PROOF_OF_WORK_BITS,
+            reduction_strategy: FriReductionStrategy::ConstantArityBits(4, 5),
+            num_query_rounds: leaf_config::FRI_NUM_QUERY_ROUNDS,
+        },
+        ..CircuitConfig::standard_recursion_config()
+    }
 }
 
-/// Circuit config for private-batch aggregation circuits (ZK enabled via row blinding).
+/// Circuit config for private-batch aggregation circuits (ZK enabled via row blinding,
+/// 128 conjectured bits).
 ///
 /// Private-batch is the *private* aggregation layer: its witnesses are the leaf proofs, whose
 /// own witnesses (spend secrets, Merkle paths) must never leak. This is the one layer in
@@ -389,18 +413,33 @@ pub fn wormhole_leaf_circuit_config() -> CircuitConfig {
 /// - Row blinding ZK mode (lower memory than PolyFri, same security)
 /// - num_wires = 135 (minimum for PoseidonGate)
 /// - num_routed_wires = 60 (optimal for degree_bits=15 circuits)
+/// - rate_bits = 4, 27 query rounds, 20 proof-of-work bits (`27 * 4 + 20 = 128`)
+///
+/// The public batch verifies these proofs recursively, and its per-proof cost scales with
+/// this query count. Taking 128 bits at `rate_bits = 3` would need 36 queries and push a
+/// 200-proof public batch from 2^20 to 2^21; at `rate_bits = 4` the per-proof cost matches
+/// the old 100-bit config, at the price of a 2x larger private-batch LDE.
 ///
 /// Measured degree with this config (the leaf verifiers dominate; the exit-slot
 /// count `M` costs about one gate per slot and does not move the degree for any
 /// `M <= 64`):
-/// - 1-2 leaves: degree_bits=14, ~0.8 GB peak
-/// - 3-7 leaves: degree_bits=15; N=7 full proving peaks at ~1.52 GB
-/// - 8-16 leaves: degree_bits=16
-/// - 17+ leaves: degree_bits=17
+/// - 1-3 leaves: degree_bits=14
+/// - 4-10 leaves: degree_bits=15; (7, 16) full proving peaks at ~2.25 GB
+///   (`wormhole-memprof --real-proofs 1`; ~1.5 GB with the former rate_bits=3)
+/// - 11-23 leaves: degree_bits=16
+/// - 24+ leaves: degree_bits=17
 pub fn wormhole_private_batch_circuit_config() -> CircuitConfig {
     CircuitConfig {
         num_wires: 135,
         num_routed_wires: 60,
+        security_bits: 128,
+        fri_config: FriConfig {
+            rate_bits: 4,
+            cap_height: 4,
+            proof_of_work_bits: 20,
+            reduction_strategy: FriReductionStrategy::ConstantArityBits(4, 5),
+            num_query_rounds: 27,
+        },
         ..CircuitConfig::standard_recursion_zk_config()
     }
 }

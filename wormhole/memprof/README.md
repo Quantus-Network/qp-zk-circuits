@@ -49,8 +49,8 @@ cargo run -p wormhole-memprof --release -- --num-leaf-proofs 4
 # Force single-threaded to compare against rayon-parallel
 cargo run -p wormhole-memprof --release -- --rayon-threads 1
 
-# CI guard: fail if peak > 1.6 GB
-cargo run -p wormhole-memprof --release -- --peak-target-mb 1600
+# CI guard: fail if peak > 2.4 GB
+cargo run -p wormhole-memprof --release -- --peak-target-mb 2400
 ```
 
 ## Output

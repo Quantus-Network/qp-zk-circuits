@@ -206,9 +206,14 @@ entirely, the pallet's nullifier set would still prevent any double spend.
 The aggregator combines `N` leaf proofs and `M` exit slots into a single proof with a fixed public input layout
 `[M, asset_id, volume_fee_bps, block_hash(4), block_number] ++ M × (amount, exit_account(4)) ++ N × nullifier(4)`.
 `N` (`--num-leaf-proofs`) and `M` (`--num-exit-slots`) are independent circuit parameters; the production shape is `N = 7`, `M = 16`.
-The leaf verifiers dominate the private-batch circuit (about 3.3k gates per leaf), while each exit slot costs roughly one gate plus
+The leaf verifiers dominate the private-batch circuit (about 2.4k gates per leaf), while each exit slot costs roughly one gate plus
 five public inputs, so `M` can be raised up to the cap of 64 without changing the circuit degree. Measured degree by `N` with the
-production config: `N <= 2` fits `2^14`, `3..=7` fits `2^15`, `8..=16` fits `2^16`, `17+` needs `2^17`. Key behaviors:
+production config: `N <= 3` fits `2^14`, `4..=10` fits `2^15`, `11..=23` fits `2^16`, `24+` needs `2^17`.
+
+All three layers target 128 conjectured bits (`num_query_rounds * rate_bits + proof_of_work_bits`). The leaf uses a large FRI
+blowup (`rate_bits = 7`, 16 queries) because its 2^8-row circuit makes the blowup nearly free while every query it saves removes
+~110 gates from each recursive verification in the private batch; the private batch uses `rate_bits = 4`, 27 queries and 20
+proof-of-work bits so that its proofs cost the public batch the same per-proof gates as the previous 100-bit config. Key behaviors:
 
 - **Single-block storage proof constraint**: All real proofs (non-zero `block_hash`) must reference the same block for storage proofs.
 - **Outputs on the batch**: Exit slots are prover-chosen witnesses bound by the batch-wide fee inequality, not per-leaf fields. Slots are forwarded verbatim; unused slots are `(0, zero account)` and several slots may name the same account.
