@@ -120,6 +120,41 @@ jobs:
             exit 1
           fi
 
+  formal-bridge:
+    name: 🔗 Formal Bridge (qp-plonky2 shape tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # qp-plonky2 commit whose constraint-exporter readers describe the circuits on this
+      # branch (Quantus-Network/qp-plonky2#116). Bump it together with any change to the
+      # traced gadget-call order; the readers fail closed on a mismatch.
+      QP_PLONKY2_REF: d45d0bc9c8a2896ffe6a9716948023e3243ba9ed
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/ubuntu
+      # The Lean bridge in qp-plonky2 proves soundness of the *traced* gadget calls, so a
+      # circuit edit that drops a constraint (e.g. a range check) only shows up when the
+      # exporter's shape readers are run against the new trace. Trace from the circuits in
+      # this checkout rather than trusting the committed JSON, then run the readers.
+      - name: Record gadget-call traces from this checkout
+        run: |
+          UPDATE_FORMAL_TRACE=1 cargo test --release --locked -p qp-wormhole-circuit --test formal_trace
+          UPDATE_FORMAL_TRACE=1 cargo test --release --locked -p qp-wormhole-aggregator --lib -- trace_is_current
+      - name: Check out qp-plonky2 constraint exporter
+        uses: actions/checkout@v4
+        with:
+          repository: Quantus-Network/qp-plonky2
+          ref: ${{ env.QP_PLONKY2_REF }}
+          path: qp-plonky2
+      - name: Run the exporter shape readers against the fresh traces
+        working-directory: qp-plonky2
+        env:
+          WORMHOLE_TRACES: ${{ github.workspace }}/formal/traces
+        run: |
+          rustup toolchain install
+          cargo test --release -p qp-plonky2-constraint-exporter \
+            --test leaf_circuit --test private_batch_wrapper --test public_batch_wrapper
+
   slow-tests:
     name: 🐌 Slow Tests (Crypto-heavy)
     # needs: fast-checks

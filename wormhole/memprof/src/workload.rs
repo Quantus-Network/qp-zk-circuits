@@ -29,6 +29,7 @@ use wormhole_prover::fill_witness;
 use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::serialization::{bytes_to_digest, digest_to_bytes as serialize_digest};
 use zk_circuits_common::utils::{digest_to_bytes, u64_to_felts};
+use zk_circuits_common::zk_merkle::{hash_node, Hash256, ARITY, SIBLINGS_PER_LEVEL};
 
 use crate::report::PhaseReport;
 
@@ -55,25 +56,92 @@ fn print_private_batch_metrics(shape: PrivateBatchShape, metrics: PrivateBatchBu
     );
 }
 
-fn build_profile_circuit_inputs() -> Result<CircuitInputs> {
-    let mut inputs = build_dummy_circuit_inputs()?;
-    inputs.public.input_amount = 100;
-    inputs.public.nullifier = digest_to_bytes(
-        Nullifier::from_preimage(
-            inputs.private.secret.expose_digest(),
-            inputs.private.transfer_count,
-        )
-        .hash,
-    );
+const PROFILE_INPUT_AMOUNT: u32 = 100;
 
-    let account: [u8; 32] = inputs.private.unspendable_account.as_ref().try_into()?;
-    let mut preimage = bytes_to_digest(&account).to_vec();
-    preimage.extend(u64_to_felts(inputs.private.transfer_count));
-    preimage.push(F::from_canonical_u32(inputs.public.asset_id));
-    preimage.push(F::from_canonical_u32(inputs.public.input_amount));
-    inputs.private.zk_tree_root = serialize_digest(&Poseidon2Hash::hash_no_pad(&preimage).elements);
-    inputs.public.block_hash = HeaderInputs::try_from(&inputs)?.block_hash();
-    Ok(inputs)
+fn zk_leaf_hash(account: &[u8; 32], transfer_count: u64, asset_id: u32, amount: u32) -> Hash256 {
+    let mut preimage = bytes_to_digest(account).to_vec();
+    preimage.extend(u64_to_felts(transfer_count));
+    preimage.push(F::from_canonical_u32(asset_id));
+    preimage.push(F::from_canonical_u32(amount));
+    serialize_digest(&Poseidon2Hash::hash_no_pad(&preimage).elements)
+}
+
+/// Sorted siblings, positions and root of a 4-ary merkle path for `leaf_index` in a
+/// tree whose leaves are `leaves` padded with zero hashes to `ARITY^depth`. The tree
+/// has at least one level so that several leaves can share a root.
+fn merkle_path(
+    leaf_index: usize,
+    leaves: &[Hash256],
+) -> Result<(Vec<[Hash256; SIBLINGS_PER_LEVEL]>, Vec<u8>, Hash256)> {
+    let mut width = ARITY;
+    while width < leaves.len() {
+        width *= ARITY;
+    }
+    let mut nodes = leaves.to_vec();
+    nodes.resize(width, [0u8; 32]);
+
+    let mut siblings = Vec::new();
+    let mut positions = Vec::new();
+    let mut idx = leaf_index;
+    while nodes.len() > 1 {
+        let current = nodes[idx];
+        let mut group: [Hash256; ARITY] = nodes[idx / ARITY * ARITY..][..ARITY].try_into()?;
+        group.sort();
+        let position = group
+            .iter()
+            .position(|h| *h == current)
+            .ok_or_else(|| anyhow::anyhow!("leaf hash missing from its own node"))?;
+        let level_siblings: Vec<Hash256> = group
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != position)
+            .map(|(_, h)| *h)
+            .collect();
+        siblings.push(
+            level_siblings
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("expected {SIBLINGS_PER_LEVEL} siblings"))?,
+        );
+        positions.push(position as u8);
+
+        nodes = nodes
+            .chunks(ARITY)
+            .map(|children| {
+                hash_node(children.try_into().expect("chunks of ARITY"))
+                    .map_err(|e| anyhow::anyhow!(e))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        idx /= ARITY;
+    }
+    Ok((siblings, positions, nodes[0]))
+}
+
+/// Inputs for `count` real leaf proofs that can be aggregated together: every leaf
+/// spends a distinct `transfer_count` of the shared secret (distinct nullifiers) and
+/// all leaves sit in one zk tree, so they commit to the same block hash.
+pub fn build_profile_circuit_inputs(count: usize) -> Result<Vec<CircuitInputs>> {
+    let template = build_dummy_circuit_inputs()?;
+    let account: [u8; 32] = template.private.unspendable_account.as_ref().try_into()?;
+    let leaf_hashes: Vec<Hash256> = (0..count as u64)
+        .map(|tc| zk_leaf_hash(&account, tc, template.public.asset_id, PROFILE_INPUT_AMOUNT))
+        .collect();
+
+    let mut all = Vec::with_capacity(count);
+    for idx in 0..count {
+        let (siblings, positions, root) = merkle_path(idx, &leaf_hashes)?;
+        let mut inputs = build_dummy_circuit_inputs()?;
+        inputs.public.input_amount = PROFILE_INPUT_AMOUNT;
+        inputs.private.transfer_count = idx as u64;
+        inputs.public.nullifier = digest_to_bytes(
+            Nullifier::from_preimage(inputs.private.secret.expose_digest(), idx as u64).hash,
+        );
+        inputs.private.zk_tree_root = root;
+        inputs.private.zk_merkle_siblings = siblings;
+        inputs.private.zk_merkle_positions = positions;
+        inputs.public.block_hash = HeaderInputs::try_from(&inputs)?.block_hash();
+        all.push(inputs);
+    }
+    Ok(all)
 }
 
 pub fn build_leaf_context(
@@ -122,16 +190,15 @@ pub fn build_leaf_context(
 pub fn generate_leaf_proof(
     ctx: &LeafContext,
     idx: usize,
+    inputs: &CircuitInputs,
     release_after: bool,
     report: &mut PhaseReport,
 ) -> Result<ProofWithPublicInputs<F, C, D>> {
     report.phase_start(&format!("gen_leaf_proof[{}]", idx))?;
 
-    let inputs = build_profile_circuit_inputs()?;
-
     // Fill witness using targets from the same build as prover_data
     let mut pw = PartialWitness::new();
-    fill_witness(&mut pw, &inputs, &ctx.targets)?;
+    fill_witness(&mut pw, inputs, &ctx.targets)?;
 
     let proof = ctx
         .prover_data
