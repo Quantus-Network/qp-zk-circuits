@@ -20,7 +20,7 @@ use plonky2::{
     },
 };
 use qp_wormhole_inputs::{
-    validate_proof_count, BytesDigest, PrivateBatchPublicInputs, PrivateBatchShape,
+    validate_public_batch_arity, BytesDigest, PrivateBatchPublicInputs, PrivateBatchShape,
 };
 use std::sync::Arc;
 
@@ -88,7 +88,7 @@ impl PublicBatchProver {
         dummy_proof_template: ProofWithPublicInputs<F, C, D>,
     ) -> Result<Self> {
         private_batch_shape.validate()?;
-        validate_proof_count(num_private_batch_proofs, "num_private_batch_proofs")?;
+        validate_public_batch_arity(num_private_batch_proofs, "num_private_batch_proofs")?;
 
         let private_batch_verifier_data = VerifierCircuitData {
             verifier_only: private_batch_verifier_only.clone(),
@@ -150,7 +150,7 @@ impl PublicBatchProver {
         // oversized config returns an error instead of panicking inside the
         // circuit builder (#97027, #97070).
         private_batch_shape.validate()?;
-        validate_proof_count(num_private_batch_proofs, "num_private_batch_proofs")?;
+        validate_public_batch_arity(num_private_batch_proofs, "num_private_batch_proofs")?;
 
         // 1) Load and pin private-batch verifier data to the canonical circuit.
         let private_batch_verifier_data = load_canonical_private_batch_verifier_data(
@@ -631,7 +631,9 @@ pub(crate) mod tests {
     use crate::private_batch::circuit::circuit_logic::PrivateBatchCircuit;
     use crate::private_batch::prover::{PrivateBatchInputs, PrivateBatchProver};
     use plonky2::field::types::Field;
-    use qp_wormhole_inputs::{WithdrawalOutput, MAX_PROOF_COUNT, PUBLIC_INPUTS_FELTS_LEN};
+    use qp_wormhole_inputs::{
+        WithdrawalOutput, MAX_PROOF_COUNT, MAX_PUBLIC_BATCH_ARITY, PUBLIC_INPUTS_FELTS_LEN,
+    };
     use test_helpers::fake_leaf::{build_fake_leaf_circuit, prove_fake_leaf};
     use zk_circuits_common::circuit::{wormhole_private_batch_circuit_config, F};
 
@@ -657,7 +659,7 @@ pub(crate) mod tests {
             wormhole_public_batch_circuit_config(),
             leaf.common.clone(),
             &leaf.verifier_only,
-            MAX_PROOF_COUNT + 1,
+            MAX_PUBLIC_BATCH_ARITY + 1,
             SHAPE,
             fake_proof,
         )
@@ -678,7 +680,7 @@ pub(crate) mod tests {
             wormhole_public_batch_circuit_config(),
             leaf.common.clone(),
             &leaf.verifier_only,
-            MAX_PROOF_COUNT + 1,
+            MAX_PUBLIC_BATCH_ARITY + 1,
             SHAPE,
         )
         .err()

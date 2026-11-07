@@ -1,13 +1,13 @@
 //! CPU versus GPU public-batch proving on the real circuit, with the GPU path
 //! split into its CPU-side witness work and its device-coordinated stages.
-//! Requires a hardware adapter with native u64 shaders; the GPU prover for an
-//! arity-53 batch plans roughly 5.5 GB of device buffers.
+//! Requires a hardware adapter with native u64 shaders; the GPU prover for the
+//! production arity-109 batch (2^19 rows) plans roughly 12 GB of device buffers.
 //!
 //! `cargo bench -p qp-wormhole-aggregator --features gpu --bench gpu`
 //!
 //! Every target proves a full batch (one real inner proof, dummy-padded; see
 //! `prepare_public_batch_fixture`), so a sample takes seconds. Filter by arity
-//! or backend, e.g. `-- 53` or `-- public_batch_prove/gpu`, to skip the other
+//! or backend, e.g. `-- 109` or `-- public_batch_prove/gpu`, to skip the other
 //! fixtures' circuit generation.
 #[path = "support/fixtures.rs"]
 mod fixtures;
@@ -16,6 +16,7 @@ use criterion::{
 };
 use fixtures::*;
 use plonky2::iop::generator::generate_partial_witness;
+use qp_wormhole_aggregator::production;
 use qp_wormhole_aggregator::public_batch::prover::{PublicBatchInputs, PublicBatchProver};
 use qp_wormhole_gpu::{DeviceContext, PreparationOptions, PreparedCircuit};
 use qp_wormhole_inputs::BytesDigest;
@@ -23,8 +24,8 @@ use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-/// 53 is the production circuit size; 8 keeps a quick comparison available.
-const ARITIES: &[usize] = &[8, 53];
+/// The production circuit size, plus 8 to keep a quick comparison available.
+const ARITIES: &[usize] = &[8, production::PUBLIC_BATCH_ARITY];
 /// Proving workers sharing one GPU prover, as a service would run them. The
 /// GPU stages are serialized on the shared workspace; only the CPU witness
 /// work overlaps.

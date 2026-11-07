@@ -10,7 +10,7 @@ use qp_wormhole_aggregator::config::CircuitBinsConfig;
 use qp_wormhole_aggregator::private_batch::circuit::build::generate_private_batch_circuit_binaries;
 use qp_wormhole_aggregator::public_batch::circuit::build::generate_public_batch_circuit_binaries;
 use qp_wormhole_aggregator::public_batch::prover::{PublicBatchInputs, PublicBatchProver};
-use qp_wormhole_aggregator::PrivateBatchShape;
+use qp_wormhole_aggregator::{production, PrivateBatchShape};
 use qp_wormhole_inputs::BytesDigest;
 use std::path::Path;
 
@@ -278,8 +278,11 @@ prove_public_batch_benchmark!(bench_prove_public_batch_4, 4);
 prove_public_batch_benchmark!(bench_prove_public_batch_8, 8);
 prove_public_batch_benchmark!(bench_prove_public_batch_16, 16);
 prove_public_batch_benchmark!(bench_prove_public_batch_32, 32);
-// Production circuit size (quantus-cli generates bins with 53 slots).
-prove_public_batch_benchmark!(bench_prove_public_batch_53, 53);
+// Production circuit size (quantus-cli generates bins with this many slots).
+prove_public_batch_benchmark!(
+    bench_prove_public_batch_production,
+    production::PUBLIC_BATCH_ARITY
+);
 
 verify_public_batch_benchmark!(bench_verify_public_batch_2, 2);
 verify_public_batch_benchmark!(bench_verify_public_batch_4, 4);
@@ -296,7 +299,7 @@ criterion_group!(
               bench_aggregate_proofs_9, bench_aggregate_proofs_25, bench_aggregate_proofs_36, bench_aggregate_proofs_49,
               bench_verify_aggregate_proof_9, bench_verify_aggregate_proof_25, bench_verify_aggregate_proof_36, bench_verify_aggregate_proof_49,
               bench_prove_public_batch_2, bench_prove_public_batch_4, bench_prove_public_batch_8, bench_prove_public_batch_16, bench_prove_public_batch_32,
-              bench_prove_public_batch_53,
+              bench_prove_public_batch_production,
               bench_verify_public_batch_2, bench_verify_public_batch_4, bench_verify_public_batch_8, bench_verify_public_batch_16, bench_verify_public_batch_32,
 );
 criterion_main!(benches);

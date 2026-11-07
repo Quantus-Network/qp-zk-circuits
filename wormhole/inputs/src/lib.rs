@@ -61,31 +61,65 @@ pub mod leaf_config {
     pub const FRI_NUM_QUERY_ROUNDS: usize = 16;
 }
 
-/// Maximum number of proofs aggregated per layer. Bounds circuit-construction,
-/// proving, and public-input parsing work to the documented practical per-layer
-/// limit (benches currently exercise up to 49 proofs). This is the single source
-/// of truth re-exported by the aggregator config; every externally supplied or
-/// length-derived batch dimension must be validated against it before any
-/// allocation, arithmetic, or circuit construction.
+/// Maximum number of leaf proofs and of exit slots in a private batch. The formal
+/// spec (`formal/WormholeSpec/Aggregation.lean`) proves the fee arithmetic cannot
+/// wrap the field and fits the 52-bit range check for at most 64 of each, so
+/// raising this requires widening that range check and the Lean bounds with it.
+/// Every externally supplied or length-derived private-batch dimension must be
+/// validated against it before any allocation, arithmetic, or circuit construction.
 pub const MAX_PROOF_COUNT: usize = 64;
 
-/// Validate that a per-layer proof count is in the canonical `1..=MAX_PROOF_COUNT` range.
-///
-/// Centralizes the batch-size bound so every build/parse entry point applies the
-/// same cap before doing work that scales with the count.
-pub fn validate_proof_count(count: usize, label: &str) -> anyhow::Result<()> {
+/// Maximum number of private-batch proofs aggregated into one public batch. The
+/// public batch has no field-arithmetic bound of its own (it forwards inner public
+/// inputs), so this only caps circuit-construction, proving, and public-input
+/// parsing work: 256 inner proofs is a 2^21-row circuit. Validate every externally
+/// supplied arity against it before any allocation or arithmetic.
+pub const MAX_PUBLIC_BATCH_ARITY: usize = 256;
+
+/// The deployed batch dimensions. Shared by the circuit-builder defaults, the
+/// profiler, the benches, and the degree-pinning tests in the aggregator crate.
+pub mod production {
+    use super::PrivateBatchShape;
+
+    /// Leaf proofs per private batch. Ten fits the private batch in 2^15 rows with
+    /// ~250 gates to spare; eleven does not.
+    pub const NUM_LEAF_PROOFS: usize = 10;
+    /// Exit slots per private batch. Slots cost ~1 gate each in the private batch
+    /// and ~1 gate per inner proof in the public batch, but 40 bytes of public
+    /// input each on chain whether used or not.
+    pub const NUM_EXIT_SLOTS: usize = 32;
+    /// Private-batch proofs per public batch. 109 is the most that fit in 2^19
+    /// rows: each inner proof costs ~4,740 gates of recursive verification plus
+    /// 25 Poseidon gates hashing its 200 forwarded public inputs.
+    pub const PUBLIC_BATCH_ARITY: usize = 109;
+
+    pub const PRIVATE_BATCH_SHAPE: PrivateBatchShape =
+        PrivateBatchShape::new(NUM_LEAF_PROOFS, NUM_EXIT_SLOTS);
+}
+
+fn validate_count(count: usize, max: usize, label: &str) -> anyhow::Result<()> {
     if count == 0 {
         bail!("{} must be > 0", label);
     }
-    if count > MAX_PROOF_COUNT {
-        bail!(
-            "{} ({}) exceeds maximum allowed ({})",
-            label,
-            count,
-            MAX_PROOF_COUNT
-        );
+    if count > max {
+        bail!("{} ({}) exceeds maximum allowed ({})", label, count, max);
     }
     Ok(())
+}
+
+/// Validate that a private-batch dimension (leaf proofs or exit slots) is in the
+/// canonical `1..=MAX_PROOF_COUNT` range.
+///
+/// Centralizes the bound so every build/parse entry point applies the same cap
+/// before doing work that scales with the count.
+pub fn validate_proof_count(count: usize, label: &str) -> anyhow::Result<()> {
+    validate_count(count, MAX_PROOF_COUNT, label)
+}
+
+/// Validate that a public-batch arity is in the canonical `1..=MAX_PUBLIC_BATCH_ARITY`
+/// range.
+pub fn validate_public_batch_arity(count: usize, label: &str) -> anyhow::Result<()> {
+    validate_count(count, MAX_PUBLIC_BATCH_ARITY, label)
 }
 
 /// Circuit-build-time shape of a private batch: how many leaf proofs it
@@ -658,7 +692,7 @@ impl PublicBatchPublicInputs {
             HEADER_LEN,
         };
 
-        validate_proof_count(num_private_batch_proofs, "num_private_batch_proofs")?;
+        validate_public_batch_arity(num_private_batch_proofs, "num_private_batch_proofs")?;
         shape.validate()?;
 
         let expected_len = try_pi_len(num_private_batch_proofs, shape).ok_or_else(|| {
@@ -775,9 +809,10 @@ impl PublicBatchPublicInputs {
 mod tests {
     use super::{private_batch_pi, public_batch_pi};
     use super::{
-        private_batch_shape_from_pis, validate_proof_count, PrivateBatchPublicInputs,
-        PrivateBatchShape, PublicBatchPublicInputs, PublicCircuitInputs, INPUT_AMOUNT_INDEX,
-        MAX_PROOF_COUNT, PUBLIC_INPUTS_FELTS_LEN,
+        private_batch_shape_from_pis, production, validate_proof_count,
+        validate_public_batch_arity, PrivateBatchPublicInputs, PrivateBatchShape,
+        PublicBatchPublicInputs, PublicCircuitInputs, INPUT_AMOUNT_INDEX, MAX_PROOF_COUNT,
+        MAX_PUBLIC_BATCH_ARITY, PUBLIC_INPUTS_FELTS_LEN,
     };
 
     #[test]
@@ -854,12 +889,32 @@ mod tests {
     #[test]
     fn public_batch_parser_rejects_oversized_counts() {
         // Counts whose product would wrap the layout arithmetic must be rejected by
-        // the MAX_PROOF_COUNT cap instead of panicking or wrapping to an empty batch.
+        // the MAX_PUBLIC_BATCH_ARITY cap instead of panicking or wrapping to an empty batch.
         let header = vec![0u64; public_batch_pi::HEADER_LEN];
         let shape = PrivateBatchShape::new(1, 2);
-        let err = PublicBatchPublicInputs::try_from_u64_slice(&header, 1usize << 63, shape)
-            .expect_err("oversized inner count must be rejected");
-        assert!(err.to_string().contains("exceeds maximum"), "got: {err}");
+        for bad in [1usize << 63, MAX_PUBLIC_BATCH_ARITY + 1] {
+            let err = PublicBatchPublicInputs::try_from_u64_slice(&header, bad, shape)
+                .expect_err("oversized inner count must be rejected");
+            assert!(err.to_string().contains("exceeds maximum"), "got: {err}");
+        }
+        let err = PublicBatchPublicInputs::try_from_u64_slice(&header, 0, shape)
+            .expect_err("zero inner count must be rejected");
+        assert!(err.to_string().contains("must be > 0"), "got: {err}");
+    }
+
+    #[test]
+    fn public_batch_parser_accepts_production_arity() {
+        let shape = production::PRIVATE_BATCH_SHAPE;
+        let n_inner = production::PUBLIC_BATCH_ARITY;
+        assert!(
+            n_inner > MAX_PROOF_COUNT,
+            "arity must not be bound by the private-batch cap"
+        );
+        let mut pis = vec![0u64; public_batch_pi::pi_len(n_inner, shape)];
+        pis[11] = (n_inner * shape.num_exit_slots) as u64;
+        let parsed = PublicBatchPublicInputs::try_from_u64_slice(&pis, n_inner, shape).unwrap();
+        assert_eq!(parsed.account_data.len(), n_inner * shape.num_exit_slots);
+        assert_eq!(parsed.nullifiers.len(), n_inner * shape.num_leaf_proofs);
     }
 
     #[test]
@@ -878,6 +933,10 @@ mod tests {
         assert!(validate_proof_count(0, "x").is_err());
         assert!(validate_proof_count(MAX_PROOF_COUNT + 1, "x").is_err());
         assert!(validate_proof_count(1, "x").is_ok());
+        assert!(validate_public_batch_arity(0, "x").is_err());
+        assert!(validate_public_batch_arity(MAX_PUBLIC_BATCH_ARITY + 1, "x").is_err());
+        assert!(validate_public_batch_arity(MAX_PROOF_COUNT + 1, "x").is_ok());
+        assert!(validate_public_batch_arity(production::PUBLIC_BATCH_ARITY, "x").is_ok());
         assert!(validate_proof_count(MAX_PROOF_COUNT, "x").is_ok());
     }
 }

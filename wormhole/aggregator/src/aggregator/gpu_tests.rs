@@ -1,6 +1,7 @@
 use super::*;
 use plonky2::field::types::Field;
 use qp_wormhole_gpu::{DeviceContext, PreparationOptions};
+use qp_wormhole_inputs::production;
 
 /// Runs without a device: the exported gate programs the GPU quotient kernels
 /// are compiled from must agree with the CPU gate evaluators for every gate in
@@ -85,13 +86,15 @@ fn gpu_backend_pads_partial_batches_and_serves_concurrent_workers() -> Result<()
     Ok(())
 }
 
-/// The production circuit shape: 53 private-batch slots. Exercises the real
-/// buffer plan (multi-chunk commitments and quotient), not the arity-1
-/// fixture the other tests use.
+/// The production arity. Exercises the real buffer plan (multi-chunk
+/// commitments and quotient), not the arity-1 fixture the other tests use.
 #[test]
 #[ignore = "requires a hardware GPU with native u64 shader support"]
 fn gpu_backend_proves_production_arity_batch() -> Result<()> {
-    let (proving, inners, cpu_proofs) = gpu_proving_context(53, 2, |inners| vec![inners.to_vec()])?;
+    let (proving, inners, cpu_proofs) =
+        gpu_proving_context(production::PUBLIC_BATCH_ARITY, 2, |inners| {
+            vec![inners.to_vec()]
+        })?;
     let cpu_proof = &cpu_proofs[0];
     let gpu_proof = proving.prove_batch(inners)?;
     assert_eq!(gpu_proof.public_inputs, cpu_proof.public_inputs);

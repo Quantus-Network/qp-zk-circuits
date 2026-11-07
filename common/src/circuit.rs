@@ -420,12 +420,16 @@ pub fn wormhole_leaf_circuit_config() -> CircuitConfig {
 /// 200-proof public batch from 2^20 to 2^21; at `rate_bits = 4` the per-proof cost matches
 /// the old 100-bit config, at the price of a 2x larger private-batch LDE.
 ///
-/// Measured degree with this config (the leaf verifiers dominate; the exit-slot
-/// count `M` costs about one gate per slot and does not move the degree for any
-/// `M <= 64`):
+/// Measured degree with this config (the leaf verifiers dominate at ~2,380 gates
+/// each; the exit-slot count `M` costs about one gate per slot and does not move
+/// the degree for any `M <= 64`):
 /// - 1-3 leaves: degree_bits=14
-/// - 4-10 leaves: degree_bits=15; (7, 16) full proving peaks at ~2.25 GB
-///   (`wormhole-memprof --real-proofs 1`; ~1.5 GB with the former rate_bits=3)
+/// - 4-10 leaves: degree_bits=15; full proving peaks at ~2.25 GB
+///   (`wormhole-memprof --real-proofs 1`; ~1.5 GB with the former rate_bits=3).
+///   The production shape (10, 32) uses 23,807 of the ~24,060 rows left after
+///   blinding, so adding gates to this circuit will push it to 2^16; the
+///   `production_private_batch_stays_at_degree_15` test in the aggregator
+///   crate pins this.
 /// - 11-23 leaves: degree_bits=16
 /// - 24+ leaves: degree_bits=17
 pub fn wormhole_private_batch_circuit_config() -> CircuitConfig {
@@ -460,8 +464,34 @@ pub fn ownership_circuit_config() -> CircuitConfig {
 /// forwarded verbatim into the public-batch public inputs. A non-ZK public-batch proof therefore
 /// cannot leak anything that is not already public. Disabling ZK (row blinding) here
 /// significantly speeds up proving, mirroring `wormhole_leaf_circuit_config`.
+///
+/// FRI: `rate_bits = 3`, 36 query rounds, 20 proof-of-work bits (`36 * 3 + 20 = 128`
+/// conjectured bits). This layer is proved on a GPU at 2^19 rows for the production
+/// arity, where the LDE already plans ~12 GB of device buffers, so the rate stays at
+/// plonky2's minimum and the extra security comes from queries and grinding. Both
+/// cost only the (native, on-chain) verifier: 36 Merkle paths per oracle instead of
+/// 28, and one 2^20-hash grind per proof for the prover. Being non-ZK, the query
+/// count adds no blinding rows, so it does not affect the circuit degree.
+///
+/// Measured degree over the production private batch (~4,785 rows per inner proof:
+/// the recursive verifier plus one Poseidon gate per 8 forwarded public inputs,
+/// which `build()` appends for the public-input hash):
+/// - up to 54 inner proofs: degree_bits=18
+/// - 55-109: degree_bits=19 (production arity 109; pinned by
+///   `production_public_batch_stays_at_degree_19` in the aggregator crate)
+/// - 110-218: degree_bits=20
 pub fn wormhole_public_batch_circuit_config() -> CircuitConfig {
-    CircuitConfig::standard_recursion_config() // zero_knowledge: false
+    CircuitConfig {
+        security_bits: 128,
+        fri_config: FriConfig {
+            rate_bits: 3,
+            cap_height: 4,
+            proof_of_work_bits: 20,
+            reduction_strategy: FriReductionStrategy::ConstantArityBits(4, 5),
+            num_query_rounds: 36,
+        },
+        ..CircuitConfig::standard_recursion_config() // zero_knowledge: false
+    }
 }
 
 // ============================================================================

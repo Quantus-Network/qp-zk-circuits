@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
-pub use qp_wormhole_inputs::validate_proof_count;
 use qp_wormhole_inputs::PrivateBatchShape;
+pub use qp_wormhole_inputs::{validate_proof_count, validate_public_batch_arity};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -12,7 +12,7 @@ use std::path::Path;
 /// exercise up to 49 proofs): accepting the old 1024 cap let a single valid
 /// artifact-generation request drive circuit construction whose work scales
 /// quadratically/multiplicatively with the count (audit #97021).
-pub use qp_wormhole_inputs::MAX_PROOF_COUNT;
+pub use qp_wormhole_inputs::{MAX_PROOF_COUNT, MAX_PUBLIC_BATCH_ARITY};
 
 /// Configuration stored alongside circuit binaries (config.json).
 /// This struct is used by both circuit-builder (to save config) and
@@ -35,7 +35,7 @@ impl CircuitBinsConfig {
     /// # Errors
     /// Returns an error if:
     /// - `shape.num_leaf_proofs` or `shape.num_exit_slots` is 0 or exceeds `MAX_PROOF_COUNT`
-    /// - `num_private_batch_proofs` is `Some(0)` or exceeds `MAX_PROOF_COUNT`
+    /// - `num_private_batch_proofs` is `Some(0)` or exceeds `MAX_PUBLIC_BATCH_ARITY`
     pub fn new(shape: PrivateBatchShape, num_private_batch_proofs: Option<usize>) -> Result<Self> {
         let config = Self {
             num_leaf_proofs: shape.num_leaf_proofs,
@@ -54,11 +54,11 @@ impl CircuitBinsConfig {
     /// Validate the config values.
     ///
     /// # Errors
-    /// Returns an error if proof counts are zero or exceed `MAX_PROOF_COUNT`.
+    /// Returns an error if proof counts are zero or exceed their layer's cap.
     pub fn validate(&self) -> Result<()> {
         self.private_batch_shape().validate()?;
         if let Some(n) = self.num_private_batch_proofs {
-            validate_proof_count(n, "num_private_batch_proofs")?;
+            validate_public_batch_arity(n, "num_private_batch_proofs")?;
         }
         Ok(())
     }
@@ -99,7 +99,7 @@ impl CircuitBinsConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{CircuitBinsConfig, PrivateBatchShape, MAX_PROOF_COUNT};
+    use super::{CircuitBinsConfig, PrivateBatchShape, MAX_PROOF_COUNT, MAX_PUBLIC_BATCH_ARITY};
     use std::{
         fs,
         path::PathBuf,
@@ -174,9 +174,14 @@ mod tests {
 
     #[test]
     fn new_rejects_excessive_num_private_batch_proofs() {
-        let err = CircuitBinsConfig::new(PrivateBatchShape::new(16, 16), Some(MAX_PROOF_COUNT + 1))
-            .unwrap_err();
+        let err = CircuitBinsConfig::new(
+            PrivateBatchShape::new(16, 16),
+            Some(MAX_PUBLIC_BATCH_ARITY + 1),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("exceeds maximum"));
+        CircuitBinsConfig::new(PrivateBatchShape::new(16, 16), Some(MAX_PROOF_COUNT + 1))
+            .expect("public-batch arity is not bound by the private-batch cap");
     }
 
     #[test]

@@ -47,7 +47,7 @@ use plonky2::{
         proof::ProofWithPublicInputsTarget,
     },
 };
-use qp_wormhole_inputs::validate_proof_count;
+use qp_wormhole_inputs::validate_public_batch_arity;
 
 /// Safely add multiple recursive proof verifications for the same inner circuit.
 ///
@@ -66,11 +66,13 @@ use qp_wormhole_inputs::validate_proof_count;
 ///
 /// # Errors
 ///
-/// Returns an error when `num_proofs` is outside `1..=MAX_PROOF_COUNT`. The
-/// bound is enforced here — not only in the higher-level batch constructors —
-/// because this is a public API boundary: `num_proofs` drives allocation and
-/// per-proof recursive-verifier construction, and `0` would silently produce
-/// an outer circuit with no inner-proof constraints at all.
+/// Returns an error when `num_proofs` is outside `1..=MAX_PUBLIC_BATCH_ARITY`
+/// (the larger of the two per-layer caps; the private batch applies the tighter
+/// `MAX_PROOF_COUNT` before calling this). The bound is enforced here — not
+/// only in the higher-level batch constructors — because this is a public API
+/// boundary: `num_proofs` drives allocation and per-proof recursive-verifier
+/// construction, and `0` would silently produce an outer circuit with no
+/// inner-proof constraints at all.
 pub fn add_recursive_verifiers<
     F: RichField + Extendable<D>,
     C: GenericConfig<D, F = F>,
@@ -85,7 +87,7 @@ where
     C::Hasher: AlgebraicHasher<F>,
     C::InnerHasher: AlgebraicHasher<F>,
 {
-    validate_proof_count(num_proofs, "num_proofs")?;
+    validate_public_batch_arity(num_proofs, "num_proofs")?;
 
     // SECURITY: Bake the verifier key as constants (shared across all proofs).
     let verifier_data = builder.constant_verifier_data::<C>(inner_verifier_only);
@@ -116,7 +118,7 @@ mod tests {
     /// unbounded count drives allocation and circuit-construction work.
     #[test]
     fn rejects_out_of_range_proof_counts() {
-        use qp_wormhole_inputs::MAX_PROOF_COUNT;
+        use qp_wormhole_inputs::MAX_PUBLIC_BATCH_ARITY;
 
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config.clone());
@@ -124,7 +126,7 @@ mod tests {
         builder.register_public_input(t);
         let inner = builder.build::<C>();
 
-        for bad_count in [0, MAX_PROOF_COUNT + 1] {
+        for bad_count in [0, MAX_PUBLIC_BATCH_ARITY + 1] {
             let mut builder = CircuitBuilder::<F, D>::new(config.clone());
             let err = add_recursive_verifiers::<F, C, D>(
                 &mut builder,

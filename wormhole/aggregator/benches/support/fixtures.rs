@@ -5,7 +5,7 @@ use qp_wormhole_aggregator::config::CircuitBinsConfig;
 use qp_wormhole_aggregator::private_batch::circuit::build::generate_private_batch_circuit_binaries;
 use qp_wormhole_aggregator::private_batch::prover::{PrivateBatchInputs, PrivateBatchProver};
 use qp_wormhole_aggregator::public_batch::circuit::build::generate_public_batch_circuit_binaries;
-use qp_wormhole_aggregator::PrivateBatchShape;
+use qp_wormhole_aggregator::{production, PrivateBatchShape};
 use std::path::Path;
 use std::sync::Once;
 use zk_circuits_common::circuit::{C, D, F};
@@ -34,11 +34,9 @@ pub fn bins_dir() -> &'static str {
 }
 
 // Must be consistent with the private_batch circuit binaries used in
-// public_batch benchmarks. 7 matches the production bins quantus-cli generates
-// (num_leaf_proofs=7, num_private_batch_proofs=53).
-pub const PUBLIC_BATCH_INNER_NUM_LEAVES: usize = 7;
-pub const PUBLIC_BATCH_INNER_SHAPE: PrivateBatchShape =
-    PrivateBatchShape::new(PUBLIC_BATCH_INNER_NUM_LEAVES, PUBLIC_BATCH_INNER_NUM_LEAVES);
+// public_batch benchmarks: the production shape quantus-cli generates bins for.
+pub const PUBLIC_BATCH_INNER_NUM_LEAVES: usize = production::NUM_LEAF_PROOFS;
+pub const PUBLIC_BATCH_INNER_SHAPE: PrivateBatchShape = production::PRIVATE_BATCH_SHAPE;
 pub const LAYER1_AGGREGATOR_ADDRESS: [u8; 32] = [42u8; 32];
 
 /// The batch-circuit generators load the leaf artifacts (`common.bin`,
