@@ -601,6 +601,7 @@ mod tests {
     /// (~4,785 rows each, including the public-input hash gates `build()`
     /// appends). A larger degree doubles the GPU prover's buffers.
     #[test]
+    #[ignore = "builds the 2^19 production public batch (~12 GB peak); run in the slow-tests CI job"]
     fn production_public_batch_stays_at_degree_19() {
         use super::{
             canonical_leaf_verifier_data, canonical_private_batch_verifier_data,

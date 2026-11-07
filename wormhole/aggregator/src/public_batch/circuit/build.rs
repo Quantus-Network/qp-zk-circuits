@@ -230,6 +230,7 @@ mod tests {
     /// End-to-end: the production shape and arity publish through the
     /// supported artifact generator.
     #[test]
+    #[ignore = "builds the 2^19 production public batch (~12 GB peak); run in the slow-tests CI job"]
     fn generator_builds_production_public_batch_artifacts() {
         use crate::private_batch::circuit::build::generate_private_batch_circuit_binaries;
         use qp_wormhole_inputs::production;
