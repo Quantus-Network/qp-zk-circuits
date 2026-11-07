@@ -169,6 +169,12 @@ jobs:
         run: |
           cargo test --release -p tests -- aggregator_tests circuit_data_tests prover_tests verifier_tests
           cargo test --release --package qp-wormhole-aggregator
+      # The 2^19 production public-batch builds peak at ~12 GB each, more than
+      # the 7 GB macos-latest runner has, so they are #[ignore]d in
+      # test-workspace and run here one at a time.
+      - name: Run production-shape degree guards
+        run: |
+          cargo test --release --locked -p qp-wormhole-aggregator --lib -- --ignored --test-threads=1 production_public_batch_stays_at_degree_19 generator_builds_production_public_batch_artifacts
 
   security-audit:
     name: 🔐 Security Audit
