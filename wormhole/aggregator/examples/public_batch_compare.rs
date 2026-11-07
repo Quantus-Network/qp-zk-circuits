@@ -1,6 +1,6 @@
 //! Compare CPU/GPU proving on prepared, populated public-batch fixtures.
 //! Usage: public_batch_compare <cpu|gpu> <fixture-dir> [a|b ...]
-//! Dataset A is full-0.bin through full-52.bin; B is full-53.bin through full-105.bin.
+//! Dataset A is full-0.bin through full-{ARITY-1}.bin; B is full-{ARITY}.bin through full-{2*ARITY-1}.bin.
 //! Initialization, input loading and output checks are outside the proof timer.
 //! ProvingContext::prove_batch includes admission, witness generation and final verification.
 //! Add --profile for host telemetry; --timestamps also enables GPU pass timing.
@@ -11,16 +11,16 @@ use plonky2::field::types::PrimeField64;
 use plonky2::plonk::config::{GenericConfig, Hasher};
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_aggregator::aggregator::PublicBatchAggregator;
-use qp_wormhole_aggregator::{CircuitBinsConfig, PrivateBatchShape};
+use qp_wormhole_aggregator::{production, CircuitBinsConfig, PrivateBatchShape};
 use qp_wormhole_gpu::{DeviceContext, DeviceOptions, PreparationOptions};
 use qp_wormhole_inputs::{BytesDigest, PrivateBatchPublicInputs, PublicBatchPublicInputs};
 use std::{collections::BTreeSet, path::PathBuf, sync::Arc, time::Instant};
 use zk_circuits_common::circuit::{C, D, F};
 
 type Proof = ProofWithPublicInputs<F, C, D>;
-const ARITY: usize = 53;
-const LEAVES: usize = 7;
-const SHAPE: PrivateBatchShape = PrivateBatchShape::new(LEAVES, LEAVES);
+const ARITY: usize = production::PUBLIC_BATCH_ARITY;
+const LEAVES: usize = production::NUM_LEAF_PROOFS;
+const SHAPE: PrivateBatchShape = production::PRIVATE_BATCH_SHAPE;
 
 fn values(proof: &Proof) -> Vec<u64> {
     proof
@@ -109,7 +109,7 @@ fn run(arguments: Vec<String>, timestamps: bool, profile: Option<&profile::Profi
     let config = CircuitBinsConfig::load(&dir)?;
     ensure!(
         config.private_batch_shape() == SHAPE && config.num_private_batch_proofs == Some(ARITY),
-        "expected arity-53, seven-leaf fixtures"
+        "expected fixtures at the production arity and private-batch shape"
     );
     let address = BytesDigest::try_from([7u8; 32])?;
     let started = Instant::now();

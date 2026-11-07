@@ -21,7 +21,7 @@ mod workload;
 
 use anyhow::Result;
 use clap::Parser;
-use wormhole_aggregator::PrivateBatchShape;
+use wormhole_aggregator::{production, PrivateBatchShape};
 
 use crate::config::{default_agg_config, default_leaf_config, print_config_summary, AggConfigArgs};
 use crate::report::PhaseReport;
@@ -32,13 +32,13 @@ use crate::report::PhaseReport;
     about = "Peak-memory profiler for wormhole proof + aggregation"
 )]
 struct Args {
-    /// Number of leaf proofs the aggregation circuit is built for. Matches
-    /// the on-chain verifier's expected batch size.
-    #[arg(long, default_value_t = 7)]
+    /// Number of leaf proofs the aggregation circuit is built for. Defaults to
+    /// the production shape, which the on-chain verifier is pinned to.
+    #[arg(long, default_value_t = production::NUM_LEAF_PROOFS)]
     num_leaf_proofs: usize,
 
     /// Number of withdrawal output slots the aggregation circuit is built for.
-    #[arg(long, default_value_t = 16)]
+    #[arg(long, default_value_t = production::NUM_EXIT_SLOTS)]
     num_exit_slots: usize,
 
     /// How many real leaf proofs to actually generate before aggregation.

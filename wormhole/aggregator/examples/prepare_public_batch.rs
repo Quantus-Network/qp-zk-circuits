@@ -5,8 +5,8 @@ use anyhow::{Context, Result};
 use qp_wormhole_aggregator::common::utils::{
     canonical_leaf_verifier_data, canonical_private_batch_verifier_data,
 };
+use qp_wormhole_aggregator::production;
 use qp_wormhole_aggregator::public_batch::circuit::circuit_logic::PublicBatchCircuit;
-use qp_wormhole_aggregator::PrivateBatchShape;
 use qp_wormhole_gpu::{DeviceContext, PreparationOptions, PreparedCircuit, ProofWorkspace};
 use std::time::Instant;
 use zk_circuits_common::circuit::wormhole_public_batch_circuit_config;
@@ -19,13 +19,13 @@ fn main() -> Result<()> {
 fn run(profile: &profile::Profile) -> Result<()> {
     let arity = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "53".into())
+        .unwrap_or_else(|| production::PUBLIC_BATCH_ARITY.to_string())
         .parse::<usize>()
         .context("invalid public-batch arity")?;
     let start = Instant::now();
-    eprintln!("Building canonical leaf and seven-slot private verifier data...");
+    eprintln!("Building canonical leaf and production-shape private verifier data...");
     let leaf = canonical_leaf_verifier_data();
-    let shape = PrivateBatchShape::new(7, 7);
+    let shape = production::PRIVATE_BATCH_SHAPE;
     let private = canonical_private_batch_verifier_data(&leaf, shape)?;
     eprintln!("Building arity-{arity} public circuit...");
     let circuit = PublicBatchCircuit::new(

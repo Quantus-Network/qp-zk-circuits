@@ -24,12 +24,12 @@ is tracked across the entire run (including inter-phase gaps) for accurate
 ## Usage
 
 ```bash
-# Default: build leaf circuit, generate 7 leaf proofs, aggregate them
+# Default: build leaf circuit, generate 10 leaf proofs, aggregate them
 cargo run -p wormhole-memprof --release
 
-# Mimic a smaller batch: 7-leaf agg circuit but only 4 real proofs
+# Mimic a partial batch: 10-leaf agg circuit but only 4 real proofs
 cargo run -p wormhole-memprof --release -- \
-    --num-leaf-proofs 7 --real-proofs 4
+    --num-leaf-proofs 10 --real-proofs 4
 
 # Just the aggregation circuit data structure (no proving)
 cargo run -p wormhole-memprof --release -- --circuit-only
@@ -59,7 +59,7 @@ Each run prints the unpadded and finalized power-of-two circuit dimensions:
 
 ```text
 [metrics] leaf unpadded_gates=... degree_bits=... padded_gates=...
-[metrics] private_batch n=7 leaf_degree_bits=... unpadded_gates=... degree_bits=... padded_gates=...
+[metrics] private_batch n=10 m=32 leaf_degree_bits=... unpadded_gates=... degree_bits=... padded_gates=...
 ```
 
 These lines make bucket-boundary comparisons reproducible without enabling

@@ -24,7 +24,7 @@ use plonky2::{
         proof::ProofWithPublicInputsTarget,
     },
 };
-use qp_wormhole_inputs::{validate_proof_count, PrivateBatchShape};
+use qp_wormhole_inputs::{validate_public_batch_arity, PrivateBatchShape};
 
 use zk_circuits_common::{
     circuit::{validate_circuit_config, C, D, F},
@@ -69,7 +69,7 @@ impl PublicBatchCircuit {
         private_batch_shape: PrivateBatchShape,
     ) -> Result<Self> {
         validate_circuit_config(&config)?;
-        validate_proof_count(n_inner, "n_inner")?;
+        validate_public_batch_arity(n_inner, "n_inner")?;
         private_batch_shape.validate()?;
 
         let expected_l0_pi_len = pbc::private_batch_pi_len(private_batch_shape);

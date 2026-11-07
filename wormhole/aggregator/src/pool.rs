@@ -75,7 +75,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, ensure, Result};
 use plonky2::field::types::PrimeField64;
 use plonky2::plonk::{circuit_data::VerifierCircuitData, proof::ProofWithPublicInputs};
-use qp_wormhole_inputs::{validate_proof_count, BytesDigest, PrivateBatchShape};
+use qp_wormhole_inputs::{validate_public_batch_arity, BytesDigest, PrivateBatchShape};
 use zk_circuits_common::{
     circuit::{C, D, F},
     utils::try_4_felts_to_bytes,
@@ -245,8 +245,9 @@ impl ProofPool {
     /// and `batch_size` the number of private-batch proofs per public batch;
     /// both must match the circuit shapes pinned into `verifier` and the
     /// public-batch prover this pool feeds. All dimensions are validated
-    /// against `MAX_PROOF_COUNT` before any layout arithmetic, so callers can
-    /// pass untrusted dimensions here.
+    /// against their layer's cap (`MAX_PROOF_COUNT`, `MAX_PUBLIC_BATCH_ARITY`)
+    /// before any layout arithmetic, so callers can pass untrusted dimensions
+    /// here.
     pub fn new(
         verifier: VerifierCircuitData<F, C, D>,
         inner_shape: PrivateBatchShape,
@@ -256,9 +257,9 @@ impl ProofPool {
         // Bound every count before the layout helpers below: pi_len does
         // unchecked arithmetic that would wrap on astronomical counts, and the
         // repo invariant is that every externally supplied batch dimension is
-        // checked with validate_proof_count before allocation or arithmetic.
+        // checked against its cap before allocation or arithmetic.
         inner_shape.validate()?;
-        validate_proof_count(batch_size, "batch_size")?;
+        validate_public_batch_arity(batch_size, "batch_size")?;
         ensure!(
             limits.max_proofs >= batch_size,
             "max_proofs ({}) must allow at least one full batch ({})",
@@ -729,7 +730,7 @@ mod tests {
     #[test]
     fn new_rejects_out_of_range_dimensions() {
         use crate::private_batch::circuit::constants::LEAF_PI_LEN;
-        use qp_wormhole_inputs::MAX_PROOF_COUNT;
+        use qp_wormhole_inputs::{MAX_PROOF_COUNT, MAX_PUBLIC_BATCH_ARITY};
 
         let (data, _) = build_fake_private_batch_circuit();
 
@@ -751,7 +752,7 @@ mod tests {
             .expect_err("out-of-range num_exit_slots must be rejected");
             assert!(err.to_string().contains("num_exit_slots"), "got: {err}");
         }
-        for bad_batch in [0, MAX_PROOF_COUNT + 1] {
+        for bad_batch in [0, MAX_PUBLIC_BATCH_ARITY + 1] {
             let err = ProofPool::new(
                 data.verifier_data(),
                 SHAPE,
