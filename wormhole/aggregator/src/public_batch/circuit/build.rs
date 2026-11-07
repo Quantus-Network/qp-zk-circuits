@@ -14,7 +14,7 @@ use std::path::Path;
 use plonky2::plonk::circuit_data::VerifierCircuitData;
 use plonky2::util::serialization::DefaultGateSerializer;
 
-use qp_wormhole_inputs::{validate_proof_count, PrivateBatchShape};
+use qp_wormhole_inputs::{validate_public_batch_arity, PrivateBatchShape};
 use zk_circuits_common::circuit::{wormhole_public_batch_circuit_config, C, D, F};
 
 use crate::common::utils::{
@@ -39,7 +39,7 @@ pub fn generate_public_batch_circuit_binaries<P: AsRef<Path>>(
 ) -> Result<()> {
     let output_dir = output_dir.as_ref();
     // Bound the per-layer counts before any circuit construction (#97021, #97070).
-    validate_proof_count(num_private_batch_proofs, "num_private_batch_proofs")?;
+    validate_public_batch_arity(num_private_batch_proofs, "num_private_batch_proofs")?;
     private_batch_shape.validate()?;
     create_dir_all(output_dir)
         .with_context(|| format!("Failed to create output dir {}", output_dir.display()))?;
@@ -189,6 +189,73 @@ mod tests {
                 && !dir.join("public_batch_verifier.bin").exists(),
             "a rejected private-batch pin must not publish public-batch artifacts"
         );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The generator is bounded by the public-batch arity cap, not the
+    /// private-batch `MAX_PROOF_COUNT`: arities above 64 must get past
+    /// validation (and fail later on the missing artifacts here), while
+    /// `MAX_PUBLIC_BATCH_ARITY + 1` must be rejected by the cap.
+    #[test]
+    fn generator_uses_public_batch_arity_cap() {
+        use qp_wormhole_inputs::{production, MAX_PROOF_COUNT, MAX_PUBLIC_BATCH_ARITY};
+
+        let dir = temp_dir("arity-cap");
+        let shape = production::PRIVATE_BATCH_SHAPE;
+
+        for arity in [
+            MAX_PROOF_COUNT + 1,
+            production::PUBLIC_BATCH_ARITY,
+            MAX_PUBLIC_BATCH_ARITY,
+        ] {
+            let err = generate_public_batch_circuit_binaries(&dir, arity, shape).unwrap_err();
+            let chain = format!("{err:#}");
+            assert!(
+                chain.contains("private_batch_common.bin"),
+                "arity {arity} must pass validation and fail on the missing artifacts, got: {chain}"
+            );
+        }
+
+        let err = generate_public_batch_circuit_binaries(&dir, MAX_PUBLIC_BATCH_ARITY + 1, shape)
+            .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("exceeds maximum allowed"),
+            "arity above MAX_PUBLIC_BATCH_ARITY must be rejected, got: {err:#}"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// End-to-end: the production shape and arity publish through the
+    /// supported artifact generator.
+    #[test]
+    fn generator_builds_production_public_batch_artifacts() {
+        use crate::private_batch::circuit::build::generate_private_batch_circuit_binaries;
+        use qp_wormhole_inputs::production;
+
+        let dir = temp_dir("production");
+        let leaf = canonical_leaf_verifier_data();
+        std::fs::write(
+            dir.join("common.bin"),
+            leaf.common.to_bytes(&DefaultGateSerializer).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("verifier.bin"),
+            leaf.verifier_only.to_bytes().unwrap(),
+        )
+        .unwrap();
+        generate_private_batch_circuit_binaries(&dir, production::PRIVATE_BATCH_SHAPE, false)
+            .unwrap();
+        generate_public_batch_circuit_binaries(
+            &dir,
+            production::PUBLIC_BATCH_ARITY,
+            production::PRIVATE_BATCH_SHAPE,
+        )
+        .unwrap();
+        assert!(dir.join("public_batch_common.bin").exists());
+        assert!(dir.join("public_batch_verifier.bin").exists());
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
