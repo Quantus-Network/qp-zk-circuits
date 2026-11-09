@@ -64,11 +64,12 @@ jobs:
       - name: Setup macOS
         if: matrix.os == 'macos-latest'
         uses: ./.github/actions/macos
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-nextest@${{ env.NEXTEST_VERSION }}
       # Test selection lives in .config/nextest.toml and the -E filtersets.
-      # Doctests are not supported by nextest and stay on `cargo test --doc`.
+      # Doctests are not supported by nextest and stay on `cargo test --doc`;
+      # the GPU crate's compile_fail doctests only exist behind its features.
       - name: Test workspace (release, fast tests)
         run: |
           cargo nextest run --profile ci --workspace --locked --release --lib --bins -E 'not (test(aggregator_tests) | test(circuit_data_tests) | test(prover_tests) | test(verifier_tests))'
@@ -76,6 +77,7 @@ jobs:
           cargo nextest run --profile ci --release --locked -p tests --test encoding_safety --test spec_differential
           cargo nextest run --profile ci --release --locked -p qp-wormhole-circuit --test heap_zeroization --test formal_trace
           cargo nextest run --profile ci --release --locked -p qp-wormhole-gpu --features constraint-export
+          cargo test --release --locked -p qp-wormhole-gpu --features constraint-export --doc
           cargo nextest run --profile ci --release --locked -p qp-wormhole-aggregator --features gpu --lib -E 'test(gpu)'
           cargo nextest run --profile ci --release --locked -p qp-wormhole-aggregator --features gpu --example public_batch_compare
 
@@ -169,7 +171,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ubuntu
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-nextest@${{ env.NEXTEST_VERSION }}
       - name: Build circuit binaries
