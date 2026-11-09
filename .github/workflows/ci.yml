@@ -29,6 +29,7 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_NET_RETRY: 10
   CARGO_NET_TIMEOUT: 60
+  NEXTEST_VERSION: 0.9.151
 
 jobs:
   fast-checks:
@@ -63,15 +64,20 @@ jobs:
       - name: Setup macOS
         if: matrix.os == 'macos-latest'
         uses: ./.github/actions/macos
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@${{ env.NEXTEST_VERSION }}
+      # Test selection lives in .config/nextest.toml and the -E filtersets.
+      # Doctests are not supported by nextest and stay on `cargo test --doc`.
       - name: Test workspace (release, fast tests)
         run: |
-          cargo test --workspace --locked --release --lib --bins -- --skip aggregator_tests --skip circuit_data_tests --skip prover_tests --skip verifier_tests
+          cargo nextest run --profile ci --workspace --locked --release --lib --bins -E 'not (test(aggregator_tests) | test(circuit_data_tests) | test(prover_tests) | test(verifier_tests))'
           cargo test --workspace --locked --release --doc
-          cargo test --release --locked -p tests --test encoding_safety --test spec_differential
-          cargo test --release --locked -p qp-wormhole-circuit --test heap_zeroization --test formal_trace
-          cargo test --release --locked -p qp-wormhole-gpu --features constraint-export
-          cargo test --release --locked -p qp-wormhole-aggregator --features gpu --lib gpu
-          cargo test --release --locked -p qp-wormhole-aggregator --features gpu --example public_batch_compare
+          cargo nextest run --profile ci --release --locked -p tests --test encoding_safety --test spec_differential
+          cargo nextest run --profile ci --release --locked -p qp-wormhole-circuit --test heap_zeroization --test formal_trace
+          cargo nextest run --profile ci --release --locked -p qp-wormhole-gpu --features constraint-export
+          cargo nextest run --profile ci --release --locked -p qp-wormhole-aggregator --features gpu --lib -E 'test(gpu)'
+          cargo nextest run --profile ci --release --locked -p qp-wormhole-aggregator --features gpu --example public_batch_compare
 
   analysis:
     name: 🤖 Analysis (Clippy & Doc)
@@ -163,18 +169,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ubuntu
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@${{ env.NEXTEST_VERSION }}
       - name: Build circuit binaries
         run: ./scripts/build-circuits.sh
+      # The `tests` crate generates its circuit artifacts once per test process
+      # (std::sync::Once); under nextest's process-per-test model every test
+      # would regenerate them, so this invocation stays on `cargo test`.
       - name: Run slow crypto tests
         run: |
           cargo test --release -p tests -- aggregator_tests circuit_data_tests prover_tests verifier_tests
-          cargo test --release --package qp-wormhole-aggregator
+          cargo nextest run --profile ci --release --package qp-wormhole-aggregator
+          cargo test --release --package qp-wormhole-aggregator --doc
       # The 2^19 production public-batch builds peak at ~12 GB each, more than
       # the 7 GB macos-latest runner has, so they are #[ignore]d in
-      # test-workspace and run here one at a time.
+      # test-workspace. The `production-circuit` test group in
+      # .config/nextest.toml runs them one at a time.
       - name: Run production-shape degree guards
         run: |
-          cargo test --release --locked -p qp-wormhole-aggregator --lib -- --ignored --test-threads=1 production_public_batch_stays_at_degree_19 generator_builds_production_public_batch_artifacts
+          cargo nextest run --profile ci --release --locked -p qp-wormhole-aggregator --lib --run-ignored only -E 'test(production_public_batch_stays_at_degree_19) | test(generator_builds_production_public_batch_artifacts)'
 
   security-audit:
     name: 🔐 Security Audit

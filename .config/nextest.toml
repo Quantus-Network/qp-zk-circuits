@@ -1,0 +1,30 @@
+# cargo-nextest configuration (https://nexte.st/docs/configuration/).
+#
+# nextest runs every test in its own process, so a test that hangs or swaps
+# cannot stall the rest of the binary, and the per-test timeouts below turn a
+# stuck test into a failure instead of a job-level timeout. Doctests are not
+# supported by nextest and still run through `cargo test --doc`.
+
+[profile.default]
+# Report tests that run longer than this; `terminate-after` multiplies it into
+# a hard per-test limit.
+slow-timeout = { period = "60s" }
+
+# Used by CI (`--profile ci`).
+[profile.ci]
+fail-fast = false
+failure-output = "immediate-final"
+slow-timeout = { period = "60s", terminate-after = 15 }
+
+# Tests that build a full-size production circuit peak at ~12 GB each; never
+# run two at once. They are #[ignore]d and only selected with --run-ignored.
+[test-groups]
+production-circuit = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = '''
+test(=common::utils::tests::production_public_batch_stays_at_degree_19)
+| test(=public_batch::circuit::build::tests::generator_builds_production_public_batch_artifacts)
+'''
+slow-timeout = { period = "120s", terminate-after = 10 }
+test-group = "production-circuit"

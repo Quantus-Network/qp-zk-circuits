@@ -76,6 +76,10 @@ You can also run tests for a specific package, for example, for the `wormhole-ci
 cargo test -p wormhole-circuit
 ```
 
+CI runs the suite with [cargo-nextest](https://nexte.st) (`cargo nextest run --release`),
+which isolates each test in its own process and applies the per-test timeouts in
+`.config/nextest.toml`. Doctests still go through `cargo test --doc`.
+
 
 ## Benchmarks
 
