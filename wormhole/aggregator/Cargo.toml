@@ -35,12 +35,8 @@ zk-circuits-common = { package = "qp-zk-circuits-common", version = "=4.4.0", pa
 wormhole-circuit-builder = { package = "qp-wormhole-circuit-builder", path = "../circuit-builder" }
 
 [features]
-default = ["multithread", "std"]
+default = ["std"]
 gpu = ["dep:qp-wormhole-gpu", "dep:tracing", "std"]
-# No-op: the rayon code paths behind it were removed in #94 and parallelism
-# comes from `qp-plonky2/parallel`. Kept so downstream manifests that enable it
-# keep resolving.
-multithread = []
 no_zk = []
 profile = ["qp-plonky2/rand", "qp-plonky2/timing", "std"]
 std = [
@@ -69,4 +65,4 @@ required-features = ["gpu"]
 
 [[example]]
 name = "public_batch_compare"
-required-features = ["gpu", "multithread"]
+required-features = ["gpu"]
