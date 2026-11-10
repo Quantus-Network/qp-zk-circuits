@@ -11,7 +11,7 @@ version.workspace = true
 anyhow = { workspace = true, features = ["std"] }
 clap = { version = "=4.6.1", features = ["derive"] }
 qp-plonky2 = { workspace = true, features = ["default"] }
-rayon = "=1.12.0"
+rayon = "=1.11.0"
 wormhole-aggregator = { package = "qp-wormhole-aggregator", version = "=4.4.0", path = "../aggregator", default-features = false, features = [
 	"std",
 ] }
