@@ -6,6 +6,35 @@ is the reference that the Phase-2/3 soundness and completeness proofs check the
 circuit against. Nothing here proves the circuit correct yet — Phase 0 is the
 spec + the differential safety net.
 
+## Deployed circuits
+
+This branch specifies the circuits embedded in the runtime that is
+live on mainnet. `main` specifies their successor (proof-of-burn leaf), which is not deployed.
+
+| Item | Value |
+|------|-------|
+| Chain release | `v1.0.2-Qm`, commit `482c5b9e02bec0adc70797eade0a67f60baf2619`, `spec_version` 153 |
+| Runtime wasm | `quantus-runtime-v153.compact.wasm`, sha256 `1401e06665bb0b9254d90d2eb04747fa7e8b9745fdb26d8318ba7ce8f0d4a47c`; on-chain `:code` blake2-256 `78389c85e3698b7e24cf292907f2eec0657297fd8a4d82669cf357974f15ec56` |
+| Circuit crates | `qp-wormhole-*` 4.3.0 (tag `v4.3.0`), `qp-plonky2` 1.5.5, `qp-poseidon-core` 3.1.0 |
+| Batch sizes | 7 leaves (14 exit slots) per private batch, 53 private batches per public batch |
+
+The branch's Rust is `v4.3.0` plus the `GadgetBuilder` tracing hooks, on `qp-plonky2` 1.6.0.
+It builds the same circuits: `formal/deployed/*.bin` are the private- and public-batch
+verifier data it generates at the sizes above, they are byte-identical to what `v4.3.0`
+generates, and they occur verbatim in the runtime wasm. The leaf verifier key is a constant
+of the private-batch circuit, so it is covered by that circuit's digest.
+`generated_circuits_are_the_deployed_ones` (`wormhole/circuit-builder`) fails if the branch
+stops generating these bytes. To re-check them against the chain:
+
+```bash
+gh release download v1.0.2-Qm -R Quantus-Network/chain -p quantus-runtime-v153.compact.wasm
+xxd -p quantus-runtime-v153.compact.wasm | tr -d '\n' > wasm.hex
+for f in formal/deployed/*.bin; do grep -c -F "$(xxd -p "$f" | tr -d '\n')" wasm.hex; done
+```
+
+The wiring-level proofs at these sizes are generated in `qp-plonky2/formal` from
+`traces/private_batch_wrapper_n7.json` and `traces/public_batch_wrapper_n53.json`.
+
 ## Layout
 
 | File | Contents |
@@ -20,8 +49,8 @@ spec + the differential safety net.
 | `WormholeSpec/LeafBinding.lean` | Finding A: chain↔circuit leaf-recipient consistency (spendable ⟺ recipient = `WA(s)`) |
 | `../wormhole/tests/.../spec_differential.rs` | proptest harness: native oracles vs spec |
 | `../wormhole/tests/.../encoding_safety.rs` | proptest harness: encoding round-trips + witnessed `{0,p}` collision |
-| `traces/private_batch_wrapper_n{2,4}.json` | Gadget-call trace of the real private-batch wrapper at `n = 2` and `4` (rows, copy constraints, constants, public inputs, and every `GadgetBuilder` call with the rows/copies it emitted), recorded by `TracingBuilder` in `common/src/formal_trace.rs`. Consumed by `qp-plonky2/constraint-exporter` to generate and prove the wrapper's Lean decode theorem and its composition into `RPrivateBatch` (qp-plonky2 `formal/PLAN.md` Steps 8c and 8e). The aggregator's unit tests fail if it is stale; regenerate with `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib private_batch_wrapper_n` |
-| `traces/public_batch_wrapper_n{2,4}.json` | The same for the real public-batch wrapper at `n_inner = 2` and `4` over `2`-leaf private batches (`build_public_batch_constraints`, wrapper logic only, on virtual inner PI targets). Regenerate with `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib public_batch_wrapper_n` |
+| `traces/private_batch_wrapper_n{2,4,7}.json` | Gadget-call trace of the real private-batch wrapper at `n = 2`, `4` and the deployed `7` (rows, copy constraints, constants, public inputs, and every `GadgetBuilder` call with the rows/copies it emitted), recorded by `TracingBuilder` in `common/src/formal_trace.rs`. Consumed by `qp-plonky2/constraint-exporter` to generate and prove the wrapper's Lean decode theorem and its composition into `RPrivateBatch` (qp-plonky2 `formal/PLAN.md` Steps 8c and 8e). The aggregator's unit tests fail if it is stale; regenerate with `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib private_batch_wrapper_n` |
+| `traces/public_batch_wrapper_n{2,4,53}.json` | The same for the real public-batch wrapper at `n_inner = 2` and `4` over `2`-leaf private batches and the deployed `53` over `7`-leaf ones (`build_public_batch_constraints`, wrapper logic only, on virtual inner PI targets). Regenerate with `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib public_batch_wrapper_n` |
 | `traces/leaf_circuit.json` | The same for the whole leaf circuit (`WormholeCircuit`: every constraint of `build_leaf_constraints` on the targets of `CircuitTargets::new`, no recursion) — 195 rows, 1566 gadget calls, the 22 public inputs and the private witness targets by name. Consumed by the exporter to generate the leaf decode theorem and its bridge to `Rleaf` (qp-plonky2 `formal/PLAN.md` Step 9). Regenerate with `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-circuit --test formal_trace` |
 
 ## Building

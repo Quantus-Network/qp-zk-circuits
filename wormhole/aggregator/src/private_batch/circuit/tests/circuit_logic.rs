@@ -2208,3 +2208,8 @@ fn private_batch_wrapper_n2_trace_is_current() {
 fn private_batch_wrapper_n4_trace_is_current() {
     check_private_batch_wrapper_trace(4);
 }
+
+#[test]
+fn private_batch_wrapper_n7_trace_is_current() {
+    check_private_batch_wrapper_trace(crate::deployed::NUM_LEAF_PROOFS);
+}

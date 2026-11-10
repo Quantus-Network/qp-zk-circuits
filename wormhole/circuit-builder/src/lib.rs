@@ -455,6 +455,37 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
     }
 
+    /// `formal/deployed/` holds the verifier data embedded in the deployed runtime's wasm
+    /// (`formal/SPEC.md`, "Deployed circuits").
+    #[test]
+    fn generated_circuits_are_the_deployed_ones() {
+        use wormhole_aggregator::deployed::{NUM_LEAF_PROOFS, NUM_PRIVATE_BATCH_PROOFS};
+
+        let root = unique_tmp_dir("deployed");
+        let _ = fs::remove_dir_all(&root);
+        generate_all_circuit_binaries(
+            &root,
+            false,
+            NUM_LEAF_PROOFS,
+            Some(NUM_PRIVATE_BATCH_PROOFS),
+        )
+        .unwrap();
+        let deployed = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../formal/deployed");
+        for name in [
+            "private_batch_common.bin",
+            "private_batch_verifier.bin",
+            "public_batch_common.bin",
+            "public_batch_verifier.bin",
+        ] {
+            assert_eq!(
+                fs::read(root.join(name)).unwrap(),
+                fs::read(deployed.join(name)).unwrap(),
+                "{name}"
+            );
+        }
+        fs::remove_dir_all(&root).unwrap();
+    }
+
     fn io_fail() -> std::io::Error {
         std::io::Error::other("injected rename failure")
     }
