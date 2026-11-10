@@ -252,7 +252,7 @@ impl PublicBatchAggregator {
     pub fn with_gpu(
         &mut self,
         context: Arc<qp_wormhole_gpu::DeviceContext>,
-        options: qp_wormhole_gpu::PreparationOptions,
+        options: crate::public_batch::prover::GpuProvingOptions,
     ) -> Result<()> {
         let prover = Arc::get_mut(&mut self.proving.prover)
             .ok_or_else(|| anyhow!("select GPU backend before cloning the proving context"))?;

@@ -683,18 +683,39 @@ impl WireBuffers<'_, '_> {
     fn encode_generated(
         &self,
         encoder: &mut ProofEncoder<'_>,
-        partition: PartitionWitness<'_, F>,
+        mut partition: PartitionWitness<'_, F>,
     ) -> Result<WireCommitment> {
         let prepared = self.prepared;
         ensure!(
             partition.num_wires == prepared.circuit.common.config.num_wires
                 && partition.degree == prepared.degree()
-                && partition.values.len() == prepared.circuit.prover_only.representative_map.len()
                 && (std::ptr::eq(
                     partition.representative_map,
                     prepared.circuit.prover_only.representative_map.as_slice(),
                 ) || partition.representative_map
                     == prepared.circuit.prover_only.representative_map),
+            "partition witness does not match prepared circuit"
+        );
+        let num_targets = prepared.circuit.prover_only.representative_map.len();
+        let dense_values = match partition.dense_values_and_assignment_flags() {
+            Ok((values, assigned_flags)) => {
+                ensure!(
+                    values.len() == num_targets
+                        && assigned_flags.len() == num_targets,
+                    "partition witness does not match prepared circuit"
+                );
+                Some(
+                    values
+                        .iter()
+                        .zip(assigned_flags)
+                        .map(|(&value, &assigned)| if assigned != 0 { value } else { F::ZERO })
+                        .collect::<Vec<_>>(),
+                )
+            }
+            Err(_) => None,
+        };
+        ensure!(
+            dense_values.is_some() || partition.values.len() == num_targets,
             "partition witness does not match prepared circuit"
         );
         let public_inputs = prepared
@@ -710,11 +731,14 @@ impl WireBuffers<'_, '_> {
             .collect::<Result<_>>()?;
         // CPU full_witness uses zero for unassigned partitions too. Do not
         // expand or transpose the wire matrix on the host.
-        let values = partition
-            .values
-            .into_iter()
-            .map(|value| value.unwrap_or(F::ZERO))
-            .collect::<Vec<_>>();
+        let values = match dense_values {
+            Some(values) => values,
+            None => partition
+                .values
+                .into_iter()
+                .map(|value| value.unwrap_or(F::ZERO))
+                .collect::<Vec<_>>(),
+        };
         let cap = prepared.commitment.cap(&self.tree)?;
         encoder.upload(&self.representatives, &values)?;
         for batch in 0..self.wires.len() {

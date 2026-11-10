@@ -1,7 +1,15 @@
 #[cfg(feature = "gpu")]
+use super::lib::GpuProvingOptions;
+#[cfg(feature = "gpu")]
 use anyhow::Context;
 use anyhow::Result;
+#[cfg(feature = "gpu")]
+use plonky2::iop::target::Target;
 use plonky2::iop::witness::PartialWitness;
+#[cfg(feature = "gpu")]
+use plonky2::iop::witness::{PartitionWitness, WitnessWrite};
+#[cfg(feature = "gpu")]
+use plonky2::iop::witness_generation_executor::WitnessGenerationExecutor;
 use plonky2::plonk::circuit_data::CircuitData;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use std::sync::Arc;
@@ -62,6 +70,9 @@ impl ProvingBackend {
 #[cfg(feature = "gpu")]
 pub(super) struct GpuBackend {
     circuit: Arc<CircuitData<F, C, D>>,
+    witness_executor: std::sync::Mutex<WitnessGenerationExecutor<F>>,
+    #[cfg(feature = "gpu-parallel-witness")]
+    witness_workers: usize,
     context: Arc<qp_wormhole_gpu::DeviceContext>,
     prepared: qp_wormhole_gpu::PreparedCircuit<'static>,
     workspace: std::sync::Mutex<qp_wormhole_gpu::ProofWorkspace>,
@@ -80,13 +91,17 @@ impl std::fmt::Debug for GpuBackend {
 impl GpuBackend {
     pub fn prepare(
         circuit: Arc<CircuitData<F, C, D>>,
+        input_targets: impl IntoIterator<Item = Target>,
         context: Arc<qp_wormhole_gpu::DeviceContext>,
-        options: qp_wormhole_gpu::PreparationOptions,
+        options: GpuProvingOptions,
     ) -> Result<Self> {
+        options.validate()?;
+        let witness_executor = WitnessGenerationExecutor::new_with_inputs(&circuit, input_targets)
+            .context("prepare public-batch witness executor")?;
         let prepared = qp_wormhole_gpu::PreparedCircuit::prepare_shared(
             &context,
             Arc::clone(&circuit),
-            options,
+            options.preparation,
         )
         .context("prepare public-batch GPU circuit")?;
         let workspace = prepared
@@ -94,6 +109,9 @@ impl GpuBackend {
             .context("allocate public-batch GPU workspace")?;
         Ok(Self {
             circuit,
+            witness_executor: std::sync::Mutex::new(witness_executor),
+            #[cfg(feature = "gpu-parallel-witness")]
+            witness_workers: options.witness_workers,
             context,
             prepared,
             workspace: std::sync::Mutex::new(workspace),
@@ -121,12 +139,9 @@ impl GpuBackend {
     fn prove(&self, witness: PartialWitness<F>) -> Result<ProofWithPublicInputs<F, C, D>> {
         // CPU witness generation does not hold the shared GPU workspace lock.
         let generation = crate::profiling::HostOperation::new("witness_generation");
-        let partition = plonky2::iop::generator::generate_partial_witness(
-            witness,
-            &self.circuit.prover_only,
-            &self.circuit.common,
-        )
-        .context("generate public-batch witness")?;
+        let partition = self
+            .generate_witness(witness)
+            .context("generate public-batch witness")?;
         drop(generation);
         let lock = crate::profiling::HostOperation::new("workspace_lock_wait");
         // A panic in a previous proof leaves no state behind that the next
@@ -139,6 +154,28 @@ impl GpuBackend {
         self.prepared
             .prove_with_partition_witness(&self.context, &mut workspace, partition)
     }
+
+    fn generate_witness(&self, inputs: PartialWitness<F>) -> Result<PartitionWitness<'_, F>> {
+        let mut executor = self
+            .witness_executor
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut witness = executor.new_witness(&self.circuit);
+        for (target, value) in inputs.target_values {
+            witness.set_target(target, value)?;
+        }
+        #[cfg(feature = "gpu-parallel-witness")]
+        {
+            // SAFETY: Public-batch circuits use built-in generators with complete,
+            // stable access sets. Planning and execution use the same unchanged circuit.
+            unsafe {
+                executor.execute_parallel(&self.circuit, &mut witness, self.witness_workers)?;
+            }
+        }
+        #[cfg(not(feature = "gpu-parallel-witness"))]
+        executor.execute(&self.circuit, &mut witness)?;
+        Ok(witness)
+    }
 }
 
 #[cfg(all(test, feature = "gpu"))]
@@ -146,7 +183,7 @@ mod tests {
     use super::*;
     use plonky2::plonk::circuit_builder::CircuitBuilder;
     use plonky2::plonk::circuit_data::CircuitConfig;
-    use qp_wormhole_gpu::{DeviceContext, PreparationOptions};
+    use qp_wormhole_gpu::DeviceContext;
 
     fn build_circuit() -> Arc<CircuitData<F, C, D>> {
         let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
@@ -169,8 +206,12 @@ mod tests {
     fn gpu_backend_keeps_proving_after_a_worker_panics_mid_proof() -> Result<()> {
         let circuit = build_circuit();
         let context = Arc::new(futures::executor::block_on(DeviceContext::new())?);
-        let backend =
-            GpuBackend::prepare(Arc::clone(&circuit), context, PreparationOptions::default())?;
+        let backend = GpuBackend::prepare(
+            Arc::clone(&circuit),
+            [],
+            context,
+            GpuProvingOptions::default(),
+        )?;
         circuit.verify(backend.prove(PartialWitness::new())?)?;
         let panicked = std::thread::scope(|scope| {
             scope
@@ -190,11 +231,12 @@ mod tests {
     #[ignore = "requires a hardware GPU with native u64 shader support"]
     fn gpu_rebuild_releases_old_backend_and_can_retry_after_failure() -> Result<()> {
         let circuit = build_circuit();
-        let options = PreparationOptions::default();
+        let options = GpuProvingOptions::default();
         let old_context = Arc::new(futures::executor::block_on(DeviceContext::new())?);
         let old_weak = Arc::downgrade(&old_context);
         let mut backend = ProvingBackend::Gpu(Box::new(GpuBackend::prepare(
             Arc::clone(&circuit),
+            [],
             old_context,
             options,
         )?));
@@ -215,7 +257,7 @@ mod tests {
             "GPU backend unavailable; retry with_gpu"
         );
         backend.replace_gpu(&context, || {
-            GpuBackend::prepare(Arc::clone(&circuit), Arc::clone(&context), options)
+            GpuBackend::prepare(Arc::clone(&circuit), [], Arc::clone(&context), options)
         })?;
         let error = backend
             .prove(&build_circuit(), PartialWitness::new())

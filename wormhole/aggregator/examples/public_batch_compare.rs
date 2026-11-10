@@ -11,8 +11,9 @@ use plonky2::field::types::PrimeField64;
 use plonky2::plonk::config::{GenericConfig, Hasher};
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_aggregator::aggregator::PublicBatchAggregator;
+use qp_wormhole_aggregator::public_batch::prover::GpuProvingOptions;
 use qp_wormhole_aggregator::{production, CircuitBinsConfig, PrivateBatchShape};
-use qp_wormhole_gpu::{DeviceContext, DeviceOptions, PreparationOptions};
+use qp_wormhole_gpu::{DeviceContext, DeviceOptions};
 use qp_wormhole_inputs::{BytesDigest, PrivateBatchPublicInputs, PublicBatchPublicInputs};
 use std::{collections::BTreeSet, path::PathBuf, sync::Arc, time::Instant};
 use zk_circuits_common::circuit::{C, D, F};
@@ -132,7 +133,7 @@ fn run(arguments: Vec<String>, timestamps: bool, profile: Option<&profile::Profi
         device_init = device_started.elapsed().as_secs_f64();
         println!("[adapter] {:?}", context.adapter_info());
         let gpu_started = Instant::now();
-        aggregator.with_gpu(context, PreparationOptions::default())?;
+        aggregator.with_gpu(context, GpuProvingOptions::default())?;
         gpu_init = gpu_started.elapsed().as_secs_f64();
     }
     println!(
