@@ -54,6 +54,8 @@ use crate::{
 pub struct GpuProvingOptions {
     pub preparation: qp_wormhole_gpu::PreparationOptions,
     /// Number of witness workers when `gpu-parallel-witness` is enabled.
+    /// Defaults to `std::thread::available_parallelism()`, or one if unavailable.
+    /// Must be positive when parallel witness generation is enabled.
     pub witness_workers: usize,
 }
 
@@ -330,7 +332,8 @@ impl PublicBatchProver {
 
     /// Prepare and select GPU proving before sharing this prover with workers.
     /// Fixed resources, a witness executor and one reusable workspace are retained
-    /// across calls. Witness generation and GPU proving are each serialized and can overlap.
+    /// across calls. Witness generation and GPU proving are each serialized.
+    /// Witness generation for one call can overlap GPU proving for another call.
     /// Preparation/proving failures return errors, not CPU fallback.
     /// Validation failures leave the existing backend unchanged. Re-preparation
     /// releases an existing GPU backend first; if rebuilding fails, proving
