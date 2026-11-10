@@ -37,6 +37,7 @@ wormhole-circuit-builder = { package = "qp-wormhole-circuit-builder", path = "..
 [features]
 default = ["multithread", "std"]
 gpu = ["dep:qp-wormhole-gpu", "dep:tracing", "std"]
+gpu-parallel-witness = ["gpu", "qp-plonky2/parallel"]
 multithread = ["rayon"]
 no_zk = []
 profile = ["qp-plonky2/rand", "qp-plonky2/timing", "std"]

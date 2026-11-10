@@ -296,9 +296,9 @@ impl PublicBatchProver {
     }
 
     /// Prepare and select GPU proving before sharing this prover with workers.
-    /// Fixed resources and one reusable workspace are retained across calls.
-    /// CPU witness generation can overlap; GPU stages are serialized on this
-    /// workspace. Preparation/proving failures return errors, not CPU fallback.
+    /// Fixed resources, a witness executor and one reusable workspace are retained
+    /// across calls. Witness generation and GPU proving are each serialized and can overlap.
+    /// Preparation/proving failures return errors, not CPU fallback.
     /// Validation failures leave the existing backend unchanged. Re-preparation
     /// releases an existing GPU backend first; if rebuilding fails, proving
     /// returns an unavailable error until a later `with_gpu` call succeeds.
@@ -316,9 +316,18 @@ impl PublicBatchProver {
             &self.circuit_data,
             options,
         )?;
+        let input_targets = super::witness::public_batch_input_targets(
+            &self.targets,
+            &self.dummy_proof_template,
+        )?;
         let circuit = Arc::clone(&self.circuit_data);
         self.backend.replace_gpu(&context, || {
-            super::backend::GpuBackend::prepare(circuit, Arc::clone(&context), options)
+            super::backend::GpuBackend::prepare(
+                circuit,
+                input_targets,
+                Arc::clone(&context),
+                options,
+            )
         })
     }
 
