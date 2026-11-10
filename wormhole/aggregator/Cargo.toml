@@ -13,7 +13,7 @@ hex = "=0.4.3"
 qp-plonky2 = { workspace = true }
 qp-wormhole-gpu = { version = "=4.4.0", path = "../gpu", optional = true, features = ["constraint-export"] }
 qp-wormhole-inputs = { version = "=4.4.0", path = "../inputs" }
-rand = "=0.8.6"
+rand = { version = "=0.10.1", default-features = false, features = ["thread_rng"] }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.154"
 tracing = { workspace = true, optional = true }

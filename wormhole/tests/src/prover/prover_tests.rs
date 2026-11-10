@@ -241,7 +241,7 @@ fn verify_proof_native(
 #[test]
 fn test_random_tree_proof_native_verification() {
     use rand::rngs::StdRng;
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
 
     // Use a seeded RNG for reproducibility
     let mut rng = StdRng::seed_from_u64(12345);
@@ -302,7 +302,7 @@ fn with_genuine_block_hash(mut inputs: CircuitInputs) -> CircuitInputs {
 #[test]
 fn test_random_tree_circuit_verification() {
     use rand::rngs::StdRng;
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
     use test_helpers::block_header::{
         DEFAULT_BLOCK_NUMBERS, DEFAULT_DIGESTS, DEFAULT_EXTRINSICS_ROOTS, DEFAULT_STATE_ROOTS,
     };
@@ -412,7 +412,7 @@ fn test_random_tree_circuit_verification() {
 #[test]
 fn test_depth_2_tree_circuit_verification() {
     use rand::rngs::StdRng;
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
     use test_helpers::block_header::{
         DEFAULT_BLOCK_NUMBERS, DEFAULT_DIGESTS, DEFAULT_EXTRINSICS_ROOTS, DEFAULT_STATE_ROOTS,
     };
@@ -505,7 +505,7 @@ fn test_depth_2_tree_circuit_verification() {
 #[test]
 fn test_depth_3_tree_circuit_verification() {
     use rand::rngs::StdRng;
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
     use test_helpers::block_header::{
         DEFAULT_BLOCK_NUMBERS, DEFAULT_DIGESTS, DEFAULT_EXTRINSICS_ROOTS, DEFAULT_STATE_ROOTS,
     };
