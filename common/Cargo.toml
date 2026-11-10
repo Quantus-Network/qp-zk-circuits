@@ -12,7 +12,6 @@ anyhow = { workspace = true, default-features = false }
 qp-plonky2 = { workspace = true, default-features = false }
 qp-poseidon-core = { workspace = true, default-features = false }
 qp-wormhole-inputs = { version = "=4.4.0", path = "../wormhole/inputs", default-features = false }
-rand = { version = "=0.8.6", default-features = false, features = ["alloc"], optional = true }
 serde = { workspace = true }
 serde_json = { version = "=1.0.150", default-features = false, features = ["alloc"] }
 
@@ -21,12 +20,9 @@ default = ["std"]
 formal-export = ["qp-plonky2/formal-export", "std"]
 std = [
 	"anyhow/std",
-	"dep:rand",
 	"qp-plonky2/std",
 	"qp-poseidon-core/std",
 	"qp-wormhole-inputs/std",
-	"rand/std",
-	"rand/std_rng",
 	"serde/std",
 	"serde_json/std",
 ]

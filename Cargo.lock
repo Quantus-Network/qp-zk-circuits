@@ -1093,10 +1093,7 @@ dependencies = [
 name = "ownership-tests"
 version = "4.4.0"
 dependencies = [
- "anyhow",
- "hex",
  "qp-ownership-circuit",
- "qp-ownership-inputs",
  "qp-ownership-prover",
  "qp-ownership-verifier",
  "qp-plonky2",
@@ -1411,7 +1408,6 @@ version = "4.4.0"
 dependencies = [
  "anyhow",
  "env_logger",
- "hex",
  "qp-plonky2",
  "qp-wormhole-inputs",
  "qp-zk-circuits-common",
@@ -1484,7 +1480,6 @@ dependencies = [
  "qp-plonky2",
  "qp-poseidon-core",
  "qp-wormhole-inputs",
- "rand 0.8.6",
  "serde",
  "serde_json",
 ]
