@@ -1,4 +1,6 @@
 #[cfg(feature = "gpu")]
+use super::lib::GpuProvingOptions;
+#[cfg(feature = "gpu")]
 use anyhow::Context;
 use anyhow::Result;
 #[cfg(feature = "gpu")]
@@ -69,6 +71,8 @@ impl ProvingBackend {
 pub(super) struct GpuBackend {
     circuit: Arc<CircuitData<F, C, D>>,
     witness_executor: std::sync::Mutex<WitnessGenerationExecutor<F>>,
+    #[cfg(feature = "gpu-parallel-witness")]
+    witness_workers: usize,
     context: Arc<qp_wormhole_gpu::DeviceContext>,
     prepared: qp_wormhole_gpu::PreparedCircuit<'static>,
     workspace: std::sync::Mutex<qp_wormhole_gpu::ProofWorkspace>,
@@ -89,14 +93,15 @@ impl GpuBackend {
         circuit: Arc<CircuitData<F, C, D>>,
         input_targets: impl IntoIterator<Item = Target>,
         context: Arc<qp_wormhole_gpu::DeviceContext>,
-        options: qp_wormhole_gpu::PreparationOptions,
+        options: GpuProvingOptions,
     ) -> Result<Self> {
+        options.validate()?;
         let witness_executor = WitnessGenerationExecutor::new_with_inputs(&circuit, input_targets)
             .context("prepare public-batch witness executor")?;
         let prepared = qp_wormhole_gpu::PreparedCircuit::prepare_shared(
             &context,
             Arc::clone(&circuit),
-            options,
+            options.preparation,
         )
         .context("prepare public-batch GPU circuit")?;
         let workspace = prepared
@@ -105,6 +110,8 @@ impl GpuBackend {
         Ok(Self {
             circuit,
             witness_executor: std::sync::Mutex::new(witness_executor),
+            #[cfg(feature = "gpu-parallel-witness")]
+            witness_workers: options.witness_workers,
             context,
             prepared,
             workspace: std::sync::Mutex::new(workspace),
@@ -159,13 +166,10 @@ impl GpuBackend {
         }
         #[cfg(feature = "gpu-parallel-witness")]
         {
-            let num_workers = std::thread::available_parallelism()
-                .map(|count| count.get())
-                .unwrap_or(1);
             // SAFETY: Public-batch circuits use built-in generators with complete,
             // stable access sets. Planning and execution use the same unchanged circuit.
             unsafe {
-                executor.execute_parallel(&self.circuit, &mut witness, num_workers)?;
+                executor.execute_parallel(&self.circuit, &mut witness, self.witness_workers)?;
             }
         }
         #[cfg(not(feature = "gpu-parallel-witness"))]
@@ -179,7 +183,7 @@ mod tests {
     use super::*;
     use plonky2::plonk::circuit_builder::CircuitBuilder;
     use plonky2::plonk::circuit_data::CircuitConfig;
-    use qp_wormhole_gpu::{DeviceContext, PreparationOptions};
+    use qp_wormhole_gpu::DeviceContext;
 
     fn build_circuit() -> Arc<CircuitData<F, C, D>> {
         let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
@@ -206,7 +210,7 @@ mod tests {
             Arc::clone(&circuit),
             [],
             context,
-            PreparationOptions::default(),
+            GpuProvingOptions::default(),
         )?;
         circuit.verify(backend.prove(PartialWitness::new())?)?;
         let panicked = std::thread::scope(|scope| {
@@ -227,7 +231,7 @@ mod tests {
     #[ignore = "requires a hardware GPU with native u64 shader support"]
     fn gpu_rebuild_releases_old_backend_and_can_retry_after_failure() -> Result<()> {
         let circuit = build_circuit();
-        let options = PreparationOptions::default();
+        let options = GpuProvingOptions::default();
         let old_context = Arc::new(futures::executor::block_on(DeviceContext::new())?);
         let old_weak = Arc::downgrade(&old_context);
         let mut backend = ProvingBackend::Gpu(Box::new(GpuBackend::prepare(

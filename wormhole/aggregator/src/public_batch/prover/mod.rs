@@ -12,3 +12,6 @@ pub(crate) mod witness;
 
 pub(crate) use lib::ensure_private_batch_shape;
 pub use lib::{PublicBatchInputs, PublicBatchProver};
+
+#[cfg(feature = "gpu")]
+pub use lib::GpuProvingOptions;

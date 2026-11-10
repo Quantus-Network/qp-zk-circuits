@@ -48,6 +48,39 @@ use crate::{
     },
 };
 
+/// GPU resource preparation and CPU witness execution settings.
+#[cfg(feature = "gpu")]
+#[derive(Clone, Copy, Debug)]
+pub struct GpuProvingOptions {
+    pub preparation: qp_wormhole_gpu::PreparationOptions,
+    /// Number of witness workers when `gpu-parallel-witness` is enabled.
+    pub witness_workers: usize,
+}
+
+#[cfg(feature = "gpu")]
+impl Default for GpuProvingOptions {
+    fn default() -> Self {
+        Self {
+            preparation: qp_wormhole_gpu::PreparationOptions::default(),
+            witness_workers: std::thread::available_parallelism()
+                .map(|count| count.get())
+                .unwrap_or(1),
+        }
+    }
+}
+
+#[cfg(feature = "gpu")]
+impl GpuProvingOptions {
+    pub(super) fn validate(&self) -> Result<()> {
+        #[cfg(feature = "gpu-parallel-witness")]
+        anyhow::ensure!(
+            self.witness_workers > 0,
+            "witness worker count must be nonzero"
+        );
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 pub struct PublicBatchInputs {
     pub proofs: Vec<ProofWithPublicInputs<F, C, D>>,
@@ -309,17 +342,16 @@ impl PublicBatchProver {
     pub fn with_gpu(
         &mut self,
         context: Arc<qp_wormhole_gpu::DeviceContext>,
-        options: qp_wormhole_gpu::PreparationOptions,
+        options: GpuProvingOptions,
     ) -> Result<()> {
+        options.validate()?;
         qp_wormhole_gpu::PreparedCircuit::validate_preparation(
             &context,
             &self.circuit_data,
-            options,
+            options.preparation,
         )?;
-        let input_targets = super::witness::public_batch_input_targets(
-            &self.targets,
-            &self.dummy_proof_template,
-        )?;
+        let input_targets =
+            super::witness::public_batch_input_targets(&self.targets, &self.dummy_proof_template)?;
         let circuit = Arc::clone(&self.circuit_data);
         self.backend.replace_gpu(&context, || {
             super::backend::GpuBackend::prepare(
