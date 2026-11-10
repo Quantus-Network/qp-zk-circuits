@@ -14,7 +14,7 @@ bench = []
 anyhow = { workspace = true }
 circuit-builder = { package = "qp-wormhole-circuit-builder", version = "=4.4.0", path = "../circuit-builder" }
 hex = { workspace = true }
-libc = "=0.2.186"
+libc = "=0.2.191"
 qp-plonky2 = { workspace = true, default-features = true }
 qp-wormhole-inputs = { version = "=4.4.0", path = "../inputs" }
 rand = { version = "=0.9.4", default-features = false, features = [

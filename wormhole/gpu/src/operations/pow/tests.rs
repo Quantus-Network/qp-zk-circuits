@@ -18,7 +18,7 @@ fn pow_ranges_and_snapshots_are_checked() -> Result<()> {
 #[ignore = "requires a hardware GPU with native u64 shader support"]
 fn pow_matches_cpu_transcript_and_retries_without_advancing_on_exhaustion() -> Result<()> {
     use crate::ProofWorkspace;
-    let context = futures::executor::block_on(DeviceContext::new())?;
+    let context = pollster::block_on(DeviceContext::new())?;
     let kernels = Arc::new(PowKernels::prepare(
         &context,
         Arc::new(PoseidonKernels::prepare(&context)?),

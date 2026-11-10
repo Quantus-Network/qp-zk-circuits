@@ -41,7 +41,7 @@ fn run(profile: &profile::Profile) -> Result<()> {
         start.elapsed().as_secs_f64()
     );
     let start = Instant::now();
-    let context = futures::executor::block_on(DeviceContext::new())?;
+    let context = pollster::block_on(DeviceContext::new())?;
     println!(
         "GPU device initialization: {:.3}s",
         start.elapsed().as_secs_f64()

@@ -13,7 +13,7 @@ qp-plonky2 = { workspace = true, default-features = false }
 qp-poseidon-core = { workspace = true, default-features = false }
 qp-wormhole-inputs = { version = "=4.4.0", path = "../wormhole/inputs", default-features = false }
 serde = { workspace = true }
-serde_json = { version = "=1.0.150", default-features = false, features = ["alloc"] }
+serde_json = { version = "=1.0.154", default-features = false, features = ["alloc"] }
 
 [features]
 default = ["std"]

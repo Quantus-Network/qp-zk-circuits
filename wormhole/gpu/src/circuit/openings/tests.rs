@@ -69,7 +69,7 @@ fn next_row_openings_and_composition_span_coefficient_batches() -> Result<()> {
     use plonky2::field::polynomial::PolynomialCoeffs;
     use plonky2::util::reducing::ReducingFactor;
 
-    let context = futures::executor::block_on(DeviceContext::new())?;
+    let context = pollster::block_on(DeviceContext::new())?;
     let mut config = CircuitConfig::standard_recursion_config();
     config.num_challenges = 3;
     let circuit = CircuitBuilder::<F, 2>::new(config).build::<C>();

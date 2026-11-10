@@ -34,7 +34,7 @@ fn gpu_proving_context(
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    let context = Arc::new(futures::executor::block_on(DeviceContext::new())?);
+    let context = Arc::new(pollster::block_on(DeviceContext::new())?);
     prover.with_gpu(context, PreparationOptions::default())?;
     let proving = ProvingContext {
         aggregator_address: address,
@@ -110,7 +110,7 @@ fn gpu_backend_proves_through_aggregator_and_cloned_workers() -> Result<()> {
     assert_send_sync::<ProvingContext>();
     let (prover, inner, private_batch_verifier) =
         crate::public_batch::prover::lib::tests::gpu_fixture();
-    let context = Arc::new(futures::executor::block_on(DeviceContext::new())?);
+    let context = Arc::new(pollster::block_on(DeviceContext::new())?);
     let options = PreparationOptions::default();
     let address = BytesDigest::try_from([7u8; 32])?;
     let proving = ProvingContext {

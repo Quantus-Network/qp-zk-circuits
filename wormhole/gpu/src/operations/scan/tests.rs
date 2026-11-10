@@ -6,7 +6,7 @@ use plonky2::field::types::Field;
 #[test]
 #[ignore = "requires a hardware GPU with native u64 shader support"]
 fn hierarchical_prefix_products_match_cpu_including_zeros() -> Result<()> {
-    let context = futures::executor::block_on(DeviceContext::new())?;
+    let context = pollster::block_on(DeviceContext::new())?;
     // The last shape requires three scan levels, not just one carry pass.
     for rows in [1, 255, 256, 257, 65537] {
         let columns = 2;

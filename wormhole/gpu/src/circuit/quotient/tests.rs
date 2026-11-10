@@ -214,7 +214,7 @@ fn cpu_quotient_values(
 #[test]
 #[ignore = "requires a hardware GPU with native u64 shader support"]
 fn resident_proving_stages_match_cpu_and_generate_verifiable_proofs() -> Result<()> {
-    let context = futures::executor::block_on(DeviceContext::new())?;
+    let context = pollster::block_on(DeviceContext::new())?;
     for (challenges, factor, rate) in [(2, 8, 3), (3, 7, 4)] {
         let mut config = CircuitConfig::standard_recursion_config();
         config.num_challenges = challenges;

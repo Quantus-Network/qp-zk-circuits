@@ -168,7 +168,7 @@ mod tests {
     #[ignore = "requires a hardware GPU with native u64 shader support"]
     fn gpu_backend_keeps_proving_after_a_worker_panics_mid_proof() -> Result<()> {
         let circuit = build_circuit();
-        let context = Arc::new(futures::executor::block_on(DeviceContext::new())?);
+        let context = Arc::new(pollster::block_on(DeviceContext::new())?);
         let backend =
             GpuBackend::prepare(Arc::clone(&circuit), context, PreparationOptions::default())?;
         circuit.verify(backend.prove(PartialWitness::new())?)?;
@@ -191,14 +191,14 @@ mod tests {
     fn gpu_rebuild_releases_old_backend_and_can_retry_after_failure() -> Result<()> {
         let circuit = build_circuit();
         let options = PreparationOptions::default();
-        let old_context = Arc::new(futures::executor::block_on(DeviceContext::new())?);
+        let old_context = Arc::new(pollster::block_on(DeviceContext::new())?);
         let old_weak = Arc::downgrade(&old_context);
         let mut backend = ProvingBackend::Gpu(Box::new(GpuBackend::prepare(
             Arc::clone(&circuit),
             old_context,
             options,
         )?));
-        let context = Arc::new(futures::executor::block_on(DeviceContext::new())?);
+        let context = Arc::new(pollster::block_on(DeviceContext::new())?);
         let error = backend
             .replace_gpu(&context, || {
                 // This checks ownership release, not physical driver VRAM reclamation.
