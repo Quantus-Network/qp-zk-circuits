@@ -15,7 +15,7 @@ use plonky2::{
 };
 use qp_wormhole_inputs::{BytesDigest, PrivateBatchShape, WithdrawalOutput};
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 use zk_circuits_common::circuit::{
     wormhole_leaf_circuit_config, wormhole_private_batch_circuit_config, C, D, F,
@@ -106,7 +106,7 @@ fn build_private_batch(
 fn deterministic_dummy_nullifier_pre_images(n: usize) -> Vec<[F; 4]> {
     let mut rng = StdRng::from_seed([77u8; 32]);
     (0..n)
-        .map(|_| core::array::from_fn(|_| F::from_canonical_u64(rng.gen::<u32>() as u64)))
+        .map(|_| core::array::from_fn(|_| F::from_canonical_u64(rng.random::<u32>() as u64)))
         .collect()
 }
 
@@ -482,7 +482,7 @@ fn recursive_aggregation_tree() {
     let block = block_hash(0);
 
     let inputs: Vec<u32> = (0..SHAPE.num_leaf_proofs)
-        .map(|_| rng.gen::<u32>() >> 4)
+        .map(|_| rng.random::<u32>() >> 4)
         .collect();
     let proofs: Vec<_> = inputs
         .iter()

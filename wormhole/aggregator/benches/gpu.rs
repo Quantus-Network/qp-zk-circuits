@@ -34,7 +34,7 @@ const WORKER_COUNTS: &[usize] = &[2, 4];
 fn device() -> Arc<DeviceContext> {
     static DEVICE: OnceLock<Arc<DeviceContext>> = OnceLock::new();
     Arc::clone(DEVICE.get_or_init(|| {
-        let context = futures::executor::block_on(DeviceContext::new())
+        let context = pollster::block_on(DeviceContext::new())
             .expect("GPU benches require a hardware GPU with native u64 shader support");
         eprintln!("adapter: {:?}", context.adapter_info());
         Arc::new(context)

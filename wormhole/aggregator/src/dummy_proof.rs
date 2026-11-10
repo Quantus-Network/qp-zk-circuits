@@ -24,7 +24,7 @@ use anyhow::Result;
 use plonky2::plonk::circuit_data::CommonCircuitData;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use qp_wormhole_inputs::PublicCircuitInputs;
-use rand::Rng;
+use rand::RngExt;
 use wormhole_circuit::inputs::{CircuitInputs, PrivateCircuitInputs};
 use wormhole_circuit::unspendable_account::UnspendableAccount;
 use zk_circuits_common::circuit::{C, D, F};
@@ -157,7 +157,7 @@ pub fn build_dummy_circuit_inputs() -> Result<CircuitInputs> {
 /// Generate a random 32-byte nullifier preimage for dummy proofs.
 /// The circuit will hash this to produce the actual nullifier.
 pub(crate) fn generate_random_nullifier_preimage() -> BytesDigest {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     loop {
         let mut nullifier = [0u8; 32];
         rng.fill(&mut nullifier);

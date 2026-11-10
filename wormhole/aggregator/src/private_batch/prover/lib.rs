@@ -388,7 +388,7 @@ impl PrivateBatchProver {
         }
         outputs.resize(self.shape.num_exit_slots, WithdrawalOutput::default());
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         // Uniformly shuffle proofs to hide dummy positions. The circuit selects its block
         // reference from the first non-dummy slot in-circuit, so no position is special.

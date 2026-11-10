@@ -1440,7 +1440,7 @@ mod tests {
         use plonky2::plonk::circuit_data::CircuitConfig;
         use plonky2::plonk::config::PoseidonGoldilocksConfig;
 
-        let context = futures::executor::block_on(DeviceContext::new())?;
+        let context = pollster::block_on(DeviceContext::new())?;
         let builder =
             CircuitBuilder::<GoldilocksField, 2>::new(CircuitConfig::standard_recursion_config());
         let circuit = builder.build::<PoseidonGoldilocksConfig>();
@@ -1476,7 +1476,7 @@ mod tests {
     #[test]
     #[ignore = "requires a hardware GPU with native u64 shader support"]
     fn hardware_upload_copy_export_and_reuse() -> Result<()> {
-        let mut context = futures::executor::block_on(DeviceContext::new())?;
+        let mut context = pollster::block_on(DeviceContext::new())?;
         let mut workspace = ProofWorkspace::prepare(&context, &[4, 2])?;
         assert_eq!(workspace.allocated_bytes(), 48);
         let source = workspace.buffer(0)?;
@@ -1593,7 +1593,7 @@ mod tests {
     #[test]
     #[ignore = "requires a hardware GPU with native u64 shader support"]
     fn hardware_fixed_data_is_shared_and_bindings_are_checked() -> Result<()> {
-        let context = futures::executor::block_on(DeviceContext::new())?;
+        let context = pollster::block_on(DeviceContext::new())?;
         let values = [
             GoldilocksField::from_canonical_u64(7),
             GoldilocksField::from_canonical_u64(11),
@@ -1640,7 +1640,7 @@ mod tests {
         let first_allocation = first.buffer(0)?;
         let first_output = first_allocation.slice(0..2)?;
         let second_output = second.buffer(0)?;
-        let other_device = futures::executor::block_on(DeviceContext::new())?;
+        let other_device = pollster::block_on(DeviceContext::new())?;
         let foreign_fixed = other_device.prepare_fixed(&values)?;
         let foreign_params = other_device.prepare_params([1, 0, 0, 0])?;
         let saved_bindings;
@@ -1799,7 +1799,7 @@ mod tests {
     #[test]
     #[ignore = "requires a hardware GPU with native u64 shader support"]
     fn hardware_read_only_layout_rejects_a_writing_shader() -> Result<()> {
-        let context = futures::executor::block_on(DeviceContext::new())?;
+        let context = pollster::block_on(DeviceContext::new())?;
         let result = PreparedKernel::prepare(&context,
             "@group(0) @binding(0) var<storage, read_write> fixed: array<u64>;\n@compute @workgroup_size(1) fn main() { fixed[0] = 0lu; }",
             &[FieldBindingSpec { access: BindingAccess::Read, min_elements: 1 }], "intentional fixed-write failure");
@@ -1814,7 +1814,7 @@ mod tests {
     #[test]
     #[ignore = "requires a hardware GPU with native u64 shader support"]
     fn hardware_validation_error_invalidates_context_without_panicking() -> Result<()> {
-        let context = futures::executor::block_on(DeviceContext::new())?;
+        let context = pollster::block_on(DeviceContext::new())?;
         let mut workspace = ProofWorkspace::prepare(&context, &[2])?;
         // Invalid MAP_READ usage provokes a real uncaptured wgpu validation
         // error without exhausting the machine's memory or touching its data.

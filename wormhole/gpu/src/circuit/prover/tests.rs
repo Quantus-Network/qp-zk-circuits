@@ -97,7 +97,7 @@ fn prove_two_inputs_on_one_workspace(context: &DeviceContext) -> Result<()> {
 #[test]
 #[ignore = "requires a hardware GPU with native u64 shader support"]
 fn coordinator_generates_verifiable_proofs_with_fri_and_reuses_workspace() -> Result<()> {
-    let context = futures::executor::block_on(DeviceContext::new())?;
+    let context = pollster::block_on(DeviceContext::new())?;
     prove_two_inputs_on_one_workspace(&context)
 }
 
@@ -107,7 +107,7 @@ fn profiled_coordinator_records_every_host_span() -> Result<()> {
     let captured = HostSpans::default();
     let dispatcher = tracing::Dispatch::new(tracing_subscriber::registry().with(captured.clone()));
     tracing::dispatcher::with_default(&dispatcher, || -> Result<()> {
-        let context = futures::executor::block_on(DeviceContext::with_options(DeviceOptions {
+        let context = pollster::block_on(DeviceContext::with_options(DeviceOptions {
             timestamps: true,
             ..Default::default()
         }))?;
@@ -156,7 +156,7 @@ fn profiled_coordinator_records_every_host_span() -> Result<()> {
 #[test]
 #[ignore = "requires a hardware GPU with native u64 shader support"]
 fn pow_grind_spanning_many_chunks_matches_single_chunk_and_cpu_proofs() -> Result<()> {
-    let context = futures::executor::block_on(DeviceContext::new())?;
+    let context = pollster::block_on(DeviceContext::new())?;
     let mut config = CircuitConfig::standard_recursion_config();
     config.fri_config.reduction_strategy = FriReductionStrategy::Fixed(vec![]);
     config.fri_config.proof_of_work_bits = 6;
@@ -217,7 +217,7 @@ fn pow_grind_spanning_many_chunks_matches_single_chunk_and_cpu_proofs() -> Resul
 #[test]
 #[ignore = "requires a hardware GPU with native u64 shader support"]
 fn boundary_witness_values_prove_identically_to_cpu() -> Result<()> {
-    let context = futures::executor::block_on(DeviceContext::new())?;
+    let context = pollster::block_on(DeviceContext::new())?;
     let mut config = CircuitConfig::standard_recursion_config();
     config.fri_config.reduction_strategy = FriReductionStrategy::Fixed(vec![1]);
     config.fri_config.proof_of_work_bits = 4;
@@ -292,7 +292,7 @@ fn workspace_ranges_and_pow_retries_are_checked() {
 #[test]
 #[ignore = "requires a hardware GPU with native u64 shader support"]
 fn coordinator_handles_zero_fri_rounds_and_reuses_workspace_after_input_errors() -> Result<()> {
-    let context = futures::executor::block_on(DeviceContext::new())?;
+    let context = pollster::block_on(DeviceContext::new())?;
     let mut config = CircuitConfig::standard_recursion_config();
     config.fri_config.reduction_strategy = FriReductionStrategy::Fixed(vec![]);
     config.fri_config.proof_of_work_bits = 8;

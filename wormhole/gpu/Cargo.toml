@@ -30,7 +30,7 @@ wgpu = { version = "=27.0.1", optional = true, default-features = false, feature
 
 [dev-dependencies]
 criterion = { workspace = true }
-futures = { version = "=0.3.32", default-features = false, features = ["executor"] }
+pollster = "=1.0.1"
 qp-plonky2 = { workspace = true, features = ["rand"] }
 tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["registry", "std"] }
 

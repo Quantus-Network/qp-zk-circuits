@@ -123,7 +123,7 @@ fn run(arguments: Vec<String>, timestamps: bool, profile: Option<&profile::Profi
     let mut gpu_init = 0.0;
     if backend == "gpu" {
         let device_started = Instant::now();
-        let context = Arc::new(futures::executor::block_on(DeviceContext::with_options(
+        let context = Arc::new(pollster::block_on(DeviceContext::with_options(
             DeviceOptions {
                 timestamps,
                 ..Default::default()

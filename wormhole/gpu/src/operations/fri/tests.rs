@@ -28,7 +28,7 @@ fn planes(values: &[E<F>]) -> Vec<F> {
 #[test]
 #[ignore = "requires a hardware GPU with native u64 shader support"]
 fn fri_folds_and_chunked_commitments_match_cpu() -> Result<()> {
-    let context = futures::executor::block_on(DeviceContext::new())?;
+    let context = pollster::block_on(DeviceContext::new())?;
     let kernels = Arc::new(FriKernels::prepare(&context)?);
     let poseidon = Arc::new(PoseidonKernels::prepare(&context)?);
     for (rows, arity, cap_height) in [

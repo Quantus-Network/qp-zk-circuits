@@ -157,7 +157,7 @@ fn zero_padding_is_not_emitted_as_horner_work() {
 #[test]
 #[ignore = "requires a hardware GPU with native u64 shader support"]
 fn quotient_matches_cpu_gates_and_permutation_equations_on_arbitrary_rows() -> Result<()> {
-    let context = futures::executor::block_on(DeviceContext::new())?;
+    let context = pollster::block_on(DeviceContext::new())?;
     for challenges in [2, 3] {
         let mut config = CircuitConfig::standard_recursion_config();
         config.num_challenges = challenges;

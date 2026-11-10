@@ -30,7 +30,7 @@ const CHUNK_ROWS: usize = 1 << 16;
 fn context() -> &'static DeviceContext {
     static CONTEXT: OnceLock<DeviceContext> = OnceLock::new();
     CONTEXT.get_or_init(|| {
-        let context = futures::executor::block_on(DeviceContext::new())
+        let context = pollster::block_on(DeviceContext::new())
             .expect("kernel benches require a hardware GPU with native u64 shader support");
         eprintln!("adapter: {:?}", context.adapter_info());
         context

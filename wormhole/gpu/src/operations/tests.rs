@@ -42,7 +42,7 @@ fn mds_accumulation_bound_is_checked() {
 #[test]
 #[ignore = "requires a hardware GPU with native u64 shader support"]
 fn goldilocks_arithmetic_matches_cpu_at_boundaries_and_arbitrary_values() -> Result<()> {
-    let context = futures::executor::block_on(DeviceContext::new())?;
+    let context = pollster::block_on(DeviceContext::new())?;
     let mut a = samples(64, 7);
     a[..6].copy_from_slice(&[
         F::ZERO,
@@ -90,7 +90,7 @@ fn goldilocks_arithmetic_matches_cpu_at_boundaries_and_arbitrary_values() -> Res
 #[test]
 #[ignore = "requires a hardware GPU with native u64 shader support"]
 fn fft_and_inverse_match_cpu_with_padding_and_cosets() -> Result<()> {
-    let context = futures::executor::block_on(DeviceContext::new())?;
+    let context = pollster::block_on(DeviceContext::new())?;
     let kernels = Arc::new(FftKernels::prepare(&context)?);
     for (degree, rows) in [(1, 1), (1, 8), (8, 8), (8, 64), (64, 64)] {
         for shift in [F::ONE, F::coset_shift()] {
@@ -136,7 +136,7 @@ fn fft_and_inverse_match_cpu_with_padding_and_cosets() -> Result<()> {
 #[test]
 #[ignore = "requires a hardware GPU with native u64 shader support"]
 fn poseidon_commitments_match_cpu_layout_caps_and_bit_reversal() -> Result<()> {
-    let context = futures::executor::block_on(DeviceContext::new())?;
+    let context = pollster::block_on(DeviceContext::new())?;
     let kernels = Arc::new(PoseidonKernels::prepare(&context)?);
     for width in [1, 7, 8, 9, 17, 143] {
         let rows = 16usize;

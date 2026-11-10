@@ -236,12 +236,12 @@ mod tests {
     #[test]
     #[ignore = "requires hardware timestamp queries and native u64 shaders"]
     fn timestamp_resources_survive_cancel_capacity_errors_dropped_tokens_and_reuse() -> Result<()> {
-        let ordinary = futures::executor::block_on(DeviceContext::new())?;
+        let ordinary = pollster::block_on(DeviceContext::new())?;
         assert!(ProofWorkspace::prepare(&ordinary, &[1])?
             .timestamps
             .is_none());
         drop(ordinary);
-        let context = futures::executor::block_on(DeviceContext::with_options(DeviceOptions {
+        let context = pollster::block_on(DeviceContext::with_options(DeviceOptions {
             timestamps: true,
             timestamp_dispatch_capacity: 1,
         }))?;
