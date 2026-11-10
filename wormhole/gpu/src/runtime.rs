@@ -590,7 +590,7 @@ impl PreparedKernel {
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some(label),
                     bind_group_layouts: &[&layout],
-                    push_constant_ranges: &[],
+                    immediate_size: 0,
                 });
         context.check_device()?;
         let module = context
