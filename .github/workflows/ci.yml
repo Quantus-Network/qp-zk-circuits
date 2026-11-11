@@ -136,7 +136,7 @@ jobs:
       # qp-plonky2 commit whose constraint-exporter readers describe the circuits on this
       # branch (Quantus-Network/qp-plonky2#116). Bump it together with any change to the
       # traced gadget-call order; the readers fail closed on a mismatch.
-      QP_PLONKY2_REF: d45d0bc9c8a2896ffe6a9716948023e3243ba9ed
+      QP_PLONKY2_REF: 825efba73a324f4e5add671d6668095e0dfe9308
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ubuntu
