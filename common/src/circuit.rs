@@ -379,12 +379,14 @@ where
 /// proofs without compromising security - the aggregator that verifies these proofs runs in a
 /// trusted environment anyway.
 ///
-/// The leaf is a 2^8-degree circuit, so its FRI blowup is cheap (`rate_bits = 7` is a
-/// 2^15-row LDE) and buys 128 bits with only 16 query rounds. The private batch verifies
-/// one leaf per slot recursively, and that cost scales with the leaf's query count, so
-/// this halves the per-leaf gate cost relative to `standard_recursion_config()`.
-/// The parameters live in [`qp_wormhole_inputs::leaf_config`] so the `no_std` verifier
-/// can pin the same config.
+/// The leaf is a 2^8-degree circuit, so its FRI blowup is cheap (`rate_bits = 6` is a
+/// 2^14-row LDE) and buys 128 bits with 19 query rounds. The private batch verifies
+/// one leaf per slot recursively, and that cost scales with the leaf's query count
+/// (~2,600 gates per leaf here, against ~3,100 for `standard_recursion_config()` at
+/// 128 bits and ~2,370 at `rate_bits = 7`). Leaves are proven client-side, so the rate
+/// trades leaf prover time (each bit doubles the LDE) against leaf slots in the 2^15
+/// private batch (each bit removed costs about one). The parameters live in
+/// [`qp_wormhole_inputs::leaf_config`] so the `no_std` verifier can pin the same config.
 pub fn wormhole_leaf_circuit_config() -> CircuitConfig {
     CircuitConfig {
         num_wires: leaf_config::NUM_WIRES,
@@ -420,18 +422,18 @@ pub fn wormhole_leaf_circuit_config() -> CircuitConfig {
 /// 200-proof public batch from 2^20 to 2^21; at `rate_bits = 4` the per-proof cost matches
 /// the old 100-bit config, at the price of a 2x larger private-batch LDE.
 ///
-/// Measured degree with this config (the leaf verifiers dominate at ~2,380 gates
+/// Measured degree with this config (the leaf verifiers dominate at ~2,600 gates
 /// each; the exit-slot count `M` costs about one gate per slot and does not move
 /// the degree for any `M <= 64`):
 /// - 1-3 leaves: degree_bits=14
-/// - 4-10 leaves: degree_bits=15; full proving peaks at ~2.25 GB
+/// - 4-9 leaves: degree_bits=15; full proving peaks at ~2.25 GB
 ///   (`wormhole-memprof --real-proofs 1`; ~1.5 GB with the former rate_bits=3).
-///   The production shape (10, 32) uses 23,807 of the ~24,060 rows left after
+///   The production shape (9, 32) uses 23,469 of the ~24,060 rows left after
 ///   blinding, so adding gates to this circuit will push it to 2^16; the
 ///   `production_private_batch_stays_at_degree_15` test in the aggregator
 ///   crate pins this.
-/// - 11-23 leaves: degree_bits=16
-/// - 24+ leaves: degree_bits=17
+/// - 10-21 leaves: degree_bits=16
+/// - 22+ leaves: degree_bits=17
 pub fn wormhole_private_batch_circuit_config() -> CircuitConfig {
     CircuitConfig {
         num_wires: 135,
@@ -473,7 +475,7 @@ pub fn ownership_circuit_config() -> CircuitConfig {
 /// 28, and one 2^20-hash grind per proof for the prover. Being non-ZK, the query
 /// count adds no blinding rows, so it does not affect the circuit degree.
 ///
-/// Measured degree over the production private batch (~4,785 rows per inner proof:
+/// Measured degree over the production private batch (~4,765 rows per inner proof:
 /// the recursive verifier plus one Poseidon gate per 8 forwarded public inputs,
 /// which `build()` appends for the public-input hash):
 /// - up to 54 inner proofs: degree_bits=18

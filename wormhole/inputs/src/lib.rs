@@ -48,17 +48,20 @@ pub const MIN_LEAF_SECURITY_BITS: usize = 128;
 ///
 /// Shared by the circuit side (`zk_circuits_common::circuit::wormhole_leaf_circuit_config`)
 /// and the `no_std` verifier, which cannot depend on the circuit crates. The
-/// leaf is a 2^8-degree circuit, so a large blowup is nearly free for the
-/// prover while every query it saves removes ~110 gates from each recursive
-/// verification in the private batch. `16 * 7 + 16 = 128` conjectured bits.
+/// leaf is a 2^8-degree circuit, so its blowup is cheap for the prover, while
+/// every query it saves removes ~75 gates from each recursive verification in
+/// the private batch. Leaves are proven client-side, so the rate is a
+/// compromise: each extra rate bit doubles the leaf prover's LDE (rate 7 proved
+/// in ~130 ms where rate 6 takes ~60 ms on an M4) and each bit removed costs a
+/// leaf slot in the 2^15 private batch. `19 * 6 + 16 = 130` conjectured bits.
 pub mod leaf_config {
     pub const NUM_WIRES: usize = 135;
     pub const NUM_ROUTED_WIRES: usize = 60;
     pub const SECURITY_BITS: usize = 128;
-    pub const FRI_RATE_BITS: usize = 7;
+    pub const FRI_RATE_BITS: usize = 6;
     pub const FRI_CAP_HEIGHT: usize = 4;
     pub const FRI_PROOF_OF_WORK_BITS: u32 = 16;
-    pub const FRI_NUM_QUERY_ROUNDS: usize = 16;
+    pub const FRI_NUM_QUERY_ROUNDS: usize = 19;
 }
 
 /// Maximum number of leaf proofs and of exit slots in a private batch. The formal
@@ -81,16 +84,16 @@ pub const MAX_PUBLIC_BATCH_ARITY: usize = 256;
 pub mod production {
     use super::PrivateBatchShape;
 
-    /// Leaf proofs per private batch. Ten fits the private batch in 2^15 rows with
-    /// ~250 gates to spare; eleven does not.
-    pub const NUM_LEAF_PROOFS: usize = 10;
+    /// Leaf proofs per private batch. Nine fits the private batch in 2^15 rows with
+    /// ~600 gates to spare at the current leaf config; ten does not.
+    pub const NUM_LEAF_PROOFS: usize = 9;
     /// Exit slots per private batch. Slots cost ~1 gate each in the private batch
     /// and ~1 gate per inner proof in the public batch, but 40 bytes of public
     /// input each on chain whether used or not.
     pub const NUM_EXIT_SLOTS: usize = 32;
     /// Private-batch proofs per public batch. 109 is the most that fit in 2^19
     /// rows: each inner proof costs ~4,740 gates of recursive verification plus
-    /// 25 Poseidon gates hashing its 200 forwarded public inputs.
+    /// 25 Poseidon gates hashing its 196 forwarded public inputs.
     pub const PUBLIC_BATCH_ARITY: usize = 109;
 
     pub const PRIVATE_BATCH_SHAPE: PrivateBatchShape =
