@@ -84,17 +84,19 @@ pub const MAX_PUBLIC_BATCH_ARITY: usize = 256;
 pub mod production {
     use super::PrivateBatchShape;
 
-    /// Leaf proofs per private batch. Nine fits the private batch in 2^15 rows with
-    /// ~600 gates to spare at the current leaf config; ten does not.
-    pub const NUM_LEAF_PROOFS: usize = 9;
+    /// Leaf proofs per private batch. Eight is the largest N that keeps the
+    /// private batch at 2^15 rows with the rate-3 / 36-query FRI config; nine
+    /// is degree 16.
+    pub const NUM_LEAF_PROOFS: usize = 8;
     /// Exit slots per private batch. Slots cost ~1 gate each in the private batch
     /// and ~1 gate per inner proof in the public batch, but 40 bytes of public
     /// input each on chain whether used or not.
     pub const NUM_EXIT_SLOTS: usize = 32;
-    /// Private-batch proofs per public batch. 109 is the most that fit in 2^19
-    /// rows: each inner proof costs ~4,740 gates of recursive verification plus
-    /// 25 Poseidon gates hashing its 196 forwarded public inputs.
-    pub const PUBLIC_BATCH_ARITY: usize = 109;
+    /// Private-batch proofs per public batch. 89 is the most that fit in 2^19
+    /// rows once each inner proof costs ~5,855 gates of recursive verification
+    /// (36 FRI queries at rate 3) plus the Poseidon gates hashing its forwarded
+    /// public inputs. 90 is degree 20.
+    pub const PUBLIC_BATCH_ARITY: usize = 89;
 
     pub const PRIVATE_BATCH_SHAPE: PrivateBatchShape =
         PrivateBatchShape::new(NUM_LEAF_PROOFS, NUM_EXIT_SLOTS);

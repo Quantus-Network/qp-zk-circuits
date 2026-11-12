@@ -13,7 +13,7 @@
 //!
 //! # Concurrency
 //!
-//! Public-batch proving takes tens of seconds (~30 s for the 109-proof
+//! Public-batch proving takes tens of seconds (~30 s for the 89-proof
 //! production batch on Apple-Silicon-class hardware; a few block times, so
 //! settlements can land mid-prove). [`PublicBatchAggregator::aggregate`] is the simple blocking
 //! convenience; a service that must keep admitting proofs while proving
@@ -172,7 +172,7 @@ impl ProvingContext {
     /// checked against the pinned [`Self::verify`] before being handed back,
     /// so a divergent prover build cannot silently return an unusable proof.
     ///
-    /// Takes tens of seconds (~30 s for the 109-proof production batch on
+    /// Takes tens of seconds (~30 s for the 89-proof production batch on
     /// Apple-Silicon-class hardware). Run it on a dedicated proving worker
     /// without holding whatever lock guards the aggregator — this context is
     /// owned, so nothing here needs the lock.

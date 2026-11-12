@@ -1,13 +1,13 @@
 //! CPU versus GPU public-batch proving on the real circuit, with the GPU path
 //! split into its CPU-side witness work and its device-coordinated stages.
 //! Requires a hardware adapter with native u64 shaders; the GPU prover for the
-//! production arity-109 batch (2^19 rows) plans roughly 12 GB of device buffers.
+//! production arity-89 batch (2^19 rows) plans roughly 12 GB of device buffers.
 //!
 //! `cargo bench -p qp-wormhole-aggregator --features gpu --bench gpu`
 //!
 //! Every target proves a full batch (one real inner proof, dummy-padded; see
 //! `prepare_public_batch_fixture`), so a sample takes seconds. Filter by arity
-//! or backend, e.g. `-- 109` or `-- public_batch_prove/gpu`, to skip the other
+//! or backend, e.g. `-- 89` or `-- public_batch_prove/gpu`, to skip the other
 //! fixtures' circuit generation.
 #[path = "support/fixtures.rs"]
 mod fixtures;
