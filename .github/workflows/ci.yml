@@ -134,9 +134,9 @@ jobs:
     timeout-minutes: 30
     env:
       # qp-plonky2 commit whose constraint-exporter readers describe the circuits on this
-      # branch (Quantus-Network/qp-plonky2#116). Bump it together with any change to the
+      # branch (Quantus-Network/qp-plonky2#126). Bump it together with any change to the
       # traced gadget-call order; the readers fail closed on a mismatch.
-      QP_PLONKY2_REF: 825efba73a324f4e5add671d6668095e0dfe9308
+      QP_PLONKY2_REF: a38c3235ce82678b5a587a4e0bcd565f0e75ac6f
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ubuntu
