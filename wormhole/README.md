@@ -205,21 +205,22 @@ entirely, the pallet's nullifier set would still prevent any double spend.
 
 The aggregator combines `N` leaf proofs and `M` exit slots into a single proof with a fixed public input layout
 `[M, asset_id, volume_fee_bps, block_hash(4), block_number] ++ M × (amount, exit_account(4)) ++ N × nullifier(4)`.
-`N` (`--num-leaf-proofs`) and `M` (`--num-exit-slots`) are independent circuit parameters; the production shape is `N = 10`,
-`M = 32` (`qp_wormhole_inputs::production`). The leaf verifiers dominate the private-batch circuit (about 2.4k gates per leaf),
+`N` (`--num-leaf-proofs`) and `M` (`--num-exit-slots`) are independent circuit parameters; the production shape is `N = 9`,
+`M = 32` (`qp_wormhole_inputs::production`). The leaf verifiers dominate the private-batch circuit (about 2.6k gates per leaf),
 while each exit slot costs roughly one gate plus five public inputs, so `M` can be raised up to the cap of 64 without changing the
-circuit degree. Measured degree by `N` with the production config: `N <= 3` fits `2^14`, `4..=10` fits `2^15`, `11..=23` fits
-`2^16`, `24+` needs `2^17`. `N = 10` leaves only ~250 rows of headroom in `2^15`; a test pins the degree so a later gate added to
+circuit degree. Measured degree by `N` with the production config: `N <= 3` fits `2^14`, `4..=9` fits `2^15`, `10..=21` fits
+`2^16`, `22+` needs `2^17`. `N = 9` leaves ~600 rows of headroom in `2^15`; a test pins the degree so a later gate added to
 the private batch fails CI rather than silently doubling the prover's work.
 
 The public batch aggregates `n` private-batch proofs (production `n = 109`, cap `MAX_PUBLIC_BATCH_ARITY = 256`). Each inner proof
 costs about 4.74k gates of recursive verification plus one Poseidon gate per 8 of the `5M + 4N` public inputs it forwards (25 at the
 production shape): up to 54 inner proofs fit `2^18`, 109 fit `2^19`, 218 fit `2^20`. At the production shape a public batch carries
-1,090 burns and 3,488 exit slots; the 2^19 GPU prover plans ~12 GB of device buffers.
+981 burns and 3,488 exit slots; the 2^19 GPU prover plans ~12 GB of device buffers.
 
-The leaf and private batch target 128 conjectured bits (`num_query_rounds * rate_bits + proof_of_work_bits`). The leaf uses a
-large FRI blowup (`rate_bits = 7`, 16 queries) because its 2^8-row circuit makes the blowup nearly free while every query it saves
-removes ~110 gates from each recursive verification in the private batch; the private batch uses `rate_bits = 4`, 27 queries and 20
+The leaf and private batch target 128 conjectured bits (`num_query_rounds * rate_bits + proof_of_work_bits`). The leaf uses
+`rate_bits = 6` with 19 queries: leaves are proven client-side, and each rate bit doubles the leaf prover's LDE (rate 7 proved in
+~130 ms against ~60 ms at rate 6 on an M4), while every query it saves removes ~75 gates from each recursive verification in the
+private batch, so each bit removed from the rate costs about one leaf slot in the 2^15 private batch; the private batch uses `rate_bits = 4`, 27 queries and 20
 proof-of-work bits so that its proofs cost the public batch the same per-proof gates as the previous 100-bit config. The public
 batch keeps Plonky2's minimum `rate_bits = 3` (its 2^19-row LDE is already the GPU's memory budget) and reaches 128 bits with 36
 queries and 20 proof-of-work bits; being non-ZK, the extra queries add no rows, only on-chain verifier hashing. Key behaviors:
