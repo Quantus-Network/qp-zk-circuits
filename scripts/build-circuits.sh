@@ -6,7 +6,7 @@
 #   ./scripts/build-circuits.sh [NUM_LEAF_PROOFS] [NUM_EXIT_SLOTS]
 #
 # Arguments:
-#   NUM_LEAF_PROOFS - Number of leaf proofs per private-batch aggregation (default: 9)
+#   NUM_LEAF_PROOFS - Number of leaf proofs per private-batch aggregation (default: 8)
 #   NUM_EXIT_SLOTS  - Number of withdrawal output slots per private batch (default: 32)
 #
 # The defaults are the production shape (`qp_wormhole_inputs::production`).
@@ -19,7 +19,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-NUM_LEAF_PROOFS="${1:-9}"
+NUM_LEAF_PROOFS="${1:-8}"
 NUM_EXIT_SLOTS="${2:-32}"
 OUTPUT_DIR="$REPO_ROOT/wormhole/generated-bins"
 

@@ -415,36 +415,37 @@ pub fn wormhole_leaf_circuit_config() -> CircuitConfig {
 /// - Row blinding ZK mode (lower memory than PolyFri, same security)
 /// - num_wires = 135 (minimum for PoseidonGate)
 /// - num_routed_wires = 60 (optimal for degree_bits=15 circuits)
-/// - rate_bits = 4, 27 query rounds, 20 proof-of-work bits (`27 * 4 + 20 = 128`)
+/// - rate_bits = 3, 36 query rounds, 20 proof-of-work bits (`36 * 3 + 20 = 128`)
 ///
-/// The public batch verifies these proofs recursively, and its per-proof cost scales with
-/// this query count. Taking 128 bits at `rate_bits = 3` would need 36 queries and push a
-/// 200-proof public batch from 2^20 to 2^21; at `rate_bits = 4` the per-proof cost matches
-/// the old 100-bit config, at the price of a 2x larger private-batch LDE.
+/// The client proves this layer. `rate_bits = 4` doubled the LDE (2^19 rows,
+/// ~2.2 GB) and priced out 4 GB phones, whose foreground jetsam limit is about
+/// 2,050 MB. Rate 3 is plonky2's floor and puts the extension back at 2^18
+/// rows, the same size as the pre-change peak of ~1.5 GB. The public batch
+/// pays for those 36 queries: each inner proof costs ~5,855 verifier gates
+/// instead of ~4,740, so the 2^19 arity ceiling is 89 rather than 109.
 ///
 /// Measured degree with this config (the leaf verifiers dominate at ~2,600 gates
 /// each; the exit-slot count `M` costs about one gate per slot and does not move
-/// the degree for any `M <= 64`):
-/// - 1-3 leaves: degree_bits=14
-/// - 4-9 leaves: degree_bits=15; full proving peaks at ~2.25 GB
-///   (`wormhole-memprof --real-proofs 1`; ~1.5 GB with the former rate_bits=3).
-///   The production shape (9, 32) uses 23,469 of the ~24,060 rows left after
-///   blinding, so adding gates to this circuit will push it to 2^16; the
-///   `production_private_batch_stays_at_degree_15` test in the aggregator
-///   crate pins this.
-/// - 10-21 leaves: degree_bits=16
-/// - 22+ leaves: degree_bits=17
+/// the degree for any `M <= 64`). The 36-query blinding rows are what move the
+/// bands relative to the rate-4 config:
+/// - 1-2 leaves: degree_bits=14
+/// - 3-8 leaves: degree_bits=15. The production shape (8, 32) is the largest
+///   that stays here; full proving at this degree peaks near the old ~1.5 GB.
+///   The `production_private_batch_stays_at_degree_15` test pins it.
+/// - 9-19 leaves: degree_bits=16
+/// - 20-44 leaves: degree_bits=17
+/// - 45-64 leaves: degree_bits=18
 pub fn wormhole_private_batch_circuit_config() -> CircuitConfig {
     CircuitConfig {
         num_wires: 135,
         num_routed_wires: 60,
         security_bits: 128,
         fri_config: FriConfig {
-            rate_bits: 4,
+            rate_bits: 3,
             cap_height: 4,
             proof_of_work_bits: 20,
             reduction_strategy: FriReductionStrategy::ConstantArityBits(4, 5),
-            num_query_rounds: 27,
+            num_query_rounds: 36,
         },
         ..CircuitConfig::standard_recursion_zk_config()
     }
@@ -475,13 +476,13 @@ pub fn ownership_circuit_config() -> CircuitConfig {
 /// 28, and one 2^20-hash grind per proof for the prover. Being non-ZK, the query
 /// count adds no blinding rows, so it does not affect the circuit degree.
 ///
-/// Measured degree over the production private batch (~4,765 rows per inner proof:
+/// Measured degree over the production private batch (~5,880 rows per inner proof:
 /// the recursive verifier plus one Poseidon gate per 8 forwarded public inputs,
 /// which `build()` appends for the public-input hash):
-/// - up to 54 inner proofs: degree_bits=18
-/// - 55-109: degree_bits=19 (production arity 109; pinned by
+/// - up to 44 inner proofs: degree_bits=18
+/// - 45-89: degree_bits=19 (production arity 89; pinned by
 ///   `production_public_batch_stays_at_degree_19` in the aggregator crate)
-/// - 110-218: degree_bits=20
+/// - 90-178: degree_bits=20
 pub fn wormhole_public_batch_circuit_config() -> CircuitConfig {
     CircuitConfig {
         security_bits: 128,
