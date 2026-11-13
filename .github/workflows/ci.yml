@@ -38,8 +38,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ubuntu
+      # Compiled dependencies are cached per job. Only main saves, so PRs
+      # restore main's cache instead of each branch filling the 10 GB quota.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
       - name: Install taplo
-        run: cargo install taplo-cli --locked
+        run: command -v taplo >/dev/null 2>&1 || cargo install taplo-cli --locked
       - name: Run format checks
         run: |
           taplo format --check --config taplo.toml
@@ -64,6 +70,10 @@ jobs:
       - name: Setup macOS
         if: matrix.os == 'macos-latest'
         uses: ./.github/actions/macos
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-nextest@${{ env.NEXTEST_VERSION }}
@@ -89,6 +99,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ubuntu
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
       - name: Run clippy (workspace)
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Check documentation
@@ -140,6 +154,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ubuntu
+      - name: Check out qp-plonky2 constraint exporter
+        uses: actions/checkout@v4
+        with:
+          repository: Quantus-Network/qp-plonky2
+          ref: ${{ env.QP_PLONKY2_REF }}
+          path: qp-plonky2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: |
+            .
+            qp-plonky2
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
       # The Lean bridge in qp-plonky2 proves soundness of the *traced* gadget calls, so a
       # circuit edit that drops a constraint (e.g. a range check) only shows up when the
       # exporter's shape readers are run against the new trace. Trace from the circuits in
@@ -148,12 +175,6 @@ jobs:
         run: |
           UPDATE_FORMAL_TRACE=1 cargo test --release --locked -p qp-wormhole-circuit --test formal_trace
           UPDATE_FORMAL_TRACE=1 cargo test --release --locked -p qp-wormhole-aggregator --lib -- trace_is_current
-      - name: Check out qp-plonky2 constraint exporter
-        uses: actions/checkout@v4
-        with:
-          repository: Quantus-Network/qp-plonky2
-          ref: ${{ env.QP_PLONKY2_REF }}
-          path: qp-plonky2
       - name: Run the exporter shape readers against the fresh traces
         working-directory: qp-plonky2
         env:
@@ -171,6 +192,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ubuntu
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-nextest@${{ env.NEXTEST_VERSION }}
