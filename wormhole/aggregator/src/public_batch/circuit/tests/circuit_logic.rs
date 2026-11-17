@@ -784,30 +784,28 @@ fn public_batch_rejects_proofs_from_substituted_private_batch_circuit() {
     );
 }
 
-/// Records the `n_inner` public-batch wrapper over `TRACED_INNER_SHAPE` private batches —
-/// the wrapper logic only, on virtual inner-proof PI targets, without the recursive
-/// verifiers — for the Lean constraint exporter (`qp-plonky2/constraint-exporter`,
-/// PLAN.md Step 8) and checks the trace `formal/traces/public_batch_wrapper_n{n_inner}.json`
-/// is current. Regenerate with `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator
-/// --lib public_batch_wrapper_n`.
-fn check_public_batch_wrapper_trace(n_inner: usize) {
+/// Records the `n_inner` public-batch wrapper over `inner` private batches — the wrapper
+/// logic only, on virtual inner-proof PI targets, without the recursive verifiers — for
+/// the Lean constraint exporter (`qp-plonky2/constraint-exporter`, PLAN.md Step 8) and
+/// checks the trace `formal/traces/public_batch_wrapper_n{n_inner}.json` is current.
+/// Regenerate with `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib
+/// public_batch_wrapper_n`.
+///
+/// `n_inner = 2` and `4` are recorded over 2-leaf, 2-slot private batches. The production
+/// trace is `PUBLIC_BATCH_ARITY = 89` over `(NUM_LEAF_PROOFS, NUM_EXIT_SLOTS) = (8, 32)`,
+/// and its recursion gadgets name `private_batch_wrapper_n8`.
+fn check_public_batch_wrapper_trace(n_inner: usize, inner_shape: PrivateBatchShape) {
     use zk_circuits_common::circuit::wormhole_public_batch_circuit_config;
     use zk_circuits_common::formal_trace::{Trace, TracingBuilder};
-
-    // Matches the shape the private-batch wrapper trace is recorded at.
-    const TRACED_INNER_SHAPE: PrivateBatchShape = PrivateBatchShape::new(2, 2);
 
     let leaf = build_fake_leaf_circuit().0;
     let mut tracing = TracingBuilder::new(wormhole_public_batch_circuit_config());
 
     // Only the PI slice of each inner proof is read by the wrapper; the proof body comes
     // from any common data. Where production runs `add_recursive_verifiers` under the
-    // `TRACED_INNER_SHAPE` private-batch verifier key.
-    let pi_len = pbc::private_batch_pi_len(TRACED_INNER_SHAPE);
-    let child = format!(
-        "private_batch_wrapper_n{}",
-        TRACED_INNER_SHAPE.num_leaf_proofs
-    );
+    // `inner_shape` private-batch verifier key.
+    let pi_len = pbc::private_batch_pi_len(inner_shape);
+    let child = format!("private_batch_wrapper_n{}", inner_shape.num_leaf_proofs);
     let private_batch_proofs: Vec<_> = (0..n_inner)
         .map(|_| {
             let mut proof = tracing.inner.add_virtual_proof_with_pis(&leaf.common);
@@ -826,7 +824,7 @@ fn check_public_batch_wrapper_trace(n_inner: usize) {
         private_batch_proofs,
         aggregator_address,
     };
-    super::build_public_batch_constraints(&mut tracing, &targets, n_inner, TRACED_INNER_SHAPE);
+    super::build_public_batch_constraints(&mut tracing, &targets, n_inner, inner_shape);
     assert_eq!(
         rows_before, 0,
         "wrapper rows must start at 0 for the exporter"
@@ -846,7 +844,7 @@ fn check_public_batch_wrapper_trace(n_inner: usize) {
     let round_trip = Trace::from_json(&json).expect("trace round-trips");
     assert_eq!(round_trip.to_json(), json);
     println!(
-        "public wrapper trace n_inner={n_inner} inner={TRACED_INNER_SHAPE:?}: rows={} copies={} calls={}",
+        "public wrapper trace n_inner={n_inner} inner={inner_shape:?}: rows={} copies={} calls={}",
         trace.rows.len(),
         trace.copies.len(),
         trace.calls.len()
@@ -869,10 +867,19 @@ fn check_public_batch_wrapper_trace(n_inner: usize) {
 
 #[test]
 fn public_batch_wrapper_n2_trace_is_current() {
-    check_public_batch_wrapper_trace(2);
+    check_public_batch_wrapper_trace(2, PrivateBatchShape::new(2, 2));
 }
 
 #[test]
 fn public_batch_wrapper_n4_trace_is_current() {
-    check_public_batch_wrapper_trace(4);
+    check_public_batch_wrapper_trace(4, PrivateBatchShape::new(2, 2));
+}
+
+#[test]
+fn public_batch_wrapper_production_trace_is_current() {
+    use qp_wormhole_inputs::production;
+    check_public_batch_wrapper_trace(
+        production::PUBLIC_BATCH_ARITY,
+        production::PRIVATE_BATCH_SHAPE,
+    );
 }
