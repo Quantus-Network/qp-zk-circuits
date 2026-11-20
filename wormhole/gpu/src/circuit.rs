@@ -15,7 +15,7 @@ use plonky2::plonk::circuit_data::CircuitData;
 use plonky2::plonk::config::PoseidonGoldilocksConfig as C;
 use plonky2::util::log2_ceil;
 use std::ops::Deref;
-use std::sync::Arc;
+use std::sync::{atomic::Ordering, Arc};
 
 #[cfg(feature = "constraint-export")]
 mod fri;
@@ -683,7 +683,7 @@ impl WireBuffers<'_, '_> {
     fn encode_generated(
         &self,
         encoder: &mut ProofEncoder<'_>,
-        mut partition: PartitionWitness<'_, F>,
+        partition: PartitionWitness<'_, F>,
     ) -> Result<WireCommitment> {
         let prepared = self.prepared;
         ensure!(
@@ -708,7 +708,14 @@ impl WireBuffers<'_, '_> {
                     values
                         .iter()
                         .zip(assigned_flags)
-                        .map(|(&value, &assigned)| if assigned != 0 { value } else { F::ZERO })
+                        .map(|(value, assigned)| {
+                            // Generation has finished; the witness is exclusively owned here.
+                            if assigned.load(Ordering::Relaxed) != 0 {
+                                F::from_noncanonical_u64(value.load(Ordering::Relaxed))
+                            } else {
+                                F::ZERO
+                            }
+                        })
                         .collect::<Vec<_>>(),
                 )
             }

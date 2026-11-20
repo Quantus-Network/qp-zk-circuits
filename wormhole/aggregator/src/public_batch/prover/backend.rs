@@ -166,11 +166,7 @@ impl GpuBackend {
         }
         #[cfg(feature = "gpu-parallel-witness")]
         {
-            // SAFETY: Public-batch circuits use built-in generators with complete,
-            // stable access sets. Planning and execution use the same unchanged circuit.
-            unsafe {
-                executor.execute_parallel(&self.circuit, &mut witness, self.witness_workers)?;
-            }
+            executor.execute_parallel(&self.circuit, &mut witness, self.witness_workers)?;
         }
         #[cfg(not(feature = "gpu-parallel-witness"))]
         executor.execute(&self.circuit, &mut witness)?;
