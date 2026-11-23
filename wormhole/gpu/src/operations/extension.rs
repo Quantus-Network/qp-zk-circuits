@@ -64,11 +64,11 @@ pub struct PolynomialEvaluationPlan {
     kernels: Arc<ExtensionKernels>,
     degree: usize,
     columns: usize,
-    point: usize,
+    point_index: usize,
     blocks: usize,
     params: KernelParams,
     reductions: Vec<(usize, KernelParams)>,
-    scratch: Vec<usize>,
+    scratch_field_counts: Vec<usize>,
 }
 
 impl PolynomialEvaluationPlan {
@@ -77,21 +77,25 @@ impl PolynomialEvaluationPlan {
         kernels: Arc<ExtensionKernels>,
         degree: usize,
         columns: usize,
-        point: usize,
+        point_index: usize,
     ) -> Result<Self> {
         table_size(degree, columns)?;
         table_size(columns, 2)?;
         let blocks = degree.div_ceil(4096);
         let limit = context.limits().max_compute_workgroups_per_dimension as usize;
         ensure!(
-            blocks <= limit && columns <= limit && point < u32::MAX as usize,
+            blocks <= limit && columns <= limit && point_index < u32::MAX as usize,
             "polynomial evaluation exceeds dispatch limits"
         );
-        let params =
-            context.prepare_params([degree as u32, blocks as u32, columns as u32, point as u32])?;
-        let mut scratch = Vec::new();
+        let params = context.prepare_params([
+            degree as u32,
+            blocks as u32,
+            columns as u32,
+            point_index as u32,
+        ])?;
+        let mut scratch_field_counts = Vec::new();
         if blocks > 1 {
-            scratch.push(table_size(blocks, columns * 2)?);
+            scratch_field_counts.push(table_size(blocks, columns * 2)?);
         }
         let mut rows = blocks;
         let mut reductions = Vec::new();
@@ -99,10 +103,15 @@ impl PolynomialEvaluationPlan {
             let next = rows.div_ceil(64);
             reductions.push((
                 next,
-                context.prepare_params([rows as u32, next as u32, columns as u32, point as u32])?,
+                context.prepare_params([
+                    rows as u32,
+                    next as u32,
+                    columns as u32,
+                    point_index as u32,
+                ])?,
             ));
             if next > 1 {
-                scratch.push(table_size(next, columns * 2)?);
+                scratch_field_counts.push(table_size(next, columns * 2)?);
             }
             rows = next;
         }
@@ -110,16 +119,16 @@ impl PolynomialEvaluationPlan {
             kernels,
             degree,
             columns,
-            point,
+            point_index,
             blocks,
             params,
             reductions,
-            scratch,
+            scratch_field_counts,
         })
     }
 
     pub fn workspace_field_counts(&self) -> &[usize] {
-        &self.scratch
+        &self.scratch_field_counts
     }
 
     /// Extra input columns may be present; only the prepared prefix is evaluated.
@@ -136,12 +145,12 @@ impl PolynomialEvaluationPlan {
         let coefficients = coefficients.into();
         ensure!(
             coefficients.len() >= self.degree * self.columns
-                && points.len() / 2 > self.point
+                && points.len() / 2 > self.point_index
                 && output.len() == self.columns * 2
-                && scratch.len() == self.scratch.len()
+                && scratch.len() == self.scratch_field_counts.len()
                 && scratch
                     .iter()
-                    .zip(&self.scratch)
+                    .zip(&self.scratch_field_counts)
                     .all(|(buffer, &size)| buffer.len() >= size),
             "polynomial evaluation buffer shape mismatch"
         );
@@ -273,9 +282,9 @@ impl PolynomialCombinationPlan {
 pub struct LinearDivisionPlan {
     kernels: Arc<ExtensionKernels>,
     degree: usize,
-    point: usize,
+    point_index: usize,
     levels: Vec<(usize, KernelParams)>,
-    scratch: Vec<usize>,
+    scratch_field_counts: Vec<usize>,
 }
 
 impl LinearDivisionPlan {
@@ -283,26 +292,26 @@ impl LinearDivisionPlan {
         context: &DeviceContext,
         kernels: Arc<ExtensionKernels>,
         degree: usize,
-        point: usize,
+        point_index: usize,
     ) -> Result<Self> {
         table_size(degree, 2)?;
         ensure!(
-            point < u32::MAX as usize,
+            point_index < u32::MAX as usize,
             "linear division point index overflow"
         );
         let limit = context.limits().max_compute_workgroups_per_dimension as usize;
         let mut rows = degree;
         let mut power = 1u32;
         let mut levels = Vec::new();
-        let mut scratch = Vec::new();
+        let mut scratch_field_counts = Vec::new();
         loop {
             let blocks = rows.div_ceil(256);
             ensure!(blocks <= limit, "linear division exceeds dispatch limits");
             levels.push((
                 blocks,
-                context.prepare_params([rows as u32, blocks as u32, power, point as u32])?,
+                context.prepare_params([rows as u32, blocks as u32, power, point_index as u32])?,
             ));
-            scratch.extend([rows * 2, blocks * 2]);
+            scratch_field_counts.extend([rows * 2, blocks * 2]);
             if blocks == 1 {
                 break;
             }
@@ -314,14 +323,14 @@ impl LinearDivisionPlan {
         Ok(Self {
             kernels,
             degree,
-            point,
+            point_index,
             levels,
-            scratch,
+            scratch_field_counts,
         })
     }
 
     pub fn workspace_field_counts(&self) -> &[usize] {
-        &self.scratch
+        &self.scratch_field_counts
     }
 
     /// Input and output may alias: all input reads precede the final placement
@@ -337,11 +346,11 @@ impl LinearDivisionPlan {
         ensure!(
             input.len() == self.degree * 2
                 && output.len() == input.len()
-                && points.len() / 2 > self.point
-                && scratch.len() == self.scratch.len()
+                && points.len() / 2 > self.point_index
+                && scratch.len() == self.scratch_field_counts.len()
                 && scratch
                     .iter()
-                    .zip(&self.scratch)
+                    .zip(&self.scratch_field_counts)
                     .all(|(buffer, &size)| buffer.len() == size),
             "linear division buffer shape mismatch"
         );
@@ -390,7 +399,7 @@ impl LinearDivisionPlan {
             encoder.dispatch_elements(
                 &self.kernels.carry,
                 &bindings,
-                self.scratch[2 * level] / 2,
+                self.scratch_field_counts[2 * level] / 2,
                 "linear division block carry",
             )?;
         }
