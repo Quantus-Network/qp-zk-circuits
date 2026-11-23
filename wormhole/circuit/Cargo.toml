@@ -9,7 +9,6 @@ version.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-hex = { workspace = true, features = ["alloc"] }
 qp-plonky2 = { workspace = true }
 qp-wormhole-inputs = { version = "=4.4.0", path = "../inputs", default-features = false }
 zeroize = { workspace = true }

@@ -14,7 +14,7 @@ fn planes(values: &[E<F>]) -> Vec<F> {
 #[test]
 #[ignore = "requires a hardware GPU with native u64 shader support"]
 fn extension_polynomial_operations_match_cpu_across_block_boundaries() -> Result<()> {
-    let context = futures::executor::block_on(DeviceContext::new())?;
+    let context = pollster::block_on(DeviceContext::new())?;
     let kernels = Arc::new(ExtensionKernels::prepare(&context)?);
     let point = E([F::from_canonical_u64(11), F::from_canonical_u64(9)]);
     let weights = [

@@ -582,10 +582,10 @@ pub fn private_batch_shape_from_proof(
 mod tests {
     use super::{commit_artifact_set, read_artifact_file, MAX_ARTIFACT_FILE_BYTES};
 
-    /// The production private batch sits ~250 rows under the 2^15 boundary. A
-    /// gate added to the wrapper, or a plonky2 change to the recursive verifier,
-    /// would otherwise silently double the client prover's time and memory and
-    /// raise the public batch's per-proof cost (dropping its arity ceiling).
+    /// The production private batch (N=8) is the largest shape that stays at
+    /// degree 15 with 36-query blinding. One more leaf is degree 16, which
+    /// doubles the client prover's time and memory and raises the public
+    /// batch's per-proof cost.
     #[test]
     fn production_private_batch_stays_at_degree_15() {
         use super::{canonical_leaf_verifier_data, canonical_private_batch_verifier_data};
@@ -598,7 +598,7 @@ mod tests {
     }
 
     /// The production public batch is the most inner proofs that fit 2^19 rows
-    /// (~4,785 rows each, including the public-input hash gates `build()`
+    /// (~5,880 rows each, including the public-input hash gates `build()`
     /// appends). A larger degree doubles the GPU prover's buffers.
     #[test]
     #[ignore = "builds the 2^19 production public batch (~12 GB peak); run in the slow-tests CI job"]

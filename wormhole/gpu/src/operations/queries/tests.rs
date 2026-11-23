@@ -33,7 +33,7 @@ fn query_layout_decodes_cpu_records_and_rejects_invalid_shapes() -> Result<()> {
 #[test]
 #[ignore = "requires a hardware GPU with native u64 shader support"]
 fn sparse_initial_and_fri_queries_match_cpu_leaves_and_paths() -> Result<()> {
-    let context = futures::executor::block_on(DeviceContext::new())?;
+    let context = pollster::block_on(DeviceContext::new())?;
     let kernels = Arc::new(MerkleQueryKernels::prepare(&context)?);
     let challenges = [
         F::ZERO,

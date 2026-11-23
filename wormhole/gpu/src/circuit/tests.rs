@@ -210,7 +210,7 @@ fn column_batches_respect_binding_limits() {
 #[test]
 #[ignore = "requires a hardware GPU with native u64 shader support"]
 fn resident_wire_commitment_matches_cpu_and_reuses_preparation() -> Result<()> {
-    let context = futures::executor::block_on(DeviceContext::new())?;
+    let context = pollster::block_on(DeviceContext::new())?;
     let (circuit, input) = tiny_circuit();
     let prepared = PreparedCircuit::prepare(
         &context,
