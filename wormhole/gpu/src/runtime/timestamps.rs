@@ -127,16 +127,17 @@ impl TimestampBuffers {
     }
 
     /// Returns false while a nonblocking collection is pending.
-    pub(super) fn collect(&mut self, context: &DeviceContext, wait: bool) -> Result<bool> {
+    pub(super) fn collect(
+        &mut self,
+        context: &DeviceContext,
+        deadline: Option<&WaitDeadline<'_>>,
+    ) -> Result<bool> {
         let Some(pending) = self.pending.as_ref() else {
             return Ok(true);
         };
-        let result = if wait {
+        let result = if let Some(deadline) = deadline {
             // GPU polling can deliver map callbacks on a different thread.
-            pending
-                .mapped
-                .recv()
-                .context("wait for timestamp export callback")
+            deadline.receive(&pending.mapped, "wait for timestamp export callback")
         } else {
             match pending.mapped.try_recv() {
                 Ok(result) => Ok(result),
@@ -255,6 +256,7 @@ mod tests {
         let context = pollster::block_on(DeviceContext::with_options(DeviceOptions {
             timestamps: true,
             timestamp_dispatch_capacity: 1,
+            ..Default::default()
         }))?;
         let rows = 1 << 20;
         let kernels = Arc::new(ArithmeticKernels::prepare(&context)?);

@@ -1,6 +1,7 @@
 use std::ops::Range;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::profiling::HostOperation;
 use anyhow::{ensure, Context, Result};
@@ -9,12 +10,15 @@ use plonky2::field::types::{Field, Field64, PrimeField64};
 mod timestamps;
 use timestamps::TimestampBuffers;
 
-/// Explicit device instrumentation options. The default path requests no
+/// GPU wait and instrumentation options. The default path requests no
 /// timestamp feature and allocates no query resources. Capacity is per
 /// submission; multiple query sets are prepared when necessary, never extra
 /// submissions. An explicitly requested unsupported feature is an error.
 #[derive(Clone, Copy, Debug)]
 pub struct DeviceOptions {
+    /// Time allowed for GPU completion and callback delivery.
+    /// A timeout invalidates the context.
+    pub wait_timeout: Duration,
     pub timestamps: bool,
     pub timestamp_dispatch_capacity: usize,
 }
@@ -22,6 +26,7 @@ pub struct DeviceOptions {
 impl Default for DeviceOptions {
     fn default() -> Self {
         Self {
+            wait_timeout: Duration::from_secs(30),
             timestamps: false,
             timestamp_dispatch_capacity: 8192,
         }
@@ -33,9 +38,9 @@ static NEXT_WORKSPACE_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_KERNEL_ID: AtomicU64 = AtomicU64::new(1);
 
 /// One hardware device and queue, retained across proofs. No global state or
-/// environment variables select the adapter or enable profiling. Uncaptured
-/// wgpu errors and device loss invalidate the context; create a new context
-/// rather than continuing with potentially invalid resources.
+/// environment variables select the adapter or enable profiling. Wait timeouts,
+/// uncaptured wgpu errors and device loss invalidate the context; create a new
+/// context rather than continuing with potentially invalid resources.
 pub struct DeviceContext {
     id: u64,
     info: wgpu::AdapterInfo,
@@ -58,6 +63,56 @@ fn record_gpu_error(failure: &Mutex<Option<String>>, error: wgpu::Error) {
     record_failure(failure, format!("uncaptured wgpu error: {error:#?}"));
 }
 
+/// One budget shared by GPU completion and its callback delivery.
+struct WaitDeadline<'a> {
+    expires: Instant,
+    failure: &'a Mutex<Option<String>>,
+}
+
+impl<'a> WaitDeadline<'a> {
+    fn new(timeout: Duration, failure: &'a Mutex<Option<String>>) -> Result<Self> {
+        Ok(Self {
+            expires: Instant::now()
+                .checked_add(timeout)
+                .context("GPU wait timeout is too large")?,
+            failure,
+        })
+    }
+
+    fn remaining(&self) -> Duration {
+        self.expires.saturating_duration_since(Instant::now())
+    }
+
+    fn timed_out(&self, operation: &str) -> anyhow::Error {
+        let error = anyhow::anyhow!("{operation} timed out");
+        record_failure(self.failure, error.to_string());
+        error
+    }
+
+    fn poll(&self, device: &wgpu::Device, operation: &'static str) -> Result<()> {
+        match device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(self.remaining()),
+        }) {
+            Ok(_) => Ok(()),
+            Err(wgpu::PollError::Timeout) => Err(self.timed_out(operation)),
+            Err(error) => Err(error).context(operation),
+        }
+    }
+
+    fn receive<T>(
+        &self,
+        receiver: &std::sync::mpsc::Receiver<T>,
+        operation: &'static str,
+    ) -> Result<T> {
+        match receiver.recv_timeout(self.remaining()) {
+            Ok(value) => Ok(value),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(self.timed_out(operation)),
+            Err(error) => Err(error).context(operation),
+        }
+    }
+}
+
 impl DeviceContext {
     /// Select a hardware adapter. The established kernels require native u64
     /// shader arithmetic; unsupported adapters are rejected, not emulated.
@@ -66,6 +121,11 @@ impl DeviceContext {
     }
 
     pub async fn with_options(options: DeviceOptions) -> Result<Self> {
+        ensure!(
+            !options.wait_timeout.is_zero()
+                && Instant::now().checked_add(options.wait_timeout).is_some(),
+            "GPU wait timeout must be positive and representable"
+        );
         // Do not hold an entered span across await: it would attribute other
         // futures on this thread to initialization and make the future !Send.
         let span = tracing::debug_span!(target: "qp_wormhole_gpu::profile", "prover.host",
@@ -159,14 +219,10 @@ impl DeviceContext {
 
     /// Wait for previously submitted work and process deferred resource cleanup.
     /// Stop submitting work first. This does not guarantee driver VRAM reclamation.
-    pub fn wait_idle(&self, timeout: std::time::Duration) -> Result<()> {
+    pub fn wait_idle(&self, timeout: Duration) -> Result<()> {
         self.check_device()?;
-        self.device
-            .poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: Some(timeout),
-            })
-            .context("wait for GPU device cleanup")?;
+        WaitDeadline::new(timeout, &self.failure)?
+            .poll(&self.device, "wait for GPU device cleanup")?;
         self.check_device()
     }
 
@@ -273,6 +329,7 @@ impl DeviceContext {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
+        let deadline = WaitDeadline::new(self.options.wait_timeout, &self.failure)?;
         // Reclaim completed reservations before checking queue capacity; do not wait.
         self.device
             .poll(wgpu::PollType::Poll)
@@ -299,11 +356,9 @@ impl DeviceContext {
             .map_async(wgpu::MapMode::Read, move |result| {
                 let _ = tx.send(result);
             });
-        self.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .context("wait for field export")?;
+        deadline.poll(&self.device, "wait for field export")?;
         self.check_device()?;
-        rx.recv().context("receive field export completion")??;
+        deadline.receive(&rx, "receive field export completion")??;
         let mapped = staging.slice(..).get_mapped_range();
         let values = mapped
             .chunks_exact(8)
@@ -666,11 +721,9 @@ struct PendingCompletion {
 }
 
 impl PendingCompletion {
-    fn wait(&self) -> Result<()> {
+    fn wait(&self, deadline: &WaitDeadline<'_>) -> Result<()> {
         if !self.done.load(Ordering::Acquire) {
-            self.callback
-                .recv()
-                .context("wait for workspace completion callback")?;
+            deadline.receive(&self.callback, "wait for workspace completion callback")?;
         }
         Ok(())
     }
@@ -784,6 +837,7 @@ impl ProofWorkspace {
     /// for the device queue; begin() remains nonblocking. Failures poison the
     /// workspace and cannot be cleared by a completion callback.
     pub fn wait(&mut self, context: &DeviceContext) -> Result<()> {
+        let deadline = WaitDeadline::new(context.options.wait_timeout, &context.failure)?;
         ensure!(
             self.device_id == context.id,
             "workspace belongs to another GPU device"
@@ -800,15 +854,12 @@ impl ProofWorkspace {
                     .as_ref()
                     .is_some_and(TimestampBuffers::has_pending)
             {
-                context
-                    .device
-                    .poll(wgpu::PollType::wait_indefinitely())
-                    .context("wait for proof workspace")?;
+                deadline.poll(&context.device, "wait for proof workspace")?;
             }
             context.check_device()?;
             if let Completion::Pending(pending) = &self.completion {
                 // Another polling thread may still be delivering this callback.
-                pending.wait()?;
+                pending.wait(&deadline)?;
             }
             Ok(())
         }) {
@@ -817,7 +868,7 @@ impl ProofWorkspace {
         }
         self.completion.reclaim()?;
         drop(wait);
-        self.collect_timestamps(context, true)
+        self.collect_timestamps(context, Some(&deadline))
     }
 
     pub fn begin<'a>(&'a mut self, context: &'a DeviceContext) -> Result<ProofEncoder<'a>> {
@@ -833,7 +884,7 @@ impl ProofWorkspace {
             return Err(error);
         }
         self.completion.reclaim()?;
-        self.collect_timestamps(context, false)?;
+        self.collect_timestamps(context, None)?;
         let command_budget = MetalCommandBufferBudget::new(context.command_buffers.clone())?;
         let commands = context.device.create_command_encoder(&Default::default());
         context.check_device()?;
@@ -850,9 +901,13 @@ impl ProofWorkspace {
         })
     }
 
-    fn collect_timestamps(&mut self, context: &DeviceContext, wait: bool) -> Result<()> {
+    fn collect_timestamps(
+        &mut self,
+        context: &DeviceContext,
+        deadline: Option<&WaitDeadline<'_>>,
+    ) -> Result<()> {
         if let Some(timestamps) = &mut self.timestamps {
-            let ready = match timestamps.collect(context, wait) {
+            let ready = match timestamps.collect(context, deadline) {
                 Ok(ready) => ready,
                 Err(error) => {
                     self.completion = Completion::Poisoned;
@@ -1517,6 +1572,45 @@ mod tests {
     }
 
     #[test]
+    fn wait_timeout_rejects_zero_and_unrepresentable_durations() {
+        for wait_timeout in [Duration::ZERO, Duration::MAX] {
+            let error = pollster::block_on(DeviceContext::with_options(DeviceOptions {
+                wait_timeout,
+                ..Default::default()
+            }))
+            .err()
+            .expect("invalid timeout was accepted");
+            assert_eq!(
+                error.to_string(),
+                "GPU wait timeout must be positive and representable"
+            );
+        }
+    }
+
+    #[test]
+    fn callback_timeout_preserves_failure_after_late_completion() -> Result<()> {
+        let failure = Mutex::new(None);
+        let deadline = WaitDeadline::new(Duration::ZERO, &failure)?;
+        assert_eq!(deadline.remaining(), Duration::ZERO);
+        let done = Arc::new(AtomicBool::new(false));
+        let (notify, callback) = std::sync::mpsc::channel();
+        let pending = PendingCompletion {
+            done: Arc::clone(&done),
+            callback,
+        };
+        let message = pending.wait(&deadline).unwrap_err().to_string();
+        assert_eq!(message, "wait for workspace completion callback timed out");
+        assert_eq!(failure.lock().unwrap().as_deref(), Some(message.as_str()));
+
+        done.store(true, Ordering::Release);
+        notify.send(())?;
+        pending.wait(&deadline)?;
+        record_failure(&failure, "later failure".into());
+        assert_eq!(failure.lock().unwrap().as_deref(), Some(message.as_str()));
+        Ok(())
+    }
+
+    #[test]
     fn completion_wait_accepts_callback_delivery_from_another_thread() -> Result<()> {
         let done = Arc::new(AtomicBool::new(false));
         let (notify, callback) = std::sync::mpsc::channel();
@@ -1528,7 +1622,9 @@ mod tests {
             done.store(true, Ordering::Release);
             notify.send(()).unwrap();
         });
-        pending.wait()?;
+        let failure = Mutex::new(None);
+        let deadline = WaitDeadline::new(Duration::from_secs(30), &failure)?;
+        pending.wait(&deadline)?;
         assert!(pending.done.load(Ordering::Acquire));
         complete.join().unwrap();
         Completion::Pending(pending).reclaim()?;
