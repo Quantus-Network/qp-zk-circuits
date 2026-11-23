@@ -470,10 +470,6 @@ pub struct DeviceFieldSlice {
 }
 
 impl DeviceFieldSlice {
-    pub(crate) fn shares_buffer(&self, other: &Self) -> bool {
-        self.buffer == other.buffer
-    }
-
     pub fn len(&self) -> usize {
         self.len
     }

@@ -225,11 +225,7 @@ fn bench_pow(c: &mut Criterion) {
         let plan = PowPlan::prepare(context, Arc::clone(&kernels), POW_BITS, trials).unwrap();
         let mut workspace =
             ProofWorkspace::prepare(context, &plan.workspace_field_counts()).unwrap();
-        let buffers = [
-            workspace.buffer(0).unwrap(),
-            workspace.buffer(1).unwrap(),
-            workspace.buffer(2).unwrap(),
-        ];
+        let buffers = [workspace.buffer(0).unwrap(), workspace.buffer(1).unwrap()];
         group.throughput(Throughput::Elements(trials as u64));
         group.bench_function(
             BenchmarkId::from_parameter(format!("2^{trial_bits}_trials_{POW_BITS}_bits")),
@@ -238,12 +234,7 @@ fn bench_pow(c: &mut Criterion) {
                     let mut transcript = challenger.clone();
                     let mut encoder = workspace.begin(context).unwrap();
                     let result = plan
-                        .encode(
-                            &mut encoder,
-                            &transcript,
-                            0,
-                            [&buffers[0], &buffers[1], &buffers[2]],
-                        )
+                        .encode(&mut encoder, &transcript, 0, [&buffers[0], &buffers[1]])
                         .unwrap();
                     encoder.submit().unwrap().finish().unwrap();
                     result.readback(context, &mut transcript).unwrap()
