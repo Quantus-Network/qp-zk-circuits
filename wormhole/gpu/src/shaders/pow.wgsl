@@ -26,13 +26,13 @@ fn initialize(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 @compute @workgroup_size(64)
-fn search(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) group: vec3<u32>) {
+fn search(@builtin(local_invocation_index) local_index: u32, @builtin(workgroup_id) group: vec3<u32>) {
     var threshold = 0lu;
     if dims.x < 64u { threshold = 0xfffffffffffffffflu >> dims.x; }
     let blocks = (dims.y - 1u) / 64u + 1u;
     for (var block = group.x; block < blocks; block += dims.z) {
         if atomicLoad(&winner[0]) != 0xffffffffu { break; }
-        let offset = block * 64u + lane;
+        let offset = block * 64u + local_index;
         if offset >= dims.y { continue; }
         let nonce = snapshot[13] + u64(offset);
         if nonce >= P64 { continue; }

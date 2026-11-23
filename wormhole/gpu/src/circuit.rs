@@ -491,7 +491,7 @@ impl<'a> PreparedCircuit<'a> {
         let scratch = 1 + 3 * self.layout.batch_columns.len();
         Ok(WireBuffers {
             prepared: self,
-            representatives: buffers[0].clone(),
+            witness_values: buffers[0].clone(),
             wires,
             coefficients,
             evaluations,
@@ -604,7 +604,7 @@ fn prepare_fixed_commitment(
 /// These views pin allocations and are overwritten on workspace reuse.
 pub struct WireBuffers<'c, 'a> {
     prepared: &'c PreparedCircuit<'a>,
-    representatives: DeviceFieldSlice,
+    witness_values: DeviceFieldSlice,
     wires: Vec<DeviceFieldSlice>,
     coefficients: Vec<DeviceFieldSlice>,
     evaluations: Vec<DeviceFieldSlice>,
@@ -698,7 +698,7 @@ impl WireBuffers<'_, '_> {
         let cap = prepared.commitment.cap(&self.tree)?;
         match dense_values {
             Some((values, assigned_flags)) => encoder.upload_iter(
-                &self.representatives,
+                &self.witness_values,
                 values.iter().zip(assigned_flags).map(|(value, assigned)| {
                     // Generation has finished; the witness is exclusively owned here.
                     if assigned.load(Ordering::Relaxed) != 0 {
@@ -709,7 +709,7 @@ impl WireBuffers<'_, '_> {
                 }),
             )?,
             None => encoder.upload_iter(
-                &self.representatives,
+                &self.witness_values,
                 partition
                     .values
                     .into_iter()
@@ -722,7 +722,7 @@ impl WireBuffers<'_, '_> {
                 &[
                     FieldBinding::ReadWrite(&self.wires[batch]),
                     FieldBinding::Read((&prepared.wire_maps[batch]).into()),
-                    FieldBinding::Read((&self.representatives).into()),
+                    FieldBinding::Read((&self.witness_values).into()),
                 ],
                 "witness wire gathering",
             )?;

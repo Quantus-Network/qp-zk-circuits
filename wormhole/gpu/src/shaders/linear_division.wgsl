@@ -7,41 +7,41 @@
 var<workgroup> sums: array<vec2<u64>, 256>;
 var<workgroup> step_power: vec2<u64>;
 
-fn scan_block(group: u32, lane: u32, reverse: bool) {
-    let row = group * 256u + lane;
+fn scan_block(group: u32, local_index: u32, reverse: bool) {
+    let row = group * 256u + local_index;
     var value = vec2<u64>(0lu);
     if row < dims.x {
         var index = row;
         if reverse { index = dims.x - 1u - row; }
         value = vec2<u64>(input[index], input[dims.x + index]);
     }
-    sums[lane] = value;
-    if lane == 0u { step_power = ext_pow(points[dims.w], dims.z); }
+    sums[local_index] = value;
+    if local_index == 0u { step_power = ext_pow(points[dims.w], dims.z); }
     workgroupBarrier();
     for (var offset = 1u; offset < 256u; offset *= 2u) {
         var left = vec2<u64>(0lu);
-        if lane >= offset { left = ext_mul(step_power, sums[lane - offset]); }
+        if local_index >= offset { left = ext_mul(step_power, sums[local_index - offset]); }
         workgroupBarrier();
-        sums[lane] = ext_add(sums[lane], left);
-        if lane == 0u { step_power = ext_mul(step_power, step_power); }
+        sums[local_index] = ext_add(sums[local_index], left);
+        if local_index == 0u { step_power = ext_mul(step_power, step_power); }
         workgroupBarrier();
     }
     if row < dims.x {
-        output[row] = sums[lane].x;
-        output[dims.x + row] = sums[lane].y;
+        output[row] = sums[local_index].x;
+        output[dims.x + row] = sums[local_index].y;
     }
-    if lane == min(256u, dims.x - group * 256u) - 1u {
-        totals[group] = sums[lane].x;
-        totals[dims.y + group] = sums[lane].y;
+    if local_index == min(256u, dims.x - group * 256u) - 1u {
+        totals[group] = sums[local_index].x;
+        totals[dims.y + group] = sums[local_index].y;
     }
 }
 @compute @workgroup_size(256)
-fn scan_coefficients(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index) lane: u32) {
-    scan_block(group.x, lane, true);
+fn scan_coefficients(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index) local_index: u32) {
+    scan_block(group.x, local_index, true);
 }
 @compute @workgroup_size(256)
-fn scan_totals(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index) lane: u32) {
-    scan_block(group.x, lane, false);
+fn scan_totals(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index) local_index: u32) {
+    scan_block(group.x, local_index, false);
 }
 @compute @workgroup_size(64)
 fn carry(@builtin(global_invocation_id) gid: vec3<u32>) {

@@ -1,5 +1,5 @@
 @group(0) @binding(0) var<storage, read_write> data: array<u64>;
-@group(0) @binding(1) var<storage, read> coeffs: array<u64>;
+@group(0) @binding(1) var<storage, read> input: array<u64>;
 @group(0) @binding(2) var<storage, read> roots: array<u64>;
 @group(0) @binding(3) var<storage, read> shifts: array<u64>;
 // n, degree, log2(n), zero-padding bits for prepare / butterfly half-width
@@ -20,7 +20,7 @@ fn prepare(@builtin(global_invocation_id) gid: vec3<u32>) {
         k = reverseBits(block_start) >> (32u-dims.z);
     }
     var value = 0lu;
-    if (k < dims.y) { value = gf64_canon(gf64_mul(coeffs[column * dims.y + k], shifts[k])); }
+    if (k < dims.y) { value = gf64_canon(gf64_mul(input[column * dims.y + k], shifts[k])); }
     data[linear] = value;
 }
 

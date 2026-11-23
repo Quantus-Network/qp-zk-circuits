@@ -44,7 +44,7 @@ fn packed_index(n: u32, caps: u32, level: u32, i: u32) -> u32 {
 }
 
 @compute @workgroup_size(64)
-fn scatter_leaves(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn scatter_bit_reversed(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = gid.x + gid.y * 2097152u;
     if (i >= params.x) { return; }
     var r = 0u;
