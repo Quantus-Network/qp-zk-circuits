@@ -320,7 +320,7 @@ impl<'a> PreparedCircuit<'a> {
             "witness wire gathering",
         )?;
         drop(preparation);
-        let preparation = HostOperation::new("fft_tables_preparation");
+        let preparation = HostOperation::new("fft_and_commitment_preparation");
         let inverse = FftPlan::prepare_inverse(context, Arc::clone(&fft), degree, F::ONE)?;
         let forward =
             FftPlan::prepare_coset(context, Arc::clone(&fft), degree, rows, F::coset_shift())?;
