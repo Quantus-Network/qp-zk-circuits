@@ -58,7 +58,7 @@ impl ExtensionKernels {
 }
 
 /// Evaluate a column-major base-field coefficient batch at one extension point.
-/// Results and reduction scratch use interleaved (real, extension) pairs.
+/// Results and reduction scratch interleave each value's two base-field components.
 /// Workgroups evaluate bounded Horner chunks and recursively sum partials.
 pub struct PolynomialEvaluationPlan {
     kernels: Arc<ExtensionKernels>,

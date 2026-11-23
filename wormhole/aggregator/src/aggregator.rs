@@ -13,11 +13,9 @@
 //!
 //! # Concurrency
 //!
-//! Public-batch proving takes tens of seconds (~30 s for the 89-proof
-//! production batch on Apple-Silicon-class hardware; a few block times, so
-//! settlements can land mid-prove). [`PublicBatchAggregator::aggregate`] is the simple blocking
-//! convenience; a service that must keep admitting proofs while proving
-//! should snapshot under a short lock and prove without it:
+//! [`PublicBatchAggregator::aggregate`] blocks until proving completes.
+//! A service that must keep admitting proofs while proving should snapshot
+//! under a short lock and prove without it:
 //!
 //! ```text
 //! // policy loop, short exclusive lock (snapshot_batch takes &mut self —

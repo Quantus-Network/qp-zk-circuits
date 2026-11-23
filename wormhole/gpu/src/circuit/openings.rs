@@ -350,8 +350,8 @@ pub struct ResidentOpeningSet<'s> {
     points: DeviceFieldSlice,
 }
 
-/// Resident FRI input. Each buffer contains the real component plane followed
-/// by the extension component plane. Evaluations are natural-order coset values.
+/// Resident FRI input. Each buffer stores all first base-field components
+/// followed by all second components. Evaluations are natural-order coset values.
 /// Views pin workspace allocations and are overwritten on workspace reuse.
 pub struct FriInput {
     pub coefficients: DeviceFieldSlice,

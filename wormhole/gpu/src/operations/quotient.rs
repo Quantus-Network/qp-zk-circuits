@@ -15,9 +15,10 @@ use plonky2::field::types::{Field, PrimeField64};
 use plonky2::plonk::circuit_data::CommonCircuitData;
 use std::fmt::Write;
 
-/// Column-major row inputs. Scalars are separate: public-input hash (4), beta,
-/// gamma, alpha (each num_challenges). Helpers x, L0(x), and 1/Z_H(x) are fixed
-/// coset data, prepared once; next_zs are the rotated Z evaluations.
+/// Column offsets into the column-major quotient input table.
+/// `x`, `l0` and `inverse_zero` select fixed coset data: x, L0(x) and 1/Z_H(x).
+/// `next_zs` selects the rotated Z evaluations. Scalars are separate: the
+/// public-input hash (4), beta, gamma and alpha (each num_challenges).
 #[derive(Clone, Debug)]
 pub struct QuotientLayout {
     pub constants: usize,
@@ -29,7 +30,9 @@ pub struct QuotientLayout {
     pub x: usize,
     pub l0: usize,
     pub inverse_zero: usize,
+    /// Total number of table columns.
     pub columns: usize,
+    /// Number of base-field elements in the scalar buffer.
     pub scalar_count: usize,
 }
 

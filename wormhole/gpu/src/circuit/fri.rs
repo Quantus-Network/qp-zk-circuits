@@ -163,7 +163,8 @@ pub struct FriRoundBuffers<'c> {
 }
 
 /// Grouped bit-reversed leaves committed in a resident packed tree. Evaluations
-/// themselves stay natural-order real/extension planes for later query gathering.
+/// stay in natural order, with all first base-field components followed by all
+/// second components, for later query gathering.
 /// Views pin workspace allocations and are overwritten on workspace reuse.
 pub struct FriCommitment {
     pub evaluations: DeviceFieldSlice,
