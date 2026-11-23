@@ -871,6 +871,9 @@ impl ProofWorkspace {
         self.collect_timestamps(context, Some(&deadline))
     }
 
+    /// Begin recording GPU commands, returning an error if the workspace is not ready.
+    /// Use [`Self::wait`] before reusing a workspace with a pending submission
+    /// to await GPU completion and callback delivery.
     pub fn begin<'a>(&'a mut self, context: &'a DeviceContext) -> Result<ProofEncoder<'a>> {
         ensure!(
             self.device_id == context.id,
