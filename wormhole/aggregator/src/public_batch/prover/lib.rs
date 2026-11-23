@@ -334,6 +334,11 @@ impl PublicBatchProver {
     /// Fixed resources, a witness executor and one reusable workspace are retained
     /// across calls. Witness generation and GPU proving are each serialized.
     /// Witness generation for one call can overlap GPU proving for another call.
+    ///
+    /// At most one subsequent witness is generated or held while another proof
+    /// uses the GPU workspace. Further callers wait before dense witness allocation.
+    /// Callers control queued requests and the memory retained by their input data.
+    ///
     /// Preparation/proving failures return errors, not CPU fallback.
     /// Validation failures leave the existing backend unchanged. Re-preparation
     /// releases an existing GPU backend first; if rebuilding fails, proving

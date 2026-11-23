@@ -139,10 +139,16 @@ impl GpuBackend {
     fn prove(&self, witness: PartialWitness<F>) -> Result<ProofWithPublicInputs<F, C, D>> {
         // CPU witness generation does not hold the shared GPU workspace lock.
         let generation = crate::profiling::HostOperation::new("witness_generation");
+        let mut executor = self
+            .witness_executor
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let partition = self
-            .generate_witness(witness)
+            .generate_witness(&mut executor, witness)
             .context("generate public-batch witness")?;
         drop(generation);
+        // Keep the executor locked until workspace acquisition so only one
+        // generated witness can wait for the GPU workspace.
         let lock = crate::profiling::HostOperation::new("workspace_lock_wait");
         // A panic in a previous proof leaves no state behind that the next
         // proof depends on: every workspace view is rewritten from scratch.
@@ -150,16 +156,17 @@ impl GpuBackend {
             .workspace
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        drop(executor);
         drop(lock);
         self.prepared
             .prove_with_partition_witness(&self.context, &mut workspace, partition)
     }
 
-    fn generate_witness(&self, inputs: PartialWitness<F>) -> Result<PartitionWitness<'_, F>> {
-        let mut executor = self
-            .witness_executor
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+    fn generate_witness(
+        &self,
+        executor: &mut WitnessGenerationExecutor<F>,
+        inputs: PartialWitness<F>,
+    ) -> Result<PartitionWitness<'_, F>> {
         let mut witness = executor.new_witness(&self.circuit);
         for (target, value) in inputs.target_values {
             witness.set_target(target, value)?;
