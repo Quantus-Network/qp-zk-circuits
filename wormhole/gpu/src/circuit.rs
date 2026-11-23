@@ -16,28 +16,18 @@ use plonky2::plonk::config::PoseidonGoldilocksConfig as C;
 use plonky2::util::log2_ceil;
 use std::ops::Deref;
 use std::sync::{atomic::Ordering, Arc};
-
-#[cfg(feature = "constraint-export")]
 mod fri;
-#[cfg(feature = "constraint-export")]
 mod openings;
 mod oracle;
 mod permutation;
-#[cfg(feature = "constraint-export")]
 mod proof_tail;
-#[cfg(feature = "constraint-export")]
 mod prover;
-#[cfg(feature = "constraint-export")]
 mod quotient;
-#[cfg(feature = "constraint-export")]
 pub use fri::{FriBuffers, FriCommitment, FriFold, FriRoundBuffers};
-#[cfg(feature = "constraint-export")]
 pub use openings::{FriInput, OpeningBuffers, ResidentOpeningSet};
 pub use oracle::PolynomialCommitment;
 pub use permutation::{PermutationBuffers, PermutationCommitment};
-#[cfg(feature = "constraint-export")]
 pub use proof_tail::{ProofTailBuffers, ResidentQueryRounds};
-#[cfg(feature = "constraint-export")]
 pub use quotient::{QuotientBuffers, QuotientCommitment};
 
 /// Resource limits, not protocol parameters. Column batches are further bounded
@@ -82,11 +72,8 @@ struct CircuitLayout {
     quotient_step: usize,
     columns_per_batch: usize,
     batch_columns: Vec<usize>,
-    #[cfg(feature = "constraint-export")]
     openings: openings::OpeningLayout,
-    #[cfg(feature = "constraint-export")]
     fri: fri::FriLayout,
-    #[cfg(feature = "constraint-export")]
     proof_tail: proof_tail::ProofTailLayout,
 }
 
@@ -151,14 +138,11 @@ impl CircuitLayout {
             "fixed oracle does not match circuit metadata"
         );
         validate_fixed_commitment(oracle, degree, lde_rows)?;
-        #[cfg(feature = "constraint-export")]
         let openings = openings::OpeningLayout::new(common)?;
-        #[cfg(feature = "constraint-export")]
         ensure!(
             common.fri_params.config == common.config.fri_config && !common.fri_params.leaf_hiding,
             "FRI parameters do not match circuit configuration"
         );
-        #[cfg(feature = "constraint-export")]
         let fri = fri::FriLayout::new(
             degree,
             lde_rows,
@@ -168,7 +152,6 @@ impl CircuitLayout {
         )?;
         let columns_per_batch =
             column_capacity(lde_rows, width, limit, options.max_columns_per_batch)?;
-        #[cfg(feature = "constraint-export")]
         let proof_tail = proof_tail::ProofTailLayout::new(
             common,
             lde_rows,
@@ -183,11 +166,8 @@ impl CircuitLayout {
             quotient_step,
             columns_per_batch,
             batch_columns: batches(width, columns_per_batch),
-            #[cfg(feature = "constraint-export")]
             openings,
-            #[cfg(feature = "constraint-export")]
             fri,
-            #[cfg(feature = "constraint-export")]
             proof_tail,
         })
     }
@@ -255,13 +235,9 @@ pub struct PreparedCircuit<'a> {
     fixed: FixedCommitment,
     wire_workspace_fields: Vec<usize>,
     permutation: permutation::PreparedPermutation,
-    #[cfg(feature = "constraint-export")]
     quotient: quotient::PreparedQuotient,
-    #[cfg(feature = "constraint-export")]
     openings: openings::PreparedOpenings,
-    #[cfg(feature = "constraint-export")]
     fri: fri::PreparedFri,
-    #[cfg(feature = "constraint-export")]
     proof_tail: proof_tail::PreparedProofTail,
 }
 
@@ -320,13 +296,9 @@ impl<'a> PreparedCircuit<'a> {
         let preparation = HostOperation::new("shared_kernels_preparation");
         let poseidon = Arc::new(PoseidonKernels::prepare(context)?);
         let fft = Arc::new(FftKernels::prepare(context)?);
-        #[cfg(feature = "constraint-export")]
         let extension = Arc::new(crate::ExtensionKernels::prepare(context)?);
-        #[cfg(feature = "constraint-export")]
         let fri_kernels = Arc::new(crate::FriKernels::prepare(context)?);
-        #[cfg(feature = "constraint-export")]
         let pow = Arc::new(crate::PowKernels::prepare(context, poseidon.clone())?);
-        #[cfg(feature = "constraint-export")]
         let queries = Arc::new(crate::MerkleQueryKernels::prepare(context)?);
         let gather = PreparedKernel::prepare(
             context,
@@ -393,7 +365,6 @@ impl<'a> PreparedCircuit<'a> {
             Arc::clone(&poseidon),
         )?;
         drop(preparation);
-        #[cfg(feature = "constraint-export")]
         let quotient = {
             let _preparation = HostOperation::new("quotient_preparation");
             quotient::PreparedQuotient::prepare(
@@ -405,12 +376,10 @@ impl<'a> PreparedCircuit<'a> {
                 fft.clone(),
             )?
         };
-        #[cfg(feature = "constraint-export")]
         let openings = {
             let _preparation = HostOperation::new("openings_preparation");
             openings::PreparedOpenings::prepare(context, common, &layout, options, extension)?
         };
-        #[cfg(feature = "constraint-export")]
         let fri = {
             let _preparation = HostOperation::new("fri_preparation");
             fri::PreparedFri::prepare(
@@ -423,7 +392,6 @@ impl<'a> PreparedCircuit<'a> {
                 fft,
             )?
         };
-        #[cfg(feature = "constraint-export")]
         let proof_tail = {
             let _preparation = HostOperation::new("proof_tail_preparation");
             proof_tail::PreparedProofTail::prepare(
@@ -446,13 +414,9 @@ impl<'a> PreparedCircuit<'a> {
             fixed,
             wire_workspace_fields,
             permutation,
-            #[cfg(feature = "constraint-export")]
             quotient,
-            #[cfg(feature = "constraint-export")]
             openings,
-            #[cfg(feature = "constraint-export")]
             fri,
-            #[cfg(feature = "constraint-export")]
             proof_tail,
         })
     }
@@ -485,8 +449,6 @@ impl<'a> PreparedCircuit<'a> {
     pub fn fixed_commitment(&self) -> &FixedCommitment {
         &self.fixed
     }
-
-    #[cfg(feature = "constraint-export")]
     pub fn quotient_plan(&self) -> &crate::QuotientPlan {
         &self.quotient.evaluation
     }

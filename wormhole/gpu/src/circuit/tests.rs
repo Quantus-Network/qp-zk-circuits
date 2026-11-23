@@ -36,7 +36,6 @@ fn quotient_domain_uses_strided_lde_points() -> Result<()> {
 }
 
 #[test]
-#[cfg(feature = "constraint-export")]
 fn proof_tail_validates_reductions_without_fri_preparation() -> Result<()> {
     let (mut circuit, _) = tiny_circuit();
     let common = &mut circuit.common;
@@ -77,7 +76,6 @@ fn preparation_rejects_unsupported_and_mismatched_circuit_data_without_gpu() {
             .expect("preparation must reject invalid input");
         assert_eq!(error.to_string(), message);
     };
-    #[cfg(feature = "constraint-export")]
     {
         circuit.common.fri_params.config.cap_height += 1;
         rejected(

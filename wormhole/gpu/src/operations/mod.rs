@@ -9,26 +9,22 @@ mod fft;
 mod fri;
 mod pow;
 mod queries;
-#[cfg(feature = "constraint-export")]
 mod quotient;
 mod scan;
 
 pub use arithmetic::{ArithmeticKernels, ArithmeticPlan, FieldOperation};
 pub use commitment::{CommitmentPlan, EvaluationOrder, PoseidonKernels};
-#[cfg(feature = "constraint-export")]
 pub(crate) use extension::EXTENSION;
 pub use extension::{
     ExtensionKernels, LinearDivisionPlan, PolynomialCombinationPlan, PolynomialEvaluationPlan,
 };
 pub use fft::{FftKernels, FftPlan};
 pub use fri::{FriCommitmentPlan, FriFoldPlan, FriKernels};
-#[cfg(feature = "constraint-export")]
 pub(crate) use pow::validate_pow;
 pub use pow::{PowKernels, PowPlan, PowResult};
 pub use queries::{
     MerkleQuery, MerkleQueryKernels, MerkleQueryLayout, MerkleQueryPlan, ResidentMerkleQueries,
 };
-#[cfg(feature = "constraint-export")]
 pub use quotient::{check_exported_constraints, QuotientLayout, QuotientPlan};
 pub use scan::PrefixProductPlan;
 

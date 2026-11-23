@@ -11,7 +11,7 @@ version.workspace = true
 anyhow = { workspace = true }
 hex = "=0.4.3"
 qp-plonky2 = { workspace = true }
-qp-wormhole-gpu = { version = "=4.4.0", path = "../gpu", optional = true, features = ["constraint-export"] }
+qp-wormhole-gpu = { version = "=4.4.0", path = "../gpu", optional = true, features = ["gpu"] }
 qp-wormhole-inputs = { version = "=4.4.0", path = "../inputs" }
 rand = { version = "=0.10.1", default-features = false, features = ["thread_rng"] }
 serde = { version = "=1.0.229", features = ["derive"] }

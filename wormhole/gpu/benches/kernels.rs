@@ -6,7 +6,7 @@
 //! columns, 16 quotient columns, 16 PoW bits); rows range up to the LDE size of
 //! an arity-53 batch. Requires a hardware adapter with native u64 shaders.
 //!
-//! `cargo bench -p qp-wormhole-gpu --features wgpu --bench kernels`
+//! `cargo bench -p qp-wormhole-gpu --features gpu --bench kernels`
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use plonky2::field::goldilocks_field::GoldilocksField as F;
 use plonky2::field::types::Field;

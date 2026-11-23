@@ -197,9 +197,7 @@ pub struct PermutationCommitment {
     pub oracle: PolynomialCommitment,
     pub values: Vec<DeviceFieldSlice>,
     status: DeviceFieldSlice,
-    #[cfg(feature = "constraint-export")]
     pub(super) betas: Vec<F>,
-    #[cfg(feature = "constraint-export")]
     pub(super) gammas: Vec<F>,
 }
 
@@ -344,9 +342,7 @@ impl PermutationBuffers<'_, '_> {
             oracle: plan.oracle.encode_values(prepared, encoder, &self.oracle)?,
             values: self.oracle.values.clone(),
             status: self.status.clone(),
-            #[cfg(feature = "constraint-export")]
             betas: betas.to_vec(),
-            #[cfg(feature = "constraint-export")]
             gammas: gammas.to_vec(),
         })
     }

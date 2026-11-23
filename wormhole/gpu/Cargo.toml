@@ -8,13 +8,13 @@ repository.workspace = true
 version.workspace = true
 
 [features]
-constraint-export = ["qp-plonky2/formal-export", "wgpu"]
 default = []
-wgpu = [
+gpu = [
 	"dep:anyhow",
 	"dep:qp-plonky2",
 	"dep:tracing",
 	"dep:wgpu",
+	"qp-plonky2/formal-export",
 ]
 
 [dependencies]
@@ -40,4 +40,4 @@ workspace = true
 [[bench]]
 harness = false
 name = "kernels"
-required-features = ["wgpu"]
+required-features = ["gpu"]

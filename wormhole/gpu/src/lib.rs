@@ -1,6 +1,6 @@
 //! GPU execution support for Wormhole proving.
 //!
-//! Enable `wgpu` to use the Metal/Vulkan execution backend. This crate currently
+//! Enable `gpu` to use the Metal/Vulkan execution backend. This crate currently
 //! supplies execution resources, prepared mathematical operations, resident
 //! proving stages and a blocking proof coordinator. The aggregator's optional
 //! `gpu` feature enables backend selection through `PublicBatchProver::with_gpu`
@@ -17,15 +17,14 @@
 //! PreparedCircuit::prove runs CPU witness generators and coordinates a proof,
 //! while prove_with_partition_witness accepts an already-generated witness.
 //!
-//! `constraint-export` additionally enables quotient, opening, FRI and proof-tail stages.
 //! Gate constraints are exported in this crate (see `constraint_export`) by running
 //! each gate's recursive evaluator against a scratch builder and reading the
 //! placed rows back through the dependency's `formal-export` view.
 //!
 //! Hardware-independent checks:
-//! `cargo test --release -p qp-wormhole-gpu --features constraint-export`.
+//! `cargo test --release -p qp-wormhole-gpu --features gpu`.
 //! Hardware execution check (Metal on macOS, Vulkan elsewhere):
-//! `cargo test --release -p qp-wormhole-gpu --features constraint-export --lib -- --ignored`.
+//! `cargo test --release -p qp-wormhole-gpu --features gpu --lib -- --ignored`.
 //! These are small execution and CPU-parity checks, not proof benchmarks.
 //! The aggregator crate's `prepare_public_batch` example measures initialization
 //! with the actual public-batch circuit, including specialized quotient pipelines;
@@ -52,46 +51,28 @@
 //! telemetry and `--timestamps` for GPU pass timings, printing a host table and
 //! aggregated kernel/counter JSON independently for initialization and proofs.
 
-#[cfg(feature = "wgpu")]
+#![cfg(feature = "gpu")]
+
+mod circuit;
+pub mod constraint_export;
+mod operations;
+mod profiling;
 mod runtime;
 
-#[cfg(feature = "wgpu")]
-mod profiling;
-
-#[cfg(feature = "wgpu")]
-mod operations;
-
-#[cfg(feature = "wgpu")]
-mod circuit;
-
-#[cfg(feature = "constraint-export")]
-pub mod constraint_export;
-
-#[cfg(feature = "wgpu")]
 pub use circuit::{
-    FixedCommitment, PermutationBuffers, PermutationCommitment, PolynomialCommitment,
-    PreparationOptions, PreparedCircuit, WireBuffers, WireCommitment,
+    FixedCommitment, FriBuffers, FriCommitment, FriFold, FriInput, FriRoundBuffers, OpeningBuffers,
+    PermutationBuffers, PermutationCommitment, PolynomialCommitment, PreparationOptions,
+    PreparedCircuit, ProofTailBuffers, QuotientBuffers, QuotientCommitment, ResidentOpeningSet,
+    ResidentQueryRounds, WireBuffers, WireCommitment,
 };
-
-#[cfg(feature = "constraint-export")]
-pub use circuit::{
-    FriBuffers, FriCommitment, FriFold, FriInput, FriRoundBuffers, OpeningBuffers,
-    ProofTailBuffers, QuotientBuffers, QuotientCommitment, ResidentOpeningSet, ResidentQueryRounds,
-};
-
-#[cfg(feature = "wgpu")]
+pub use operations::check_exported_constraints;
 pub use operations::{
     ArithmeticKernels, ArithmeticPlan, CommitmentPlan, EvaluationOrder, ExtensionKernels,
     FftKernels, FftPlan, FieldOperation, FriCommitmentPlan, FriFoldPlan, FriKernels,
     LinearDivisionPlan, MerkleQuery, MerkleQueryKernels, MerkleQueryLayout, MerkleQueryPlan,
     PolynomialCombinationPlan, PolynomialEvaluationPlan, PoseidonKernels, PowKernels, PowPlan,
-    PowResult, PrefixProductPlan, ResidentMerkleQueries,
+    PowResult, PrefixProductPlan, QuotientLayout, QuotientPlan, ResidentMerkleQueries,
 };
-
-#[cfg(feature = "constraint-export")]
-pub use operations::{check_exported_constraints, QuotientLayout, QuotientPlan};
-
-#[cfg(feature = "wgpu")]
 pub use runtime::{
     DeviceContext, DeviceFieldSlice, DeviceOptions, FieldSource, FixedFieldSlice,
     PendingSubmission, ProofEncoder, ProofWorkspace,
