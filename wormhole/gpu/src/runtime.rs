@@ -286,7 +286,7 @@ impl DeviceContext {
         Ok(FixedFieldSlice {
             device_id: self.id,
             buffer,
-            offset: 0,
+            offset_bytes: 0,
             len,
         })
     }
@@ -327,7 +327,7 @@ impl DeviceContext {
         let _operation = HostOperation::new("readback");
         let source = source.into();
         self.validate_source(source)?;
-        let (buffer, offset, len) = source.parts();
+        let (buffer, offset_bytes, len) = source.parts();
         let bytes = field_bytes(len)?;
         tracing::debug!(target: "qp_wormhole_gpu::profile", readback_bytes = bytes,
             "field export");
@@ -348,7 +348,7 @@ impl DeviceContext {
         tracing::debug!(target: "qp_wormhole_gpu::profile",
             metal_command_buffers = command_budget.used, "field export submission");
         let mut encoder = self.device.create_command_encoder(&Default::default());
-        encoder.copy_buffer_to_buffer(buffer, offset, &staging, 0, bytes);
+        encoder.copy_buffer_to_buffer(buffer, offset_bytes, &staging, 0, bytes);
         let commands = encoder.finish();
         if let Err(error) = self.check_device() {
             drop(commands);
@@ -392,7 +392,7 @@ impl DeviceContext {
 pub struct FixedFieldSlice {
     device_id: u64,
     buffer: wgpu::Buffer,
-    offset: u64,
+    offset_bytes: u64,
     len: usize,
 }
 
@@ -405,9 +405,9 @@ impl FixedFieldSlice {
     }
 
     pub fn slice(&self, range: Range<usize>) -> Result<Self> {
-        let (offset, len) = field_range(self.offset, self.len, range)?;
+        let (offset_bytes, len) = field_range(self.offset_bytes, self.len, range)?;
         Ok(Self {
-            offset,
+            offset_bytes,
             len,
             ..self.clone()
         })
@@ -450,8 +450,8 @@ impl<'a> FieldSource<'a> {
 
     fn parts(self) -> (&'a wgpu::Buffer, u64, usize) {
         match self {
-            Self::Fixed(slice) => (&slice.buffer, slice.offset, slice.len),
-            Self::Workspace(slice) => (&slice.buffer, slice.offset, slice.len),
+            Self::Fixed(slice) => (&slice.buffer, slice.offset_bytes, slice.len),
+            Self::Workspace(slice) => (&slice.buffer, slice.offset_bytes, slice.len),
         }
     }
 }
@@ -465,7 +465,7 @@ pub struct DeviceFieldSlice {
     device_id: u64,
     workspace_id: u64,
     buffer: wgpu::Buffer,
-    offset: u64,
+    offset_bytes: u64,
     len: usize,
 }
 
@@ -478,22 +478,22 @@ impl DeviceFieldSlice {
     }
 
     pub fn slice(&self, range: Range<usize>) -> Result<Self> {
-        let (offset, len) = field_range(self.offset, self.len, range)?;
+        let (offset_bytes, len) = field_range(self.offset_bytes, self.len, range)?;
         Ok(Self {
-            offset,
+            offset_bytes,
             len,
             ..self.clone()
         })
     }
 }
 
-fn field_range(offset: u64, len: usize, range: Range<usize>) -> Result<(u64, usize)> {
+fn field_range(offset_bytes: u64, len: usize, range: Range<usize>) -> Result<(u64, usize)> {
     ensure!(
         range.start < range.end && range.end <= len,
         "invalid field slice range"
     );
     Ok((
-        offset
+        offset_bytes
             .checked_add(field_bytes(range.start)?)
             .context("field slice offset overflow")?,
         range.end - range.start,
@@ -691,7 +691,7 @@ pub(crate) struct CheckedBindings {
 }
 
 fn validate_binding_range(
-    offset: u64,
+    offset_bytes: u64,
     len: usize,
     buffer_bytes: u64,
     minimum: usize,
@@ -702,7 +702,7 @@ fn validate_binding_range(
         "field binding is smaller than the kernel requires"
     );
     ensure!(
-        offset.is_multiple_of(u64::from(limits.min_storage_buffer_offset_alignment)),
+        offset_bytes.is_multiple_of(u64::from(limits.min_storage_buffer_offset_alignment)),
         "field binding offset is not storage-aligned"
     );
     let bytes = field_bytes(len)?;
@@ -711,7 +711,7 @@ fn validate_binding_range(
         "field binding exceeds storage limit"
     );
     ensure!(
-        offset
+        offset_bytes
             .checked_add(bytes)
             .is_some_and(|end| end <= buffer_bytes),
         "field binding exceeds backing allocation"
@@ -806,7 +806,7 @@ impl ProofWorkspace {
                 Ok(DeviceFieldSlice {
                     device_id: context.id,
                     workspace_id: id,
-                    offset: 0,
+                    offset_bytes: 0,
                     len,
                     buffer,
                 })
@@ -1096,7 +1096,7 @@ impl ProofEncoder<'_> {
             &staging,
             0,
             &destination.buffer,
-            destination.offset,
+            destination.offset_bytes,
             bytes,
         );
         if let Some(counters) = &mut self.counters {
@@ -1120,7 +1120,7 @@ impl ProofEncoder<'_> {
         let source = source.into();
         self.validate_source(source)?;
         self.validate(destination)?;
-        let (buffer, offset, len) = source.parts();
+        let (buffer, offset_bytes, len) = source.parts();
         ensure!(len == destination.len, "field copy length mismatch");
         ensure!(
             *buffer != destination.buffer,
@@ -1129,9 +1129,9 @@ impl ProofEncoder<'_> {
         self.command_budget.copy()?;
         self.commands.copy_buffer_to_buffer(
             buffer,
-            offset,
+            offset_bytes,
             &destination.buffer,
-            destination.offset,
+            destination.offset_bytes,
             field_bytes(len)?,
         );
         if let Some(counters) = &mut self.counters {
@@ -1201,13 +1201,19 @@ impl ProofEncoder<'_> {
                     _ => anyhow::bail!("kernel binding access mismatch"),
                 };
                 self.validate_source(source)?;
-                let (buffer, offset, len) = source.parts();
-                validate_binding_range(offset, len, buffer.size(), spec.min_elements, &limits)?;
+                let (buffer, offset_bytes, len) = source.parts();
+                validate_binding_range(
+                    offset_bytes,
+                    len,
+                    buffer.size(),
+                    spec.min_elements,
+                    &limits,
+                )?;
                 Ok(wgpu::BindGroupEntry {
                     binding: u32::try_from(index)?,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer,
-                        offset,
+                        offset: offset_bytes,
                         size: wgpu::BufferSize::new(field_bytes(len)?),
                     }),
                 })
