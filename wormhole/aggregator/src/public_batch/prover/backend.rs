@@ -138,11 +138,13 @@ impl GpuBackend {
 
     fn prove(&self, witness: PartialWitness<F>) -> Result<ProofWithPublicInputs<F, C, D>> {
         // CPU witness generation does not hold the shared GPU workspace lock.
-        let generation = crate::profiling::HostOperation::new("witness_generation");
+        let lock = crate::profiling::HostOperation::new("executor_lock_wait");
         let mut executor = self
             .witness_executor
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        drop(lock);
+        let generation = crate::profiling::HostOperation::new("witness_generation");
         let partition = self
             .generate_witness(&mut executor, witness)
             .context("generate public-batch witness")?;
@@ -167,10 +169,17 @@ impl GpuBackend {
         executor: &mut WitnessGenerationExecutor<F>,
         inputs: PartialWitness<F>,
     ) -> Result<PartitionWitness<'_, F>> {
-        let mut witness = executor.new_witness(&self.circuit);
-        for (target, value) in inputs.target_values {
-            witness.set_target(target, value)?;
+        let mut witness = {
+            let _allocation = crate::profiling::HostOperation::new("witness_allocation");
+            executor.new_witness(&self.circuit)
+        };
+        {
+            let _fill = crate::profiling::HostOperation::new("input_application");
+            for (target, value) in inputs.target_values {
+                witness.set_target(target, value)?;
+            }
         }
+        let _execution = crate::profiling::HostOperation::new("generator_execution");
         #[cfg(feature = "gpu-parallel-witness")]
         {
             executor.execute_parallel(&self.circuit, &mut witness, self.witness_workers)?;
