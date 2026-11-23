@@ -17,7 +17,9 @@ use criterion::{
 use fixtures::*;
 use plonky2::iop::generator::generate_partial_witness;
 use qp_wormhole_aggregator::production;
-use qp_wormhole_aggregator::public_batch::prover::{PublicBatchInputs, PublicBatchProver};
+use qp_wormhole_aggregator::public_batch::prover::{
+    GpuProvingOptions, PublicBatchInputs, PublicBatchProver,
+};
 use qp_wormhole_gpu::{DeviceContext, PreparationOptions, PreparedCircuit};
 use qp_wormhole_inputs::BytesDigest;
 use std::path::Path;
@@ -129,7 +131,7 @@ fn bench_public_batch(c: &mut Criterion) {
 
         // End-to-end GPU-assisted proving through the backend a service uses.
         prover
-            .with_gpu(device(), PreparationOptions::default())
+            .with_gpu(device(), GpuProvingOptions::default())
             .expect("Failed to select the GPU backend");
         let prover = Arc::new(prover);
         group.bench_function(BenchmarkId::new("gpu", arity), |b| {

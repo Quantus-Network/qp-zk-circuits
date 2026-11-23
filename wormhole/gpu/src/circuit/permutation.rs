@@ -5,7 +5,7 @@ use crate::runtime::KernelParams;
 use crate::PrefixProductPlan;
 
 pub(super) struct PreparedPermutation {
-    pub fields: Vec<usize>,
+    pub workspace_field_counts: Vec<usize>,
     pub oracle: OraclePlan,
     init: PreparedKernel,
     fold: PreparedKernel,
@@ -112,16 +112,12 @@ impl PreparedPermutation {
         for &columns in &layout.batch_columns {
             let count = columns.min(routed.saturating_sub(first));
             if count > 0 {
-                let values = (first..first + count)
-                    .flat_map(|column| {
-                        circuit
-                            .prover_only
-                            .sigmas
-                            .iter()
-                            .map(move |row| row[column])
-                    })
-                    .collect::<Vec<_>>();
-                sigmas.push(context.prepare_fixed(&values)?);
+                sigmas.push(context.prepare_fixed_iter((0..count * layout.degree).map(
+                    |index| {
+                        circuit.prover_only.sigmas[index % layout.degree]
+                            [first + index / layout.degree]
+                    },
+                ))?);
                 fold_params.push(context.prepare_params([
                     layout.degree as u32,
                     columns as u32,
@@ -141,18 +137,18 @@ impl PreparedPermutation {
             challenges * chunks,
             true,
         )?;
-        let mut fields = vec![
+        let mut workspace_field_counts = vec![
             challenges * 2,
             2 * chunks * challenges * layout.degree,
             challenges * layout.degree,
             challenges * layout.degree,
             1,
         ];
-        fields.extend_from_slice(scan.workspace_field_counts());
-        fields.extend_from_slice(&oracle.fields);
+        workspace_field_counts.extend_from_slice(scan.workspace_field_counts());
+        workspace_field_counts.extend_from_slice(&oracle.workspace_field_counts);
         let mut first = 0;
         let assemble_params = oracle
-            .columns
+            .batch_columns
             .iter()
             .map(|&columns| {
                 let params = context.prepare_params([
@@ -166,7 +162,7 @@ impl PreparedPermutation {
             })
             .collect::<Result<_>>()?;
         Ok(Self {
-            fields,
+            workspace_field_counts,
             oracle,
             init,
             fold,
@@ -201,9 +197,7 @@ pub struct PermutationCommitment {
     pub oracle: PolynomialCommitment,
     pub values: Vec<DeviceFieldSlice>,
     status: DeviceFieldSlice,
-    #[cfg(feature = "constraint-export")]
     pub(super) betas: Vec<F>,
-    #[cfg(feature = "constraint-export")]
     pub(super) gammas: Vec<F>,
 }
 
@@ -221,16 +215,16 @@ impl PermutationCommitment {
 
 impl<'a> PreparedCircuit<'a> {
     pub fn permutation_workspace_field_counts(&self) -> &[usize] {
-        &self.permutation.fields
+        &self.permutation.workspace_field_counts
     }
 
     pub fn permutation_buffers(
         &self,
         workspace: &ProofWorkspace,
-        first: usize,
+        first_buffer: usize,
     ) -> Result<PermutationBuffers<'_, 'a>> {
         let plan = &self.permutation;
-        let buffers = workspace_views(workspace, first, &plan.fields)?;
+        let buffers = workspace_views(workspace, first_buffer, &plan.workspace_field_counts)?;
         let scan_end = 5 + plan.scan.workspace_field_counts().len();
         Ok(PermutationBuffers {
             prepared: self,
@@ -240,7 +234,7 @@ impl<'a> PreparedCircuit<'a> {
             zs: buffers[3].clone(),
             status: buffers[4].clone(),
             scan_scratch: buffers[5..scan_end].to_vec(),
-            oracle: plan.oracle.buffers(workspace, first + scan_end)?,
+            oracle: plan.oracle.buffers(workspace, first_buffer + scan_end)?,
         })
     }
 }
@@ -348,9 +342,7 @@ impl PermutationBuffers<'_, '_> {
             oracle: plan.oracle.encode_values(prepared, encoder, &self.oracle)?,
             values: self.oracle.values.clone(),
             status: self.status.clone(),
-            #[cfg(feature = "constraint-export")]
             betas: betas.to_vec(),
-            #[cfg(feature = "constraint-export")]
             gammas: gammas.to_vec(),
         })
     }

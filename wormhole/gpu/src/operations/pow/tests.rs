@@ -25,26 +25,10 @@ fn pow_matches_cpu_transcript_and_retries_without_advancing_on_exhaustion() -> R
     )?);
     let plan = PowPlan::prepare(&context, kernels.clone(), 8, 8192)?;
     let mut workspace = ProofWorkspace::prepare(&context, &plan.workspace_field_counts())?;
-    let buffers = [
-        workspace.buffer(0)?,
-        workspace.buffer(1)?,
-        workspace.buffer(2)?,
-    ];
-    let alias = buffers[2].slice(0..1)?;
+    let buffers = [workspace.buffer(0)?, workspace.buffer(1)?];
     let mut encoder = workspace.begin(&context)?;
-    assert_eq!(
-        plan.encode(
-            &mut encoder,
-            &Challenger::new(),
-            0,
-            [&buffers[0], &alias, &buffers[2]],
-        )
-        .err()
-        .unwrap()
-        .to_string(),
-        "FRI PoW atomic scratch and result must use separate buffers"
-    );
-    drop(encoder);
+    encoder.upload(&buffers[1], &[F::NEG_ONE])?;
+    encoder.submit()?.finish()?;
     for pending in 0..8 {
         let mut cpu = Challenger::<F, PoseidonHash>::new();
         cpu.observe_elements(
@@ -61,12 +45,7 @@ fn pow_matches_cpu_transcript_and_retries_without_advancing_on_exhaustion() -> R
         assert_eq!(cpu.input_buffer().len(), pending);
         let mut expected = cpu.clone();
         let mut encoder = workspace.begin(&context)?;
-        let result = plan.encode(
-            &mut encoder,
-            &cpu,
-            100,
-            [&buffers[0], &buffers[1], &buffers[2]],
-        )?;
+        let result = plan.encode(&mut encoder, &cpu, 100, [&buffers[0], &buffers[1]])?;
         encoder.submit()?.finish()?;
         let mut changed = cpu.clone();
         changed.observe_element(F::ONE);
@@ -99,22 +78,12 @@ fn pow_matches_cpu_transcript_and_retries_without_advancing_on_exhaustion() -> R
         .unwrap();
     let before = pow_snapshot(&cpu, 0)?;
     let mut encoder = workspace.begin(&context)?;
-    let result = single.encode(
-        &mut encoder,
-        &cpu,
-        failed,
-        [&buffers[0], &buffers[1], &buffers[2]],
-    )?;
+    let result = single.encode(&mut encoder, &cpu, failed, [&buffers[0], &buffers[1]])?;
     encoder.submit()?.finish()?;
     assert_eq!(result.readback(&context, &mut cpu)?, None);
     assert_eq!(pow_snapshot(&cpu, 0)?, before);
     let mut encoder = workspace.begin(&context)?;
-    let result = single.encode(
-        &mut encoder,
-        &cpu,
-        successful,
-        [&buffers[0], &buffers[1], &buffers[2]],
-    )?;
+    let result = single.encode(&mut encoder, &cpu, successful, [&buffers[0], &buffers[1]])?;
     encoder.submit()?.finish()?;
     assert_eq!(
         result.readback(&context, &mut cpu)?,
@@ -127,17 +96,31 @@ fn pow_matches_cpu_transcript_and_retries_without_advancing_on_exhaustion() -> R
         expected.observe_element(F::from_canonical_u64(base));
         let valid = expected.get_challenge().to_canonical_u64().leading_zeros() >= bits;
         let mut encoder = workspace.begin(&context)?;
-        let result = plan.encode(
-            &mut encoder,
-            &cpu,
-            base,
-            [&buffers[0], &buffers[1], &buffers[2]],
-        )?;
+        let result = plan.encode(&mut encoder, &cpu, base, [&buffers[0], &buffers[1]])?;
         encoder.submit()?.finish()?;
         assert_eq!(
             result.readback(&context, &mut cpu)?,
             valid.then(|| F::from_canonical_u64(base))
         );
+        if bits == 0 {
+            for (offset, message) in [
+                (trials as u64, "FRI PoW offset is outside the search range"),
+                (1, "FRI PoW nonce is not canonical"),
+            ] {
+                let mut encoder = workspace.begin(&context)?;
+                encoder.upload(&buffers[1], &[F::from_canonical_u64(offset)])?;
+                encoder.submit()?.finish()?;
+                let mut rejected = before.clone();
+                assert_eq!(
+                    result
+                        .readback(&context, &mut rejected)
+                        .unwrap_err()
+                        .to_string(),
+                    message
+                );
+                assert_eq!(pow_snapshot(&rejected, 0)?, pow_snapshot(&before, 0)?);
+            }
+        }
     }
     Ok(())
 }

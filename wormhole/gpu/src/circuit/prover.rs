@@ -14,19 +14,22 @@ use plonky2::plonk::proof::{OpeningSet, Proof, ProofWithPublicInputs};
 /// Six stage ranges in one per-proof workspace. Host metadata only;
 /// constructing it never allocates GPU resources.
 struct ProvingWorkspaceLayout {
-    fields: Vec<usize>,
-    first: [usize; 6],
+    workspace_field_counts: Vec<usize>,
+    stage_buffer_offsets: [usize; 6],
 }
 
 impl ProvingWorkspaceLayout {
     fn new(stages: [&[usize]; 6]) -> Self {
-        let mut fields = Vec::new();
-        let first = stages.map(|stage| {
-            let first = fields.len();
-            fields.extend_from_slice(stage);
+        let mut workspace_field_counts = Vec::new();
+        let stage_buffer_offsets = stages.map(|stage| {
+            let first = workspace_field_counts.len();
+            workspace_field_counts.extend_from_slice(stage);
             first
         });
-        Self { fields, first }
+        Self {
+            workspace_field_counts,
+            stage_buffer_offsets,
+        }
     }
 }
 
@@ -45,7 +48,7 @@ impl PreparedCircuit<'_> {
     /// Complete per-proof field-buffer plan, in stage order. This does not
     /// include shared fixed buffers, driver allocations or upload staging.
     pub fn proof_workspace_field_counts(&self) -> Vec<usize> {
-        self.proving_workspace_layout().fields
+        self.proving_workspace_layout().workspace_field_counts
     }
 
     /// Allocate once and reuse across proofs. Concurrent proofs require distinct
@@ -86,7 +89,7 @@ impl PreparedCircuit<'_> {
     ) -> Result<ProofWithPublicInputs<F, C, 2>> {
         let _proof = crate::profiling::HostOperation::new("gpu_prove");
         let layout = self.proving_workspace_layout();
-        let [wfirst, pfirst, qfirst, ofirst, ffirst, tfirst] = layout.first;
+        let [wfirst, pfirst, qfirst, ofirst, ffirst, tfirst] = layout.stage_buffer_offsets;
         // Resolve and validate all stage views before recording any commands.
         let wires = self.wire_buffers(workspace, wfirst)?;
         let products = self.permutation_buffers(workspace, pfirst)?;
@@ -135,7 +138,13 @@ impl PreparedCircuit<'_> {
 
         let phase = enter_phase("quotient", None);
         let mut encoder = workspace.begin(context)?;
-        let quotient = quotient.encode(&mut encoder, &wires, &products, &alphas)?;
+        let quotient = quotient.encode(
+            &mut encoder,
+            &wires,
+            &public_inputs_hash,
+            &products,
+            &alphas,
+        )?;
         encoder
             .submit()?
             .finish()

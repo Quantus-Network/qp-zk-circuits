@@ -17,8 +17,8 @@ struct U128 {
     hi: u64,
 }
 
-// Reduce a 128-bit value (lo + hi*2^64) mod P using
-// 2^64 ≡ EPS64 and 2^96 ≡ -1 (mod P).
+// Reduce a 128-bit value (lo + hi*2^64) mod P64 using
+// 2^64 = EPS64 and 2^96 = -1 modulo P64.
 fn gf64_reduce(v: U128) -> u64 {
     // With B=2^32, reduce to (w0-w2-w3) + (w1+w2)*B.
     // Track the low limb's two possible borrows in u32 instead of

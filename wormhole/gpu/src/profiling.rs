@@ -10,7 +10,6 @@ pub(crate) struct HostOperation {
 }
 
 impl HostOperation {
-    #[cfg(feature = "constraint-export")]
     pub(crate) fn phase(phase: &'static str, round: Option<usize>) -> Self {
         let span = tracing::debug_span!(target: "qp_wormhole_gpu::profile", "prover.phase",
             phase, round, elapsed_ns = tracing::field::Empty);
@@ -41,8 +40,6 @@ impl Drop for HostOperation {
         }
     }
 }
-
-#[cfg(feature = "constraint-export")]
 pub(crate) fn measure<T>(operation: &'static str, f: impl FnOnce() -> T) -> T {
     let _operation = HostOperation::new(operation);
     f()

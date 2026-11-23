@@ -11,10 +11,10 @@ version.workspace = true
 anyhow = { workspace = true }
 hex = "=0.4.3"
 qp-plonky2 = { workspace = true }
-qp-wormhole-gpu = { version = "=4.4.0", path = "../gpu", optional = true, features = ["constraint-export"] }
+qp-wormhole-gpu = { version = "=4.4.0", path = "../gpu", optional = true, features = ["gpu"] }
 qp-wormhole-inputs = { version = "=4.4.0", path = "../inputs" }
 rand = { version = "=0.10.1", default-features = false, features = ["thread_rng"] }
-serde = { version = "=1.0.228", features = ["derive"] }
+serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 tracing = { workspace = true, optional = true }
 wormhole-circuit = { package = "qp-wormhole-circuit", version = "=4.4.0", path = "../circuit", default-features = false }
@@ -37,6 +37,7 @@ wormhole-circuit-builder = { package = "qp-wormhole-circuit-builder", path = "..
 [features]
 default = ["std"]
 gpu = ["dep:qp-wormhole-gpu", "dep:tracing", "std"]
+gpu-parallel-witness = ["gpu", "qp-plonky2/parallel"]
 no_zk = []
 profile = ["qp-plonky2/rand", "qp-plonky2/timing", "std"]
 std = [
@@ -57,10 +58,6 @@ name = "aggregator"
 [[bench]]
 harness = false
 name = "gpu"
-required-features = ["gpu"]
-
-[[example]]
-name = "prepare_public_batch"
 required-features = ["gpu"]
 
 [[example]]

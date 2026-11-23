@@ -3,7 +3,7 @@ use super::*;
 use crate::operations::{read, write, FIELD};
 use crate::runtime::KernelParams;
 use plonky2::field::zero_poly_coset::ZeroPolyOnCoset;
-use plonky2::plonk::config::{GenericConfig, Hasher};
+use plonky2::hash::hash_types::HashOut;
 
 struct GatherBatch {
     columns: usize,
@@ -12,7 +12,7 @@ struct GatherBatch {
 
 pub(super) struct PreparedQuotient {
     pub evaluation: crate::QuotientPlan,
-    pub fields: Vec<usize>,
+    pub workspace_field_counts: Vec<usize>,
     oracle: OraclePlan,
     inverse: FftPlan,
     gather: PreparedKernel,
@@ -205,12 +205,12 @@ impl PreparedQuotient {
             c as u32,
             0,
         ])?;
-        let mut fields = evaluation.workspace_field_counts().to_vec();
-        fields.extend([c * layout.quotient_rows, c * layout.quotient_rows, 1]);
-        fields.extend_from_slice(&oracle.fields);
+        let mut workspace_field_counts = evaluation.workspace_field_counts().to_vec();
+        workspace_field_counts.extend([c * layout.quotient_rows, c * layout.quotient_rows, 1]);
+        workspace_field_counts.extend_from_slice(&oracle.workspace_field_counts);
         Ok(Self {
             evaluation,
-            fields,
+            workspace_field_counts,
             oracle,
             inverse,
             gather,
@@ -267,15 +267,19 @@ impl QuotientCommitment {
 
 impl<'a> PreparedCircuit<'a> {
     pub fn quotient_workspace_field_counts(&self) -> &[usize] {
-        &self.quotient.fields
+        &self.quotient.workspace_field_counts
     }
 
     pub fn quotient_buffers(
         &self,
         workspace: &ProofWorkspace,
-        first: usize,
+        first_buffer: usize,
     ) -> Result<QuotientBuffers<'_, 'a>> {
-        let buffers = workspace_views(workspace, first, &self.quotient.fields)?;
+        let buffers = workspace_views(
+            workspace,
+            first_buffer,
+            &self.quotient.workspace_field_counts,
+        )?;
         Ok(QuotientBuffers {
             prepared: self,
             rows: buffers[0].clone(),
@@ -285,7 +289,7 @@ impl<'a> PreparedCircuit<'a> {
             values: buffers[4].clone(),
             coefficients: buffers[5].clone(),
             status: buffers[6].clone(),
-            oracle: self.quotient.oracle.buffers(workspace, first + 7)?,
+            oracle: self.quotient.oracle.buffers(workspace, first_buffer + 7)?,
         })
     }
 }
@@ -319,13 +323,14 @@ impl QuotientBuffers<'_, '_> {
         Ok(())
     }
 
-    /// Use betas/gammas from the permutation stage and alphas supplied after
-    /// the coordinator observes its cap. Hash the CPU public-input vector once;
+    /// Use the public-input hash observed by the coordinator, betas/gammas from
+    /// the permutation stage, and alphas supplied after observing its cap;
     /// all oracle gathering, evaluation, interpolation and splitting run on GPU.
     pub fn encode(
         &self,
         encoder: &mut ProofEncoder<'_>,
         wires: &WireCommitment,
+        public_inputs_hash: &HashOut<F>,
         permutation: &PermutationCommitment,
         alphas: &[F],
     ) -> Result<QuotientCommitment> {
@@ -349,11 +354,10 @@ impl QuotientBuffers<'_, '_> {
                 && check_batches(&permutation.oracle.evaluations, &plan.product_batches),
             "quotient oracle buffer shape mismatch"
         );
-        let hash = <C as GenericConfig<2>>::InnerHasher::hash_no_pad(&wires.public_inputs);
         encoder.upload(
             &self.scalars,
             &[
-                hash.elements.as_slice(),
+                public_inputs_hash.elements.as_slice(),
                 permutation.betas.as_slice(),
                 permutation.gammas.as_slice(),
                 alphas,
@@ -362,7 +366,7 @@ impl QuotientBuffers<'_, '_> {
         )?;
         encoder.upload(&self.status, &[F::ZERO])?;
         plan.evaluation
-            .encode_weights(encoder, &self.scalars, &self.weights)?;
+            .encode_weights(encoder, alphas, &self.weights)?;
         let fixed = prepared
             .fixed
             .evaluations
@@ -450,7 +454,12 @@ impl QuotientBuffers<'_, '_> {
             "quotient degree validation",
         )?;
         let mut column = 0;
-        for (coefficients, &columns) in self.oracle.coefficients.iter().zip(&plan.oracle.columns) {
+        for (coefficients, &columns) in self
+            .oracle
+            .coefficients
+            .iter()
+            .zip(&plan.oracle.batch_columns)
+        {
             for local in 0..columns {
                 let start = (column / plan.factor) * prepared.layout.quotient_rows
                     + (column % plan.factor) * prepared.layout.degree;

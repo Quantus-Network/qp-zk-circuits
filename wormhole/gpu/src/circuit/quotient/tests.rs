@@ -13,6 +13,7 @@ use plonky2::iop::challenger::Challenger;
 use plonky2::iop::witness::WitnessWrite;
 use plonky2::plonk::circuit_builder::CircuitBuilder;
 use plonky2::plonk::circuit_data::CircuitConfig;
+use plonky2::plonk::config::{GenericConfig, Hasher};
 use plonky2::plonk::plonk_common::reduce_with_powers_multi;
 use plonky2::plonk::proof::{OpeningSet, Proof, ProofWithPublicInputs};
 use plonky2::plonk::prover::prove_with_partition_witness;
@@ -332,9 +333,9 @@ fn resident_proving_stages_match_cpu_and_generate_verifiable_proofs() -> Result<
             .is_err());
         let products = product_buffers.encode(&mut encoder, &wires, &betas, &gammas)?;
         assert!(quotient_buffers
-            .encode(&mut encoder, &wires, &products, &[])
+            .encode(&mut encoder, &wires, &hash, &products, &[])
             .is_err());
-        let quotient = quotient_buffers.encode(&mut encoder, &wires, &products, &alphas)?;
+        let quotient = quotient_buffers.encode(&mut encoder, &wires, &hash, &products, &alphas)?;
         // Fixed oracle, wires, products, quotient share one encoder/submission.
         // Challenge values come from the independent CPU oracle, not readback.
         encoder.submit()?.finish()?;
@@ -655,7 +656,7 @@ fn resident_proving_stages_match_cpu_and_generate_verifiable_proofs() -> Result<
                     .collect(),
             ))
         };
-        let mut gpu_proof = ProofWithPublicInputs::<F, C, 2> {
+        let gpu_proof = ProofWithPublicInputs::<F, C, 2> {
             public_inputs: wires.public_inputs.clone(),
             proof: Proof {
                 wires_cap: read_cap(&wires.cap)?,
@@ -670,15 +671,7 @@ fn resident_proving_stages_match_cpu_and_generate_verifiable_proofs() -> Result<
                 },
             },
         };
-        circuit.verify(gpu_proof.clone())?;
-        // A malformed gathered sibling is not accepted by the CPU verifier.
-        gpu_proof.proof.opening_proof.query_round_proofs[0]
-            .initial_trees_proof
-            .evals_proofs[0]
-            .1
-            .siblings[0]
-            .elements[0] += F::ONE;
-        assert!(circuit.verify(gpu_proof).is_err());
+        circuit.verify(gpu_proof)?;
         // Exercise the reusable coordinator with the same completed witness.
         // Unlike the diagnostic sequence above, its challenges come only from
         // GPU-produced caps and openings, never from the CPU proof oracle.

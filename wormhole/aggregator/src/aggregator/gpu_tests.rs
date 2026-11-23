@@ -1,6 +1,7 @@
 use super::*;
+use crate::public_batch::prover::GpuProvingOptions;
 use plonky2::field::types::Field;
-use qp_wormhole_gpu::{DeviceContext, PreparationOptions};
+use qp_wormhole_gpu::DeviceContext;
 use qp_wormhole_inputs::production;
 
 /// Runs without a device: the exported gate programs the GPU quotient kernels
@@ -35,7 +36,7 @@ fn gpu_proving_context(
         })
         .collect::<Result<Vec<_>>>()?;
     let context = Arc::new(pollster::block_on(DeviceContext::new())?);
-    prover.with_gpu(context, PreparationOptions::default())?;
+    prover.with_gpu(context, GpuProvingOptions::default())?;
     let proving = ProvingContext {
         aggregator_address: address,
         verifier: prover.verifier_data(),
@@ -45,7 +46,7 @@ fn gpu_proving_context(
     Ok((proving, inners, cpu_proofs))
 }
 
-/// Partial batches are padded with the dummy template inside `build_witness`;
+/// Partial batches are padded with the dummy template before witness filling;
 /// the GPU proof of a padded batch must match the CPU proof bit-for-bit on
 /// public inputs. Cloned contexts prove concurrently on one shared backend,
 /// serialising on the workspace lock rather than failing or corrupting state.
@@ -111,7 +112,7 @@ fn gpu_backend_proves_through_aggregator_and_cloned_workers() -> Result<()> {
     let (prover, inner, private_batch_verifier) =
         crate::public_batch::prover::lib::tests::gpu_fixture();
     let context = Arc::new(pollster::block_on(DeviceContext::new())?);
-    let options = PreparationOptions::default();
+    let options = GpuProvingOptions::default();
     let address = BytesDigest::try_from([7u8; 32])?;
     let proving = ProvingContext {
         aggregator_address: address,
@@ -152,8 +153,11 @@ fn gpu_backend_proves_through_aggregator_and_cloned_workers() -> Result<()> {
     saved_context.verify(cpu_proof.clone())?;
     drop(saved_context);
 
-    let invalid_options = PreparationOptions {
-        quotient_chunk_rows: 0,
+    let invalid_options = GpuProvingOptions {
+        preparation: qp_wormhole_gpu::PreparationOptions {
+            quotient_chunk_rows: 0,
+            ..options.preparation
+        },
         ..options
     };
     let error = aggregator

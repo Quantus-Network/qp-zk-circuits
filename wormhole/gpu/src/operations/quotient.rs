@@ -15,9 +15,10 @@ use plonky2::field::types::{Field, PrimeField64};
 use plonky2::plonk::circuit_data::CommonCircuitData;
 use std::fmt::Write;
 
-/// Column-major row inputs. Scalars are separate: public-input hash (4), beta,
-/// gamma, alpha (each num_challenges). Helpers x, L0(x), and 1/Z_H(x) are fixed
-/// coset data, prepared once; next_zs are the rotated Z evaluations.
+/// Column offsets into the column-major quotient input table.
+/// `x`, `l0` and `inverse_zero` select fixed coset data: x, L0(x) and 1/Z_H(x).
+/// `next_zs` selects the rotated Z evaluations. Scalars are separate: the
+/// public-input hash (4), beta, gamma and alpha (each num_challenges).
 #[derive(Clone, Debug)]
 pub struct QuotientLayout {
     pub constants: usize,
@@ -29,7 +30,9 @@ pub struct QuotientLayout {
     pub x: usize,
     pub l0: usize,
     pub inverse_zero: usize,
+    /// Total number of table columns.
     pub columns: usize,
+    /// Number of base-field elements in the scalar buffer.
     pub scalar_count: usize,
 }
 
@@ -37,7 +40,7 @@ pub struct QuotientPlan {
     layout: QuotientLayout,
     rows: usize,
     challenges: usize,
-    powers: PreparedKernel,
+    alpha_exponent: u64,
     permutation: PreparedKernel,
     gates: Vec<PreparedKernel>,
     params: KernelParams,
@@ -72,14 +75,7 @@ impl QuotientPlan {
         table_size(rows, layout.columns)?;
         table_size(rows, challenges)?;
         validate_program(&program)?;
-        let prefix = challenges + challenges * (common.num_partial_products + 1);
-        let power_source = format!("{FIELD}\n@group(0) @binding(0) var<storage,read_write> weights:array<u64>;\n@group(0) @binding(1) var<storage,read> scalars:array<u64>;\n@compute @workgroup_size(1) fn main() {{ for(var i=0u;i<{challenges}u;i++) {{ var power=1lu; for(var j=0u;j<{prefix}u;j++) {{ power=gf64_mul(power,scalars[{}u+i]); }} weights[i]=gf64_canon(power); }} }}", 4 + challenges * 2);
-        let powers = PreparedKernel::prepare(
-            context,
-            &power_source,
-            &[write(challenges), read(layout.scalar_count)],
-            "quotient alpha powers",
-        )?;
+        let alpha_exponent = (challenges + challenges * (common.num_partial_products + 1)) as u64;
         let specs = [
             write(rows * challenges),
             read(rows * layout.columns),
@@ -112,7 +108,7 @@ impl QuotientPlan {
             layout,
             rows,
             challenges,
-            powers,
+            alpha_exponent,
             permutation,
             gates,
             params: context.prepare_params([rows as u32, 0, 0, 0])?,
@@ -130,11 +126,14 @@ impl QuotientPlan {
         ]
     }
 
+    /// Compute alpha powers on CPU and upload them before evaluating rows.
+    /// Alphas are the transcript challenges also supplied in the scalar buffer.
     pub fn encode<'a>(
         &self,
         encoder: &mut ProofEncoder<'_>,
         rows: impl Into<FieldSource<'a>>,
         scalars: impl Into<FieldSource<'a>>,
+        alphas: &[F],
         weights: &DeviceFieldSlice,
         output: &DeviceFieldSlice,
     ) -> Result<()> {
@@ -145,31 +144,26 @@ impl QuotientPlan {
                 == self.workspace_field_counts(),
             "quotient buffer shape mismatch"
         );
-        self.encode_weights(encoder, scalars, weights)?;
+        self.encode_weights(encoder, alphas, weights)?;
         self.encode_rows(encoder, rows, scalars, weights, output)
     }
 
-    pub(crate) fn encode_weights<'a>(
+    pub(crate) fn encode_weights(
         &self,
         encoder: &mut ProofEncoder<'_>,
-        scalars: impl Into<FieldSource<'a>>,
+        alphas: &[F],
         weights: &DeviceFieldSlice,
     ) -> Result<()> {
-        let scalars = scalars.into();
         ensure!(
-            scalars.len() == self.layout.scalar_count && weights.len() == self.challenges,
+            alphas.len() == self.challenges && weights.len() == self.challenges,
             "quotient weight buffer shape mismatch"
         );
-        let group = encoder.bind(
-            &self.powers,
-            &[
-                FieldBinding::ReadWrite(weights),
-                FieldBinding::Read(scalars),
-            ],
-            "quotient alpha powers",
-        )?;
-        encoder.dispatch(&self.powers, &group, [1, 1, 1], "quotient alpha powers")?;
-        Ok(())
+        encoder.upload_iter(
+            weights,
+            alphas
+                .iter()
+                .map(|alpha| alpha.exp_u64(self.alpha_exponent)),
+        )
     }
 
     pub(crate) fn encode_rows<'a>(
@@ -235,7 +229,22 @@ impl QuotientLayout {
 }
 
 fn row_source(body: &str, columns: usize) -> String {
-    format!("{FIELD}\n@group(0) @binding(0) var<storage,read_write> output:array<u64>;\n@group(0) @binding(1) var<storage,read> table:array<u64>;\n@group(0) @binding(2) var<storage,read> scalars:array<u64>;\n@group(0) @binding(3) var<storage,read> weights:array<u64>;\n@group(0) @binding(4) var<uniform> dims:vec4<u32>;\nfn read(column:u32,row:u32)->u64 {{ return table[column*dims.x+row]; }}\nfn sub(a:u64,b:u64)->u64 {{ return gf64_add(a,P64-gf64_canon(b)); }}\n@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) gid:vec3<u32>) {{ let row=gid.x+gid.y*2097152u; if(row>=dims.x || {columns}u==0u){{return;}}\n{body}\n}}")
+    format!(
+        r"{FIELD}
+@group(0) @binding(0) var<storage, read_write> output: array<u64>;
+@group(0) @binding(1) var<storage, read> table: array<u64>;
+@group(0) @binding(2) var<storage, read> scalars: array<u64>;
+@group(0) @binding(3) var<storage, read> weights: array<u64>;
+@group(0) @binding(4) var<uniform> dims: vec4<u32>;
+fn read(column: u32,row: u32) -> u64 {{ return table[column*dims.x+row]; }}
+fn sub(a: u64,b: u64) -> u64 {{ return gf64_add(a,P64-gf64_canon(b)); }}
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
+    let row=gid.x+gid.y*2097152u;
+    if(row>=dims.x || {columns}u==0u){{return;}}
+{body}
+}}"
+    )
 }
 
 fn permutation_body(common: &CommonCircuitData<F, 2>, layout: &QuotientLayout) -> String {

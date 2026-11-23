@@ -29,7 +29,7 @@ use std::path::Path;
 
 use zk_circuits_common::{
     circuit::{wormhole_public_batch_circuit_config, C, D, F},
-    utils::bytes_to_digest,
+    utils::{bytes_to_digest, Digest},
 };
 
 #[cfg(feature = "std")]
@@ -47,6 +47,41 @@ use crate::{
         prover::witness::fill_public_batch_witness,
     },
 };
+
+/// GPU resource preparation and CPU witness execution settings.
+#[cfg(feature = "gpu")]
+#[derive(Clone, Copy, Debug)]
+pub struct GpuProvingOptions {
+    pub preparation: qp_wormhole_gpu::PreparationOptions,
+    /// Number of witness workers when `gpu-parallel-witness` is enabled.
+    /// Defaults to `std::thread::available_parallelism()`, or one if unavailable.
+    /// Must be positive when parallel witness generation is enabled.
+    pub witness_workers: usize,
+}
+
+#[cfg(feature = "gpu")]
+impl Default for GpuProvingOptions {
+    fn default() -> Self {
+        Self {
+            preparation: qp_wormhole_gpu::PreparationOptions::default(),
+            witness_workers: std::thread::available_parallelism()
+                .map(|count| count.get())
+                .unwrap_or(1),
+        }
+    }
+}
+
+#[cfg(feature = "gpu")]
+impl GpuProvingOptions {
+    pub(super) fn validate(&self) -> Result<()> {
+        #[cfg(feature = "gpu-parallel-witness")]
+        anyhow::ensure!(
+            self.witness_workers > 0,
+            "witness worker count must be nonzero"
+        );
+        Ok(())
+    }
+}
 
 #[derive(Debug)]
 pub struct PublicBatchInputs {
@@ -281,24 +316,35 @@ impl PublicBatchProver {
 
     /// Prove one public batch from private-batch aggregated proofs.
     ///
-    /// Validates and prepares the inputs with [`Self::build_witness`], then
-    /// proves the circuit with the backend selected during initialization.
+    /// Validates and pads the inputs, then proves the circuit with the backend
+    /// selected during initialization.
     /// CPU proving is the default.
     pub fn prove_batch(&self, inputs: PublicBatchInputs) -> Result<ProofWithPublicInputs<F, C, D>> {
         #[cfg(feature = "gpu")]
-        let admission = crate::profiling::HostOperation::new("admission_and_witness_fill");
-        let witness = self.build_witness(inputs)?;
+        let admission = crate::profiling::HostOperation::new("admission");
+        let (proofs, aggregator_address) = self.prepare_inputs(inputs)?;
         #[cfg(feature = "gpu")]
         drop(admission);
         self.backend
-            .prove(&self.circuit_data, witness)
+            .prove(
+                &self.circuit_data,
+                &self.targets,
+                proofs,
+                aggregator_address,
+            )
             .context("Failed to prove public-batch aggregation circuit")
     }
 
     /// Prepare and select GPU proving before sharing this prover with workers.
-    /// Fixed resources and one reusable workspace are retained across calls.
-    /// CPU witness generation can overlap; GPU stages are serialized on this
-    /// workspace. Preparation/proving failures return errors, not CPU fallback.
+    /// Fixed resources, a witness executor and one reusable workspace are retained
+    /// across calls. Witness generation and GPU proving are each serialized.
+    /// Witness generation for one call can overlap GPU proving for another call.
+    ///
+    /// At most one subsequent witness is generated or held while another proof
+    /// uses the GPU workspace. Further callers wait before dense witness allocation.
+    /// Callers control queued requests and the memory retained by their input data.
+    ///
+    /// Preparation/proving failures return errors, not CPU fallback.
     /// Validation failures leave the existing backend unchanged. Re-preparation
     /// releases an existing GPU backend first; if rebuilding fails, proving
     /// returns an unavailable error until a later `with_gpu` call succeeds.
@@ -309,16 +355,24 @@ impl PublicBatchProver {
     pub fn with_gpu(
         &mut self,
         context: Arc<qp_wormhole_gpu::DeviceContext>,
-        options: qp_wormhole_gpu::PreparationOptions,
+        options: GpuProvingOptions,
     ) -> Result<()> {
+        options.validate()?;
         qp_wormhole_gpu::PreparedCircuit::validate_preparation(
             &context,
             &self.circuit_data,
-            options,
+            options.preparation,
         )?;
+        let input_targets =
+            super::witness::public_batch_input_targets(&self.targets, &self.dummy_proof_template)?;
         let circuit = Arc::clone(&self.circuit_data);
         self.backend.replace_gpu(&context, || {
-            super::backend::GpuBackend::prepare(circuit, Arc::clone(&context), options)
+            super::backend::GpuBackend::prepare(
+                circuit,
+                input_targets,
+                Arc::clone(&context),
+                options,
+            )
         })
     }
 
@@ -348,31 +402,13 @@ impl PublicBatchProver {
     /// Callers using a custom backend should verify its resulting proof with
     /// [`Self::verifier_data`]; this method only prepares the partial witness.
     pub fn build_witness(&self, inputs: PublicBatchInputs) -> Result<PartialWitness<F>> {
-        let mut proofs = inputs.proofs;
-        let aggregator_address = inputs.aggregator_address;
-
-        let aggregator_address_felts = bytes_to_digest(aggregator_address);
-
-        preflight_private_batch_proofs(
-            &proofs,
-            self.num_private_batch_proofs,
-            &self.private_batch_verifier,
-            self.private_batch_shape,
-        )?;
-
-        // Pad partial batches with the dummy template. No shuffle: forwarding is
-        // order-preserving by design (per-segment attribution on-chain).
-        let num_dummies_needed = self.num_private_batch_proofs - proofs.len();
-        for _ in 0..num_dummies_needed {
-            proofs.push(self.dummy_proof_template.clone());
-        }
-
+        let (proofs, aggregator_address) = self.prepare_inputs(inputs)?;
         let mut partial_witness = PartialWitness::new();
         fill_public_batch_witness(
             &mut partial_witness,
             &self.targets,
             &proofs,
-            aggregator_address_felts,
+            aggregator_address,
         )?;
 
         Ok(partial_witness)
@@ -382,6 +418,29 @@ impl PublicBatchProver {
     /// so it is canonical by construction — usable for pinning artifact bytes.
     pub fn verifier_data(&self) -> VerifierCircuitData<F, C, D> {
         self.circuit_data.verifier_data()
+    }
+
+    fn prepare_inputs(
+        &self,
+        inputs: PublicBatchInputs,
+    ) -> Result<(Vec<ProofWithPublicInputs<F, C, D>>, Digest)> {
+        let mut proofs = inputs.proofs;
+        let aggregator_address = bytes_to_digest(inputs.aggregator_address);
+
+        preflight_private_batch_proofs(
+            &proofs,
+            self.num_private_batch_proofs,
+            &self.private_batch_verifier,
+            self.private_batch_shape,
+        )?;
+
+        // Preserve proof order and fill the remaining slots with the dummy template.
+        let num_dummies_needed = self.num_private_batch_proofs - proofs.len();
+        for _ in 0..num_dummies_needed {
+            proofs.push(self.dummy_proof_template.clone());
+        }
+
+        Ok((proofs, aggregator_address))
     }
 }
 

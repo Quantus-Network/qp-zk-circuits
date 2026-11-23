@@ -13,6 +13,18 @@ pub(super) struct FriLayout {
     rounds: Vec<FriRoundLayout>,
 }
 
+pub(super) fn reduction_arity(bits: usize, remaining_coefficients: usize) -> Result<usize> {
+    let arity = u32::try_from(bits)
+        .ok()
+        .and_then(|bits| 1usize.checked_shl(bits))
+        .context("FRI reduction arity overflow")?;
+    ensure!(
+        arity <= remaining_coefficients,
+        "invalid FRI reduction arity"
+    );
+    Ok(arity)
+}
+
 impl FriLayout {
     pub fn new(
         degree: usize,
@@ -33,11 +45,7 @@ impl FriLayout {
         let mut evaluations = lde_rows;
         let mut rounds = Vec::with_capacity(arity_bits.len());
         for &bits in arity_bits {
-            let arity = u32::try_from(bits)
-                .ok()
-                .and_then(|bits| 1usize.checked_shl(bits))
-                .context("FRI reduction arity overflow")?;
-            ensure!(arity <= coefficients, "invalid FRI reduction arity");
+            let arity = reduction_arity(bits, coefficients)?;
             let leaves = evaluations / arity;
             ensure!(
                 cap_height <= leaves.ilog2() as usize,
@@ -78,7 +86,7 @@ struct PreparedFriRound {
 
 pub(super) struct PreparedFri {
     rounds: Vec<PreparedFriRound>,
-    fields: Vec<usize>,
+    workspace_field_counts: Vec<usize>,
 }
 
 impl PreparedFri {
@@ -92,7 +100,7 @@ impl PreparedFri {
         fft: Arc<FftKernels>,
     ) -> Result<Self> {
         let mut rounds = Vec::with_capacity(layout.rounds.len());
-        let mut fields = Vec::new();
+        let mut workspace_field_counts = Vec::new();
         let mut shift = F::MULTIPLICATIVE_GROUP_GENERATOR;
         for (index, round) in layout.rounds.iter().enumerate() {
             let fold =
@@ -106,11 +114,11 @@ impl PreparedFri {
                 circuit.common.config.fri_config.cap_height,
                 options.commitment_chunk_rows,
             )?;
-            fields.extend([fold.output_field_count(), 2]);
-            fields.extend(commitment.workspace_field_counts());
+            workspace_field_counts.extend([fold.output_field_count(), 2]);
+            workspace_field_counts.extend(commitment.workspace_field_counts());
             shift = shift.exp_u64(round.arity as u64);
             let next_fft = if index + 1 < layout.rounds.len() {
-                fields.push(2 * (round.evaluations / round.arity));
+                workspace_field_counts.push(2 * (round.evaluations / round.arity));
                 Some(FftPlan::prepare_coset(
                     context,
                     fft.clone(),
@@ -128,7 +136,10 @@ impl PreparedFri {
                 arity: round.arity,
             });
         }
-        Ok(Self { rounds, fields })
+        Ok(Self {
+            rounds,
+            workspace_field_counts,
+        })
     }
 }
 
@@ -152,7 +163,8 @@ pub struct FriRoundBuffers<'c> {
 }
 
 /// Grouped bit-reversed leaves committed in a resident packed tree. Evaluations
-/// themselves stay natural-order real/extension planes for later query gathering.
+/// stay in natural order, with all first base-field components followed by all
+/// second components, for later query gathering.
 /// Views pin workspace allocations and are overwritten on workspace reuse.
 pub struct FriCommitment {
     pub evaluations: DeviceFieldSlice,
@@ -172,11 +184,16 @@ pub struct FriFold {
 
 impl PreparedCircuit<'_> {
     pub fn fri_workspace_field_counts(&self) -> &[usize] {
-        &self.fri.fields
+        &self.fri.workspace_field_counts
     }
 
-    pub fn fri_buffers(&self, workspace: &ProofWorkspace, first: usize) -> Result<FriBuffers<'_>> {
-        let mut buffers = workspace_views(workspace, first, &self.fri.fields)?.into_iter();
+    pub fn fri_buffers(
+        &self,
+        workspace: &ProofWorkspace,
+        first_buffer: usize,
+    ) -> Result<FriBuffers<'_>> {
+        let mut buffers =
+            workspace_views(workspace, first_buffer, &self.fri.workspace_field_counts)?.into_iter();
         let rounds = self
             .fri
             .rounds

@@ -81,7 +81,7 @@ impl PoseidonKernels {
                 &source,
                 &specs,
                 "Merkle bit-reversed leaf placement",
-                "scatter_leaves",
+                "scatter_bit_reversed",
                 true,
             )?,
             nodes: PreparedKernel::prepare_entry(

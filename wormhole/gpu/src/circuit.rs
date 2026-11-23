@@ -15,29 +15,19 @@ use plonky2::plonk::circuit_data::CircuitData;
 use plonky2::plonk::config::PoseidonGoldilocksConfig as C;
 use plonky2::util::log2_ceil;
 use std::ops::Deref;
-use std::sync::Arc;
-
-#[cfg(feature = "constraint-export")]
+use std::sync::{atomic::Ordering, Arc};
 mod fri;
-#[cfg(feature = "constraint-export")]
 mod openings;
 mod oracle;
 mod permutation;
-#[cfg(feature = "constraint-export")]
 mod proof_tail;
-#[cfg(feature = "constraint-export")]
 mod prover;
-#[cfg(feature = "constraint-export")]
 mod quotient;
-#[cfg(feature = "constraint-export")]
 pub use fri::{FriBuffers, FriCommitment, FriFold, FriRoundBuffers};
-#[cfg(feature = "constraint-export")]
 pub use openings::{FriInput, OpeningBuffers, ResidentOpeningSet};
 pub use oracle::PolynomialCommitment;
 pub use permutation::{PermutationBuffers, PermutationCommitment};
-#[cfg(feature = "constraint-export")]
 pub use proof_tail::{ProofTailBuffers, ResidentQueryRounds};
-#[cfg(feature = "constraint-export")]
 pub use quotient::{QuotientBuffers, QuotientCommitment};
 
 /// Resource limits, not protocol parameters. Column batches are further bounded
@@ -82,11 +72,8 @@ struct CircuitLayout {
     quotient_step: usize,
     columns_per_batch: usize,
     batch_columns: Vec<usize>,
-    #[cfg(feature = "constraint-export")]
     openings: openings::OpeningLayout,
-    #[cfg(feature = "constraint-export")]
     fri: fri::FriLayout,
-    #[cfg(feature = "constraint-export")]
     proof_tail: proof_tail::ProofTailLayout,
 }
 
@@ -151,14 +138,11 @@ impl CircuitLayout {
             "fixed oracle does not match circuit metadata"
         );
         validate_fixed_commitment(oracle, degree, lde_rows)?;
-        #[cfg(feature = "constraint-export")]
         let openings = openings::OpeningLayout::new(common)?;
-        #[cfg(feature = "constraint-export")]
         ensure!(
             common.fri_params.config == common.config.fri_config && !common.fri_params.leaf_hiding,
             "FRI parameters do not match circuit configuration"
         );
-        #[cfg(feature = "constraint-export")]
         let fri = fri::FriLayout::new(
             degree,
             lde_rows,
@@ -168,7 +152,6 @@ impl CircuitLayout {
         )?;
         let columns_per_batch =
             column_capacity(lde_rows, width, limit, options.max_columns_per_batch)?;
-        #[cfg(feature = "constraint-export")]
         let proof_tail = proof_tail::ProofTailLayout::new(
             common,
             lde_rows,
@@ -183,11 +166,8 @@ impl CircuitLayout {
             quotient_step,
             columns_per_batch,
             batch_columns: batches(width, columns_per_batch),
-            #[cfg(feature = "constraint-export")]
             openings,
-            #[cfg(feature = "constraint-export")]
             fri,
-            #[cfg(feature = "constraint-export")]
             proof_tail,
         })
     }
@@ -253,15 +233,11 @@ pub struct PreparedCircuit<'a> {
     forward: FftPlan,
     commitment: CommitmentPlan,
     fixed: FixedCommitment,
-    wire_workspace_fields: Vec<usize>,
+    wire_workspace_field_counts: Vec<usize>,
     permutation: permutation::PreparedPermutation,
-    #[cfg(feature = "constraint-export")]
     quotient: quotient::PreparedQuotient,
-    #[cfg(feature = "constraint-export")]
     openings: openings::PreparedOpenings,
-    #[cfg(feature = "constraint-export")]
     fri: fri::PreparedFri,
-    #[cfg(feature = "constraint-export")]
     proof_tail: proof_tail::PreparedProofTail,
 }
 
@@ -320,13 +296,9 @@ impl<'a> PreparedCircuit<'a> {
         let preparation = HostOperation::new("shared_kernels_preparation");
         let poseidon = Arc::new(PoseidonKernels::prepare(context)?);
         let fft = Arc::new(FftKernels::prepare(context)?);
-        #[cfg(feature = "constraint-export")]
         let extension = Arc::new(crate::ExtensionKernels::prepare(context)?);
-        #[cfg(feature = "constraint-export")]
         let fri_kernels = Arc::new(crate::FriKernels::prepare(context)?);
-        #[cfg(feature = "constraint-export")]
         let pow = Arc::new(crate::PowKernels::prepare(context, poseidon.clone())?);
-        #[cfg(feature = "constraint-export")]
         let queries = Arc::new(crate::MerkleQueryKernels::prepare(context)?);
         let gather = PreparedKernel::prepare(
             context,
@@ -348,7 +320,7 @@ impl<'a> PreparedCircuit<'a> {
             "witness wire gathering",
         )?;
         drop(preparation);
-        let preparation = HostOperation::new("fft_tables_preparation");
+        let preparation = HostOperation::new("fft_and_commitment_preparation");
         let inverse = FftPlan::prepare_inverse(context, Arc::clone(&fft), degree, F::ONE)?;
         let forward =
             FftPlan::prepare_coset(context, Arc::clone(&fft), degree, rows, F::coset_shift())?;
@@ -368,15 +340,13 @@ impl<'a> PreparedCircuit<'a> {
             .batch_columns
             .iter()
             .map(|&columns| {
-                let map = (first_column..first_column + columns)
-                    .flat_map(|column| {
-                        (0..degree).map(move |row| {
-                            F::from_canonical_usize(representatives[row * width + column])
-                        })
-                    })
-                    .collect::<Vec<_>>();
+                let first = first_column;
                 first_column += columns;
-                context.prepare_fixed(&map)
+                context.prepare_fixed_iter((0..columns * degree).map(|index| {
+                    let column = first + index / degree;
+                    let row = index % degree;
+                    F::from_canonical_usize(representatives[row * width + column])
+                }))
             })
             .collect::<Result<_>>()?;
         let fixed = prepare_fixed_commitment(
@@ -395,7 +365,6 @@ impl<'a> PreparedCircuit<'a> {
             Arc::clone(&poseidon),
         )?;
         drop(preparation);
-        #[cfg(feature = "constraint-export")]
         let quotient = {
             let _preparation = HostOperation::new("quotient_preparation");
             quotient::PreparedQuotient::prepare(
@@ -407,12 +376,10 @@ impl<'a> PreparedCircuit<'a> {
                 fft.clone(),
             )?
         };
-        #[cfg(feature = "constraint-export")]
         let openings = {
             let _preparation = HostOperation::new("openings_preparation");
             openings::PreparedOpenings::prepare(context, common, &layout, options, extension)?
         };
-        #[cfg(feature = "constraint-export")]
         let fri = {
             let _preparation = HostOperation::new("fri_preparation");
             fri::PreparedFri::prepare(
@@ -425,18 +392,21 @@ impl<'a> PreparedCircuit<'a> {
                 fft,
             )?
         };
-        #[cfg(feature = "constraint-export")]
         let proof_tail = {
             let _preparation = HostOperation::new("proof_tail_preparation");
             proof_tail::PreparedProofTail::prepare(
                 context, circuit, &layout, options, pow, queries,
             )?
         };
-        let mut wire_workspace_fields = vec![representatives.len()];
+        let mut wire_workspace_field_counts = vec![representatives.len()];
         for &columns in &layout.batch_columns {
-            wire_workspace_fields.extend([degree * columns, degree * columns, rows * columns]);
+            wire_workspace_field_counts.extend([
+                degree * columns,
+                degree * columns,
+                rows * columns,
+            ]);
         }
-        wire_workspace_fields.extend(commitment.workspace_field_counts());
+        wire_workspace_field_counts.extend(commitment.workspace_field_counts());
         Ok(Self {
             circuit: source,
             layout,
@@ -446,15 +416,11 @@ impl<'a> PreparedCircuit<'a> {
             forward,
             commitment,
             fixed,
-            wire_workspace_fields,
+            wire_workspace_field_counts,
             permutation,
-            #[cfg(feature = "constraint-export")]
             quotient,
-            #[cfg(feature = "constraint-export")]
             openings,
-            #[cfg(feature = "constraint-export")]
             fri,
-            #[cfg(feature = "constraint-export")]
             proof_tail,
         })
     }
@@ -482,13 +448,11 @@ impl<'a> PreparedCircuit<'a> {
     /// One u64 per partition slot, including virtual targets. Representatives
     /// may live in virtual slots, so uploading only wire slots is insufficient.
     pub fn witness_upload_bytes(&self) -> u64 {
-        self.wire_workspace_fields[0] as u64 * 8
+        self.wire_workspace_field_counts[0] as u64 * 8
     }
     pub fn fixed_commitment(&self) -> &FixedCommitment {
         &self.fixed
     }
-
-    #[cfg(feature = "constraint-export")]
     pub fn quotient_plan(&self) -> &crate::QuotientPlan {
         &self.quotient.evaluation
     }
@@ -496,7 +460,7 @@ impl<'a> PreparedCircuit<'a> {
     /// Append these counts to the shared per-proof allocation plan. Other
     /// stages append their own counts and use the same ProofWorkspace/encoder.
     pub fn wire_workspace_field_counts(&self) -> &[usize] {
-        &self.wire_workspace_fields
+        &self.wire_workspace_field_counts
     }
 
     /// View the wire-stage allocation range, starting at first_buffer in the
@@ -507,7 +471,7 @@ impl<'a> PreparedCircuit<'a> {
         first_buffer: usize,
     ) -> Result<WireBuffers<'_, 'a>> {
         let buffers = self
-            .wire_workspace_fields
+            .wire_workspace_field_counts
             .iter()
             .enumerate()
             .map(|(index, &len)| {
@@ -531,7 +495,7 @@ impl<'a> PreparedCircuit<'a> {
         let scratch = 1 + 3 * self.layout.batch_columns.len();
         Ok(WireBuffers {
             prepared: self,
-            representatives: buffers[0].clone(),
+            witness_values: buffers[0].clone(),
             wires,
             coefficients,
             evaluations,
@@ -598,26 +562,37 @@ fn prepare_fixed_commitment(
     let width = oracle.polynomials.len();
     let mut coefficients = Vec::new();
     let mut evaluations = Vec::new();
+    let degree = oracle.polynomials[0].coeffs.len();
     for first in (0..width).step_by(capacity) {
         let end = (first + capacity).min(width);
-        let coeffs = oracle.polynomials[first..end]
-            .iter()
-            .flat_map(|p| p.coeffs.iter().copied())
-            .collect::<Vec<_>>();
-        coefficients.push(context.prepare_fixed(&coeffs)?);
-        let values = (first..end)
-            .flat_map(|column| (0..rows).map(move |row| oracle.get_lde_values(row, 1)[column]))
-            .collect::<Vec<_>>();
-        evaluations.push(context.prepare_fixed(&values)?);
+        coefficients.push(
+            context
+                .prepare_fixed_iter((0..(end - first) * degree).map(|index| {
+                    oracle.polynomials[first + index / degree].coeffs[index % degree]
+                }))?,
+        );
+        evaluations.push(
+            context.prepare_fixed_iter(
+                (0..(end - first) * rows)
+                    .map(|index| oracle.get_lde_values(index % rows, 1)[first + index / rows]),
+            )?,
+        );
     }
-    let tree_values = oracle
-        .merkle_tree
-        .digests
-        .iter()
-        .chain(&oracle.merkle_tree.cap.0)
-        .flat_map(|hash| hash.elements)
-        .collect::<Vec<_>>();
-    let tree = context.prepare_fixed(&tree_values)?;
+    let digests = &oracle.merkle_tree.digests;
+    let caps = &oracle.merkle_tree.cap.0;
+    let fields = digests
+        .len()
+        .checked_add(caps.len())
+        .and_then(|n| n.checked_mul(4))
+        .context("fixed tree size overflow")?;
+    let tree = context.prepare_fixed_iter((0..fields).map(|index| {
+        let hash = if index / 4 < digests.len() {
+            &digests[index / 4]
+        } else {
+            &caps[index / 4 - digests.len()]
+        };
+        hash.elements[index % 4]
+    }))?;
     let cap = tree.slice(tree.len() - 4 * oracle.merkle_tree.cap.0.len()..tree.len())?;
     Ok(FixedCommitment {
         coefficients,
@@ -633,7 +608,7 @@ fn prepare_fixed_commitment(
 /// These views pin allocations and are overwritten on workspace reuse.
 pub struct WireBuffers<'c, 'a> {
     prepared: &'c PreparedCircuit<'a>,
-    representatives: DeviceFieldSlice,
+    witness_values: DeviceFieldSlice,
     wires: Vec<DeviceFieldSlice>,
     coefficients: Vec<DeviceFieldSlice>,
     evaluations: Vec<DeviceFieldSlice>,
@@ -689,12 +664,26 @@ impl WireBuffers<'_, '_> {
         ensure!(
             partition.num_wires == prepared.circuit.common.config.num_wires
                 && partition.degree == prepared.degree()
-                && partition.values.len() == prepared.circuit.prover_only.representative_map.len()
                 && (std::ptr::eq(
                     partition.representative_map,
                     prepared.circuit.prover_only.representative_map.as_slice(),
                 ) || partition.representative_map
                     == prepared.circuit.prover_only.representative_map),
+            "partition witness does not match prepared circuit"
+        );
+        let num_targets = prepared.circuit.prover_only.representative_map.len();
+        let dense_values = match partition.dense_values_and_assignment_flags() {
+            Ok((values, assigned_flags)) => {
+                ensure!(
+                    values.len() == num_targets && assigned_flags.len() == num_targets,
+                    "partition witness does not match prepared circuit"
+                );
+                Some((values, assigned_flags))
+            }
+            Err(_) => None,
+        };
+        ensure!(
+            dense_values.is_some() || partition.values.len() == num_targets,
             "partition witness does not match prepared circuit"
         );
         let public_inputs = prepared
@@ -710,20 +699,34 @@ impl WireBuffers<'_, '_> {
             .collect::<Result<_>>()?;
         // CPU full_witness uses zero for unassigned partitions too. Do not
         // expand or transpose the wire matrix on the host.
-        let values = partition
-            .values
-            .into_iter()
-            .map(|value| value.unwrap_or(F::ZERO))
-            .collect::<Vec<_>>();
         let cap = prepared.commitment.cap(&self.tree)?;
-        encoder.upload(&self.representatives, &values)?;
+        match dense_values {
+            Some((values, assigned_flags)) => encoder.upload_iter(
+                &self.witness_values,
+                values.iter().zip(assigned_flags).map(|(value, assigned)| {
+                    // Generation has finished; the witness is exclusively owned here.
+                    if assigned.load(Ordering::Relaxed) != 0 {
+                        F::from_noncanonical_u64(value.load(Ordering::Relaxed))
+                    } else {
+                        F::ZERO
+                    }
+                }),
+            )?,
+            None => encoder.upload_iter(
+                &self.witness_values,
+                partition
+                    .values
+                    .into_iter()
+                    .map(|value| value.unwrap_or(F::ZERO)),
+            )?,
+        }
         for batch in 0..self.wires.len() {
             let bindings = encoder.bind(
                 &prepared.gather,
                 &[
                     FieldBinding::ReadWrite(&self.wires[batch]),
                     FieldBinding::Read((&prepared.wire_maps[batch]).into()),
-                    FieldBinding::Read((&self.representatives).into()),
+                    FieldBinding::Read((&self.witness_values).into()),
                 ],
                 "witness wire gathering",
             )?;

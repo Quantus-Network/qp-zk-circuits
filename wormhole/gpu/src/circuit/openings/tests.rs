@@ -9,12 +9,12 @@ fn opening_layout_matches_cpu_and_rejects_changed_protocol_structure() -> Result
     let common = &circuit.common;
     let layout = OpeningLayout::new(common)?;
     assert_eq!(
-        layout.all(),
+        layout.zeta_opening_count(),
         verifier_fri_instance(common, E::ONE).batches[0]
             .openings
             .len()
     );
-    assert_eq!(layout.next, common.config.num_challenges);
+    assert_eq!(layout.next_row_opening_count, common.config.num_challenges);
     let mut instance = verifier_fri_instance(common, E::ONE);
     instance.oracles[0].num_polys += 1;
     assert_eq!(
@@ -82,12 +82,15 @@ fn next_row_openings_and_composition_span_coefficient_batches() -> Result<()> {
         },
     )?;
     let plan = &prepared.openings;
-    assert_eq!(plan.next.len(), 2);
-    assert_eq!(plan.next[0].columns, 2);
-    assert_eq!(plan.next[1].columns, 1);
-    assert_eq!(plan.next[1].first_opening, plan.layout.all() + 2);
+    assert_eq!(plan.next_row_batches.len(), 2);
+    assert_eq!(plan.next_row_batches[0].columns, 2);
+    assert_eq!(plan.next_row_batches[1].columns, 1);
+    assert_eq!(
+        plan.next_row_batches[1].first_opening,
+        plan.layout.zeta_opening_count() + 2
+    );
     let degree = prepared.degree();
-    let polynomials = (0..plan.layout.all())
+    let polynomials = (0..plan.layout.zeta_opening_count())
         .map(|column| {
             PolynomialCoeffs::new(
                 (0..degree)
@@ -98,7 +101,7 @@ fn next_row_openings_and_composition_span_coefficient_batches() -> Result<()> {
         })
         .collect::<Vec<_>>();
     let mut counts = plan
-        .all
+        .zeta_batches
         .iter()
         .map(|batch| batch.columns * degree)
         .collect::<Vec<_>>();
@@ -113,7 +116,7 @@ fn next_row_openings_and_composition_span_coefficient_batches() -> Result<()> {
     let alpha = QuadraticExtension([F::from_canonical_u64(17), F::from_canonical_u64(23)]);
     let g = E::primitive_root_of_unity(circuit.common.degree_bits());
     let mut encoder = workspace.begin(&context)?;
-    for (batch, source) in plan.all.iter().zip(&sources) {
+    for (batch, source) in plan.zeta_batches.iter().zip(&sources) {
         let values = polynomials[batch.first_opening..batch.first_opening + batch.columns]
             .iter()
             .flat_map(|p| p.coeffs.iter().map(|coefficient| coefficient.0[0]))
@@ -128,8 +131,8 @@ fn next_row_openings_and_composition_span_coefficient_batches() -> Result<()> {
     // No transcript is needed for this focused oracle; alpha is fixed.
     let input = buffers.encode_fri_input(&mut encoder, &openings, alpha)?;
     encoder.submit()?.finish()?;
-    let zs_start = plan.layout.widths[0] + plan.layout.widths[1];
-    let next = &polynomials[zs_start..zs_start + plan.layout.next];
+    let zs_start = plan.layout.oracle_widths[0] + plan.layout.oracle_widths[1];
+    let next = &polynomials[zs_start..zs_start + plan.layout.next_row_opening_count];
     let expected = polynomials
         .iter()
         .map(|p| p.eval(zeta))

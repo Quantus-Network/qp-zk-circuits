@@ -36,6 +36,36 @@ fn quotient_domain_uses_strided_lde_points() -> Result<()> {
 }
 
 #[test]
+fn proof_tail_validates_reductions_without_fri_preparation() -> Result<()> {
+    let (mut circuit, _) = tiny_circuit();
+    let common = &mut circuit.common;
+    common.config.fri_config.cap_height = 0;
+    common.fri_params.config.cap_height = 0;
+    let bits = common.degree_bits();
+    let rows = common.degree() << common.config.fri_config.rate_bits;
+    let prepare = |common: &plonky2::plonk::circuit_data::CommonCircuitData<F, 2>| {
+        proof_tail::ProofTailLayout::new(common, rows, [1; 4], u64::MAX, 1)
+    };
+    for reductions in [vec![], vec![bits]] {
+        common.fri_params.reduction_arity_bits = reductions;
+        prepare(common)?;
+    }
+    for (reductions, expected) in [
+        (vec![usize::MAX], "FRI reduction arity overflow"),
+        (vec![usize::BITS as usize], "FRI reduction arity overflow"),
+        (vec![bits + 1], "invalid FRI reduction arity"),
+        (vec![bits, 1], "invalid FRI reduction arity"),
+    ] {
+        common.fri_params.reduction_arity_bits = reductions;
+        let error = prepare(common)
+            .err()
+            .expect("invalid FRI reduction was accepted");
+        assert_eq!(error.to_string(), expected);
+    }
+    Ok(())
+}
+
+#[test]
 fn preparation_rejects_unsupported_and_mismatched_circuit_data_without_gpu() {
     let (mut circuit, _) = tiny_circuit();
     let options = PreparationOptions::default();
@@ -46,7 +76,6 @@ fn preparation_rejects_unsupported_and_mismatched_circuit_data_without_gpu() {
             .expect("preparation must reject invalid input");
         assert_eq!(error.to_string(), message);
     };
-    #[cfg(feature = "constraint-export")]
     {
         circuit.common.fri_params.config.cap_height += 1;
         rejected(

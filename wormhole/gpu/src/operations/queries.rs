@@ -17,11 +17,11 @@ pub type MerkleQuery = (Vec<F>, MerkleProof<F, PoseidonHash>);
 pub struct MerkleQueryLayout {
     rows: usize,
     width: usize,
-    count: usize,
+    query_count: usize,
     depth: usize,
     shift: usize,
-    fields: usize,
-    tree_fields: usize,
+    field_count: usize,
+    tree_field_count: usize,
 }
 
 impl MerkleQueryLayout {
@@ -29,7 +29,7 @@ impl MerkleQueryLayout {
         rows: usize,
         width: usize,
         cap_height: usize,
-        count: usize,
+        query_count: usize,
         shift: usize,
     ) -> Result<Self> {
         ensure!(
@@ -41,34 +41,34 @@ impl MerkleQueryLayout {
         let stride = width
             .checked_add(depth * 4)
             .context("Merkle query stride overflow")?;
-        let fields = table_size(count, stride)?;
+        let field_count = table_size(query_count, stride)?;
         let caps = 1usize << cap_height;
         let nodes = rows
             .checked_mul(2)
             .context("Merkle query tree size overflow")?
             - caps;
-        let tree_fields = table_size(nodes, 4)?;
+        let tree_field_count = table_size(nodes, 4)?;
         Ok(Self {
             rows,
             width,
-            count,
+            query_count,
             depth,
             shift,
-            fields,
-            tree_fields,
+            field_count,
+            tree_field_count,
         })
     }
 
     pub fn field_count(&self) -> usize {
-        self.fields
+        self.field_count
     }
     pub fn query_count(&self) -> usize {
-        self.count
+        self.query_count
     }
 
     pub(crate) fn validate_limit(&self, limit: u64) -> Result<()> {
         ensure!(
-            self.fields as u64 * 8 <= limit && self.tree_fields as u64 * 8 <= limit,
+            self.field_count as u64 * 8 <= limit && self.tree_field_count as u64 * 8 <= limit,
             "Merkle query buffers exceed storage-binding limit"
         );
         Ok(())
@@ -76,7 +76,7 @@ impl MerkleQueryLayout {
 
     pub fn decode(&self, values: &[F]) -> Result<Vec<MerkleQuery>> {
         ensure!(
-            values.len() == self.fields,
+            values.len() == self.field_count,
             "Merkle query result shape mismatch"
         );
         Ok(values
@@ -123,7 +123,7 @@ impl MerkleQueryKernels {
 pub struct MerkleQueryPlan {
     kernels: Arc<MerkleQueryKernels>,
     layout: MerkleQueryLayout,
-    input_fields: Vec<usize>,
+    input_field_counts: Vec<usize>,
     params: Vec<KernelParams>,
     extension: bool,
 }
@@ -177,14 +177,14 @@ impl MerkleQueryPlan {
         )?;
         let mut first = 0;
         let mut params = Vec::new();
-        let mut input_fields = Vec::new();
+        let mut input_field_counts = Vec::new();
         for &count in columns {
-            input_fields.push(table_size(layout.rows, count)?);
+            input_field_counts.push(table_size(layout.rows, count)?);
             params.push(context.prepare_params([
                 layout.rows as u32,
                 layout.width as u32,
                 layout.depth as u32,
-                layout.count as u32,
+                layout.query_count as u32,
                 layout.shift as u32,
                 first as u32,
                 count as u32,
@@ -195,7 +195,7 @@ impl MerkleQueryPlan {
         Ok(Self {
             kernels,
             layout,
-            input_fields,
+            input_field_counts,
             params,
             extension,
         })
@@ -210,13 +210,13 @@ impl MerkleQueryPlan {
         output: &DeviceFieldSlice,
     ) -> Result<ResidentMerkleQueries> {
         ensure!(
-            challenges.len() == self.layout.count
-                && output.len() == self.layout.fields
-                && tree.len() == self.layout.tree_fields
-                && sources.len() == self.input_fields.len()
+            challenges.len() == self.layout.query_count
+                && output.len() == self.layout.field_count
+                && tree.len() == self.layout.tree_field_count
+                && sources.len() == self.input_field_counts.len()
                 && sources
                     .iter()
-                    .zip(&self.input_fields)
+                    .zip(&self.input_field_counts)
                     .all(|(source, &count)| source.len() == count),
             "Merkle query buffer shape mismatch"
         );
@@ -239,7 +239,7 @@ impl MerkleQueryPlan {
             encoder.dispatch_elements(
                 kernel,
                 &bindings,
-                self.layout.count,
+                self.layout.query_count,
                 "query leaf gathering",
             )?;
         }
@@ -256,7 +256,7 @@ impl MerkleQueryPlan {
         encoder.dispatch_elements(
             &self.kernels.paths,
             &bindings,
-            self.layout.count,
+            self.layout.query_count,
             "query path gathering",
         )?;
         Ok(ResidentMerkleQueries {

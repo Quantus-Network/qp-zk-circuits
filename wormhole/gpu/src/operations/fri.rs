@@ -39,7 +39,8 @@ impl FriKernels {
 }
 
 /// Reduce arity-sized coefficient groups with successive powers of beta.
-/// Input and output use real/extension component planes and may not alias.
+/// Input and output store all first base-field components followed by all second
+/// components. The buffers may not alias.
 /// Known zero LDE padding is omitted, as in the zero-padded FFT operation.
 pub struct FriFoldPlan {
     kernels: Arc<FriKernels>,
