@@ -126,23 +126,26 @@ impl TimestampBuffers {
         });
     }
 
-    pub(super) fn collect(&mut self, context: &DeviceContext, wait: bool) -> Result<()> {
+    /// Returns false while a nonblocking collection is pending.
+    pub(super) fn collect(&mut self, context: &DeviceContext, wait: bool) -> Result<bool> {
         let Some(pending) = self.pending.as_ref() else {
-            return Ok(());
+            return Ok(true);
         };
-        if wait {
+        let result = if wait {
             // GPU polling can deliver map callbacks on a different thread.
             pending
                 .mapped
                 .recv()
-                .context("wait for timestamp export callback")??;
+                .context("wait for timestamp export callback")
         } else {
-            pending
-                .mapped
-                .try_recv()
-                .context("timestamp export is pending; wait for the workspace")??;
-        }
+            match pending.mapped.try_recv() {
+                Ok(result) => Ok(result),
+                Err(std::sync::mpsc::TryRecvError::Empty) => return Ok(false),
+                Err(error) => Err(error).context("receive timestamp export callback"),
+            }
+        };
         let pending = self.pending.take().unwrap();
+        result?.context("map timestamp export")?;
         let _operation = crate::profiling::HostOperation::new("timestamp_collection");
         let mapped = self
             .staging
@@ -174,7 +177,7 @@ impl TimestampBuffers {
         });
         drop(mapped);
         self.staging.unmap();
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -300,6 +303,34 @@ mod tests {
             .filter_map(|(ns, _)| *ns)
             .all(|ns| ns >= 0.0 && ns.is_finite()));
         assert!(samples.iter().any(|(ns, _)| ns.is_some_and(|ns| ns > 0.0)));
+        drop(samples);
+
+        for wait in [false, true] {
+            let mut workspace = ProofWorkspace::prepare(&context, &[1])?;
+            let (sender, mapped) = std::sync::mpsc::channel();
+            workspace.timestamps.as_mut().unwrap().pending = Some(PendingTimestamps {
+                labels: vec!["test"],
+                mapped,
+                span: tracing::Span::none(),
+                dispatcher: tracing::dispatcher::get_default(Clone::clone),
+            });
+            assert!(workspace.begin(&context).is_err());
+            assert!(workspace.timestamps.as_ref().unwrap().has_pending());
+            assert!(matches!(workspace.completion, Completion::Ready));
+
+            sender.send(Err(wgpu::BufferAsyncError))?;
+            let error = if wait {
+                workspace.wait(&context).unwrap_err()
+            } else {
+                workspace.begin(&context).map(drop).unwrap_err()
+            };
+            assert_eq!(error.to_string(), "map timestamp export");
+            assert!(!workspace.timestamps.as_ref().unwrap().has_pending());
+            assert!(matches!(workspace.completion, Completion::Poisoned));
+            assert!(workspace.begin(&context).is_err());
+            assert!(workspace.wait(&context).is_err());
+            context.check_device()?;
+        }
         Ok(())
     }
 }

@@ -691,7 +691,7 @@ impl Completion {
                 Ok(())
             }
             Self::Pending(_) => anyhow::bail!("proof workspace is still in use by the GPU"),
-            Self::Poisoned => anyhow::bail!("proof workspace was invalidated by device failure"),
+            Self::Poisoned => anyhow::bail!("proof workspace is invalidated"),
         }
     }
 }
@@ -790,7 +790,7 @@ impl ProofWorkspace {
         );
         ensure!(
             !matches!(self.completion, Completion::Poisoned),
-            "proof workspace was invalidated by device failure"
+            "proof workspace is invalidated"
         );
         let wait = HostOperation::new("wait");
         if let Err(error) = context.check_device().and_then(|_| {
@@ -817,10 +817,7 @@ impl ProofWorkspace {
         }
         self.completion.reclaim()?;
         drop(wait);
-        if let Some(timestamps) = &mut self.timestamps {
-            timestamps.collect(context, true)?;
-        }
-        Ok(())
+        self.collect_timestamps(context, true)
     }
 
     pub fn begin<'a>(&'a mut self, context: &'a DeviceContext) -> Result<ProofEncoder<'a>> {
@@ -836,9 +833,7 @@ impl ProofWorkspace {
             return Err(error);
         }
         self.completion.reclaim()?;
-        if let Some(timestamps) = &mut self.timestamps {
-            timestamps.collect(context, false)?;
-        }
+        self.collect_timestamps(context, false)?;
         let command_budget = MetalCommandBufferBudget::new(context.command_buffers.clone())?;
         let commands = context.device.create_command_encoder(&Default::default());
         context.check_device()?;
@@ -853,6 +848,20 @@ impl ProofWorkspace {
                 .then(std::time::Instant::now),
             timestamp_labels: Vec::new(),
         })
+    }
+
+    fn collect_timestamps(&mut self, context: &DeviceContext, wait: bool) -> Result<()> {
+        if let Some(timestamps) = &mut self.timestamps {
+            let ready = match timestamps.collect(context, wait) {
+                Ok(ready) => ready,
+                Err(error) => {
+                    self.completion = Completion::Poisoned;
+                    return Err(error);
+                }
+            };
+            ensure!(ready, "timestamp export is pending; wait for the workspace");
+        }
+        Ok(())
     }
 }
 
