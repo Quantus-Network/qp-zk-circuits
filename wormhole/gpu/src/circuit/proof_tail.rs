@@ -1,3 +1,4 @@
+use super::fri::reduction_arity;
 use super::oracle::workspace_views;
 use super::*;
 use crate::{
@@ -35,12 +36,13 @@ impl ProofTailLayout {
             .map(|width| MerkleQueryLayout::new(rows, width, cap, count, 0))
             .collect::<Result<Vec<_>>>()?;
         let mut fri = Vec::new();
+        let mut coefficients = common.degree();
         let mut evaluations = rows;
         let mut shift = 0;
-        // FriLayout has already validated these arities and domain sizes.
         for &bits in &common.fri_params.reduction_arity_bits {
-            let arity = 1usize << bits;
+            let arity = reduction_arity(bits, coefficients)?;
             shift += bits;
+            coefficients /= arity;
             evaluations /= arity;
             fri.push((
                 MerkleQueryLayout::new(evaluations, arity * 2, cap, count, shift)?,

@@ -28,7 +28,7 @@ jobs:
       # workflow branch the run was dispatched from.
       - name: Overlay publish script from the workflow ref
         run: |
-          git fetch origin "${{ github.ref }}"
+          git fetch origin "$GITHUB_REF"
           git checkout FETCH_HEAD -- .github/scripts/publish-crates.sh
 
       - uses: ./.github/actions/ubuntu
