@@ -135,7 +135,13 @@ impl PreparedCircuit<'_> {
 
         let phase = enter_phase("quotient", None);
         let mut encoder = workspace.begin(context)?;
-        let quotient = quotient.encode(&mut encoder, &wires, &products, &alphas)?;
+        let quotient = quotient.encode(
+            &mut encoder,
+            &wires,
+            &public_inputs_hash,
+            &products,
+            &alphas,
+        )?;
         encoder
             .submit()?
             .finish()
