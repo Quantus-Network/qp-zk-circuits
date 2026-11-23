@@ -185,9 +185,7 @@ pub(super) struct PreparedOpenings {
     next: Vec<CoefficientBatch>,
     division: [LinearDivisionPlan; 2],
     subgroup_generator: F,
-    weights: PreparedKernel,
     merge: PreparedKernel,
-    params: KernelParams,
     merge_params: [KernelParams; 2],
     eval_scratch: usize,
 }
@@ -296,18 +294,6 @@ impl PreparedOpenings {
         ];
         fields.extend(eval_counts);
         fields.extend_from_slice(division[0].workspace_field_counts());
-        let source = format!(
-            "{FIELD}\n{EXTENSION}\n{}",
-            include_str!("../shaders/opening_parameters.wgsl")
-        );
-        let weights = PreparedKernel::prepare_entry(
-            context,
-            &source,
-            &[write(2), read(2)],
-            "opening weights",
-            "weights",
-            true,
-        )?;
         let merge = PreparedKernel::prepare_entry(
             context,
             &format!(
@@ -320,12 +306,6 @@ impl PreparedOpenings {
             true,
         )?;
         Ok(Self {
-            params: context.prepare_params([
-                description.all() as u32,
-                description.next as u32,
-                0,
-                0,
-            ])?,
             merge_params: [
                 context.prepare_params([layout.degree as u32, description.all() as u32, 0, 0])?,
                 context.prepare_params([layout.degree as u32, description.next as u32, 1, 0])?,
@@ -336,7 +316,6 @@ impl PreparedOpenings {
             next,
             division,
             subgroup_generator: F::primitive_root_of_unity(common.degree_bits()),
-            weights,
             merge,
             eval_scratch,
         })
@@ -497,21 +476,15 @@ impl OpeningBuffers<'_, '_> {
             "openings belong to another prepared circuit"
         );
         encoder.upload(&openings.scalars, &alpha.0)?;
-        let bindings = encoder.bind_with_params(
-            &plan.weights,
-            &[
-                FieldBinding::ReadWrite(&self.weights),
-                FieldBinding::Read((&openings.scalars).into()),
-            ],
-            Some(&plan.params),
-            "opening weights",
-        )?;
-        encoder.dispatch_elements(
-            &plan.weights,
-            &bindings,
-            plan.layout.total(),
-            "opening weights",
-        )?;
+        let mut weights = Vec::with_capacity(plan.layout.total() * 2);
+        for count in [plan.layout.all(), plan.layout.next] {
+            let mut power = E::ONE;
+            for _ in 0..count {
+                weights.extend_from_slice(&power.0);
+                power *= alpha;
+            }
+        }
+        encoder.upload(&self.weights, &weights)?;
         for (index, batches) in [&plan.all, &plan.next].into_iter().enumerate() {
             for batch in batches {
                 batch.combination.encode(
