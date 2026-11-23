@@ -35,7 +35,7 @@ fn search(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) gro
         let offset = block * 64u + lane;
         if offset >= dims.y { continue; }
         let nonce = snapshot[13] + u64(offset);
-        if nonce >= 0xffffffff00000001lu { continue; }
+        if nonce >= P64 { continue; }
         if trial_response(nonce) <= threshold { atomicMin(&winner[0], offset); }
     }
 }
