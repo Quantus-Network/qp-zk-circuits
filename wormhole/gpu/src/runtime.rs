@@ -660,9 +660,25 @@ fn validate_binding_range(
     Ok(())
 }
 
+struct PendingCompletion {
+    done: Arc<AtomicBool>,
+    callback: std::sync::mpsc::Receiver<()>,
+}
+
+impl PendingCompletion {
+    fn wait(&self) -> Result<()> {
+        if !self.done.load(Ordering::Acquire) {
+            self.callback
+                .recv()
+                .context("wait for workspace completion callback")?;
+        }
+        Ok(())
+    }
+}
+
 enum Completion {
     Ready,
-    Pending(Arc<AtomicBool>),
+    Pending(PendingCompletion),
     Poisoned,
 }
 
@@ -670,7 +686,7 @@ impl Completion {
     fn reclaim(&mut self) -> Result<()> {
         match self {
             Self::Ready => Ok(()),
-            Self::Pending(done) if done.load(Ordering::Acquire) => {
+            Self::Pending(pending) if pending.done.load(Ordering::Acquire) => {
                 *self = Self::Ready;
                 Ok(())
             }
@@ -789,7 +805,12 @@ impl ProofWorkspace {
                     .poll(wgpu::PollType::wait_indefinitely())
                     .context("wait for proof workspace")?;
             }
-            context.check_device()
+            context.check_device()?;
+            if let Completion::Pending(pending) = &self.completion {
+                // Another polling thread may still be delivering this callback.
+                pending.wait()?;
+            }
+            Ok(())
         }) {
             self.completion = Completion::Poisoned;
             return Err(error);
@@ -797,7 +818,7 @@ impl ProofWorkspace {
         self.completion.reclaim()?;
         drop(wait);
         if let Some(timestamps) = &mut self.timestamps {
-            timestamps.collect(context)?;
+            timestamps.collect(context, true)?;
         }
         Ok(())
     }
@@ -816,7 +837,7 @@ impl ProofWorkspace {
         }
         self.completion.reclaim()?;
         if let Some(timestamps) = &mut self.timestamps {
-            timestamps.collect(context)?;
+            timestamps.collect(context, false)?;
         }
         let command_budget = MetalCommandBufferBudget::new(context.command_buffers.clone())?;
         let commands = context.device.create_command_encoder(&Default::default());
@@ -1267,11 +1288,16 @@ impl<'a> ProofEncoder<'a> {
         context.queue.submit([commands]);
         let done = Arc::new(AtomicBool::new(false));
         let callback = Arc::clone(&done);
+        let (notify, notified) = std::sync::mpsc::channel();
         context.queue.on_submitted_work_done(move || {
             drop(command_budget);
             callback.store(true, Ordering::Release);
+            let _ = notify.send(());
         });
-        workspace.completion = Completion::Pending(done);
+        workspace.completion = Completion::Pending(PendingCompletion {
+            done,
+            callback: notified,
+        });
         if !timestamp_labels.is_empty() {
             workspace
                 .timestamps
@@ -1462,15 +1488,42 @@ mod tests {
     #[test]
     fn cancellation_does_not_release_pending_work() {
         let done = Arc::new(AtomicBool::new(false));
-        let mut state = Completion::Pending(Arc::clone(&done));
+        let (_notify, callback) = std::sync::mpsc::channel();
+        let mut state = Completion::Pending(PendingCompletion {
+            done: Arc::clone(&done),
+            callback,
+        });
         assert!(state.reclaim().is_err());
         done.store(true, Ordering::Release);
         state.reclaim().unwrap();
         let next = Arc::new(AtomicBool::new(false));
-        state = Completion::Pending(next);
+        let (_notify, callback) = std::sync::mpsc::channel();
+        state = Completion::Pending(PendingCompletion {
+            done: next,
+            callback,
+        });
         assert!(state.reclaim().is_err());
         state = Completion::Poisoned;
         assert!(state.reclaim().is_err());
+    }
+
+    #[test]
+    fn completion_wait_accepts_callback_delivery_from_another_thread() -> Result<()> {
+        let done = Arc::new(AtomicBool::new(false));
+        let (notify, callback) = std::sync::mpsc::channel();
+        let pending = PendingCompletion {
+            done: Arc::clone(&done),
+            callback,
+        };
+        let complete = std::thread::spawn(move || {
+            done.store(true, Ordering::Release);
+            notify.send(()).unwrap();
+        });
+        pending.wait()?;
+        assert!(pending.done.load(Ordering::Acquire));
+        complete.join().unwrap();
+        Completion::Pending(pending).reclaim()?;
+        Ok(())
     }
 
     #[test]

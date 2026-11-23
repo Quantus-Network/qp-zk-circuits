@@ -126,14 +126,22 @@ impl TimestampBuffers {
         });
     }
 
-    pub(super) fn collect(&mut self, context: &DeviceContext) -> Result<()> {
+    pub(super) fn collect(&mut self, context: &DeviceContext, wait: bool) -> Result<()> {
         let Some(pending) = self.pending.as_ref() else {
             return Ok(());
         };
-        pending
-            .mapped
-            .try_recv()
-            .context("timestamp export is pending; wait for the workspace")??;
+        if wait {
+            // GPU polling can deliver map callbacks on a different thread.
+            pending
+                .mapped
+                .recv()
+                .context("wait for timestamp export callback")??;
+        } else {
+            pending
+                .mapped
+                .try_recv()
+                .context("timestamp export is pending; wait for the workspace")??;
+        }
         let pending = self.pending.take().unwrap();
         let _operation = crate::profiling::HostOperation::new("timestamp_collection");
         let mapped = self
