@@ -249,8 +249,16 @@ impl DeviceContext {
     /// view is shared across workspaces and has no upload/write API. Its backing
     /// allocation permits storage reads and debug export, but not copy writes.
     pub fn prepare_fixed(&self, values: &[GoldilocksField]) -> Result<FixedFieldSlice> {
+        self.prepare_fixed_iter(values.iter().copied())
+    }
+
+    pub(crate) fn prepare_fixed_iter(
+        &self,
+        values: impl ExactSizeIterator<Item = GoldilocksField>,
+    ) -> Result<FixedFieldSlice> {
         self.check_device()?;
-        let size = field_bytes(values.len())?;
+        let len = values.len();
+        let size = field_bytes(len)?;
         let limits = self.limits();
         ensure!(
             size > 0
@@ -267,7 +275,7 @@ impl DeviceContext {
         self.check_device()?;
         {
             let mut mapped = buffer.slice(..).get_mapped_range_mut();
-            for (value, bytes) in values.iter().zip(mapped.chunks_exact_mut(8)) {
+            for (value, bytes) in values.zip(mapped.chunks_exact_mut(8)) {
                 bytes.copy_from_slice(&value.to_canonical_u64().to_le_bytes());
             }
         }
@@ -279,7 +287,7 @@ impl DeviceContext {
             device_id: self.id,
             buffer,
             offset: 0,
-            len: values.len(),
+            len,
         })
     }
 

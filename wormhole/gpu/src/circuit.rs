@@ -368,15 +368,13 @@ impl<'a> PreparedCircuit<'a> {
             .batch_columns
             .iter()
             .map(|&columns| {
-                let map = (first_column..first_column + columns)
-                    .flat_map(|column| {
-                        (0..degree).map(move |row| {
-                            F::from_canonical_usize(representatives[row * width + column])
-                        })
-                    })
-                    .collect::<Vec<_>>();
+                let first = first_column;
                 first_column += columns;
-                context.prepare_fixed(&map)
+                context.prepare_fixed_iter((0..columns * degree).map(|index| {
+                    let column = first + index / degree;
+                    let row = index % degree;
+                    F::from_canonical_usize(representatives[row * width + column])
+                }))
             })
             .collect::<Result<_>>()?;
         let fixed = prepare_fixed_commitment(
@@ -598,26 +596,37 @@ fn prepare_fixed_commitment(
     let width = oracle.polynomials.len();
     let mut coefficients = Vec::new();
     let mut evaluations = Vec::new();
+    let degree = oracle.polynomials[0].coeffs.len();
     for first in (0..width).step_by(capacity) {
         let end = (first + capacity).min(width);
-        let coeffs = oracle.polynomials[first..end]
-            .iter()
-            .flat_map(|p| p.coeffs.iter().copied())
-            .collect::<Vec<_>>();
-        coefficients.push(context.prepare_fixed(&coeffs)?);
-        let values = (first..end)
-            .flat_map(|column| (0..rows).map(move |row| oracle.get_lde_values(row, 1)[column]))
-            .collect::<Vec<_>>();
-        evaluations.push(context.prepare_fixed(&values)?);
+        coefficients.push(
+            context
+                .prepare_fixed_iter((0..(end - first) * degree).map(|index| {
+                    oracle.polynomials[first + index / degree].coeffs[index % degree]
+                }))?,
+        );
+        evaluations.push(
+            context.prepare_fixed_iter(
+                (0..(end - first) * rows)
+                    .map(|index| oracle.get_lde_values(index % rows, 1)[first + index / rows]),
+            )?,
+        );
     }
-    let tree_values = oracle
-        .merkle_tree
-        .digests
-        .iter()
-        .chain(&oracle.merkle_tree.cap.0)
-        .flat_map(|hash| hash.elements)
-        .collect::<Vec<_>>();
-    let tree = context.prepare_fixed(&tree_values)?;
+    let digests = &oracle.merkle_tree.digests;
+    let caps = &oracle.merkle_tree.cap.0;
+    let fields = digests
+        .len()
+        .checked_add(caps.len())
+        .and_then(|n| n.checked_mul(4))
+        .context("fixed tree size overflow")?;
+    let tree = context.prepare_fixed_iter((0..fields).map(|index| {
+        let hash = if index / 4 < digests.len() {
+            &digests[index / 4]
+        } else {
+            &caps[index / 4 - digests.len()]
+        };
+        hash.elements[index % 4]
+    }))?;
     let cap = tree.slice(tree.len() - 4 * oracle.merkle_tree.cap.0.len()..tree.len())?;
     Ok(FixedCommitment {
         coefficients,

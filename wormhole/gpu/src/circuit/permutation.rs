@@ -112,16 +112,12 @@ impl PreparedPermutation {
         for &columns in &layout.batch_columns {
             let count = columns.min(routed.saturating_sub(first));
             if count > 0 {
-                let values = (first..first + count)
-                    .flat_map(|column| {
-                        circuit
-                            .prover_only
-                            .sigmas
-                            .iter()
-                            .map(move |row| row[column])
-                    })
-                    .collect::<Vec<_>>();
-                sigmas.push(context.prepare_fixed(&values)?);
+                sigmas.push(context.prepare_fixed_iter((0..count * layout.degree).map(
+                    |index| {
+                        circuit.prover_only.sigmas[index % layout.degree]
+                            [first + index / layout.degree]
+                    },
+                ))?);
                 fold_params.push(context.prepare_params([
                     layout.degree as u32,
                     columns as u32,
