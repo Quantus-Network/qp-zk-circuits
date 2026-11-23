@@ -148,7 +148,7 @@ jobs:
     timeout-minutes: 30
     env:
       # qp-plonky2 commit whose constraint-exporter readers describe the circuits on this
-      # branch (Quantus-Network/qp-plonky2#126, #137). Bump it together with any change to
+      # branch (Quantus-Network/qp-plonky2#126, #138). Bump it together with any change to
       # the traced gadget-call order or the trace format; the readers fail closed on a
       # mismatch.
       QP_PLONKY2_REF: 1a59ea27335f94f1cc68b3b1a8cd0b6d56dc6aae
