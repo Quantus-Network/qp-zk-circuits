@@ -1148,36 +1148,32 @@ fn wrapper_only_n2_builds_without_verifiers() {
 }
 
 /// Records the `(n_leaf, n_slots)` wrapper's gadget calls and constraint system for the
-/// Lean constraint exporter (`qp-plonky2/constraint-exporter`, PLAN.md Steps 8c and 8e) and
-/// checks the trace `formal/traces/private_batch_wrapper_n{n_leaf}.json` is current.
-/// Regenerate with `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib
-/// private_batch_wrapper_n`.
+/// Lean constraint exporter (`qp-plonky2/constraint-exporter`, PLAN.md Steps 8c, 8e and 19)
+/// and checks the trace `formal/traces/private_batch_wrapper_n{n_leaf}.json` is current.
+/// Regenerate with `UPDATE_FORMAL_TRACE=1 cargo test --release -p qp-wormhole-aggregator
+/// --lib private_batch_wrapper_n`.
 ///
-/// The file name carries the leaf count only; the exit-slot count is in the trace.
-/// `n = 2` and `n = 4` are recorded with `n_slots = n_leaf`. The production trace is
-/// `(NUM_LEAF_PROOFS, NUM_EXIT_SLOTS) = (8, 32)`.
+/// The builder traced is the production one: the canonical leaf verifiers are added first,
+/// exactly as `PrivateBatchCircuit::new` does, and the resulting builder state is checked
+/// against that constructor's. The file name carries the leaf count only; the exit-slot
+/// count is in the trace. `n = 2` and `n = 4` are recorded with `n_slots = n_leaf`. The
+/// production trace is `(NUM_LEAF_PROOFS, NUM_EXIT_SLOTS) = (8, 32)`.
 fn check_private_batch_wrapper_trace(n_leaf: usize, n_slots: usize) {
-    use zk_circuits_common::formal_trace::{Trace, TracingBuilder};
+    use crate::common::{recursive::add_recursive_verifiers, utils::canonical_leaf_verifier_data};
+    use zk_circuits_common::formal_trace::{state_digest, TracingBuilder};
 
-    let leaf = build_fake_leaf_circuit().0;
+    let leaf = canonical_leaf_verifier_data();
     let shape = PrivateBatchShape::new(n_leaf, n_slots);
-    let mut tracing = TracingBuilder::new(wormhole_private_batch_circuit_config());
-
-    // Where production runs `add_recursive_verifiers` under the leaf verifier key.
-    let leaf_proofs: Vec<_> = (0..n_leaf)
-        .map(|_| {
-            let proof = tracing.inner.add_virtual_proof_with_pis(&leaf.common);
-            tracing.verify_proof("leaf_circuit", &proof);
-            proof
-        })
-        .collect();
-    let rows_before = tracing.inner.num_gates();
+    let mut builder = CircuitBuilder::<F, D>::new(wormhole_private_batch_circuit_config());
+    let leaf_proofs =
+        add_recursive_verifiers::<F, C, D>(&mut builder, &leaf.common, &leaf.verifier_only, n_leaf)
+            .unwrap();
+    let mut tracing = TracingBuilder::over(builder);
+    for proof in &leaf_proofs {
+        tracing.verifier("leaf_circuit", proof);
+    }
     let targets = PrivateBatchCircuitTargets::allocate(&mut tracing, leaf_proofs, shape);
     super::build_private_batch_constraints(&mut tracing, &targets);
-    assert_eq!(
-        rows_before, 0,
-        "wrapper rows must start at 0 for the exporter"
-    );
 
     let mut named = Vec::new();
     for (i, proof) in targets.leaf_proofs.iter().enumerate() {
@@ -1193,28 +1189,24 @@ fn check_private_batch_wrapper_trace(n_leaf: usize, n_slots: usize) {
     }
     let name = format!("private_batch_wrapper_n{n_leaf}");
     let trace = tracing.trace(&name, named);
-    let json = trace.to_json();
-    let round_trip = Trace::from_json(&json).expect("trace round-trips");
-    assert_eq!(round_trip.to_json(), json);
-    println!(
-        "wrapper trace n={n_leaf}: rows={} copies={} calls={}",
-        trace.rows.len(),
-        trace.copies.len(),
-        trace.calls.len()
-    );
 
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(format!("../../formal/traces/{name}.json"));
-    if std::env::var_os("UPDATE_FORMAL_TRACE").is_some() {
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, &json).unwrap();
-    }
-    let checked_in = std::fs::read_to_string(&path).unwrap_or_default();
-    assert!(
-        checked_in == json,
-        "formal/traces/{name}.json is stale; regenerate with \
-         UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib \
-         private_batch_wrapper_n"
+    let production = PrivateBatchCircuit::new(
+        wormhole_private_batch_circuit_config(),
+        &leaf.common,
+        &leaf.verifier_only,
+        shape,
+    )
+    .unwrap();
+    assert_eq!(
+        trace.digest,
+        state_digest(production.builder()),
+        "traced builder is not the production {name} builder"
+    );
+    trace.assert_current(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../../formal/traces/{name}.json")),
+        "UPDATE_FORMAL_TRACE=1 cargo test --release -p qp-wormhole-aggregator --lib \
+         private_batch_wrapper_n",
     );
 }
 

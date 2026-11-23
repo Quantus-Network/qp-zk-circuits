@@ -200,6 +200,11 @@ impl PrivateBatchCircuit {
     pub fn num_gates(&self) -> usize {
         self.builder.num_gates()
     }
+
+    /// The builder's pre-`build` state.
+    pub fn builder(&self) -> &CircuitBuilder<F, D> {
+        &self.builder
+    }
 }
 
 /// The wrapper logic, written against [`GadgetBuilder`] so the `formal-export` tracing
