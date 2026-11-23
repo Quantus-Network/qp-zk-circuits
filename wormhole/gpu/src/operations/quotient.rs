@@ -226,7 +226,22 @@ impl QuotientLayout {
 }
 
 fn row_source(body: &str, columns: usize) -> String {
-    format!("{FIELD}\n@group(0) @binding(0) var<storage,read_write> output:array<u64>;\n@group(0) @binding(1) var<storage,read> table:array<u64>;\n@group(0) @binding(2) var<storage,read> scalars:array<u64>;\n@group(0) @binding(3) var<storage,read> weights:array<u64>;\n@group(0) @binding(4) var<uniform> dims:vec4<u32>;\nfn read(column:u32,row:u32)->u64 {{ return table[column*dims.x+row]; }}\nfn sub(a:u64,b:u64)->u64 {{ return gf64_add(a,P64-gf64_canon(b)); }}\n@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) gid:vec3<u32>) {{ let row=gid.x+gid.y*2097152u; if(row>=dims.x || {columns}u==0u){{return;}}\n{body}\n}}")
+    format!(
+        r"{FIELD}
+@group(0) @binding(0) var<storage, read_write> output: array<u64>;
+@group(0) @binding(1) var<storage, read> table: array<u64>;
+@group(0) @binding(2) var<storage, read> scalars: array<u64>;
+@group(0) @binding(3) var<storage, read> weights: array<u64>;
+@group(0) @binding(4) var<uniform> dims: vec4<u32>;
+fn read(column: u32,row: u32) -> u64 {{ return table[column*dims.x+row]; }}
+fn sub(a: u64,b: u64) -> u64 {{ return gf64_add(a,P64-gf64_canon(b)); }}
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
+    let row=gid.x+gid.y*2097152u;
+    if(row>=dims.x || {columns}u==0u){{return;}}
+{body}
+}}"
+    )
 }
 
 fn permutation_body(common: &CommonCircuitData<F, 2>, layout: &QuotientLayout) -> String {
