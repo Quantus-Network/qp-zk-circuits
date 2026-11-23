@@ -26,9 +26,9 @@
 //! Hardware execution check (Metal on macOS, Vulkan elsewhere):
 //! `cargo test --release -p qp-wormhole-gpu --features gpu --lib -- --ignored`.
 //! These are small execution and CPU-parity checks, not proof benchmarks.
-//! The aggregator crate's `prepare_public_batch` example measures initialization
-//! with the actual public-batch circuit, including specialized quotient pipelines;
-//! it generates no proof.
+//! The `prepare_circuit` example prepares a small circuit and allocates its
+//! reusable proving workspace:
+//! `cargo run -p qp-wormhole-gpu --features gpu --example prepare_circuit`.
 //!
 //! Profiling emits DEBUG spans/events through `tracing`; callers choose a
 //! subscriber and output format. Proving signatures are unchanged. Host wall

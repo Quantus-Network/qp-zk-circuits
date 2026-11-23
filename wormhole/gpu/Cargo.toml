@@ -41,3 +41,7 @@ workspace = true
 harness = false
 name = "kernels"
 required-features = ["gpu"]
+
+[[example]]
+name = "prepare_circuit"
+required-features = ["gpu"]
