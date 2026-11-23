@@ -139,6 +139,11 @@ impl PublicBatchCircuit {
     pub fn num_gates(&self) -> usize {
         self.builder.num_gates()
     }
+
+    /// The builder's pre-`build` state.
+    pub fn builder(&self) -> &CircuitBuilder<F, D> {
+        &self.builder
+    }
 }
 
 /// Build the public-batch wrapper constraints and register output public inputs.

@@ -206,6 +206,11 @@ pub mod circuit_logic {
         pub fn num_gates(&self) -> usize {
             self.builder.num_gates()
         }
+
+        /// The builder's pre-`build` state.
+        pub fn builder(&self) -> &CircuitBuilder<F, D> {
+            &self.builder
+        }
     }
 
     /// Every constraint of the leaf circuit on already-allocated targets, in the order the

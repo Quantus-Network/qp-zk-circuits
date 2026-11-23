@@ -6,12 +6,14 @@
 
 use plonky2::field::types::PrimeField64;
 use plonky2::iop::target::Target;
-use qp_wormhole_circuit::circuit::circuit_logic::{build_leaf_constraints, CircuitTargets};
+use qp_wormhole_circuit::circuit::circuit_logic::{
+    build_leaf_constraints, CircuitTargets, WormholeCircuit,
+};
 use qp_wormhole_circuit::nullifier::NULLIFIER_SALT;
 use qp_wormhole_circuit::unspendable_account::UNSPENDABLE_SALT;
 use zk_circuits_common::{
     circuit::wormhole_leaf_circuit_config,
-    formal_trace::{Trace, TracingBuilder},
+    formal_trace::{state_digest, TracingBuilder},
     utils::string_to_felts,
 };
 
@@ -88,27 +90,15 @@ fn leaf_circuit_trace_is_current() {
     named.push(("header_digest".into(), header.digest.to_vec()));
 
     let trace = tracing.trace("leaf_circuit", named);
-    let json = trace.to_json();
-    let round_trip = Trace::from_json(&json).expect("trace round-trips");
-    assert_eq!(round_trip.to_json(), json);
-    println!(
-        "leaf trace: rows={} copies={} calls={} public_inputs={}",
-        trace.rows.len(),
-        trace.copies.len(),
-        trace.calls.len(),
-        trace.public_inputs.len()
+    let production = WormholeCircuit::new(wormhole_leaf_circuit_config()).unwrap();
+    assert_eq!(
+        trace.digest,
+        state_digest(production.builder()),
+        "traced builder is not the production leaf builder"
     );
-
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../formal/traces/leaf_circuit.json");
-    if std::env::var_os("UPDATE_FORMAL_TRACE").is_some() {
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, &json).unwrap();
-    }
-    let checked_in = std::fs::read_to_string(&path).unwrap_or_default();
-    assert!(
-        checked_in == json,
-        "formal/traces/leaf_circuit.json is stale; regenerate with \
-         UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-circuit --test formal_trace"
+    trace.assert_current(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../formal/traces/leaf_circuit.json"),
+        "UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-circuit --test formal_trace",
     );
 }

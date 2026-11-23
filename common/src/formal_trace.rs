@@ -1,20 +1,39 @@
 //! Gadget-call traces for the formal constraint exporter (`qp-plonky2/constraint-exporter`,
-//! PLAN.md Step 8c).
+//! PLAN.md Steps 8c and 19).
 //!
 //! [`TracingBuilder`] implements [`GadgetBuilder`] over a real `CircuitBuilder` and records,
 //! for every gadget call, the targets involved and the gate rows / copy constraints the call
 //! actually emitted (read off `formal_export_view` before and after). [`Trace`] bundles the
-//! calls with the builder's final constraint system in a plain JSON shape, so the exporter,
-//! which cannot link against this crate, can regenerate the wrapper's Lean decode theorem
-//! from the checked-in trace alone.
+//! calls with the builder's constraint system in a plain JSON shape, so the exporter, which
+//! cannot link against this crate, can regenerate the circuit's Lean decode theorem from the
+//! checked-in trace alone.
+//!
+//! The builder traced is the production one: for a wrapper, the `CircuitBuilder` that
+//! already ran `add_recursive_verifiers` ([`TracingBuilder::over`]). The trace then holds
+//! the rows and copies the traced gadgets added — with the rows' production indices, since
+//! an arithmetic op can land in a free slot of a row the verifiers left — the constants and
+//! virtual targets they use, the builder's counts when tracing began and a digest of the
+//! whole builder state ([`state_digest`]). That lets the exporter replay the builder, check
+//! it reached the same state, build it and certify the result (`built.rs`).
 
-use alloc::{format, string::String, vec::Vec};
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    format,
+    string::String,
+    vec::Vec,
+};
+use std::collections::HashSet;
+
 use plonky2::{
-    field::types::PrimeField64,
-    hash::{hash_types::HashOutTarget, poseidon2::Poseidon2Hash},
+    field::types::{Field, PrimeField64},
+    hash::{
+        hash_types::{BytesHash, HashOutTarget},
+        keccak::KeccakHash,
+        poseidon2::Poseidon2Hash,
+    },
     iop::target::{BoolTarget, Target},
     plonk::{
-        circuit_builder::CircuitBuilder, circuit_data::CircuitConfig,
+        circuit_builder::CircuitBuilder, circuit_data::CircuitConfig, config::Hasher,
         proof::ProofWithPublicInputsTarget,
     },
 };
@@ -35,10 +54,20 @@ pub fn encode_target(t: Target) -> String {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceRow {
+    /// The row's index in the builder.
+    pub row: usize,
     /// `Gate::id()` of the placed gate.
     pub gate: String,
     /// The row's gate constants, canonical decimal.
     pub constants: Vec<String>,
+}
+
+/// The builder's counts of rows, copy constraints and virtual targets at a moment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Counts {
+    pub rows: usize,
+    pub copies: usize,
+    pub virtual_targets: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,10 +88,10 @@ pub struct TraceCall {
     pub copies: [usize; 2],
 }
 
-/// A `verify_proof` gadget the circuit contains but the trace's rows do not: the child
-/// circuit is named by its own trace, and `public_inputs` are the parent targets that carry
-/// the child's public inputs. The verifier key baked into the gadget is that of the named
-/// circuit (production passes the built child's `VerifierCircuitData` to
+/// A `verify_proof` gadget the builder holds among the rows the trace does not list: the
+/// child circuit is named by its own trace, and `public_inputs` are the parent targets that
+/// carry the child's public inputs. The verifier key baked into the gadget is that of the
+/// named circuit (production passes the built child's `VerifierCircuitData` to
 /// `add_recursive_verifiers`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceVerifier {
@@ -73,16 +102,24 @@ pub struct TraceVerifier {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Trace {
     pub circuit: String,
-    pub num_routed_wires: usize,
+    /// The builder's `CircuitConfig`, as `serde_json` renders it.
+    pub config: serde_json::Value,
+    /// [`state_digest`] of the traced builder.
+    pub digest: String,
+    /// The builder's counts when tracing began: what the recursive verifiers laid down.
+    pub start: Counts,
+    pub num_virtual_targets: usize,
+    /// The rows the traced gadgets use, by production index: every row added from
+    /// `start.rows` on, and the earlier rows whose free slots their ops landed in.
     pub rows: Vec<TraceRow>,
+    /// The copy constraints added from `start.copies` on.
     pub copies: Vec<[String; 2]>,
-    /// Constant targets and their values, sorted by target.
+    /// Constant targets and their values, sorted by target: those the traced gadgets
+    /// allocated, and the earlier ones they use.
     pub constants: Vec<(String, String)>,
     pub public_inputs: Vec<String>,
-    pub num_virtual_targets: usize,
     /// Targets of interest by role, so the Lean statement can refer to them.
     pub named: Vec<(String, Vec<String>)>,
-    #[serde(default)]
     pub verifiers: Vec<TraceVerifier>,
     pub calls: Vec<TraceCall>,
 }
@@ -101,12 +138,18 @@ impl Trace {
                 format!("[\n{}\n  ]", lines.join(",\n"))
             }
         }
+        fn json<T: Serialize>(v: &T) -> String {
+            serde_json::to_string(v).expect("serializable")
+        }
         format!(
-            "{{\n  \"circuit\": {},\n  \"num_routed_wires\": {},\n  \"num_virtual_targets\": {},\n  \
-             \"rows\": {},\n  \"copies\": {},\n  \"constants\": {},\n  \"public_inputs\": {},\n  \
-             \"named\": {},\n  \"verifiers\": {},\n  \"calls\": {}\n}}\n",
-            serde_json::to_string(&self.circuit).expect("serializable"),
-            self.num_routed_wires,
+            "{{\n  \"circuit\": {},\n  \"config\": {},\n  \"digest\": {},\n  \"start\": {},\n  \
+             \"num_virtual_targets\": {},\n  \"rows\": {},\n  \"copies\": {},\n  \
+             \"constants\": {},\n  \"public_inputs\": {},\n  \"named\": {},\n  \
+             \"verifiers\": {},\n  \"calls\": {}\n}}\n",
+            json(&self.circuit),
+            json(&self.config),
+            json(&self.digest),
+            json(&self.start),
             self.num_virtual_targets,
             list(&self.rows),
             list(&self.copies),
@@ -121,6 +164,32 @@ impl Trace {
     pub fn from_json(s: &str) -> serde_json::Result<Self> {
         serde_json::from_str(s)
     }
+
+    /// The checked-in trace at `path` is this one. With `UPDATE_FORMAL_TRACE` set, writes it
+    /// first; `regenerate` is the command the failure message names.
+    pub fn assert_current(&self, path: &std::path::Path, regenerate: &str) {
+        let json = self.to_json();
+        let round_trip = Trace::from_json(&json).expect("trace round-trips");
+        assert_eq!(round_trip.to_json(), json);
+        std::println!(
+            "{} trace: rows={} copies={} calls={} public_inputs={}",
+            self.circuit,
+            self.rows.len(),
+            self.copies.len(),
+            self.calls.len(),
+            self.public_inputs.len()
+        );
+        if std::env::var_os("UPDATE_FORMAL_TRACE").is_some() {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, &json).unwrap();
+        }
+        let checked_in = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(
+            checked_in == json,
+            "{} is stale; regenerate with {regenerate}",
+            path.display()
+        );
+    }
 }
 
 /// A `CircuitBuilder` that records the gadget calls made through [`GadgetBuilder`].
@@ -128,23 +197,35 @@ pub struct TracingBuilder {
     pub inner: CircuitBuilder<F, D>,
     pub calls: Vec<TraceCall>,
     pub verifiers: Vec<TraceVerifier>,
-    num_routed_wires: usize,
+    start: Counts,
+    /// The targets the calls and verifiers mention.
+    used: HashSet<Target>,
 }
 
 impl TracingBuilder {
+    /// Trace a fresh builder.
     pub fn new(config: CircuitConfig) -> Self {
+        Self::over(CircuitBuilder::new(config))
+    }
+
+    /// Trace `inner` from its current state on: the production builder after
+    /// `add_recursive_verifiers`. Name its `verify_proof` gadgets with [`Self::verifier`].
+    pub fn over(inner: CircuitBuilder<F, D>) -> Self {
+        let start = counts(&inner);
         TracingBuilder {
-            num_routed_wires: config.num_routed_wires,
-            inner: CircuitBuilder::new(config),
+            inner,
             calls: Vec::new(),
             verifiers: Vec::new(),
+            start,
+            used: HashSet::new(),
         }
     }
 
-    /// Record a `verify_proof` gadget for a proof of the circuit whose trace is named `child`,
-    /// with `proof.public_inputs` carrying the child's public inputs. The gadget's rows are not
-    /// added: they are what the exporter's trusted proof-system-soundness axiom stands for.
-    pub fn verify_proof(&mut self, child: &str, proof: &ProofWithPublicInputsTarget<D>) {
+    /// Record that `inner` holds a `verify_proof` gadget for a proof of the circuit whose
+    /// trace is named `child`, with `proof.public_inputs` carrying the child's public
+    /// inputs.
+    pub fn verifier(&mut self, child: &str, proof: &ProofWithPublicInputsTarget<D>) {
+        self.used.extend(&proof.public_inputs);
         self.verifiers.push(TraceVerifier {
             child: child.into(),
             public_inputs: proof
@@ -156,15 +237,6 @@ impl TracingBuilder {
         });
     }
 
-    fn counts(&self) -> (usize, usize, usize) {
-        let v = self.inner.formal_export_view();
-        (
-            v.gate_instances.len(),
-            v.copy_constraints.len(),
-            v.num_virtual_targets,
-        )
-    }
-
     fn record<T>(
         &mut self,
         kind: &str,
@@ -173,66 +245,89 @@ impl TracingBuilder {
         f: impl FnOnce(&mut CircuitBuilder<F, D>) -> T,
         outs: impl FnOnce(&T) -> Vec<Target>,
     ) -> T {
-        let (rows0, copies0, virt0) = self.counts();
+        let before = counts(&self.inner);
         let r = f(&mut self.inner);
-        let (rows1, copies1, virt1) = self.counts();
+        let after = counts(&self.inner);
         let view = self.inner.formal_export_view();
-        let fresh = (virt0..virt1)
+        let fresh: Vec<Target> = (before.virtual_targets..after.virtual_targets)
             .map(|index| Target::VirtualTarget { index })
             .filter(|t| !view.constant_targets.contains_key(t))
-            .map(encode_target)
             .collect();
+        let outs = outs(&r);
+        self.used.extend(args.iter().chain(&outs).chain(&fresh));
         self.calls.push(TraceCall {
             kind: kind.into(),
             args: args.iter().copied().map(encode_target).collect(),
-            outs: outs(&r).into_iter().map(encode_target).collect(),
-            fresh,
+            outs: outs.into_iter().map(encode_target).collect(),
+            fresh: fresh.into_iter().map(encode_target).collect(),
             bits,
-            rows: [rows0, rows1],
-            copies: [copies0, copies1],
+            rows: [before.rows, after.rows],
+            copies: [before.copies, after.copies],
         });
         r
     }
 
-    /// Snapshot the constraint system and the recorded calls.
+    /// Snapshot the constraint system the traced gadgets added and the recorded calls.
     pub fn trace(&self, circuit: &str, named: Vec<(String, Vec<Target>)>) -> Trace {
+        let digest = state_digest(&self.inner);
         let view = self.inner.formal_export_view();
-        let pending: usize = view.lookups.iter().map(Vec::len).sum();
-        assert_eq!(pending, 0, "lookups are not modeled by the exporter");
-        let mut constants: Vec<(String, String)> = view
+        let copies = &view.copy_constraints[self.start.copies..];
+        let referenced: HashSet<Target> = copies
+            .iter()
+            .flat_map(|c| [c.pair.0, c.pair.1])
+            .chain(self.used.iter().copied())
+            .chain(view.public_inputs.iter().copied())
+            .chain(named.iter().flat_map(|(_, ts)| ts.iter().copied()))
+            .collect();
+        let rows: BTreeSet<usize> = referenced
+            .iter()
+            .filter_map(|t| match t {
+                Target::Wire(w) => Some(w.row),
+                Target::VirtualTarget { .. } => None,
+            })
+            .chain(self.start.rows..view.gate_instances.len())
+            .collect();
+        let constants: BTreeMap<String, String> = view
             .constant_targets
             .iter()
+            .filter(|(t, _)| {
+                referenced.contains(t)
+                    || matches!(t, Target::VirtualTarget { index } if *index >= self.start.virtual_targets)
+            })
             .map(|(t, v)| (encode_target(*t), format!("{}", v.to_canonical_u64())))
             .collect();
-        constants.sort();
         Trace {
             circuit: circuit.into(),
-            num_routed_wires: self.num_routed_wires,
-            rows: view
-                .gate_instances
-                .iter()
-                .map(|gi| TraceRow {
-                    gate: gi.gate_ref.0.id(),
-                    constants: gi
-                        .constants
-                        .iter()
-                        .map(|c| format!("{}", c.to_canonical_u64()))
-                        .collect(),
+            config: serde_json::to_value(&self.inner.config).expect("serializable"),
+            digest,
+            start: self.start,
+            num_virtual_targets: view.num_virtual_targets,
+            rows: rows
+                .into_iter()
+                .map(|row| {
+                    let gi = &view.gate_instances[row];
+                    TraceRow {
+                        row,
+                        gate: gi.gate_ref.0.id(),
+                        constants: gi
+                            .constants
+                            .iter()
+                            .map(|c| format!("{}", c.to_canonical_u64()))
+                            .collect(),
+                    }
                 })
                 .collect(),
-            copies: view
-                .copy_constraints
+            copies: copies
                 .iter()
                 .map(|c| [encode_target(c.pair.0), encode_target(c.pair.1)])
                 .collect(),
-            constants,
+            constants: constants.into_iter().collect(),
             public_inputs: view
                 .public_inputs
                 .iter()
                 .copied()
                 .map(encode_target)
                 .collect(),
-            num_virtual_targets: view.num_virtual_targets,
             named: named
                 .into_iter()
                 .map(|(n, ts)| (n, ts.into_iter().map(encode_target).collect()))
@@ -240,6 +335,64 @@ impl TracingBuilder {
             verifiers: self.verifiers.clone(),
             calls: self.calls.clone(),
         }
+    }
+}
+
+/// Keccak-256, hex, of the builder's pre-`build` constraint system: every gate row with its
+/// constants, the copy constraints, constant targets, public inputs and the virtual-target
+/// count. Two builders with the same digest build the same circuit. The trace tests check
+/// the traced builder's against the production constructor's, and the exporter checks its
+/// replay's against the trace's.
+pub fn state_digest(b: &CircuitBuilder<F, D>) -> String {
+    let view = b.formal_export_view();
+    assert!(
+        view.lookups.iter().all(Vec::is_empty),
+        "lookups are not modeled"
+    );
+    let felt = |n: usize| F::from_canonical_u64(n as u64);
+    let target = |t: &Target| match *t {
+        Target::Wire(w) => [felt(0), felt(w.row), felt(w.column)],
+        Target::VirtualTarget { index } => [felt(1), felt(index), felt(0)],
+    };
+    let mut input = Vec::new();
+    input.push(felt(view.gate_instances.len()));
+    for gi in view.gate_instances {
+        let id = gi.gate_ref.0.id();
+        input.push(felt(id.len()));
+        input.extend(id.bytes().map(|b| felt(b as usize)));
+        input.push(felt(gi.constants.len()));
+        input.extend(&gi.constants);
+    }
+    input.push(felt(view.copy_constraints.len()));
+    for c in view.copy_constraints {
+        input.extend(target(&c.pair.0));
+        input.extend(target(&c.pair.1));
+    }
+    let constants: BTreeMap<String, (&Target, &F)> = view
+        .constant_targets
+        .iter()
+        .map(|(t, v)| (encode_target(*t), (t, v)))
+        .collect();
+    input.push(felt(constants.len()));
+    for (t, v) in constants.values() {
+        input.extend(target(t));
+        input.push(**v);
+    }
+    input.push(felt(view.public_inputs.len()));
+    for t in view.public_inputs {
+        input.extend(target(t));
+    }
+    input.push(felt(view.num_virtual_targets));
+    let BytesHash(bytes) = KeccakHash::<32>::hash_no_pad(&input);
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn counts(b: &CircuitBuilder<F, D>) -> Counts {
+    let v = b.formal_export_view();
+    Counts {
+        rows: v.gate_instances.len(),
+        copies: v.copy_constraints.len(),
+        virtual_targets: v.num_virtual_targets,
     }
 }
 

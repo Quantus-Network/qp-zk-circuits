@@ -784,51 +784,51 @@ fn public_batch_rejects_proofs_from_substituted_private_batch_circuit() {
     );
 }
 
-/// Records the `n_inner` public-batch wrapper over `inner` private batches — the wrapper
-/// logic only, on virtual inner-proof PI targets, without the recursive verifiers — for
-/// the Lean constraint exporter (`qp-plonky2/constraint-exporter`, PLAN.md Step 8) and
+/// Records the `n_inner` public-batch wrapper over `inner_shape` private batches for the
+/// Lean constraint exporter (`qp-plonky2/constraint-exporter`, PLAN.md Steps 8 and 19) and
 /// checks the trace `formal/traces/public_batch_wrapper_n{n_inner}.json` is current.
-/// Regenerate with `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib
-/// public_batch_wrapper_n`.
+/// Regenerate with `UPDATE_FORMAL_TRACE=1 cargo test --release -p qp-wormhole-aggregator
+/// --lib public_batch_wrapper_n`.
 ///
-/// `n_inner = 2` and `4` are recorded over 2-leaf, 2-slot private batches. The production
-/// trace is `PUBLIC_BATCH_ARITY = 89` over `(NUM_LEAF_PROOFS, NUM_EXIT_SLOTS) = (8, 32)`,
-/// and its recursion gadgets name `private_batch_wrapper_n8`.
+/// The builder traced is the production one: the canonical private-batch verifiers are added
+/// first, exactly as `PublicBatchCircuit::new` does, and the resulting builder state is
+/// checked against that constructor's. `n_inner = 2` and `4` are recorded over 2-leaf,
+/// 2-slot private batches. The production trace is `PUBLIC_BATCH_ARITY = 89` over
+/// `(NUM_LEAF_PROOFS, NUM_EXIT_SLOTS) = (8, 32)`, and its recursion gadgets name
+/// `private_batch_wrapper_n8`.
 fn check_public_batch_wrapper_trace(n_inner: usize, inner_shape: PrivateBatchShape) {
+    use crate::common::{
+        recursive::add_recursive_verifiers,
+        utils::{canonical_leaf_verifier_data, canonical_private_batch_verifier_data},
+    };
     use zk_circuits_common::circuit::wormhole_public_batch_circuit_config;
-    use zk_circuits_common::formal_trace::{Trace, TracingBuilder};
+    use zk_circuits_common::formal_trace::{state_digest, TracingBuilder};
 
-    let leaf = build_fake_leaf_circuit().0;
-    let mut tracing = TracingBuilder::new(wormhole_public_batch_circuit_config());
-
-    // Only the PI slice of each inner proof is read by the wrapper; the proof body comes
-    // from any common data. Where production runs `add_recursive_verifiers` under the
-    // `inner_shape` private-batch verifier key.
-    let pi_len = pbc::private_batch_pi_len(inner_shape);
+    let inner = canonical_private_batch_verifier_data(&canonical_leaf_verifier_data(), inner_shape)
+        .unwrap();
     let child = format!("private_batch_wrapper_n{}", inner_shape.num_leaf_proofs);
-    let private_batch_proofs: Vec<_> = (0..n_inner)
-        .map(|_| {
-            let mut proof = tracing.inner.add_virtual_proof_with_pis(&leaf.common);
-            proof.public_inputs = tracing.inner.add_virtual_targets(pi_len);
-            tracing.verify_proof(&child, &proof);
-            proof
-        })
-        .collect();
+    let mut builder = CircuitBuilder::<F, D>::new(wormhole_public_batch_circuit_config());
+    let private_batch_proofs = add_recursive_verifiers::<F, C, D>(
+        &mut builder,
+        &inner.common,
+        &inner.verifier_only,
+        n_inner,
+    )
+    .unwrap();
+    let mut tracing = TracingBuilder::over(builder);
+    for proof in &private_batch_proofs {
+        tracing.verifier(&child, proof);
+    }
     let aggregator_address: [Target; AGGREGATOR_ADDRESS_LEN] = tracing
         .inner
         .add_virtual_targets(AGGREGATOR_ADDRESS_LEN)
         .try_into()
         .unwrap();
-    let rows_before = tracing.inner.num_gates();
     let targets = PublicBatchCircuitTargets {
         private_batch_proofs,
         aggregator_address,
     };
     super::build_public_batch_constraints(&mut tracing, &targets, n_inner, inner_shape);
-    assert_eq!(
-        rows_before, 0,
-        "wrapper rows must start at 0 for the exporter"
-    );
 
     let mut named = Vec::new();
     for (i, proof) in targets.private_batch_proofs.iter().enumerate() {
@@ -840,28 +840,25 @@ fn check_public_batch_wrapper_trace(n_inner: usize, inner_shape: PrivateBatchSha
     ));
     let name = format!("public_batch_wrapper_n{n_inner}");
     let trace = tracing.trace(&name, named);
-    let json = trace.to_json();
-    let round_trip = Trace::from_json(&json).expect("trace round-trips");
-    assert_eq!(round_trip.to_json(), json);
-    println!(
-        "public wrapper trace n_inner={n_inner} inner={inner_shape:?}: rows={} copies={} calls={}",
-        trace.rows.len(),
-        trace.copies.len(),
-        trace.calls.len()
-    );
 
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(format!("../../formal/traces/{name}.json"));
-    if std::env::var_os("UPDATE_FORMAL_TRACE").is_some() {
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, &json).unwrap();
-    }
-    let checked_in = std::fs::read_to_string(&path).unwrap_or_default();
-    assert!(
-        checked_in == json,
-        "formal/traces/{name}.json is stale; regenerate with \
-         UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib \
-         public_batch_wrapper_n"
+    let production = PublicBatchCircuit::new(
+        wormhole_public_batch_circuit_config(),
+        inner.common,
+        &inner.verifier_only,
+        n_inner,
+        inner_shape,
+    )
+    .unwrap();
+    assert_eq!(
+        trace.digest,
+        state_digest(production.builder()),
+        "traced builder is not the production {name} builder"
+    );
+    trace.assert_current(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../../formal/traces/{name}.json")),
+        "UPDATE_FORMAL_TRACE=1 cargo test --release -p qp-wormhole-aggregator --lib \
+         public_batch_wrapper_n",
     );
 }
 
