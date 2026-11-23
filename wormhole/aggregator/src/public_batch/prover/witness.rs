@@ -1,15 +1,15 @@
 //! Witness filling for the public-batch aggregation circuit.
 //!
-//! Crate-private: callers with untrusted proof vectors must go through
-//! [`super::PublicBatchProver::build_witness`], which verifies each inner proof,
-//! enforces metadata compatibility, pads only after validation, and rejects
-//! all-dummy batches before this helper runs.
+//! [`super::PublicBatchProver::prove_batch`] and
+//! [`super::PublicBatchProver::build_witness`] verify each inner proof, enforce
+//! metadata compatibility, reject all-dummy batches and pad the inputs before
+//! this crate-private helper runs.
 
 use anyhow::{bail, Result};
-#[cfg(feature = "gpu")]
-use plonky2::{field::types::Field, iop::target::Target};
 use plonky2::iop::witness::WitnessWrite;
 use plonky2::plonk::proof::ProofWithPublicInputs;
+#[cfg(feature = "gpu")]
+use plonky2::{field::types::Field, iop::target::Target};
 
 use zk_circuits_common::circuit::{C, D, F};
 use zk_circuits_common::utils::Digest;

@@ -29,7 +29,7 @@ use std::path::Path;
 
 use zk_circuits_common::{
     circuit::{wormhole_public_batch_circuit_config, C, D, F},
-    utils::bytes_to_digest,
+    utils::{bytes_to_digest, Digest},
 };
 
 #[cfg(feature = "std")]
@@ -316,17 +316,22 @@ impl PublicBatchProver {
 
     /// Prove one public batch from private-batch aggregated proofs.
     ///
-    /// Validates and prepares the inputs with [`Self::build_witness`], then
-    /// proves the circuit with the backend selected during initialization.
+    /// Validates and pads the inputs, then proves the circuit with the backend
+    /// selected during initialization.
     /// CPU proving is the default.
     pub fn prove_batch(&self, inputs: PublicBatchInputs) -> Result<ProofWithPublicInputs<F, C, D>> {
         #[cfg(feature = "gpu")]
-        let admission = crate::profiling::HostOperation::new("admission_and_witness_fill");
-        let witness = self.build_witness(inputs)?;
+        let admission = crate::profiling::HostOperation::new("admission");
+        let (proofs, aggregator_address) = self.prepare_inputs(inputs)?;
         #[cfg(feature = "gpu")]
         drop(admission);
         self.backend
-            .prove(&self.circuit_data, witness)
+            .prove(
+                &self.circuit_data,
+                &self.targets,
+                proofs,
+                aggregator_address,
+            )
             .context("Failed to prove public-batch aggregation circuit")
     }
 
@@ -397,31 +402,13 @@ impl PublicBatchProver {
     /// Callers using a custom backend should verify its resulting proof with
     /// [`Self::verifier_data`]; this method only prepares the partial witness.
     pub fn build_witness(&self, inputs: PublicBatchInputs) -> Result<PartialWitness<F>> {
-        let mut proofs = inputs.proofs;
-        let aggregator_address = inputs.aggregator_address;
-
-        let aggregator_address_felts = bytes_to_digest(aggregator_address);
-
-        preflight_private_batch_proofs(
-            &proofs,
-            self.num_private_batch_proofs,
-            &self.private_batch_verifier,
-            self.private_batch_shape,
-        )?;
-
-        // Pad partial batches with the dummy template. No shuffle: forwarding is
-        // order-preserving by design (per-segment attribution on-chain).
-        let num_dummies_needed = self.num_private_batch_proofs - proofs.len();
-        for _ in 0..num_dummies_needed {
-            proofs.push(self.dummy_proof_template.clone());
-        }
-
+        let (proofs, aggregator_address) = self.prepare_inputs(inputs)?;
         let mut partial_witness = PartialWitness::new();
         fill_public_batch_witness(
             &mut partial_witness,
             &self.targets,
             &proofs,
-            aggregator_address_felts,
+            aggregator_address,
         )?;
 
         Ok(partial_witness)
@@ -431,6 +418,29 @@ impl PublicBatchProver {
     /// so it is canonical by construction — usable for pinning artifact bytes.
     pub fn verifier_data(&self) -> VerifierCircuitData<F, C, D> {
         self.circuit_data.verifier_data()
+    }
+
+    fn prepare_inputs(
+        &self,
+        inputs: PublicBatchInputs,
+    ) -> Result<(Vec<ProofWithPublicInputs<F, C, D>>, Digest)> {
+        let mut proofs = inputs.proofs;
+        let aggregator_address = bytes_to_digest(inputs.aggregator_address);
+
+        preflight_private_batch_proofs(
+            &proofs,
+            self.num_private_batch_proofs,
+            &self.private_batch_verifier,
+            self.private_batch_shape,
+        )?;
+
+        // Preserve proof order and fill the remaining slots with the dummy template.
+        let num_dummies_needed = self.num_private_batch_proofs - proofs.len();
+        for _ in 0..num_dummies_needed {
+            proofs.push(self.dummy_proof_template.clone());
+        }
+
+        Ok((proofs, aggregator_address))
     }
 }
 

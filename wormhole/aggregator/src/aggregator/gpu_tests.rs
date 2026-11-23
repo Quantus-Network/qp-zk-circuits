@@ -46,7 +46,7 @@ fn gpu_proving_context(
     Ok((proving, inners, cpu_proofs))
 }
 
-/// Partial batches are padded with the dummy template inside `build_witness`;
+/// Partial batches are padded with the dummy template before witness filling;
 /// the GPU proof of a padded batch must match the CPU proof bit-for-bit on
 /// public inputs. Cloned contexts prove concurrently on one shared backend,
 /// serialising on the workspace lock rather than failing or corrupting state.
