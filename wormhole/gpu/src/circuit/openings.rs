@@ -283,7 +283,6 @@ impl PreparedOpenings {
             .max()
             .context("empty opening oracle")?;
         let mut fields = vec![
-            2,
             4,
             description.total() * 2,
             description.total() * 2,
@@ -307,7 +306,7 @@ impl PreparedOpenings {
         )?;
         Ok(Self {
             merge_params: [
-                context.prepare_params([layout.degree as u32, description.all() as u32, 0, 0])?,
+                context.prepare_params([layout.degree as u32, 0, 0, 0])?,
                 context.prepare_params([layout.degree as u32, description.next as u32, 1, 0])?,
             ],
             layout: description,
@@ -325,7 +324,6 @@ impl PreparedOpenings {
 /// Per-proof views for openings and the FRI input, in the caller's workspace.
 pub struct OpeningBuffers<'c, 'a> {
     prepared: &'c PreparedCircuit<'a>,
-    scalars: DeviceFieldSlice,
     points: DeviceFieldSlice,
     weights: DeviceFieldSlice,
     values: DeviceFieldSlice,
@@ -344,7 +342,6 @@ pub struct ResidentOpeningSet<'s> {
     pub values: DeviceFieldSlice,
     prepared: &'s PreparedOpenings,
     sources: Vec<FieldSource<'s>>,
-    scalars: DeviceFieldSlice,
     points: DeviceFieldSlice,
 }
 
@@ -367,18 +364,17 @@ impl PreparedCircuit<'_> {
         first: usize,
     ) -> Result<OpeningBuffers<'_, '_>> {
         let buffers = workspace_views(workspace, first, &self.openings.fields)?;
-        let division_start = 8 + self.openings.eval_scratch;
+        let division_start = 7 + self.openings.eval_scratch;
         Ok(OpeningBuffers {
             prepared: self,
-            scalars: buffers[0].clone(),
-            points: buffers[1].clone(),
-            weights: buffers[2].clone(),
-            values: buffers[3].clone(),
-            batch_values: buffers[4].clone(),
-            composition: buffers[5].clone(),
-            fri_coefficients: buffers[6].clone(),
-            fri_evaluations: buffers[7].clone(),
-            evaluation_scratch: buffers[8..division_start].to_vec(),
+            points: buffers[0].clone(),
+            weights: buffers[1].clone(),
+            values: buffers[2].clone(),
+            batch_values: buffers[3].clone(),
+            composition: buffers[4].clone(),
+            fri_coefficients: buffers[5].clone(),
+            fri_evaluations: buffers[6].clone(),
+            evaluation_scratch: buffers[7..division_start].to_vec(),
             division_scratch: buffers[division_start..].to_vec(),
         })
     }
@@ -455,7 +451,6 @@ impl OpeningBuffers<'_, '_> {
             values: self.values.clone(),
             prepared: plan,
             sources,
-            scalars: self.scalars.clone(),
             points: self.points.clone(),
         })
     }
@@ -475,7 +470,6 @@ impl OpeningBuffers<'_, '_> {
             std::ptr::eq(plan, openings.prepared),
             "openings belong to another prepared circuit"
         );
-        encoder.upload(&openings.scalars, &alpha.0)?;
         let mut weights = Vec::with_capacity(plan.layout.total() * 2);
         for count in [plan.layout.all(), plan.layout.next] {
             let mut power = E::ONE;
@@ -506,7 +500,7 @@ impl OpeningBuffers<'_, '_> {
                 &[
                     FieldBinding::ReadWrite(&self.fri_coefficients),
                     FieldBinding::Read((&self.composition).into()),
-                    FieldBinding::Read((&openings.scalars).into()),
+                    FieldBinding::Read((&self.weights).into()),
                 ],
                 Some(&plan.merge_params[index]),
                 "FRI input accumulation",
