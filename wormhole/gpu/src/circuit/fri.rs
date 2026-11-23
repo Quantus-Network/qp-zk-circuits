@@ -13,6 +13,18 @@ pub(super) struct FriLayout {
     rounds: Vec<FriRoundLayout>,
 }
 
+pub(super) fn reduction_arity(bits: usize, remaining_coefficients: usize) -> Result<usize> {
+    let arity = u32::try_from(bits)
+        .ok()
+        .and_then(|bits| 1usize.checked_shl(bits))
+        .context("FRI reduction arity overflow")?;
+    ensure!(
+        arity <= remaining_coefficients,
+        "invalid FRI reduction arity"
+    );
+    Ok(arity)
+}
+
 impl FriLayout {
     pub fn new(
         degree: usize,
@@ -33,11 +45,7 @@ impl FriLayout {
         let mut evaluations = lde_rows;
         let mut rounds = Vec::with_capacity(arity_bits.len());
         for &bits in arity_bits {
-            let arity = u32::try_from(bits)
-                .ok()
-                .and_then(|bits| 1usize.checked_shl(bits))
-                .context("FRI reduction arity overflow")?;
-            ensure!(arity <= coefficients, "invalid FRI reduction arity");
+            let arity = reduction_arity(bits, coefficients)?;
             let leaves = evaluations / arity;
             ensure!(
                 cap_height <= leaves.ilog2() as usize,
