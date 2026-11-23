@@ -1059,26 +1059,33 @@ impl ProofEncoder<'_> {
         destination: &DeviceFieldSlice,
         values: &[GoldilocksField],
     ) -> Result<()> {
+        self.upload_iter(destination, values.iter().copied())
+    }
+
+    pub(crate) fn upload_iter(
+        &mut self,
+        destination: &DeviceFieldSlice,
+        values: impl ExactSizeIterator<Item = GoldilocksField>,
+    ) -> Result<()> {
         self.validate(destination)?;
         ensure!(destination.len == values.len(), "upload length mismatch");
         self.command_budget.copy()?;
-        let bytes = values
-            .iter()
-            .flat_map(|value| value.to_canonical_u64().to_le_bytes())
-            .collect::<Vec<_>>();
+        let bytes = field_bytes(destination.len)?;
         // Do not use create_buffer_init: it maps immediately after allocation,
         // before we can reject an allocation failure and its invalid handle.
         let staging = self.context.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("field upload"),
-            size: bytes.len() as u64,
+            size: bytes,
             usage: wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: true,
         });
         self.context.check_device()?;
-        staging
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(&bytes);
+        {
+            let mut mapped = staging.slice(..).get_mapped_range_mut();
+            for (value, output) in values.zip(mapped.chunks_exact_mut(8)) {
+                output.copy_from_slice(&value.to_canonical_u64().to_le_bytes());
+            }
+        }
         staging.unmap();
         self.context.check_device()?;
         self.commands.copy_buffer_to_buffer(
@@ -1086,10 +1093,10 @@ impl ProofEncoder<'_> {
             0,
             &destination.buffer,
             destination.offset,
-            bytes.len() as u64,
+            bytes,
         );
         if let Some(counters) = &mut self.counters {
-            counters.upload_bytes += bytes.len() as u64;
+            counters.upload_bytes += bytes;
         }
         self.context.check_device()
     }
@@ -1658,7 +1665,10 @@ mod tests {
             let mut encoder = workspace.begin(&context)?;
             assert!(encoder.copy(&foreign, &destination).is_err());
             assert!(encoder.copy(&source, &destination).is_err());
-            encoder.upload(&source, &values)?;
+            assert!(encoder
+                .upload_iter(&source, values[..3].iter().copied())
+                .is_err());
+            encoder.upload_iter(&source, values.iter().copied())?;
             encoder.copy(&source.slice(1..3)?, &destination)?;
             let bindings = encoder.bind(
                 &kernel,

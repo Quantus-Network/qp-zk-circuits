@@ -700,24 +700,10 @@ impl WireBuffers<'_, '_> {
         let dense_values = match partition.dense_values_and_assignment_flags() {
             Ok((values, assigned_flags)) => {
                 ensure!(
-                    values.len() == num_targets
-                        && assigned_flags.len() == num_targets,
+                    values.len() == num_targets && assigned_flags.len() == num_targets,
                     "partition witness does not match prepared circuit"
                 );
-                Some(
-                    values
-                        .iter()
-                        .zip(assigned_flags)
-                        .map(|(value, assigned)| {
-                            // Generation has finished; the witness is exclusively owned here.
-                            if assigned.load(Ordering::Relaxed) != 0 {
-                                F::from_noncanonical_u64(value.load(Ordering::Relaxed))
-                            } else {
-                                F::ZERO
-                            }
-                        })
-                        .collect::<Vec<_>>(),
-                )
+                Some((values, assigned_flags))
             }
             Err(_) => None,
         };
@@ -738,16 +724,27 @@ impl WireBuffers<'_, '_> {
             .collect::<Result<_>>()?;
         // CPU full_witness uses zero for unassigned partitions too. Do not
         // expand or transpose the wire matrix on the host.
-        let values = match dense_values {
-            Some(values) => values,
-            None => partition
-                .values
-                .into_iter()
-                .map(|value| value.unwrap_or(F::ZERO))
-                .collect::<Vec<_>>(),
-        };
         let cap = prepared.commitment.cap(&self.tree)?;
-        encoder.upload(&self.representatives, &values)?;
+        match dense_values {
+            Some((values, assigned_flags)) => encoder.upload_iter(
+                &self.representatives,
+                values.iter().zip(assigned_flags).map(|(value, assigned)| {
+                    // Generation has finished; the witness is exclusively owned here.
+                    if assigned.load(Ordering::Relaxed) != 0 {
+                        F::from_noncanonical_u64(value.load(Ordering::Relaxed))
+                    } else {
+                        F::ZERO
+                    }
+                }),
+            )?,
+            None => encoder.upload_iter(
+                &self.representatives,
+                partition
+                    .values
+                    .into_iter()
+                    .map(|value| value.unwrap_or(F::ZERO)),
+            )?,
+        }
         for batch in 0..self.wires.len() {
             let bindings = encoder.bind(
                 &prepared.gather,
