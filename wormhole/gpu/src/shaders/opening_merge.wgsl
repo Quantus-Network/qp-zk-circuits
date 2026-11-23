@@ -6,7 +6,7 @@
 var<workgroup> factor: vec2<u64>;
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_index) lane: u32) {
-    if lane == 0u { factor = ext_pow(scalars[1], dims.y); }
+    if lane == 0u { factor = ext_pow(scalars[0], dims.y); }
     workgroupBarrier();
     let row = gid.x + gid.y * 2097152u;
     if row >= dims.x { return; }

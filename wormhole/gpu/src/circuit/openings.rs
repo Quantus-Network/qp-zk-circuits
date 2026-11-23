@@ -6,7 +6,6 @@ use crate::{
     ExtensionKernels, LinearDivisionPlan, PolynomialCombinationPlan, PolynomialEvaluationPlan,
 };
 use plonky2::field::extension::quadratic::QuadraticExtension;
-use plonky2::field::types::PrimeField64;
 use plonky2::fri::structure::{
     FriBatchInfo, FriCoefficient, FriInstanceInfo, FriOpeningExpression, FriOracleInfo,
     FriPolynomialInfo,
@@ -185,7 +184,7 @@ pub(super) struct PreparedOpenings {
     all: Vec<CoefficientBatch>,
     next: Vec<CoefficientBatch>,
     division: [LinearDivisionPlan; 2],
-    points: PreparedKernel,
+    subgroup_generator: F,
     weights: PreparedKernel,
     merge: PreparedKernel,
     params: KernelParams,
@@ -286,7 +285,7 @@ impl PreparedOpenings {
             .max()
             .context("empty opening oracle")?;
         let mut fields = vec![
-            4,
+            2,
             4,
             description.total() * 2,
             description.total() * 2,
@@ -299,26 +298,12 @@ impl PreparedOpenings {
         fields.extend_from_slice(division[0].workspace_field_counts());
         let source = format!(
             "{FIELD}\n{EXTENSION}\n{}",
-            include_str!("../shaders/opening_parameters.wgsl").replace(
-                "__SUBGROUP_GENERATOR__",
-                &F::primitive_root_of_unity(common.degree_bits())
-                    .to_canonical_u64()
-                    .to_string()
-            )
+            include_str!("../shaders/opening_parameters.wgsl")
         );
-        let specs = [write(2), read(4)];
-        let points = PreparedKernel::prepare_entry(
-            context,
-            &source,
-            &specs,
-            "opening points",
-            "points",
-            true,
-        )?;
         let weights = PreparedKernel::prepare_entry(
             context,
             &source,
-            &specs,
+            &[write(2), read(2)],
             "opening weights",
             "weights",
             true,
@@ -329,7 +314,7 @@ impl PreparedOpenings {
                 "{FIELD}\n{EXTENSION}\n{}",
                 include_str!("../shaders/opening_merge.wgsl")
             ),
-            &[write(2), read(2), read(4)],
+            &[write(2), read(2), read(2)],
             "FRI input accumulation",
             "main",
             true,
@@ -350,7 +335,7 @@ impl PreparedOpenings {
             all,
             next,
             division,
-            points,
+            subgroup_generator: F::primitive_root_of_unity(common.degree_bits()),
             weights,
             merge,
             eval_scratch,
@@ -469,17 +454,8 @@ impl OpeningBuffers<'_, '_> {
                     .all(|(source, batch)| source.len() == batch.columns * self.prepared.degree()),
             "opening oracle buffer shape mismatch"
         );
-        encoder.upload(&self.scalars, &[zeta.0[0], zeta.0[1], F::ZERO, F::ZERO])?;
-        let bindings = encoder.bind_with_params(
-            &plan.points,
-            &[
-                FieldBinding::ReadWrite(&self.points),
-                FieldBinding::Read((&self.scalars).into()),
-            ],
-            Some(&plan.params),
-            "opening points",
-        )?;
-        encoder.dispatch(&plan.points, &bindings, [1, 1, 1], "opening points")?;
+        let next = zeta.0.map(|component| component * plan.subgroup_generator);
+        encoder.upload(&self.points, &[zeta.0[0], zeta.0[1], next[0], next[1]])?;
         for batch in plan.all.iter().chain(&plan.next) {
             let output = self.batch_values.slice(0..batch.columns * 2)?;
             batch.evaluation.encode(
@@ -520,7 +496,7 @@ impl OpeningBuffers<'_, '_> {
             std::ptr::eq(plan, openings.prepared),
             "openings belong to another prepared circuit"
         );
-        encoder.upload(&openings.scalars.slice(2..4)?, &alpha.0)?;
+        encoder.upload(&openings.scalars, &alpha.0)?;
         let bindings = encoder.bind_with_params(
             &plan.weights,
             &[
