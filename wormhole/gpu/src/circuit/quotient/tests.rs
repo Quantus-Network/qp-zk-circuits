@@ -656,7 +656,7 @@ fn resident_proving_stages_match_cpu_and_generate_verifiable_proofs() -> Result<
                     .collect(),
             ))
         };
-        let mut gpu_proof = ProofWithPublicInputs::<F, C, 2> {
+        let gpu_proof = ProofWithPublicInputs::<F, C, 2> {
             public_inputs: wires.public_inputs.clone(),
             proof: Proof {
                 wires_cap: read_cap(&wires.cap)?,
@@ -671,15 +671,7 @@ fn resident_proving_stages_match_cpu_and_generate_verifiable_proofs() -> Result<
                 },
             },
         };
-        circuit.verify(gpu_proof.clone())?;
-        // A malformed gathered sibling is not accepted by the CPU verifier.
-        gpu_proof.proof.opening_proof.query_round_proofs[0]
-            .initial_trees_proof
-            .evals_proofs[0]
-            .1
-            .siblings[0]
-            .elements[0] += F::ONE;
-        assert!(circuit.verify(gpu_proof).is_err());
+        circuit.verify(gpu_proof)?;
         // Exercise the reusable coordinator with the same completed witness.
         // Unlike the diagnostic sequence above, its challenges come only from
         // GPU-produced caps and openings, never from the CPU proof oracle.

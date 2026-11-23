@@ -1570,7 +1570,7 @@ mod tests {
     }
 
     #[test]
-    fn cancellation_does_not_release_pending_work() {
+    fn completion_reclaim_checks_pending_and_poisoned_states() {
         let done = Arc::new(AtomicBool::new(false));
         let (_notify, callback) = std::sync::mpsc::channel();
         let mut state = Completion::Pending(PendingCompletion {
