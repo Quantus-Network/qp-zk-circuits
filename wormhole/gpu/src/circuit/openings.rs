@@ -180,7 +180,7 @@ struct CoefficientBatch {
 
 pub(super) struct PreparedOpenings {
     layout: OpeningLayout,
-    fields: Vec<usize>,
+    workspace_field_counts: Vec<usize>,
     zeta_batches: Vec<CoefficientBatch>,
     next_row_batches: Vec<CoefficientBatch>,
     division: [LinearDivisionPlan; 2],
@@ -282,7 +282,7 @@ impl PreparedOpenings {
             .map(|batch| batch.columns)
             .max()
             .context("empty opening oracle")?;
-        let mut fields = vec![
+        let mut workspace_field_counts = vec![
             4,
             description.total_opening_count() * 2,
             description.total_opening_count() * 2,
@@ -291,8 +291,8 @@ impl PreparedOpenings {
             layout.degree * 2,
             layout.lde_rows * 2,
         ];
-        fields.extend(eval_counts);
-        fields.extend_from_slice(division[0].workspace_field_counts());
+        workspace_field_counts.extend(eval_counts);
+        workspace_field_counts.extend_from_slice(division[0].workspace_field_counts());
         let merge = PreparedKernel::prepare_entry(
             context,
             &format!(
@@ -315,7 +315,7 @@ impl PreparedOpenings {
                 ])?,
             ],
             layout: description,
-            fields,
+            workspace_field_counts,
             zeta_batches,
             next_row_batches,
             division,
@@ -360,15 +360,19 @@ pub struct FriInput {
 
 impl PreparedCircuit<'_> {
     pub fn opening_workspace_field_counts(&self) -> &[usize] {
-        &self.openings.fields
+        &self.openings.workspace_field_counts
     }
 
     pub fn opening_buffers(
         &self,
         workspace: &ProofWorkspace,
-        first: usize,
+        first_buffer: usize,
     ) -> Result<OpeningBuffers<'_, '_>> {
-        let buffers = workspace_views(workspace, first, &self.openings.fields)?;
+        let buffers = workspace_views(
+            workspace,
+            first_buffer,
+            &self.openings.workspace_field_counts,
+        )?;
         let division_start = 7 + self.openings.evaluation_scratch_buffer_count;
         Ok(OpeningBuffers {
             prepared: self,

@@ -233,7 +233,7 @@ pub struct PreparedCircuit<'a> {
     forward: FftPlan,
     commitment: CommitmentPlan,
     fixed: FixedCommitment,
-    wire_workspace_fields: Vec<usize>,
+    wire_workspace_field_counts: Vec<usize>,
     permutation: permutation::PreparedPermutation,
     quotient: quotient::PreparedQuotient,
     openings: openings::PreparedOpenings,
@@ -398,11 +398,15 @@ impl<'a> PreparedCircuit<'a> {
                 context, circuit, &layout, options, pow, queries,
             )?
         };
-        let mut wire_workspace_fields = vec![representatives.len()];
+        let mut wire_workspace_field_counts = vec![representatives.len()];
         for &columns in &layout.batch_columns {
-            wire_workspace_fields.extend([degree * columns, degree * columns, rows * columns]);
+            wire_workspace_field_counts.extend([
+                degree * columns,
+                degree * columns,
+                rows * columns,
+            ]);
         }
-        wire_workspace_fields.extend(commitment.workspace_field_counts());
+        wire_workspace_field_counts.extend(commitment.workspace_field_counts());
         Ok(Self {
             circuit: source,
             layout,
@@ -412,7 +416,7 @@ impl<'a> PreparedCircuit<'a> {
             forward,
             commitment,
             fixed,
-            wire_workspace_fields,
+            wire_workspace_field_counts,
             permutation,
             quotient,
             openings,
@@ -444,7 +448,7 @@ impl<'a> PreparedCircuit<'a> {
     /// One u64 per partition slot, including virtual targets. Representatives
     /// may live in virtual slots, so uploading only wire slots is insufficient.
     pub fn witness_upload_bytes(&self) -> u64 {
-        self.wire_workspace_fields[0] as u64 * 8
+        self.wire_workspace_field_counts[0] as u64 * 8
     }
     pub fn fixed_commitment(&self) -> &FixedCommitment {
         &self.fixed
@@ -456,7 +460,7 @@ impl<'a> PreparedCircuit<'a> {
     /// Append these counts to the shared per-proof allocation plan. Other
     /// stages append their own counts and use the same ProofWorkspace/encoder.
     pub fn wire_workspace_field_counts(&self) -> &[usize] {
-        &self.wire_workspace_fields
+        &self.wire_workspace_field_counts
     }
 
     /// View the wire-stage allocation range, starting at first_buffer in the
@@ -467,7 +471,7 @@ impl<'a> PreparedCircuit<'a> {
         first_buffer: usize,
     ) -> Result<WireBuffers<'_, 'a>> {
         let buffers = self
-            .wire_workspace_fields
+            .wire_workspace_field_counts
             .iter()
             .enumerate()
             .map(|(index, &len)| {

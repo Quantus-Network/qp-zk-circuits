@@ -12,7 +12,7 @@ struct GatherBatch {
 
 pub(super) struct PreparedQuotient {
     pub evaluation: crate::QuotientPlan,
-    pub fields: Vec<usize>,
+    pub workspace_field_counts: Vec<usize>,
     oracle: OraclePlan,
     inverse: FftPlan,
     gather: PreparedKernel,
@@ -205,12 +205,12 @@ impl PreparedQuotient {
             c as u32,
             0,
         ])?;
-        let mut fields = evaluation.workspace_field_counts().to_vec();
-        fields.extend([c * layout.quotient_rows, c * layout.quotient_rows, 1]);
-        fields.extend_from_slice(&oracle.fields);
+        let mut workspace_field_counts = evaluation.workspace_field_counts().to_vec();
+        workspace_field_counts.extend([c * layout.quotient_rows, c * layout.quotient_rows, 1]);
+        workspace_field_counts.extend_from_slice(&oracle.workspace_field_counts);
         Ok(Self {
             evaluation,
-            fields,
+            workspace_field_counts,
             oracle,
             inverse,
             gather,
@@ -267,15 +267,19 @@ impl QuotientCommitment {
 
 impl<'a> PreparedCircuit<'a> {
     pub fn quotient_workspace_field_counts(&self) -> &[usize] {
-        &self.quotient.fields
+        &self.quotient.workspace_field_counts
     }
 
     pub fn quotient_buffers(
         &self,
         workspace: &ProofWorkspace,
-        first: usize,
+        first_buffer: usize,
     ) -> Result<QuotientBuffers<'_, 'a>> {
-        let buffers = workspace_views(workspace, first, &self.quotient.fields)?;
+        let buffers = workspace_views(
+            workspace,
+            first_buffer,
+            &self.quotient.workspace_field_counts,
+        )?;
         Ok(QuotientBuffers {
             prepared: self,
             rows: buffers[0].clone(),
@@ -285,7 +289,7 @@ impl<'a> PreparedCircuit<'a> {
             values: buffers[4].clone(),
             coefficients: buffers[5].clone(),
             status: buffers[6].clone(),
-            oracle: self.quotient.oracle.buffers(workspace, first + 7)?,
+            oracle: self.quotient.oracle.buffers(workspace, first_buffer + 7)?,
         })
     }
 }
@@ -450,7 +454,12 @@ impl QuotientBuffers<'_, '_> {
             "quotient degree validation",
         )?;
         let mut column = 0;
-        for (coefficients, &columns) in self.oracle.coefficients.iter().zip(&plan.oracle.columns) {
+        for (coefficients, &columns) in self
+            .oracle
+            .coefficients
+            .iter()
+            .zip(&plan.oracle.batch_columns)
+        {
             for local in 0..columns {
                 let start = (column / plan.factor) * prepared.layout.quotient_rows
                     + (column % plan.factor) * prepared.layout.degree;

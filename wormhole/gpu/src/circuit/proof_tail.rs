@@ -65,7 +65,7 @@ pub(super) struct PreparedProofTail {
     pow: PowPlan,
     initial: Vec<MerkleQueryPlan>,
     fri: Vec<MerkleQueryPlan>,
-    fields: Vec<usize>,
+    workspace_field_counts: Vec<usize>,
 }
 
 impl PreparedProofTail {
@@ -115,16 +115,16 @@ impl PreparedProofTail {
                 MerkleQueryPlan::prepare_extension(context, queries.clone(), layout, arity)
             })
             .collect::<Result<Vec<_>>>()?;
-        let mut fields = pow.workspace_field_counts().to_vec();
-        fields.push(layout.proof_tail.count);
-        fields.extend(
+        let mut workspace_field_counts = pow.workspace_field_counts().to_vec();
+        workspace_field_counts.push(layout.proof_tail.count);
+        workspace_field_counts.extend(
             layout
                 .proof_tail
                 .initial
                 .iter()
                 .map(MerkleQueryLayout::field_count),
         );
-        fields.extend(
+        workspace_field_counts.extend(
             layout
                 .proof_tail
                 .fri
@@ -135,7 +135,7 @@ impl PreparedProofTail {
             pow,
             initial,
             fri,
-            fields,
+            workspace_field_counts,
         })
     }
 }
@@ -160,7 +160,7 @@ pub struct ResidentQueryRounds {
 
 impl PreparedCircuit<'_> {
     pub fn proof_tail_workspace_field_counts(&self) -> &[usize] {
-        &self.proof_tail.fields
+        &self.proof_tail.workspace_field_counts
     }
     pub fn pow_chunk_trials(&self) -> usize {
         self.layout.proof_tail.pow_chunk_trials
@@ -169,9 +169,13 @@ impl PreparedCircuit<'_> {
     pub fn proof_tail_buffers(
         &self,
         workspace: &ProofWorkspace,
-        first: usize,
+        first_buffer: usize,
     ) -> Result<ProofTailBuffers<'_, '_>> {
-        let buffers = workspace_views(workspace, first, &self.proof_tail.fields)?;
+        let buffers = workspace_views(
+            workspace,
+            first_buffer,
+            &self.proof_tail.workspace_field_counts,
+        )?;
         Ok(ProofTailBuffers {
             prepared: self,
             pow: [buffers[0].clone(), buffers[1].clone()],

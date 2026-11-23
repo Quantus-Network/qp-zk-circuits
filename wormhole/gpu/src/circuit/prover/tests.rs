@@ -317,8 +317,8 @@ fn boundary_witness_values_prove_identically_to_cpu() -> Result<()> {
 #[test]
 fn workspace_ranges_and_pow_retries_are_checked() {
     let layout = ProvingWorkspaceLayout::new([&[1, 2], &[3], &[4, 5], &[6], &[], &[7, 8]]);
-    assert_eq!(layout.first, [0, 2, 3, 5, 6, 6]);
-    assert_eq!(layout.fields, [1, 2, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(layout.stage_buffer_offsets, [0, 2, 3, 5, 6, 6]);
+    assert_eq!(layout.workspace_field_counts, [1, 2, 3, 4, 5, 6, 7, 8]);
     assert_eq!(next_pow_base(0, 17).unwrap(), 17);
     assert_eq!(next_pow_base(F::ORDER - 2, 1).unwrap(), F::ORDER - 1);
     assert!(next_pow_base(F::ORDER - 1, 1).is_err());

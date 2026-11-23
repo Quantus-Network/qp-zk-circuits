@@ -5,7 +5,7 @@ use crate::runtime::KernelParams;
 use crate::PrefixProductPlan;
 
 pub(super) struct PreparedPermutation {
-    pub fields: Vec<usize>,
+    pub workspace_field_counts: Vec<usize>,
     pub oracle: OraclePlan,
     init: PreparedKernel,
     fold: PreparedKernel,
@@ -137,18 +137,18 @@ impl PreparedPermutation {
             challenges * chunks,
             true,
         )?;
-        let mut fields = vec![
+        let mut workspace_field_counts = vec![
             challenges * 2,
             2 * chunks * challenges * layout.degree,
             challenges * layout.degree,
             challenges * layout.degree,
             1,
         ];
-        fields.extend_from_slice(scan.workspace_field_counts());
-        fields.extend_from_slice(&oracle.fields);
+        workspace_field_counts.extend_from_slice(scan.workspace_field_counts());
+        workspace_field_counts.extend_from_slice(&oracle.workspace_field_counts);
         let mut first = 0;
         let assemble_params = oracle
-            .columns
+            .batch_columns
             .iter()
             .map(|&columns| {
                 let params = context.prepare_params([
@@ -162,7 +162,7 @@ impl PreparedPermutation {
             })
             .collect::<Result<_>>()?;
         Ok(Self {
-            fields,
+            workspace_field_counts,
             oracle,
             init,
             fold,
@@ -215,16 +215,16 @@ impl PermutationCommitment {
 
 impl<'a> PreparedCircuit<'a> {
     pub fn permutation_workspace_field_counts(&self) -> &[usize] {
-        &self.permutation.fields
+        &self.permutation.workspace_field_counts
     }
 
     pub fn permutation_buffers(
         &self,
         workspace: &ProofWorkspace,
-        first: usize,
+        first_buffer: usize,
     ) -> Result<PermutationBuffers<'_, 'a>> {
         let plan = &self.permutation;
-        let buffers = workspace_views(workspace, first, &plan.fields)?;
+        let buffers = workspace_views(workspace, first_buffer, &plan.workspace_field_counts)?;
         let scan_end = 5 + plan.scan.workspace_field_counts().len();
         Ok(PermutationBuffers {
             prepared: self,
@@ -234,7 +234,7 @@ impl<'a> PreparedCircuit<'a> {
             zs: buffers[3].clone(),
             status: buffers[4].clone(),
             scan_scratch: buffers[5..scan_end].to_vec(),
-            oracle: plan.oracle.buffers(workspace, first + scan_end)?,
+            oracle: plan.oracle.buffers(workspace, first_buffer + scan_end)?,
         })
     }
 }

@@ -10,8 +10,8 @@ pub struct PolynomialCommitment {
 }
 
 pub(super) struct OraclePlan {
-    pub columns: Vec<usize>,
-    pub fields: Vec<usize>,
+    pub batch_columns: Vec<usize>,
+    pub workspace_field_counts: Vec<usize>,
     from_values: bool,
     commitment: CommitmentPlan,
 }
@@ -35,7 +35,7 @@ impl OraclePlan {
                 .min(u64::from(context.limits().max_storage_buffer_binding_size)),
             options.max_columns_per_batch,
         )?;
-        let columns = batches(width, capacity);
+        let batch_columns = batches(width, capacity);
         let commitment = CommitmentPlan::prepare_chunked(
             context,
             kernels,
@@ -45,28 +45,33 @@ impl OraclePlan {
             EvaluationOrder::BitReversed,
             options.commitment_chunk_rows,
         )?;
-        let mut fields = Vec::new();
-        for &count in &columns {
+        let mut workspace_field_counts = Vec::new();
+        for &count in &batch_columns {
             if from_values {
-                fields.push(layout.degree * count);
+                workspace_field_counts.push(layout.degree * count);
             }
-            fields.extend([layout.degree * count, layout.lde_rows * count]);
+            workspace_field_counts.extend([layout.degree * count, layout.lde_rows * count]);
         }
-        fields.extend(commitment.workspace_field_counts());
+        workspace_field_counts.extend(commitment.workspace_field_counts());
         Ok(Self {
-            columns,
-            fields,
+            batch_columns,
+            workspace_field_counts,
             from_values,
             commitment,
         })
     }
 
-    pub fn buffers(&self, workspace: &ProofWorkspace, first: usize) -> Result<OracleBuffers> {
-        let mut buffers = workspace_views(workspace, first, &self.fields)?.into_iter();
+    pub fn buffers(
+        &self,
+        workspace: &ProofWorkspace,
+        first_buffer: usize,
+    ) -> Result<OracleBuffers> {
+        let mut buffers =
+            workspace_views(workspace, first_buffer, &self.workspace_field_counts)?.into_iter();
         let mut values = Vec::new();
         let mut coefficients = Vec::new();
         let mut evaluations = Vec::new();
-        for _ in &self.columns {
+        for _ in &self.batch_columns {
             if self.from_values {
                 values.push(buffers.next().unwrap());
             }
@@ -109,7 +114,7 @@ impl OraclePlan {
         let columns = buffers
             .evaluations
             .iter()
-            .zip(&self.columns)
+            .zip(&self.batch_columns)
             .flat_map(|(batch, &columns)| {
                 (0..columns).map(move |column| {
                     batch.slice(
@@ -145,15 +150,15 @@ pub(super) struct OracleBuffers {
 
 pub(super) fn workspace_views(
     workspace: &ProofWorkspace,
-    first: usize,
-    fields: &[usize],
+    first_buffer: usize,
+    workspace_field_counts: &[usize],
 ) -> Result<Vec<DeviceFieldSlice>> {
-    fields
+    workspace_field_counts
         .iter()
         .enumerate()
         .map(|(index, &len)| {
             let buffer = workspace.buffer(
-                first
+                first_buffer
                     .checked_add(index)
                     .context("stage buffer index overflow")?,
             )?;
