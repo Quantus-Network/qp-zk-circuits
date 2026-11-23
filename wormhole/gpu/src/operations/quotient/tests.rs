@@ -277,7 +277,14 @@ fn quotient_matches_cpu_gates_and_permutation_equations_on_arbitrary_rows() -> R
             let mut encoder = workspace.begin(&context)?;
             encoder.upload(&row_buffer, &table)?;
             encoder.upload(&scalar_buffer, &scalars)?;
-            plan.encode(&mut encoder, &row_buffer, &scalar_buffer, &weights, &output)?;
+            plan.encode(
+                &mut encoder,
+                &row_buffer,
+                &scalar_buffer,
+                &scalars[4 + 2 * challenges..],
+                &weights,
+                &output,
+            )?;
             encoder.submit()?.finish()?;
             assert_eq!(
                 context.readback(&output)?,

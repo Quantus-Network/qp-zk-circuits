@@ -362,7 +362,7 @@ impl QuotientBuffers<'_, '_> {
         )?;
         encoder.upload(&self.status, &[F::ZERO])?;
         plan.evaluation
-            .encode_weights(encoder, &self.scalars, &self.weights)?;
+            .encode_weights(encoder, alphas, &self.weights)?;
         let fixed = prepared
             .fixed
             .evaluations
