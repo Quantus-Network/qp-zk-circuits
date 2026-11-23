@@ -1147,17 +1147,20 @@ fn wrapper_only_n2_builds_without_verifiers() {
     );
 }
 
-/// Records the `n = n_leaf` wrapper's gadget calls and constraint system for the Lean
-/// constraint exporter (`qp-plonky2/constraint-exporter`, PLAN.md Steps 8c and 8e) and checks
-/// the trace `formal/traces/private_batch_wrapper_n{n_leaf}.json` is current. Regenerate with
-/// `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib private_batch_wrapper_n`.
+/// Records the `(n_leaf, n_slots)` wrapper's gadget calls and constraint system for the
+/// Lean constraint exporter (`qp-plonky2/constraint-exporter`, PLAN.md Steps 8c and 8e) and
+/// checks the trace `formal/traces/private_batch_wrapper_n{n_leaf}.json` is current.
+/// Regenerate with `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib
+/// private_batch_wrapper_n`.
 ///
-/// The traced shape uses `num_exit_slots == num_leaf_proofs`.
-fn check_private_batch_wrapper_trace(n_leaf: usize) {
+/// The file name carries the leaf count only; the exit-slot count is in the trace.
+/// `n = 2` and `n = 4` are recorded with `n_slots = n_leaf`. The production trace is
+/// `(NUM_LEAF_PROOFS, NUM_EXIT_SLOTS) = (8, 32)`.
+fn check_private_batch_wrapper_trace(n_leaf: usize, n_slots: usize) {
     use zk_circuits_common::formal_trace::{Trace, TracingBuilder};
 
     let leaf = build_fake_leaf_circuit().0;
-    let shape = PrivateBatchShape::new(n_leaf, n_leaf);
+    let shape = PrivateBatchShape::new(n_leaf, n_slots);
     let mut tracing = TracingBuilder::new(wormhole_private_batch_circuit_config());
 
     // Where production runs `add_recursive_verifiers` under the leaf verifier key.
@@ -1217,10 +1220,16 @@ fn check_private_batch_wrapper_trace(n_leaf: usize) {
 
 #[test]
 fn private_batch_wrapper_n2_trace_is_current() {
-    check_private_batch_wrapper_trace(2);
+    check_private_batch_wrapper_trace(2, 2);
 }
 
 #[test]
 fn private_batch_wrapper_n4_trace_is_current() {
-    check_private_batch_wrapper_trace(4);
+    check_private_batch_wrapper_trace(4, 4);
+}
+
+#[test]
+fn private_batch_wrapper_production_trace_is_current() {
+    use qp_wormhole_inputs::production;
+    check_private_batch_wrapper_trace(production::NUM_LEAF_PROOFS, production::NUM_EXIT_SLOTS);
 }
