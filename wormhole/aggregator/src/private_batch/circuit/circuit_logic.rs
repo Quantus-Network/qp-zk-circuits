@@ -230,7 +230,7 @@ pub(crate) fn build_private_batch_constraints(
 
     // Guaranteed by the runtime num_public_inputs check in PrivateBatchCircuit::new;
     // this assertion only guards against future callers bypassing that constructor.
-    debug_assert!(leaf_pi_targets.iter().all(|pis| pis.len() == LEAF_PI_LEN));
+    assert!(leaf_pi_targets.iter().all(|pis| pis.len() == LEAF_PI_LEN));
 
     // =========================================================================
     // Header / reference values
@@ -409,15 +409,15 @@ pub(crate) fn build_private_batch_constraints(
         }
     }
 
-    debug_assert_eq!(output_pis.len(), aggregated_output::pi_len(shape));
+    assert_eq!(output_pis.len(), aggregated_output::pi_len(shape));
     builder.register_public_inputs(&output_pis);
 
     // Optional sanity checks on header offsets
-    debug_assert_eq!(aggregated_output::NUM_EXIT_SLOTS_OFFSET, 0);
-    debug_assert_eq!(aggregated_output::ASSET_ID_OFFSET, 1);
-    debug_assert_eq!(aggregated_output::VOLUME_FEE_BPS_OFFSET, 2);
-    debug_assert_eq!(aggregated_output::BLOCK_HASH_OFFSET, 3);
-    debug_assert_eq!(aggregated_output::BLOCK_NUMBER_OFFSET, 7);
+    assert_eq!(aggregated_output::NUM_EXIT_SLOTS_OFFSET, 0);
+    assert_eq!(aggregated_output::ASSET_ID_OFFSET, 1);
+    assert_eq!(aggregated_output::VOLUME_FEE_BPS_OFFSET, 2);
+    assert_eq!(aggregated_output::BLOCK_HASH_OFFSET, 3);
+    assert_eq!(aggregated_output::BLOCK_NUMBER_OFFSET, 7);
 }
 
 fn hash_dummy_nullifier_pre_image(
