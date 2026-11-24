@@ -85,6 +85,51 @@ Even with a trusted build host, the following remain required:
 
 ---
 
+## Verifier integration requirements
+
+The circuits leave the following to whoever verifies their proofs. A verifier
+that skips one of them is unsound even though every proof it accepts is valid.
+
+1. **Whole-segment nullifier settlement**
+   The public batch does not deduplicate inner proofs or nullifiers, and
+   dummy-slot nullifiers are prover-chosen. See the
+   [nullifier section](./README.md#nullifiers-and-double-spend-prevention-security-model).
+
+2. **Block binding**
+   The leaf binds `block_hash` only to a header preimage. The verifier must
+   check that it is non-zero and is the canonical hash at `block_number`, and
+   must reject all-dummy batches.
+
+3. **Fee rate and asset**
+   `volume_fee_bps` is range-checked to `0..=10000`, nothing more. The verifier
+   must compare it and `asset_id` with the chain's configured values.
+
+4. **Canonical proof bytes**
+   Proof encodings are malleable (non-canonical field elements, trailing
+   bytes). The verifier must reject any proof that does not re-serialize to the
+   submitted bytes, and must key pool or replay state on nullifiers, never on
+   proof bytes.
+
+5. **Artifact config**
+   `verifier.bin` does not commit to the FRI parameters or `num_challenges`;
+   those live in `common.bin`. Both must come from the same attested build, and
+   the loaded `common.config` must equal the canonical config of its layer
+   (`zk_circuits_common::circuit`). The leaf and ownership loaders pin both
+   files by keccak256.
+
+6. **Ownership proofs carry no context**
+   An ownership proof binds `wormhole_address` to `claim_account` and nothing
+   else: no chain, round or nonce. Anyone holding one can resubmit it. The
+   consumer must allow one claim per `wormhole_address` and must not reuse the
+   verifier artifact for a second claim round unless a replay there is harmless.
+
+7. **Leaf proofs stay on the client**
+   The leaf circuit is not zero-knowledge. A leaf proof must never leave the
+   device that holds the secret; the private-batch proof built from it is what
+   gets submitted.
+
+---
+
 ## Operational requirements (trusted path)
 
 To stay inside this model, deployments should:

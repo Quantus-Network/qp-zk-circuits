@@ -160,11 +160,15 @@ layer's responsibility because only it has authoritative state.
 
 The wormhole pallet (in the chain repository, not here) maintains the persistent set of
 settled nullifiers. When an aggregated batch is submitted, the pallet must, for each
-nullifier in the proof's public inputs:
+private segment in the proof's public inputs:
 
-1. reject (or skip, see below) any nullifier already present in the settled set, and
-2. atomically record the newly settled nullifiers together with executing the corresponding
+1. refuse the whole segment if any of its nullifiers is already in the settled set, is
+   claimed by an earlier segment of the same batch, or repeats within the segment, and
+2. atomically record the nullifiers of each accepted segment together with executing its
    exits.
+
+A segment settles entirely or not at all: its exit slots are bound to its nullifiers only
+through the batch-wide fee inequality, so no exit can be attributed to a single nullifier.
 
 Fee settlement uses the same private-segment boundary as the proof: a public batch must sum
 the independently rounded fee of each accepted private segment, not round once over the
@@ -175,9 +179,9 @@ block, or across blocks — settles **at most once**. The private-batch circuit 
 duplicates within a segment as defense in depth; the pallet remains the consensus boundary
 for every case.
 
-A chain-level refinement (tracked separately): for public batches the pallet can settle the
-*unused* segments of a batch and skip already-settled nullifiers instead of rejecting the
-whole proof, so one front-running miner cannot invalidate another miner's entire batch.
+For public batches the pallet settles the *unused* segments and skips each refused segment
+instead of rejecting the whole proof, so one front-running miner cannot invalidate another
+miner's entire batch.
 
 ### Dummy-slot nullifiers
 
