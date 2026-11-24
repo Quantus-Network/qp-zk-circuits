@@ -9,7 +9,7 @@ extern crate alloc;
 
 use anyhow::{bail, Context};
 
-pub use qp_wormhole_inputs::{private_batch_config, BytesDigest, DigestError, DIGEST_BYTES_LEN};
+pub use qp_wormhole_inputs::{BytesDigest, DigestError, DIGEST_BYTES_LEN};
 
 /// Public inputs: wormhole_address(4) + claim_account(4) + context(4) = 12.
 pub const PUBLIC_INPUTS_FELTS_LEN: usize = 12;

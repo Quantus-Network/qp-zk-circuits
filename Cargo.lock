@@ -1256,6 +1256,7 @@ dependencies = [
  "anyhow",
  "qp-ownership-inputs",
  "qp-plonky2-verifier",
+ "qp-wormhole-verifier",
  "tiny-keccak",
 ]
 

@@ -80,6 +80,19 @@ pub mod private_batch_config {
     pub const FRI_NUM_QUERY_ROUNDS: usize = 36;
 }
 
+/// FRI and wire parameters of the canonical public-batch circuit config. Lives here
+/// for the same reason as [`leaf_config`]: the on-chain verifier is `no_std`.
+pub mod public_batch_config {
+    pub const NUM_WIRES: usize = 143;
+    pub const NUM_ROUTED_WIRES: usize = 80;
+    pub const SECURITY_BITS: usize = 128;
+    pub const NUM_CHALLENGES: usize = 4;
+    pub const FRI_RATE_BITS: usize = 3;
+    pub const FRI_CAP_HEIGHT: usize = 4;
+    pub const FRI_PROOF_OF_WORK_BITS: u32 = 20;
+    pub const FRI_NUM_QUERY_ROUNDS: usize = 36;
+}
+
 /// Maximum number of leaf proofs and of exit slots in a private batch. The formal
 /// spec (`formal/WormholeSpec/Aggregation.lean`) proves the fee arithmetic cannot
 /// wrap the field and fits the 52-bit range check for at most 64 of each, so

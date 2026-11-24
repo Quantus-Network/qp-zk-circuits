@@ -29,9 +29,9 @@ use qp_plonky2_verifier::util::serialization::DefaultGateSerializer;
 use tiny_keccak::{Hasher, Keccak};
 
 pub use qp_ownership_inputs::{
-    private_batch_config, BytesDigest, PublicCircuitInputs, MIN_OWNERSHIP_SECURITY_BITS,
-    PUBLIC_INPUTS_FELTS_LEN,
+    BytesDigest, PublicCircuitInputs, MIN_OWNERSHIP_SECURITY_BITS, PUBLIC_INPUTS_FELTS_LEN,
 };
+use qp_wormhole_verifier::canonical_private_batch_circuit_config;
 
 /// Parse public inputs from a proof.
 pub fn parse_public_inputs(
@@ -150,26 +150,10 @@ impl OwnershipVerifier {
         })
     }
 
-    /// The canonical ownership config, mirroring
-    /// `zk_circuits_common::circuit::ownership_circuit_config()` from the shared
-    /// [`private_batch_config`] parameters. The keccak pins above catch any drift.
-    pub fn canonical_circuit_config() -> CircuitConfig {
-        let mut config = CircuitConfig::standard_recursion_zk_config();
-        config.num_wires = private_batch_config::NUM_WIRES;
-        config.num_routed_wires = private_batch_config::NUM_ROUTED_WIRES;
-        config.security_bits = private_batch_config::SECURITY_BITS;
-        config.num_challenges = private_batch_config::NUM_CHALLENGES;
-        config.fri_config.rate_bits = private_batch_config::FRI_RATE_BITS;
-        config.fri_config.cap_height = private_batch_config::FRI_CAP_HEIGHT;
-        config.fri_config.proof_of_work_bits = private_batch_config::FRI_PROOF_OF_WORK_BITS;
-        config.fri_config.num_query_rounds = private_batch_config::FRI_NUM_QUERY_ROUNDS;
-        config
-    }
-
     fn ensure_loaded_matches_canonical_profile(
         common: &CommonCircuitData<F, D>,
     ) -> anyhow::Result<()> {
-        let expected = Self::canonical_circuit_config();
+        let expected = canonical_private_batch_circuit_config();
 
         if expected.security_bits < MIN_OWNERSHIP_SECURITY_BITS {
             return Err(anyhow!(

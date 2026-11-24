@@ -10,7 +10,7 @@ use plonky2::{
         config::PoseidonGoldilocksConfig,
     },
 };
-use qp_wormhole_inputs::{leaf_config, private_batch_config};
+use qp_wormhole_inputs::{leaf_config, private_batch_config, public_batch_config};
 use serde::de::{self, Deserializer, Error, SeqAccess, Visitor};
 use serde::Deserialize;
 
@@ -491,14 +491,16 @@ pub fn ownership_circuit_config() -> CircuitConfig {
 /// - 87-173: degree_bits=20
 pub fn wormhole_public_batch_circuit_config() -> CircuitConfig {
     CircuitConfig {
-        security_bits: 128,
-        num_challenges: 4,
+        num_wires: public_batch_config::NUM_WIRES,
+        num_routed_wires: public_batch_config::NUM_ROUTED_WIRES,
+        security_bits: public_batch_config::SECURITY_BITS,
+        num_challenges: public_batch_config::NUM_CHALLENGES,
         fri_config: FriConfig {
-            rate_bits: 3,
-            cap_height: 4,
-            proof_of_work_bits: 20,
+            rate_bits: public_batch_config::FRI_RATE_BITS,
+            cap_height: public_batch_config::FRI_CAP_HEIGHT,
+            proof_of_work_bits: public_batch_config::FRI_PROOF_OF_WORK_BITS,
             reduction_strategy: FriReductionStrategy::ConstantArityBits(4, 5),
-            num_query_rounds: 36,
+            num_query_rounds: public_batch_config::FRI_NUM_QUERY_ROUNDS,
         },
         ..CircuitConfig::standard_recursion_config() // zero_knowledge: false
     }

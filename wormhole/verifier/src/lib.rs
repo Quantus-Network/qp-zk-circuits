@@ -48,10 +48,38 @@ use tiny_keccak::{Hasher, Keccak};
 
 // Re-export input types from qp-wormhole-inputs
 pub use qp_wormhole_inputs::{
-    leaf_config, BlockData, BytesDigest, PrivateBatchPublicInputs, PrivateBatchShape,
-    PublicBatchPublicInputs, PublicCircuitInputs, PublicInputsByAccount, WithdrawalOutput,
-    MIN_LEAF_SECURITY_BITS, PUBLIC_INPUTS_FELTS_LEN,
+    leaf_config, private_batch_config, public_batch_config, BlockData, BytesDigest,
+    PrivateBatchPublicInputs, PrivateBatchShape, PublicBatchPublicInputs, PublicCircuitInputs,
+    PublicInputsByAccount, WithdrawalOutput, MIN_LEAF_SECURITY_BITS, PUBLIC_INPUTS_FELTS_LEN,
 };
+
+macro_rules! canonical_config {
+    ($base:ident, $params:ident) => {{
+        let mut config = CircuitConfig::$base();
+        config.num_wires = $params::NUM_WIRES;
+        config.num_routed_wires = $params::NUM_ROUTED_WIRES;
+        config.security_bits = $params::SECURITY_BITS;
+        config.num_challenges = $params::NUM_CHALLENGES;
+        config.fri_config.rate_bits = $params::FRI_RATE_BITS;
+        config.fri_config.cap_height = $params::FRI_CAP_HEIGHT;
+        config.fri_config.proof_of_work_bits = $params::FRI_PROOF_OF_WORK_BITS;
+        config.fri_config.num_query_rounds = $params::FRI_NUM_QUERY_ROUNDS;
+        config
+    }};
+}
+
+/// The canonical private-batch config, mirroring
+/// `zk_circuits_common::circuit::wormhole_private_batch_circuit_config()`. A verifier
+/// loading batch artifacts must check `common.config` against it.
+pub fn canonical_private_batch_circuit_config() -> CircuitConfig {
+    canonical_config!(standard_recursion_zk_config, private_batch_config)
+}
+
+/// The canonical public-batch config, mirroring
+/// `zk_circuits_common::circuit::wormhole_public_batch_circuit_config()`.
+pub fn canonical_public_batch_circuit_config() -> CircuitConfig {
+    canonical_config!(standard_recursion_config, public_batch_config)
+}
 
 /// Parse public inputs from a proof.
 pub fn parse_public_inputs(
@@ -221,17 +249,7 @@ impl WormholeVerifier {
     /// [`leaf_config`] parameters (this crate is `no_std` and cannot depend on the
     /// circuit crates). The keccak pins above catch any drift between the two.
     pub fn canonical_leaf_circuit_config() -> CircuitConfig {
-        let mut config = CircuitConfig::standard_recursion_config();
-        config.num_wires = leaf_config::NUM_WIRES;
-        config.num_routed_wires = leaf_config::NUM_ROUTED_WIRES;
-        config.security_bits = leaf_config::SECURITY_BITS;
-        config.num_challenges = leaf_config::NUM_CHALLENGES;
-        config.zero_knowledge = false;
-        config.fri_config.rate_bits = leaf_config::FRI_RATE_BITS;
-        config.fri_config.cap_height = leaf_config::FRI_CAP_HEIGHT;
-        config.fri_config.proof_of_work_bits = leaf_config::FRI_PROOF_OF_WORK_BITS;
-        config.fri_config.num_query_rounds = leaf_config::FRI_NUM_QUERY_ROUNDS;
-        config
+        canonical_config!(standard_recursion_config, leaf_config)
     }
 
     fn ensure_loaded_matches_canonical_leaf_profile(

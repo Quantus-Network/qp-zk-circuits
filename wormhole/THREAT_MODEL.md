@@ -114,8 +114,9 @@ that skips one of them is unsound even though every proof it accepts is valid.
    `verifier.bin` does not commit to the FRI parameters or `num_challenges`;
    those live in `common.bin`. Both must come from the same attested build, and
    the loaded `common.config` must equal the canonical config of its layer
-   (`zk_circuits_common::circuit`). The leaf and ownership loaders pin both
-   files by keccak256.
+   (`canonical_private_batch_circuit_config` and
+   `canonical_public_batch_circuit_config` in `qp-wormhole-verifier`). The leaf
+   and ownership loaders pin both files by keccak256.
 
 6. **Ownership context**
    An ownership proof binds `wormhole_address` to `claim_account` and to a
