@@ -9,7 +9,7 @@ use anyhow::{anyhow, bail};
 use ownership_circuit::circuit::circuit_logic::{CircuitTargets, OwnershipCircuit};
 use ownership_circuit::inputs::CircuitInputs;
 use plonky2::{
-    iop::witness::PartialWitness,
+    iop::witness::{PartialWitness, WitnessWrite},
     plonk::{
         circuit_data::{CircuitConfig, ProverCircuitData},
         proof::ProofWithPublicInputs,
@@ -18,6 +18,7 @@ use plonky2::{
 use wormhole_circuit::substrate_account::SubstrateAccount;
 use wormhole_circuit::unspendable_account::UnspendableAccount;
 use zk_circuits_common::circuit::{CircuitFragment, C, D, F};
+use zk_circuits_common::utils::bytes_to_digest;
 
 pub struct OwnershipProver {
     pub circuit_data: ProverCircuitData<F, C, D>,
@@ -101,8 +102,10 @@ pub fn fill_witness(
 
     unspendable_account.fill_targets(pw, targets.unspendable_account.clone())?;
     claim_account.fill_targets(pw, targets.claim_account)?;
-
-    Ok(())
+    pw.set_target_arr(
+        &targets.context.elements,
+        &bytes_to_digest(circuit_inputs.public.context),
+    )
 }
 
 #[cfg(test)]
@@ -115,7 +118,7 @@ mod tests {
     fn committed_prover_debug_does_not_leak_secret() {
         let secret = Secret::try_from([0xAB; 32]).unwrap();
         let claim = BytesDigest::try_from([0xCD; 32].as_slice()).unwrap();
-        let inputs = CircuitInputs::from_secret(secret, claim);
+        let inputs = CircuitInputs::from_secret(secret, claim, claim);
 
         let prover = build_fresh().commit(&inputs).unwrap();
         let dump = format!("{:?}", prover);

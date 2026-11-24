@@ -9,7 +9,8 @@ use zk_circuits_common::utils::{digest_to_bytes, BytesDigest};
 fn sample_inputs() -> CircuitInputs {
     let secret = Secret::try_from([0x11; 32]).unwrap();
     let claim = BytesDigest::try_from([0x22; 32].as_slice()).unwrap();
-    CircuitInputs::from_secret(secret, claim)
+    let context = BytesDigest::try_from([0x66; 32].as_slice()).unwrap();
+    CircuitInputs::from_secret(secret, claim, context)
 }
 
 #[test]
@@ -33,7 +34,7 @@ fn public_inputs_match_committed_values() {
 fn mismatched_address_fails_to_prove() {
     let secret = Secret::try_from([0x11; 32]).unwrap();
     let claim = BytesDigest::try_from([0x22; 32].as_slice()).unwrap();
-    let mut inputs = CircuitInputs::from_secret(secret, claim);
+    let mut inputs = CircuitInputs::from_secret(secret, claim, claim);
     inputs.public.wormhole_address = BytesDigest::try_from([0x33; 32].as_slice()).unwrap();
 
     let prover = OwnershipProver::new(CircuitConfig::standard_recursion_config()).unwrap();
@@ -45,7 +46,7 @@ fn derived_address_matches_unspendable_account() {
     let secret_bytes = [0x44u8; 32];
     let secret = Secret::try_from(secret_bytes).unwrap();
     let claim = BytesDigest::try_from([0x55; 32].as_slice()).unwrap();
-    let inputs = CircuitInputs::from_secret(secret, claim);
+    let inputs = CircuitInputs::from_secret(secret, claim, claim);
     let account = UnspendableAccount::from_secret(secret_bytes.try_into().unwrap());
     assert_eq!(
         inputs.public.wormhole_address,

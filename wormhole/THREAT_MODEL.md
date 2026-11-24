@@ -117,11 +117,11 @@ that skips one of them is unsound even though every proof it accepts is valid.
    (`zk_circuits_common::circuit`). The leaf and ownership loaders pin both
    files by keccak256.
 
-6. **Ownership proofs carry no context**
-   An ownership proof binds `wormhole_address` to `claim_account` and nothing
-   else: no chain, round or nonce. Anyone holding one can resubmit it. The
-   consumer must allow one claim per `wormhole_address` and must not reuse the
-   verifier artifact for a second claim round unless a replay there is harmless.
+6. **Ownership context**
+   An ownership proof binds `wormhole_address` to `claim_account` and to a
+   `context` digest the circuit does not interpret. The consumer must derive
+   the expected `context` from its chain and claim round, reject any other
+   value, and allow one claim per `wormhole_address` within a context.
 
 7. **Leaf proofs stay on the client**
    The leaf circuit is not zero-knowledge. A leaf proof must never leave the

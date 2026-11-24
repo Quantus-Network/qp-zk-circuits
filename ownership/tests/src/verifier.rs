@@ -3,17 +3,19 @@ use ownership_circuit::inputs::CircuitInputs;
 use ownership_circuit::PUBLIC_INPUTS_FELTS_LEN;
 use ownership_prover::OwnershipProver;
 use ownership_verifier::{OwnershipVerifier, ProofWithPublicInputs};
+use plonky2::field::types::Field;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::util::serialization::DefaultGateSerializer;
 use tiny_keccak::{Hasher, Keccak};
 use wormhole_circuit::sensitive::Secret;
-use zk_circuits_common::circuit::ownership_circuit_config;
+use zk_circuits_common::circuit::{ownership_circuit_config, F};
 use zk_circuits_common::utils::BytesDigest;
 
 fn sample_inputs() -> CircuitInputs {
     let secret = Secret::try_from([0x11; 32]).unwrap();
     let claim = BytesDigest::try_from([0x22; 32].as_slice()).unwrap();
-    CircuitInputs::from_secret(secret, claim)
+    let context = BytesDigest::try_from([0x66; 32].as_slice()).unwrap();
+    CircuitInputs::from_secret(secret, claim, context)
 }
 
 fn build_verifier_bytes() -> (Vec<u8>, Vec<u8>) {
@@ -57,6 +59,23 @@ fn loaded_verifier_accepts_fresh_proof() {
         ProofWithPublicInputs::from_bytes(proof.to_bytes(), &verifier.circuit_data.common).unwrap();
     verifier.verify(verifier_proof).unwrap();
     assert_eq!(proof.public_inputs.len(), PUBLIC_INPUTS_FELTS_LEN);
+}
+
+#[test]
+fn tampering_any_public_input_fails_verification() {
+    let config = CircuitConfig::standard_recursion_config();
+    let prover = OwnershipProver::new(config.clone()).unwrap();
+    let proof = prover.commit(&sample_inputs()).unwrap().prove().unwrap();
+    let verifier_data = OwnershipCircuit::new(config).unwrap().build_verifier();
+
+    for i in 0..PUBLIC_INPUTS_FELTS_LEN {
+        let mut tampered = proof.clone();
+        tampered.public_inputs[i] += F::ONE;
+        assert!(
+            verifier_data.verify(tampered).is_err(),
+            "public input {i} is not bound to the proof"
+        );
+    }
 }
 
 #[test]

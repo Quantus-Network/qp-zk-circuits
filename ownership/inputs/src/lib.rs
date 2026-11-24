@@ -8,12 +8,11 @@
 extern crate alloc;
 
 use anyhow::{bail, Context};
-use core::fmt;
 
 pub use qp_wormhole_inputs::{private_batch_config, BytesDigest, DigestError, DIGEST_BYTES_LEN};
 
-/// Public inputs: wormhole_address(4) + claim_account(4) = 8.
-pub const PUBLIC_INPUTS_FELTS_LEN: usize = 8;
+/// Public inputs: wormhole_address(4) + claim_account(4) + context(4) = 12.
+pub const PUBLIC_INPUTS_FELTS_LEN: usize = 12;
 
 /// Minimum acceptable security level (bits) for the ownership circuit config.
 pub const MIN_OWNERSHIP_SECURITY_BITS: usize = 128;
@@ -22,28 +21,25 @@ pub const WORMHOLE_ADDRESS_START_INDEX: usize = 0;
 pub const WORMHOLE_ADDRESS_END_INDEX: usize = 4;
 pub const CLAIM_ACCOUNT_START_INDEX: usize = 4;
 pub const CLAIM_ACCOUNT_END_INDEX: usize = 8;
+pub const CONTEXT_START_INDEX: usize = 8;
+pub const CONTEXT_END_INDEX: usize = 12;
 
 /// Public inputs for a wormhole-address ownership proof.
 ///
 /// The circuit proves knowledge of the secret `s` such that
-/// `wormhole_address = H(H("wormhole" || s))`. `claim_account` is bound as a
-/// public input so a stolen proof cannot be submitted to a different
-/// destination. Eligibility and single-claim enforcement are on-chain.
-#[derive(Clone, PartialEq, Eq)]
+/// `wormhole_address = H(H("wormhole" || s))`. `claim_account` and `context`
+/// are bound as public inputs so a stolen proof cannot be submitted to a
+/// different destination, chain or claim round. Eligibility and single-claim
+/// enforcement are on-chain.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicCircuitInputs {
     /// The wormhole address whose secret the prover claims to know.
     pub wormhole_address: BytesDigest,
     /// The account that receives the airdrop if the proof verifies.
     pub claim_account: BytesDigest,
-}
-
-impl fmt::Debug for PublicCircuitInputs {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("PublicCircuitInputs")
-            .field("wormhole_address", &self.wormhole_address)
-            .field("claim_account", &self.claim_account)
-            .finish()
-    }
+    /// Consumer-chosen digest naming the chain and claim round the proof is
+    /// for. The verifier must compare it with the value it expects.
+    pub context: BytesDigest,
 }
 
 fn hash_u64s_to_bytes_digest(vals: &[u64]) -> anyhow::Result<BytesDigest> {
@@ -78,10 +74,13 @@ impl PublicCircuitInputs {
         let claim_account =
             hash_u64s_to_bytes_digest(&pis[CLAIM_ACCOUNT_START_INDEX..CLAIM_ACCOUNT_END_INDEX])
                 .context("failed to parse claim_account")?;
+        let context = hash_u64s_to_bytes_digest(&pis[CONTEXT_START_INDEX..CONTEXT_END_INDEX])
+            .context("failed to parse context")?;
 
         Ok(PublicCircuitInputs {
             wormhole_address,
             claim_account,
+            context,
         })
     }
 }
@@ -102,6 +101,7 @@ mod tests {
         let parsed = PublicCircuitInputs::try_from_u64_slice(&pis).unwrap();
         assert_eq!(*parsed.wormhole_address, [0u8; 32]);
         assert_eq!(*parsed.claim_account, [0u8; 32]);
+        assert_eq!(*parsed.context, [0u8; 32]);
     }
 
     #[test]
@@ -109,8 +109,10 @@ mod tests {
         let mut pis = [0u64; PUBLIC_INPUTS_FELTS_LEN];
         pis[0] = 1;
         pis[4] = 2;
+        pis[8] = 3;
         let parsed = PublicCircuitInputs::try_from_u64_slice(&pis).unwrap();
         assert_eq!(&parsed.wormhole_address[..8], &1u64.to_le_bytes());
         assert_eq!(&parsed.claim_account[..8], &2u64.to_le_bytes());
+        assert_eq!(&parsed.context[..8], &3u64.to_le_bytes());
     }
 }
