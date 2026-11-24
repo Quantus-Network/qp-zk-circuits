@@ -584,21 +584,25 @@ mod tests {
 
     /// The production private batch (N=8) is the largest shape that stays at
     /// degree 15 with 36-query blinding. One more leaf is degree 16, which
-    /// doubles the client prover's time and memory and raises the public
-    /// batch's per-proof cost.
+    /// doubles the client prover's time and memory, raises the public
+    /// batch's per-proof cost and drops the permutation argument below 128 bits.
     #[test]
     fn production_private_batch_stays_at_degree_15() {
         use super::{canonical_leaf_verifier_data, canonical_private_batch_verifier_data};
         use qp_wormhole_inputs::production;
+        use zk_circuits_common::circuit::soundness_bits;
 
         let leaf = canonical_leaf_verifier_data();
         let private =
             canonical_private_batch_verifier_data(&leaf, production::PRIVATE_BATCH_SHAPE).unwrap();
         assert_eq!(private.common.degree_bits(), 15);
+        for common in [&leaf.common, &private.common] {
+            assert!(soundness_bits(&common.config, common.degree_bits()) >= 128);
+        }
     }
 
     /// The production public batch is the most inner proofs that fit 2^19 rows
-    /// (~5,880 rows each, including the public-input hash gates `build()`
+    /// (~6,030 rows each, including the public-input hash gates `build()`
     /// appends). A larger degree doubles the GPU prover's buffers.
     #[test]
     #[ignore = "builds the 2^19 production public batch (~12 GB peak); run in the slow-tests CI job"]
@@ -608,6 +612,7 @@ mod tests {
             canonical_public_batch_verifier_data,
         };
         use qp_wormhole_inputs::production;
+        use zk_circuits_common::circuit::soundness_bits;
 
         let leaf = canonical_leaf_verifier_data();
         let private =
@@ -619,9 +624,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(public.common.degree_bits(), 19);
-        assert_eq!(public.common.config.security_bits, 128);
-        let fri = &public.common.config.fri_config;
-        assert!(fri.num_query_rounds * fri.rate_bits + fri.proof_of_work_bits as usize >= 128);
+        assert!(soundness_bits(&public.common.config, 19) >= 128);
     }
 
     /// Pinning must compare raw artifact bytes to a canonical rebuild and never

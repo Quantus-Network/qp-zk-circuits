@@ -10,13 +10,13 @@ extern crate alloc;
 use anyhow::{bail, Context};
 use core::fmt;
 
-pub use qp_wormhole_inputs::{BytesDigest, DigestError, DIGEST_BYTES_LEN};
+pub use qp_wormhole_inputs::{private_batch_config, BytesDigest, DigestError, DIGEST_BYTES_LEN};
 
 /// Public inputs: wormhole_address(4) + claim_account(4) = 8.
 pub const PUBLIC_INPUTS_FELTS_LEN: usize = 8;
 
 /// Minimum acceptable security level (bits) for the ownership circuit config.
-pub const MIN_OWNERSHIP_SECURITY_BITS: usize = 100;
+pub const MIN_OWNERSHIP_SECURITY_BITS: usize = 128;
 
 pub const WORMHOLE_ADDRESS_START_INDEX: usize = 0;
 pub const WORMHOLE_ADDRESS_END_INDEX: usize = 4;

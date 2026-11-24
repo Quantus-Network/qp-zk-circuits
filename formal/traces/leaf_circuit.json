@@ -1,6 +1,6 @@
 {
   "circuit": "leaf_circuit",
-  "config": {"fri_config":{"cap_height":4,"num_query_rounds":19,"proof_of_work_bits":16,"rate_bits":6,"reduction_strategy":{"ConstantArityBits":[4,5]}},"max_quotient_degree_factor":8,"num_challenges":2,"num_constants":2,"num_routed_wires":60,"num_wires":135,"security_bits":128,"use_base_arithmetic_gate":true,"zero_knowledge":false},
+  "config": {"fri_config":{"cap_height":4,"num_query_rounds":16,"proof_of_work_bits":16,"rate_bits":7,"reduction_strategy":{"ConstantArityBits":[4,5]}},"max_quotient_degree_factor":8,"num_challenges":3,"num_constants":2,"num_routed_wires":60,"num_wires":135,"security_bits":128,"use_base_arithmetic_gate":true,"zero_knowledge":false},
   "digest": "179109a27f3b96a756d4c53e32ed070009cbcab1bcd48d97dafe47871dcbf0dd",
   "start": {"rows":0,"copies":0,"virtual_targets":0},
   "num_virtual_targets": 434,

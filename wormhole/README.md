@@ -210,23 +210,31 @@ entirely, the pallet's nullifier set would still prevent any double spend.
 The aggregator combines `N` leaf proofs and `M` exit slots into a single proof with a fixed public input layout
 `[M, asset_id, volume_fee_bps, block_hash(4), block_number] ++ M × (amount, exit_account(4)) ++ N × nullifier(4)`.
 `N` (`--num-leaf-proofs`) and `M` (`--num-exit-slots`) are independent circuit parameters; the production shape is `N = 8`,
-`M = 32` (`qp_wormhole_inputs::production`). The leaf verifiers dominate the private-batch circuit (about 2.6k gates per leaf),
+`M = 32` (`qp_wormhole_inputs::production`). The leaf verifiers dominate the private-batch circuit (about 2.5k gates per leaf),
 while each exit slot costs roughly one gate plus five public inputs, so `M` can be raised up to the cap of 64 without changing the
-circuit degree. Measured degree by `N` with the production config: `N <= 2` fits `2^14`, `3..=8` fits `2^15`, `9..=19` fits
-`2^16`, `20..=44` fits `2^17`, and `45..=64` needs `2^18`. `N = 8` is the largest shape that stays in `2^15`; a test pins the
+circuit degree. Measured degree by `N` with the production config: `N <= 2` fits `2^14`, `3..=8` fits `2^15`, `9..=20` fits
+`2^16`, `21..=46` fits `2^17`, and `47..=64` needs `2^18`. `N = 8` is the largest shape that stays in `2^15`; a test pins the
 degree so a later gate added to the private batch fails CI rather than silently doubling the prover's work.
 
-The public batch aggregates `n` private-batch proofs (production `n = 89`, cap `MAX_PUBLIC_BATCH_ARITY = 256`). Each inner proof
-costs about 5.86k gates of recursive verification plus one Poseidon gate per 8 of the `5M + 4N` public inputs it forwards (24 at the
-production shape): up to 44 inner proofs fit `2^18`, 89 fit `2^19`, 178 fit `2^20`. At the production shape a public batch carries
-712 burns and 2,848 exit slots; the 2^19 GPU prover plans ~12 GB of device buffers.
+The public batch aggregates `n` private-batch proofs (production `n = 86`, cap `MAX_PUBLIC_BATCH_ARITY = 256`). Each inner proof
+costs about 6.0k gates of recursive verification plus one Poseidon gate per 8 of the `5M + 4N` public inputs it forwards (24 at the
+production shape): up to 43 inner proofs fit `2^18`, 86 fit `2^19`, 173 fit `2^20`. At the production shape a public batch carries
+688 burns and 2,752 exit slots; the 2^19 GPU prover plans ~16 GB of device buffers
+(4.6 GB fixed and an 11.3 GB per-proof workspace).
 
-The leaf and private batch target 128 conjectured bits (`num_query_rounds * rate_bits + proof_of_work_bits`). The leaf uses
-`rate_bits = 6` with 19 queries: leaves are proven client-side, and each rate bit doubles the leaf prover's LDE (rate 7 proved in
-~130 ms against ~60 ms at rate 6 on an M4), while every query it saves removes ~75 gates from each recursive verification in the
-private batch. The private batch uses `rate_bits = 3`, 36 queries and 20 proof-of-work bits. Rate 3 is the floor, and it keeps the
-client extension at 2^18 rows (~1.5 GB) instead of the 2^19-row / ~2.2 GB peak of rate 4, which is past the jetsam limit on a 4 GB
-phone. Those extra queries are what drop the public-batch arity from 109 to 89. The public
+Every layer targets 128 bits on the two terms its config controls, and `zk_circuits_common::circuit::soundness_bits` computes the
+lesser of them: the conjectured FRI bound (`num_query_rounds * rate_bits + proof_of_work_bits`) and the permutation argument, whose
+challenges are base-field elements and give `num_challenges * (64 - log2(rows * routed wires))`. The leaf (2^8 rows) and the private
+batch (2^15) use three permutation challenges for 150 and 129 bits; the public batch (2^19) needs four for 152. Tests pin both terms
+at the production degrees. The quotient identity is checked at a point of the quadratic extension, which no config can change: about
+`128 - log2(9 * rows)`, so 117, 110 and 106 bits.
+
+The leaf uses `rate_bits = 7` with 16 queries: leaves are proven client-side, and each rate bit doubles the leaf prover's LDE (~60 ms
+against ~35 ms at rate 6 on an M5 Pro), while every query it saves removes ~75 gates from each recursive verification in the
+private batch. Rate 6 with 19 queries leaves room for only 7 leaves in 2^15 rows once each verification carries the third challenge.
+The private batch uses `rate_bits = 3`, 36 queries and 20 proof-of-work bits. Rate 3 is the floor, and it keeps the client extension
+at 2^18 rows (~1.75 GB peak on the desktop profiler) instead of the 2^19-row / ~2.2 GB peak of rate 4, which is past the jetsam limit
+on a 4 GB phone. Those queries and the third challenge set the public-batch arity at 86. The public
 batch keeps Plonky2's minimum `rate_bits = 3` (its 2^19-row LDE is already the GPU's memory budget) and reaches 128 bits with 36
 queries and 20 proof-of-work bits; being non-ZK, the extra queries add no rows, only on-chain verifier hashing. Key behaviors:
 

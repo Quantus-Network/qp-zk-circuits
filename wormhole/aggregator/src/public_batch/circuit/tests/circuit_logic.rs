@@ -793,7 +793,7 @@ fn public_batch_rejects_proofs_from_substituted_private_batch_circuit() {
 /// The builder traced is the production one: the canonical private-batch verifiers are added
 /// first, exactly as `PublicBatchCircuit::new` does, and the resulting builder state is
 /// checked against that constructor's. `n_inner = 2` and `4` are recorded over 2-leaf,
-/// 2-slot private batches. The production trace is `PUBLIC_BATCH_ARITY = 89` over
+/// 2-slot private batches. The production trace is `PUBLIC_BATCH_ARITY = 86` over
 /// `(NUM_LEAF_PROOFS, NUM_EXIT_SLOTS) = (8, 32)`, and its recursion gadgets name
 /// `private_batch_wrapper_n8`.
 fn check_public_batch_wrapper_trace(n_inner: usize, inner_shape: PrivateBatchShape) {

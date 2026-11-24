@@ -29,7 +29,8 @@ use qp_plonky2_verifier::util::serialization::DefaultGateSerializer;
 use tiny_keccak::{Hasher, Keccak};
 
 pub use qp_ownership_inputs::{
-    BytesDigest, PublicCircuitInputs, MIN_OWNERSHIP_SECURITY_BITS, PUBLIC_INPUTS_FELTS_LEN,
+    private_batch_config, BytesDigest, PublicCircuitInputs, MIN_OWNERSHIP_SECURITY_BITS,
+    PUBLIC_INPUTS_FELTS_LEN,
 };
 
 /// Parse public inputs from a proof.
@@ -55,12 +56,12 @@ pub struct OwnershipVerifier {
 // rebuild the circuit and fail if a deliberate circuit change requires these
 // commitments to be updated.
 const CANONICAL_VERIFIER_KECCAK256: [u8; 32] = [
-    0x09, 0xb9, 0x91, 0x78, 0x58, 0x71, 0xf8, 0x59, 0x0b, 0xcf, 0x9c, 0xb6, 0x6e, 0xca, 0x0e, 0xa4,
-    0x92, 0xf2, 0xa0, 0xcf, 0x08, 0xf0, 0x07, 0x73, 0xf2, 0xd3, 0x1e, 0x3b, 0xb3, 0xde, 0x5d, 0xc6,
+    0xcf, 0x51, 0x6c, 0x82, 0x55, 0xb1, 0x2a, 0x4d, 0xfe, 0xfa, 0x47, 0x69, 0xe5, 0xce, 0x91, 0xe6,
+    0xf8, 0x4c, 0x7e, 0x2c, 0x31, 0xe2, 0xa0, 0xa5, 0x5d, 0x7a, 0x45, 0xa8, 0xd4, 0xe6, 0xd6, 0x04,
 ];
 const CANONICAL_COMMON_KECCAK256: [u8; 32] = [
-    0xb0, 0x1c, 0x73, 0xbd, 0x89, 0x98, 0x86, 0x54, 0x29, 0x6d, 0xb4, 0xd9, 0x71, 0xdc, 0xfa, 0x23,
-    0x6a, 0x9c, 0xce, 0xc3, 0xa7, 0xea, 0x41, 0xce, 0x29, 0x15, 0x47, 0x41, 0x11, 0xbf, 0x6d, 0x83,
+    0x21, 0x05, 0x96, 0x57, 0x44, 0x35, 0x6e, 0x50, 0xcb, 0x6b, 0x57, 0x67, 0x9a, 0xce, 0xcc, 0xb5,
+    0x41, 0x2f, 0xc8, 0x3a, 0x5a, 0x82, 0xca, 0xd1, 0xa5, 0x9e, 0xb8, 0x9e, 0x2a, 0x0c, 0x73, 0x6f,
 ];
 
 /// Maximum size accepted for a serialized verifier artifact.
@@ -149,10 +150,26 @@ impl OwnershipVerifier {
         })
     }
 
+    /// The canonical ownership config, mirroring
+    /// `zk_circuits_common::circuit::ownership_circuit_config()` from the shared
+    /// [`private_batch_config`] parameters. The keccak pins above catch any drift.
+    pub fn canonical_circuit_config() -> CircuitConfig {
+        let mut config = CircuitConfig::standard_recursion_zk_config();
+        config.num_wires = private_batch_config::NUM_WIRES;
+        config.num_routed_wires = private_batch_config::NUM_ROUTED_WIRES;
+        config.security_bits = private_batch_config::SECURITY_BITS;
+        config.num_challenges = private_batch_config::NUM_CHALLENGES;
+        config.fri_config.rate_bits = private_batch_config::FRI_RATE_BITS;
+        config.fri_config.cap_height = private_batch_config::FRI_CAP_HEIGHT;
+        config.fri_config.proof_of_work_bits = private_batch_config::FRI_PROOF_OF_WORK_BITS;
+        config.fri_config.num_query_rounds = private_batch_config::FRI_NUM_QUERY_ROUNDS;
+        config
+    }
+
     fn ensure_loaded_matches_canonical_profile(
         common: &CommonCircuitData<F, D>,
     ) -> anyhow::Result<()> {
-        let expected = CircuitConfig::standard_recursion_zk_config();
+        let expected = Self::canonical_circuit_config();
 
         if expected.security_bits < MIN_OWNERSHIP_SECURITY_BITS {
             return Err(anyhow!(
