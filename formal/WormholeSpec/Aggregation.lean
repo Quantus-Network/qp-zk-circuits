@@ -409,8 +409,7 @@ theorem maskedInputTotal_mul_feeDenominator_lt_modulus {leaves : List LeafPublic
       (leaves.length * (2 ^ 32)) * feeDenominator ≤
         (64 * (2 ^ 32)) * feeDenominator := by
     exact Nat.mul_le_mul_right _ (Nat.mul_le_mul_right _ hlen)
-  have hnumeric : (64 * (2 ^ 32)) * feeDenominator < goldilocks := by
-    native_decide
+  have hnumeric : (64 * (2 ^ 32)) * feeDenominator < goldilocks := by decide
   exact Nat.lt_of_le_of_lt (Nat.le_trans hscaled hcapacity) hnumeric
 
 /-- For the protocol maximum of 64 exit slots and 32-bit amounts, the scaled
@@ -427,8 +426,7 @@ theorem slotsTotal_mul_feeDenominator_lt_modulus {slots : List ExitSlot}
   have hcapacity :
       (slots.length * (2 ^ 32)) * feeDenominator ≤ (64 * (2 ^ 32)) * feeDenominator := by
     exact Nat.mul_le_mul_right _ (Nat.mul_le_mul_right _ hlen)
-  have hnumeric : (64 * (2 ^ 32)) * feeDenominator < goldilocks := by
-    native_decide
+  have hnumeric : (64 * (2 ^ 32)) * feeDenominator < goldilocks := by decide
   exact Nat.lt_of_le_of_lt (Nat.le_trans hscaled hcapacity) hnumeric
 
 /-- The actual right-hand side uses a fee complement no larger than 10000, so

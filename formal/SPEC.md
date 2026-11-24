@@ -59,9 +59,10 @@ hermetic. Toolchain is pinned in `lean-toolchain` (Lean `v4.30`).
   probabilistic accounting is the Phase-4 game-based track; this interface is the seam.
 - **TCB and phase boundary.** Not re-verified: Plonky2's FRI/PLONK soundness, the
   `PoseidonGate` implementation, the Lean kernel, or the field-level wrapper
-  gadgets. This package is axiom-free; proof-system soundness is the one explicit
-  axiom `Plonky2Bridge.proof_sound` in qp-plonky2/formal (stated on the exported
-  recursion tree), and the field-level bridges there (`Plonky2Bridge.*_end_to_end`)
+  gadgets. This package is axiom-free; proof-system soundness is the theorem
+  `Plonky2Bridge.proof_sound` in qp-plonky2/formal (stated on the exported
+  recursion tree, resting on the axioms declared in `Plonky2Bridge/Trusted.lean`
+  and the per-circuit `build_agrees`), and the field-level bridges there (`Plonky2Bridge.*_end_to_end`)
   are what prove the field constraints implement the aggregate sums/comparison.
 
 ## Clause ↔ code cross-reference

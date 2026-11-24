@@ -24,9 +24,10 @@
 
   This package is axiom-free: `#print axioms` on any theorem here names only the standard
   `propext` / `Classical.choice` / `Quot.sound`. Proof-system soundness — that a proof the
-  recursive verifier gadget accepts attests the proved circuit's relation — is the one trusted
-  axiom of the whole development, `Plonky2Bridge.proof_sound` in qp-plonky2/formal, stated on
-  the exported recursion tree; `LeafCircuit.accepted_sound` / `Wrapper{2,4}.accepted_sound`
+  recursive verifier gadget accepts attests the proved circuit's relation — is
+  `Plonky2Bridge.proof_sound` in qp-plonky2/formal, a theorem on the exported recursion tree
+  that rests on the axioms declared there (`Plonky2Bridge/Trusted.lean` and the per-circuit
+  `build_agrees`); `LeafCircuit.accepted_sound` / `Wrapper{2,4}.accepted_sound`
   there supply the child-relation hypotheses of `AggregationBridge.private_batch_sound` /
   `public_batch_sound`.
 
