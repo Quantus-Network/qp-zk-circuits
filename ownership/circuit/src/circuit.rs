@@ -2,9 +2,8 @@
 //!
 //! Proves knowledge of the secret `s` such that
 //! `wormhole_address = H(H("wormhole" || s))`, and binds the proof to a
-//! public `claim_account` and `context`. There is no inclusion proof, block
-//! header, or nullifier — eligibility and single-claim enforcement are
-//! on-chain.
+//! public `claim_account`. There is no inclusion proof, block header, or
+//! nullifier — eligibility and single-claim enforcement are on-chain.
 //!
 //! Full `CircuitData` is never serialized: a poisoned artifact could
 //! exfiltrate the secret through `public_inputs`. Always construct
@@ -31,17 +30,17 @@ pub mod circuit_logic {
     pub struct CircuitTargets {
         pub unspendable_account: UnspendableAccountTargets,
         pub claim_account: ExitAccountTargets,
-        pub context: HashOutTarget,
     }
 
     impl CircuitTargets {
         pub fn new(builder: &mut CircuitBuilder<F, D>) -> Self {
-            let account_id = builder.add_virtual_hash_public_input();
+            let account_id = HashOutTarget {
+                elements: core::array::from_fn(|_| builder.add_virtual_public_input()),
+            };
             let secret = builder.add_virtual_hash();
             Self {
                 unspendable_account: UnspendableAccountTargets { account_id, secret },
                 claim_account: ExitAccountTargets::new(builder),
-                context: builder.add_virtual_hash_public_input(),
             }
         }
     }

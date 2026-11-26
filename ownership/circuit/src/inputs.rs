@@ -1,14 +1,16 @@
-use alloc::vec::Vec;
-use anyhow::Context;
+use anyhow::{bail, Context};
 use plonky2::field::goldilocks_field::GoldilocksField;
-use plonky2::field::types::PrimeField64;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use wormhole_circuit::sensitive::Secret;
 use wormhole_circuit::unspendable_account::UnspendableAccount;
 use zk_circuits_common::circuit::{C, D, F};
-use zk_circuits_common::utils::{digest_to_bytes, BytesDigest};
+use zk_circuits_common::utils::{digest_to_bytes, try_4_felts_to_bytes, BytesDigest};
 
 pub use qp_ownership_inputs::PublicCircuitInputs;
+use qp_ownership_inputs::{
+    CLAIM_ACCOUNT_END_INDEX, CLAIM_ACCOUNT_START_INDEX, PUBLIC_INPUTS_FELTS_LEN,
+    WORMHOLE_ADDRESS_END_INDEX, WORMHOLE_ADDRESS_START_INDEX,
+};
 
 /// Inputs required to commit to the ownership circuit.
 ///
@@ -30,14 +32,13 @@ impl core::fmt::Debug for CircuitInputs {
 
 impl CircuitInputs {
     /// Derive the wormhole address from `secret` and bind the proof to
-    /// `claim_account` and `context`.
-    pub fn from_secret(secret: Secret, claim_account: BytesDigest, context: BytesDigest) -> Self {
+    /// `claim_account`.
+    pub fn from_secret(secret: Secret, claim_account: BytesDigest) -> Self {
         let account = UnspendableAccount::from_secret(secret.expose_digest());
         Self {
             public: PublicCircuitInputs {
                 wormhole_address: digest_to_bytes(account.account_id),
                 claim_account,
-                context,
             },
             private: PrivateCircuitInputs { secret },
         }
@@ -72,8 +73,25 @@ pub trait ParsePublicInputs {
 
 impl ParsePublicInputs for PublicCircuitInputs {
     fn try_from_felts(pis: &[GoldilocksField]) -> anyhow::Result<PublicCircuitInputs> {
-        let pis: Vec<u64> = pis.iter().map(|f| f.to_canonical_u64()).collect();
-        Self::try_from_u64_slice(&pis)
+        if pis.len() != PUBLIC_INPUTS_FELTS_LEN {
+            bail!(
+                "public inputs should contain: {} field elements, got: {}",
+                PUBLIC_INPUTS_FELTS_LEN,
+                pis.len()
+            )
+        }
+
+        let wormhole_address =
+            try_4_felts_to_bytes(&pis[WORMHOLE_ADDRESS_START_INDEX..WORMHOLE_ADDRESS_END_INDEX])
+                .context("failed to deserialize wormhole_address")?;
+        let claim_account =
+            try_4_felts_to_bytes(&pis[CLAIM_ACCOUNT_START_INDEX..CLAIM_ACCOUNT_END_INDEX])
+                .context("failed to deserialize claim_account")?;
+
+        Ok(PublicCircuitInputs {
+            wormhole_address,
+            claim_account,
+        })
     }
 
     fn try_from_proof(
@@ -101,14 +119,12 @@ mod tests {
     fn from_secret_derives_matching_address() {
         let secret = Secret::try_from([0x11; 32]).unwrap();
         let claim = BytesDigest::try_from([0x22; 32].as_slice()).unwrap();
-        let context = BytesDigest::try_from([0x66; 32].as_slice()).unwrap();
-        let inputs = CircuitInputs::from_secret(secret, claim, context);
+        let inputs = CircuitInputs::from_secret(secret, claim);
         let derived = UnspendableAccount::from_secret(inputs.private.secret.expose_digest());
         assert_eq!(
             inputs.public.wormhole_address,
             digest_to_bytes(derived.account_id)
         );
         assert_eq!(inputs.public.claim_account, claim);
-        assert_eq!(inputs.public.context, context);
     }
 }

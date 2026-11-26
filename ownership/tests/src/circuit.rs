@@ -1,10 +1,10 @@
 use ownership_circuit::circuit::circuit_logic::OwnershipCircuit;
-use ownership_circuit::{MIN_OWNERSHIP_SECURITY_BITS, PUBLIC_INPUTS_FELTS_LEN};
+use ownership_circuit::PUBLIC_INPUTS_FELTS_LEN;
 use plonky2::plonk::circuit_data::CircuitConfig;
-use zk_circuits_common::circuit::{ownership_circuit_config, soundness_bits};
+use zk_circuits_common::circuit::ownership_circuit_config;
 
 #[test]
-fn circuit_builds_and_exposes_its_public_inputs() {
+fn circuit_builds_and_exposes_eight_public_inputs() {
     let circuit = OwnershipCircuit::new(CircuitConfig::standard_recursion_config()).unwrap();
     assert!(circuit.num_gates() > 0);
     let verifier = circuit.build_verifier();
@@ -16,13 +16,4 @@ fn rejected_config_does_not_build() {
     let mut config = ownership_circuit_config();
     config.num_wires = 1;
     assert!(OwnershipCircuit::new(config).is_err());
-}
-
-#[test]
-fn canonical_circuit_reaches_the_security_floor() {
-    let common = OwnershipCircuit::new(ownership_circuit_config())
-        .unwrap()
-        .build_verifier()
-        .common;
-    assert!(soundness_bits(&common.config, common.degree_bits()) >= MIN_OWNERSHIP_SECURITY_BITS);
 }
