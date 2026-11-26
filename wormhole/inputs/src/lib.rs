@@ -66,9 +66,8 @@ pub mod leaf_config {
     pub const FRI_NUM_QUERY_ROUNDS: usize = 16;
 }
 
-/// FRI and wire parameters of the canonical private-batch circuit config, which the
-/// ownership circuit shares: both are zero-knowledge, proven client-side and held to
-/// 128 bits. Lives here for the same reason as [`leaf_config`].
+/// FRI and wire parameters of the canonical private-batch circuit config. Lives here
+/// for the same reason as [`leaf_config`].
 pub mod private_batch_config {
     pub const NUM_WIRES: usize = 135;
     pub const NUM_ROUTED_WIRES: usize = 60;
