@@ -151,7 +151,7 @@ jobs:
       # branch (Quantus-Network/qp-plonky2#126, #138, #160). Bump it together with any change to
       # the traced gadget-call order or the trace format; the readers fail closed on a
       # mismatch.
-      QP_PLONKY2_REF: 0d2e210428ea3809fb0b851a43d32245cff273b2
+      QP_PLONKY2_REF: 177c7e9b3f4d2f76caa1670da013b67fcc98af16
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ubuntu
