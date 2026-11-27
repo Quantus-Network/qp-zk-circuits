@@ -104,11 +104,11 @@ that skips one of them is unsound even though every proof it accepts is valid.
    `volume_fee_bps` is range-checked to `0..=10000`, nothing more. The verifier
    must compare it and `asset_id` with the chain's configured values.
 
-4. **Canonical proof bytes**
-   Proof encodings are malleable (non-canonical field elements, trailing
-   bytes). The verifier must reject any proof that does not re-serialize to the
-   submitted bytes, and must key pool or replay state on nullifiers, never on
-   proof bytes.
+4. **Proof bytes are not an identity**
+   `ProofWithPublicInputs::from_bytes` accepts one encoding per proof (it
+   rejects non-canonical field elements and trailing bytes), but the same
+   statement has many valid proofs. The verifier must key pool or replay state
+   on nullifiers, never on proof bytes or their hash.
 
 5. **Artifact config**
    `verifier.bin` does not commit to the FRI parameters or `num_challenges`;
