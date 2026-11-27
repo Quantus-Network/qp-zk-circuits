@@ -85,7 +85,7 @@ pub mod public_batch_config {
     pub const NUM_WIRES: usize = 143;
     pub const NUM_ROUTED_WIRES: usize = 80;
     pub const SECURITY_BITS: usize = 128;
-    pub const NUM_CHALLENGES: usize = 4;
+    pub const NUM_CHALLENGES: usize = 3;
     pub const FRI_RATE_BITS: usize = 3;
     pub const FRI_CAP_HEIGHT: usize = 4;
     pub const FRI_PROOF_OF_WORK_BITS: u32 = 20;

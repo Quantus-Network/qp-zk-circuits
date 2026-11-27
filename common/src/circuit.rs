@@ -477,10 +477,10 @@ pub fn ownership_circuit_config() -> CircuitConfig {
 /// 28, and one 2^20-hash grind per proof for the prover. Being non-ZK, the query
 /// count adds no blinding rows, so it does not affect the circuit degree.
 ///
-/// `num_challenges = 4`: at 2^19 rows three permutation challenges reach only 114 bits
-/// (see [`soundness_bits`]). Nothing verifies this proof recursively, so the fourth
-/// costs only the on-chain verifier and the GPU prover, whose per-proof workspace grows
-/// from 9.6 GB to 11.3 GB beside 4.6 GB of fixed buffers.
+/// `num_challenges = 3`: at 2^19 rows two permutation challenges give 76 bits and three
+/// 114, past the 105-bit quotient-identity ceiling that no config raises (see
+/// [`soundness_bits`]). A fourth would reach 152 without moving the total, at 0.9 GB more
+/// of GPU buffers.
 ///
 /// Measured degree over the production private batch (~6,030 rows per inner proof:
 /// the recursive verifier plus one Poseidon gate per 8 forwarded public inputs,
@@ -506,9 +506,13 @@ pub fn wormhole_public_batch_circuit_config() -> CircuitConfig {
     }
 }
 
-/// Soundness bits `config` buys for a circuit of `2^degree_bits` rows: the lesser of the
-/// conjectured FRI bound (`num_query_rounds * rate_bits + proof_of_work_bits`) and the
-/// permutation-argument bound.
+/// Soundness bits `config` buys for a circuit of `2^degree_bits` rows: the least of the
+/// conjectured FRI bound (`num_query_rounds * rate_bits + proof_of_work_bits`), the
+/// permutation-argument bound and the quotient-identity bound
+/// ([`quotient_identity_bits`]). The soundness error is the sum of the three terms, so
+/// the total is within a bit or two of the least, and a config that raises the other two
+/// past the quotient term buys nothing: the production configs hold each of them at or
+/// above it, which the tests pin.
 ///
 /// The permutation challenges are base-field elements, so one of them gives only
 /// `64 - log2(rows * routed wires)` bits and `num_challenges` of them multiply it.
@@ -518,7 +522,19 @@ pub fn soundness_bits(config: &CircuitConfig, degree_bits: usize) -> usize {
     let fri_bits = fri.num_query_rounds * fri.rate_bits + fri.proof_of_work_bits as usize;
     let permutation_bits = config.num_challenges
         * F::BITS.saturating_sub(degree_bits + log2_ceil(config.num_routed_wires));
-    fri_bits.min(permutation_bits)
+    fri_bits
+        .min(permutation_bits)
+        .min(quotient_identity_bits(config, degree_bits))
+}
+
+/// Soundness bits of the quotient identity `C(ζ) = Z_H(ζ) · Q(ζ)`, checked at one point
+/// `ζ` of the quadratic extension: a false identity is a nonzero polynomial of degree at
+/// most `(max_quotient_degree_factor + 1) · rows` and vanishes at `ζ` with that
+/// probability over `2^128`. No config setting raises this term (the `num_challenges`
+/// identities share `ζ`); it is the ceiling the two configurable terms are measured
+/// against.
+pub fn quotient_identity_bits(config: &CircuitConfig, degree_bits: usize) -> usize {
+    (2 * F::BITS).saturating_sub(degree_bits + log2_ceil(config.max_quotient_degree_factor + 1))
 }
 
 // ============================================================================
@@ -863,14 +879,17 @@ mod transfer_proof_json_tests {
 mod soundness_bits_tests {
     use super::*;
 
+    /// The FRI and permutation terms, which the config controls, are each at or above
+    /// the quotient-identity term, which it does not.
     #[test]
-    fn canonical_configs_reach_128_bits_at_their_production_degrees() {
-        for (config, degree_bits) in [
-            (wormhole_leaf_circuit_config(), 8),
-            (wormhole_private_batch_circuit_config(), 15),
-            (wormhole_public_batch_circuit_config(), 19),
+    fn canonical_configs_are_bounded_only_by_the_quotient_identity() {
+        for (config, degree_bits, quotient_bits) in [
+            (wormhole_leaf_circuit_config(), 8, 116),
+            (wormhole_private_batch_circuit_config(), 15, 109),
+            (wormhole_public_batch_circuit_config(), 19, 105),
         ] {
-            assert!(soundness_bits(&config, degree_bits) >= 128);
+            assert_eq!(quotient_identity_bits(&config, degree_bits), quotient_bits);
+            assert_eq!(soundness_bits(&config, degree_bits), quotient_bits);
         }
     }
 
@@ -887,18 +906,11 @@ mod soundness_bits_tests {
     }
 
     #[test]
-    fn public_batch_needs_its_fourth_permutation_challenge() {
-        let mut config = wormhole_public_batch_circuit_config();
-        config.num_challenges = 3;
-        assert_eq!(soundness_bits(&config, 19), 114);
-    }
-
-    #[test]
-    fn private_batch_at_degree_16_drops_below_128_bits() {
-        assert_eq!(
-            soundness_bits(&wormhole_private_batch_circuit_config(), 16),
-            126
-        );
+    fn fourth_public_batch_challenge_adds_nothing() {
+        let three = wormhole_public_batch_circuit_config();
+        let mut four = three.clone();
+        four.num_challenges = 4;
+        assert_eq!(soundness_bits(&four, 19), soundness_bits(&three, 19));
     }
 
     #[test]

@@ -219,15 +219,17 @@ degree so a later gate added to the private batch fails CI rather than silently 
 The public batch aggregates `n` private-batch proofs (production `n = 86`, cap `MAX_PUBLIC_BATCH_ARITY = 256`). Each inner proof
 costs about 6.0k gates of recursive verification plus one Poseidon gate per 8 of the `5M + 4N` public inputs it forwards (24 at the
 production shape): up to 43 inner proofs fit `2^18`, 86 fit `2^19`, 173 fit `2^20`. At the production shape a public batch carries
-688 burns and 2,752 exit slots; the 2^19 GPU prover plans ~16 GB of device buffers
-(4.6 GB fixed and an 11.3 GB per-proof workspace).
+688 burns and 2,752 exit slots; the 2^19 GPU prover plans ~15 GB of device buffers
+(4.6 GB fixed and a 10.5 GB per-proof workspace).
 
-Every layer targets 128 bits on the two terms its config controls, and `zk_circuits_common::circuit::soundness_bits` computes the
-lesser of them: the conjectured FRI bound (`num_query_rounds * rate_bits + proof_of_work_bits`) and the permutation argument, whose
-challenges are base-field elements and give `num_challenges * (64 - log2(rows * routed wires))`. The leaf (2^8 rows) and the private
-batch (2^15) use three permutation challenges for 150 and 129 bits; the public batch (2^19) needs four for 152. Tests pin both terms
-at the production degrees. The quotient identity is checked at a point of the quadratic extension, which no config can change: about
-`128 - log2(9 * rows)`, so 117, 110 and 106 bits.
+Three terms bound a layer's soundness, and `zk_circuits_common::circuit::soundness_bits` computes the least of them. The
+conjectured FRI bound is `num_query_rounds * rate_bits + proof_of_work_bits`, 128 at every layer. The permutation argument's
+challenges are base-field elements and give `num_challenges * (64 - log2(rows * routed wires))`: three challenges are 150 bits on
+the leaf (2^8 rows), 129 on the private batch (2^15) and 114 on the public batch (2^19). The quotient identity is checked at one
+point of the quadratic extension, which no config changes: `128 - log2(9 * rows)`, rounded down to 116, 109 and 105 bits. The error
+is the sum of the three, so raising the two configurable terms past the third buys under two bits; tests pin that each stays at or
+above it at the production degrees (a fourth public-batch challenge would reach 152 for 0.9 GB more of GPU buffers and no change in
+the total).
 
 The leaf uses `rate_bits = 7` with 16 queries: leaves are proven client-side, and each rate bit doubles the leaf prover's LDE (~60 ms
 against ~35 ms at rate 6 on an M5 Pro), while every query it saves removes ~75 gates from each recursive verification in the

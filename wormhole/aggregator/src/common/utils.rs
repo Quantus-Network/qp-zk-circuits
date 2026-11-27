@@ -584,20 +584,23 @@ mod tests {
 
     /// The production private batch (N=8) is the largest shape that stays at
     /// degree 15 with 36-query blinding. One more leaf is degree 16, which
-    /// doubles the client prover's time and memory, raises the public
-    /// batch's per-proof cost and drops the permutation argument below 128 bits.
+    /// doubles the client prover's time and memory and raises the public
+    /// batch's per-proof cost.
     #[test]
     fn production_private_batch_stays_at_degree_15() {
         use super::{canonical_leaf_verifier_data, canonical_private_batch_verifier_data};
         use qp_wormhole_inputs::production;
-        use zk_circuits_common::circuit::soundness_bits;
+        use zk_circuits_common::circuit::{quotient_identity_bits, soundness_bits};
 
         let leaf = canonical_leaf_verifier_data();
         let private =
             canonical_private_batch_verifier_data(&leaf, production::PRIVATE_BATCH_SHAPE).unwrap();
         assert_eq!(private.common.degree_bits(), 15);
         for common in [&leaf.common, &private.common] {
-            assert!(soundness_bits(&common.config, common.degree_bits()) >= 128);
+            assert_eq!(
+                soundness_bits(&common.config, common.degree_bits()),
+                quotient_identity_bits(&common.config, common.degree_bits())
+            );
         }
     }
 
@@ -612,7 +615,7 @@ mod tests {
             canonical_public_batch_verifier_data,
         };
         use qp_wormhole_inputs::production;
-        use zk_circuits_common::circuit::soundness_bits;
+        use zk_circuits_common::circuit::{quotient_identity_bits, soundness_bits};
 
         let leaf = canonical_leaf_verifier_data();
         let private =
@@ -624,7 +627,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(public.common.degree_bits(), 19);
-        assert!(soundness_bits(&public.common.config, 19) >= 128);
+        assert_eq!(
+            soundness_bits(&public.common.config, 19),
+            quotient_identity_bits(&public.common.config, 19)
+        );
     }
 
     /// Pinning must compare raw artifact bytes to a canonical rebuild and never

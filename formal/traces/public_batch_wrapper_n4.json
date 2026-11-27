@@ -1,6 +1,6 @@
 {
   "circuit": "public_batch_wrapper_n4",
-  "config": {"fri_config":{"cap_height":4,"num_query_rounds":36,"proof_of_work_bits":20,"rate_bits":3,"reduction_strategy":{"ConstantArityBits":[4,5]}},"max_quotient_degree_factor":8,"num_challenges":4,"num_constants":2,"num_routed_wires":80,"num_wires":143,"security_bits":128,"use_base_arithmetic_gate":true,"zero_knowledge":false},
+  "config": {"fri_config":{"cap_height":4,"num_query_rounds":36,"proof_of_work_bits":20,"rate_bits":3,"reduction_strategy":{"ConstantArityBits":[4,5]}},"max_quotient_degree_factor":8,"num_challenges":3,"num_constants":2,"num_routed_wires":80,"num_wires":143,"security_bits":128,"use_base_arithmetic_gate":true,"zero_knowledge":false},
   "digest": "1d74542f0c52d2977db4a82de77f1626fb5d36b1ec819082d615e93d44de1f7a",
   "start": {"rows":22781,"copies":579312,"virtual_targets":99852},
   "num_virtual_targets": 99936,
