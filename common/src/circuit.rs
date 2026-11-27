@@ -471,7 +471,7 @@ pub fn ownership_circuit_config() -> CircuitConfig {
 ///
 /// FRI: `rate_bits = 3`, 36 query rounds, 20 proof-of-work bits (`36 * 3 + 20 = 128`
 /// conjectured bits). This layer is proved on a GPU at 2^19 rows for the production
-/// arity, where the prover already plans ~16 GB of device buffers, so the rate stays at
+/// arity, where the prover already plans ~15 GB of device buffers, so the rate stays at
 /// plonky2's minimum and the extra security comes from queries and grinding. Both
 /// cost only the (native, on-chain) verifier: 36 Merkle paths per oracle instead of
 /// 28, and one 2^20-hash grind per proof for the prover. Being non-ZK, the query

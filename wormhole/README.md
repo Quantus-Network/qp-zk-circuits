@@ -217,7 +217,7 @@ circuit degree. Measured degree by `N` with the production config: `N <= 2` fits
 degree so a later gate added to the private batch fails CI rather than silently doubling the prover's work.
 
 The public batch aggregates `n` private-batch proofs (production `n = 86`, cap `MAX_PUBLIC_BATCH_ARITY = 256`). Each inner proof
-costs about 6.0k gates of recursive verification plus one Poseidon gate per 8 of the `5M + 4N` public inputs it forwards (24 at the
+costs about 6.0k gates of recursive verification plus one Poseidon gate per 8 of the `8 + 5M + 4N` public inputs it forwards (25 at the
 production shape): up to 43 inner proofs fit `2^18`, 86 fit `2^19`, 173 fit `2^20`. At the production shape a public batch carries
 688 burns and 2,752 exit slots; the 2^19 GPU prover plans ~15 GB of device buffers
 (4.6 GB fixed and a 10.5 GB per-proof workspace).

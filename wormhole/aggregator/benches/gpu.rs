@@ -1,7 +1,7 @@
 //! CPU versus GPU public-batch proving on the real circuit, with the GPU path
 //! split into its CPU-side witness work and its device-coordinated stages.
 //! Requires a hardware adapter with native u64 shaders; the GPU prover for the
-//! production arity-86 batch (2^19 rows) plans roughly 16 GB of device buffers.
+//! production arity-86 batch (2^19 rows) plans roughly 15 GB of device buffers.
 //!
 //! `cargo bench -p qp-wormhole-aggregator --features gpu --bench gpu`
 //!
