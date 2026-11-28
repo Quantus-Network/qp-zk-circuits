@@ -15,7 +15,7 @@ use plonky2::plonk::circuit_data::CircuitData;
 use plonky2::plonk::config::PoseidonGoldilocksConfig as C;
 use plonky2::util::log2_ceil;
 use std::ops::Deref;
-use std::sync::Arc;
+use std::sync::{atomic::Ordering, Arc};
 
 #[cfg(feature = "constraint-export")]
 mod fri;
@@ -689,12 +689,40 @@ impl WireBuffers<'_, '_> {
         ensure!(
             partition.num_wires == prepared.circuit.common.config.num_wires
                 && partition.degree == prepared.degree()
-                && partition.values.len() == prepared.circuit.prover_only.representative_map.len()
                 && (std::ptr::eq(
                     partition.representative_map,
                     prepared.circuit.prover_only.representative_map.as_slice(),
                 ) || partition.representative_map
                     == prepared.circuit.prover_only.representative_map),
+            "partition witness does not match prepared circuit"
+        );
+        let num_targets = prepared.circuit.prover_only.representative_map.len();
+        let dense_values = match partition.dense_values_and_assignment_flags() {
+            Ok((values, assigned_flags)) => {
+                ensure!(
+                    values.len() == num_targets
+                        && assigned_flags.len() == num_targets,
+                    "partition witness does not match prepared circuit"
+                );
+                Some(
+                    values
+                        .iter()
+                        .zip(assigned_flags)
+                        .map(|(value, assigned)| {
+                            // Generation has finished; the witness is exclusively owned here.
+                            if assigned.load(Ordering::Relaxed) != 0 {
+                                F::from_noncanonical_u64(value.load(Ordering::Relaxed))
+                            } else {
+                                F::ZERO
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            }
+            Err(_) => None,
+        };
+        ensure!(
+            dense_values.is_some() || partition.values.len() == num_targets,
             "partition witness does not match prepared circuit"
         );
         let public_inputs = prepared
@@ -710,11 +738,14 @@ impl WireBuffers<'_, '_> {
             .collect::<Result<_>>()?;
         // CPU full_witness uses zero for unassigned partitions too. Do not
         // expand or transpose the wire matrix on the host.
-        let values = partition
-            .values
-            .into_iter()
-            .map(|value| value.unwrap_or(F::ZERO))
-            .collect::<Vec<_>>();
+        let values = match dense_values {
+            Some(values) => values,
+            None => partition
+                .values
+                .into_iter()
+                .map(|value| value.unwrap_or(F::ZERO))
+                .collect::<Vec<_>>(),
+        };
         let cap = prepared.commitment.cap(&self.tree)?;
         encoder.upload(&self.representatives, &values)?;
         for batch in 0..self.wires.len() {
