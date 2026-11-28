@@ -15,7 +15,7 @@ use plonky2::plonk::circuit_data::CircuitData;
 use plonky2::plonk::config::PoseidonGoldilocksConfig as C;
 use plonky2::util::log2_ceil;
 use std::ops::Deref;
-use std::sync::Arc;
+use std::sync::{atomic::Ordering, Arc};
 
 #[cfg(feature = "constraint-export")]
 mod fri;
@@ -368,15 +368,13 @@ impl<'a> PreparedCircuit<'a> {
             .batch_columns
             .iter()
             .map(|&columns| {
-                let map = (first_column..first_column + columns)
-                    .flat_map(|column| {
-                        (0..degree).map(move |row| {
-                            F::from_canonical_usize(representatives[row * width + column])
-                        })
-                    })
-                    .collect::<Vec<_>>();
+                let first = first_column;
                 first_column += columns;
-                context.prepare_fixed(&map)
+                context.prepare_fixed_iter((0..columns * degree).map(|index| {
+                    let column = first + index / degree;
+                    let row = index % degree;
+                    F::from_canonical_usize(representatives[row * width + column])
+                }))
             })
             .collect::<Result<_>>()?;
         let fixed = prepare_fixed_commitment(
@@ -598,26 +596,37 @@ fn prepare_fixed_commitment(
     let width = oracle.polynomials.len();
     let mut coefficients = Vec::new();
     let mut evaluations = Vec::new();
+    let degree = oracle.polynomials[0].coeffs.len();
     for first in (0..width).step_by(capacity) {
         let end = (first + capacity).min(width);
-        let coeffs = oracle.polynomials[first..end]
-            .iter()
-            .flat_map(|p| p.coeffs.iter().copied())
-            .collect::<Vec<_>>();
-        coefficients.push(context.prepare_fixed(&coeffs)?);
-        let values = (first..end)
-            .flat_map(|column| (0..rows).map(move |row| oracle.get_lde_values(row, 1)[column]))
-            .collect::<Vec<_>>();
-        evaluations.push(context.prepare_fixed(&values)?);
+        coefficients.push(
+            context
+                .prepare_fixed_iter((0..(end - first) * degree).map(|index| {
+                    oracle.polynomials[first + index / degree].coeffs[index % degree]
+                }))?,
+        );
+        evaluations.push(
+            context.prepare_fixed_iter(
+                (0..(end - first) * rows)
+                    .map(|index| oracle.get_lde_values(index % rows, 1)[first + index / rows]),
+            )?,
+        );
     }
-    let tree_values = oracle
-        .merkle_tree
-        .digests
-        .iter()
-        .chain(&oracle.merkle_tree.cap.0)
-        .flat_map(|hash| hash.elements)
-        .collect::<Vec<_>>();
-    let tree = context.prepare_fixed(&tree_values)?;
+    let digests = &oracle.merkle_tree.digests;
+    let caps = &oracle.merkle_tree.cap.0;
+    let fields = digests
+        .len()
+        .checked_add(caps.len())
+        .and_then(|n| n.checked_mul(4))
+        .context("fixed tree size overflow")?;
+    let tree = context.prepare_fixed_iter((0..fields).map(|index| {
+        let hash = if index / 4 < digests.len() {
+            &digests[index / 4]
+        } else {
+            &caps[index / 4 - digests.len()]
+        };
+        hash.elements[index % 4]
+    }))?;
     let cap = tree.slice(tree.len() - 4 * oracle.merkle_tree.cap.0.len()..tree.len())?;
     Ok(FixedCommitment {
         coefficients,
@@ -689,12 +698,26 @@ impl WireBuffers<'_, '_> {
         ensure!(
             partition.num_wires == prepared.circuit.common.config.num_wires
                 && partition.degree == prepared.degree()
-                && partition.values.len() == prepared.circuit.prover_only.representative_map.len()
                 && (std::ptr::eq(
                     partition.representative_map,
                     prepared.circuit.prover_only.representative_map.as_slice(),
                 ) || partition.representative_map
                     == prepared.circuit.prover_only.representative_map),
+            "partition witness does not match prepared circuit"
+        );
+        let num_targets = prepared.circuit.prover_only.representative_map.len();
+        let dense_values = match partition.dense_values_and_assignment_flags() {
+            Ok((values, assigned_flags)) => {
+                ensure!(
+                    values.len() == num_targets && assigned_flags.len() == num_targets,
+                    "partition witness does not match prepared circuit"
+                );
+                Some((values, assigned_flags))
+            }
+            Err(_) => None,
+        };
+        ensure!(
+            dense_values.is_some() || partition.values.len() == num_targets,
             "partition witness does not match prepared circuit"
         );
         let public_inputs = prepared
@@ -710,13 +733,27 @@ impl WireBuffers<'_, '_> {
             .collect::<Result<_>>()?;
         // CPU full_witness uses zero for unassigned partitions too. Do not
         // expand or transpose the wire matrix on the host.
-        let values = partition
-            .values
-            .into_iter()
-            .map(|value| value.unwrap_or(F::ZERO))
-            .collect::<Vec<_>>();
         let cap = prepared.commitment.cap(&self.tree)?;
-        encoder.upload(&self.representatives, &values)?;
+        match dense_values {
+            Some((values, assigned_flags)) => encoder.upload_iter(
+                &self.representatives,
+                values.iter().zip(assigned_flags).map(|(value, assigned)| {
+                    // Generation has finished; the witness is exclusively owned here.
+                    if assigned.load(Ordering::Relaxed) != 0 {
+                        F::from_noncanonical_u64(value.load(Ordering::Relaxed))
+                    } else {
+                        F::ZERO
+                    }
+                }),
+            )?,
+            None => encoder.upload_iter(
+                &self.representatives,
+                partition
+                    .values
+                    .into_iter()
+                    .map(|value| value.unwrap_or(F::ZERO)),
+            )?,
+        }
         for batch in 0..self.wires.len() {
             let bindings = encoder.bind(
                 &prepared.gather,

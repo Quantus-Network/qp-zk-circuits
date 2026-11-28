@@ -37,7 +37,7 @@ pub struct QuotientPlan {
     layout: QuotientLayout,
     rows: usize,
     challenges: usize,
-    powers: PreparedKernel,
+    alpha_exponent: u64,
     permutation: PreparedKernel,
     gates: Vec<PreparedKernel>,
     params: KernelParams,
@@ -72,14 +72,7 @@ impl QuotientPlan {
         table_size(rows, layout.columns)?;
         table_size(rows, challenges)?;
         validate_program(&program)?;
-        let prefix = challenges + challenges * (common.num_partial_products + 1);
-        let power_source = format!("{FIELD}\n@group(0) @binding(0) var<storage,read_write> weights:array<u64>;\n@group(0) @binding(1) var<storage,read> scalars:array<u64>;\n@compute @workgroup_size(1) fn main() {{ for(var i=0u;i<{challenges}u;i++) {{ var power=1lu; for(var j=0u;j<{prefix}u;j++) {{ power=gf64_mul(power,scalars[{}u+i]); }} weights[i]=gf64_canon(power); }} }}", 4 + challenges * 2);
-        let powers = PreparedKernel::prepare(
-            context,
-            &power_source,
-            &[write(challenges), read(layout.scalar_count)],
-            "quotient alpha powers",
-        )?;
+        let alpha_exponent = (challenges + challenges * (common.num_partial_products + 1)) as u64;
         let specs = [
             write(rows * challenges),
             read(rows * layout.columns),
@@ -112,7 +105,7 @@ impl QuotientPlan {
             layout,
             rows,
             challenges,
-            powers,
+            alpha_exponent,
             permutation,
             gates,
             params: context.prepare_params([rows as u32, 0, 0, 0])?,
@@ -130,11 +123,14 @@ impl QuotientPlan {
         ]
     }
 
+    /// Compute alpha powers on CPU and upload them before evaluating rows.
+    /// Alphas are the transcript challenges also supplied in the scalar buffer.
     pub fn encode<'a>(
         &self,
         encoder: &mut ProofEncoder<'_>,
         rows: impl Into<FieldSource<'a>>,
         scalars: impl Into<FieldSource<'a>>,
+        alphas: &[F],
         weights: &DeviceFieldSlice,
         output: &DeviceFieldSlice,
     ) -> Result<()> {
@@ -145,31 +141,26 @@ impl QuotientPlan {
                 == self.workspace_field_counts(),
             "quotient buffer shape mismatch"
         );
-        self.encode_weights(encoder, scalars, weights)?;
+        self.encode_weights(encoder, alphas, weights)?;
         self.encode_rows(encoder, rows, scalars, weights, output)
     }
 
-    pub(crate) fn encode_weights<'a>(
+    pub(crate) fn encode_weights(
         &self,
         encoder: &mut ProofEncoder<'_>,
-        scalars: impl Into<FieldSource<'a>>,
+        alphas: &[F],
         weights: &DeviceFieldSlice,
     ) -> Result<()> {
-        let scalars = scalars.into();
         ensure!(
-            scalars.len() == self.layout.scalar_count && weights.len() == self.challenges,
+            alphas.len() == self.challenges && weights.len() == self.challenges,
             "quotient weight buffer shape mismatch"
         );
-        let group = encoder.bind(
-            &self.powers,
-            &[
-                FieldBinding::ReadWrite(weights),
-                FieldBinding::Read(scalars),
-            ],
-            "quotient alpha powers",
-        )?;
-        encoder.dispatch(&self.powers, &group, [1, 1, 1], "quotient alpha powers")?;
-        Ok(())
+        encoder.upload_iter(
+            weights,
+            alphas
+                .iter()
+                .map(|alpha| alpha.exp_u64(self.alpha_exponent)),
+        )
     }
 
     pub(crate) fn encode_rows<'a>(

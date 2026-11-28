@@ -26,7 +26,7 @@ criterion = { version = "=0.5.1", default-features = false }
 hex = { version = "=0.4.3", default-features = false, features = ["alloc"] }
 qp-plonky2 = { version = "=1.6.0", default-features = false, features = ["std"] }
 qp-poseidon-core = { version = "=3.1.0", default-features = false }
-serde = { version = "=1.0.228", default-features = false, features = ["derive"] }
+serde = { version = "=1.0.229", default-features = false, features = ["derive"] }
 tiny-keccak = { version = "=2.0.2", default-features = false, features = ["keccak"] }
 tracing = { version = "=0.1.44", default-features = false, features = ["std"] }
 zeroize = { version = "=1.9.1", default-features = false, features = ["alloc"] }

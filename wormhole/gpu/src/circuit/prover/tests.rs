@@ -6,7 +6,7 @@ use plonky2::iop::witness::WitnessWrite;
 use plonky2::plonk::circuit_builder::CircuitBuilder;
 use plonky2::plonk::circuit_data::{CircuitConfig, CircuitData};
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Barrier, Mutex};
 use tracing_subscriber::{layer::Context as TraceContext, prelude::*, registry::LookupSpan, Layer};
 
 #[derive(Clone, Default)]
@@ -99,6 +99,42 @@ fn prove_two_inputs_on_one_workspace(context: &DeviceContext) -> Result<()> {
 fn coordinator_generates_verifiable_proofs_with_fri_and_reuses_workspace() -> Result<()> {
     let context = pollster::block_on(DeviceContext::new())?;
     prove_two_inputs_on_one_workspace(&context)
+}
+
+#[test]
+#[ignore = "requires hardware timestamp queries and native u64 shaders"]
+fn concurrent_workspaces_prove_and_reuse_with_timestamps() -> Result<()> {
+    let context = pollster::block_on(DeviceContext::with_options(DeviceOptions {
+        timestamps: true,
+        ..Default::default()
+    }))?;
+    let (circuit, input) = two_round_fri_circuit();
+    let prepared = PreparedCircuit::prepare(&context, &circuit, PreparationOptions::default())?;
+    let workspaces = [
+        (prepared.prepare_workspace(&context)?, 3),
+        (prepared.prepare_workspace(&context)?, 7),
+    ];
+    let start = Barrier::new(2);
+    std::thread::scope(|scope| {
+        let workers = workspaces.map(|(mut workspace, first)| {
+            let (context, prepared, circuit, start) = (&context, &prepared, &circuit, &start);
+            scope.spawn(move || -> Result<()> {
+                start.wait();
+                for value in [first, first + 1].map(F::from_canonical_usize) {
+                    let mut inputs = PartialWitness::new();
+                    inputs.set_target(input, value)?;
+                    let proof = prepared.prove(context, &mut workspace, inputs)?;
+                    assert_eq!(proof.public_inputs, [value * value]);
+                    circuit.verify(proof)?;
+                }
+                Ok(())
+            })
+        });
+        for worker in workers {
+            worker.join().expect("proof worker panicked")?;
+        }
+        Ok(())
+    })
 }
 
 #[test]

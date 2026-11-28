@@ -3,7 +3,7 @@ use super::*;
 use crate::operations::{read, write, FIELD};
 use crate::runtime::KernelParams;
 use plonky2::field::zero_poly_coset::ZeroPolyOnCoset;
-use plonky2::plonk::config::{GenericConfig, Hasher};
+use plonky2::hash::hash_types::HashOut;
 
 struct GatherBatch {
     columns: usize,
@@ -319,13 +319,14 @@ impl QuotientBuffers<'_, '_> {
         Ok(())
     }
 
-    /// Use betas/gammas from the permutation stage and alphas supplied after
-    /// the coordinator observes its cap. Hash the CPU public-input vector once;
+    /// Use the public-input hash observed by the coordinator, betas/gammas from
+    /// the permutation stage, and alphas supplied after observing its cap;
     /// all oracle gathering, evaluation, interpolation and splitting run on GPU.
     pub fn encode(
         &self,
         encoder: &mut ProofEncoder<'_>,
         wires: &WireCommitment,
+        public_inputs_hash: &HashOut<F>,
         permutation: &PermutationCommitment,
         alphas: &[F],
     ) -> Result<QuotientCommitment> {
@@ -349,11 +350,10 @@ impl QuotientBuffers<'_, '_> {
                 && check_batches(&permutation.oracle.evaluations, &plan.product_batches),
             "quotient oracle buffer shape mismatch"
         );
-        let hash = <C as GenericConfig<2>>::InnerHasher::hash_no_pad(&wires.public_inputs);
         encoder.upload(
             &self.scalars,
             &[
-                hash.elements.as_slice(),
+                public_inputs_hash.elements.as_slice(),
                 permutation.betas.as_slice(),
                 permutation.gammas.as_slice(),
                 alphas,
@@ -362,7 +362,7 @@ impl QuotientBuffers<'_, '_> {
         )?;
         encoder.upload(&self.status, &[F::ZERO])?;
         plan.evaluation
-            .encode_weights(encoder, &self.scalars, &self.weights)?;
+            .encode_weights(encoder, alphas, &self.weights)?;
         let fixed = prepared
             .fixed
             .evaluations

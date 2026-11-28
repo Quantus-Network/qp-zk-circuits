@@ -1,3 +1,4 @@
+use super::fri::reduction_arity;
 use super::oracle::workspace_views;
 use super::*;
 use crate::{
@@ -35,12 +36,13 @@ impl ProofTailLayout {
             .map(|width| MerkleQueryLayout::new(rows, width, cap, count, 0))
             .collect::<Result<Vec<_>>>()?;
         let mut fri = Vec::new();
+        let mut coefficients = common.degree();
         let mut evaluations = rows;
         let mut shift = 0;
-        // FriLayout has already validated these arities and domain sizes.
         for &bits in &common.fri_params.reduction_arity_bits {
-            let arity = 1usize << bits;
+            let arity = reduction_arity(bits, coefficients)?;
             shift += bits;
+            coefficients /= arity;
             evaluations /= arity;
             fri.push((
                 MerkleQueryLayout::new(evaluations, arity * 2, cap, count, shift)?,
@@ -143,7 +145,7 @@ impl PreparedProofTail {
 /// and are overwritten on workspace reuse. Encoding never submits or reads back.
 pub struct ProofTailBuffers<'c, 'a> {
     prepared: &'c PreparedCircuit<'a>,
-    pow: [DeviceFieldSlice; 3],
+    pow: [DeviceFieldSlice; 2],
     challenges: DeviceFieldSlice,
     initial: Vec<DeviceFieldSlice>,
     fri: Vec<DeviceFieldSlice>,
@@ -172,10 +174,10 @@ impl PreparedCircuit<'_> {
         let buffers = workspace_views(workspace, first, &self.proof_tail.fields)?;
         Ok(ProofTailBuffers {
             prepared: self,
-            pow: [buffers[0].clone(), buffers[1].clone(), buffers[2].clone()],
-            challenges: buffers[3].clone(),
-            initial: buffers[4..8].to_vec(),
-            fri: buffers[8..].to_vec(),
+            pow: [buffers[0].clone(), buffers[1].clone()],
+            challenges: buffers[2].clone(),
+            initial: buffers[3..7].to_vec(),
+            fri: buffers[7..].to_vec(),
         })
     }
 }
@@ -189,12 +191,10 @@ impl ProofTailBuffers<'_, '_> {
         challenger: &Challenger<F, PoseidonHash>,
         base: u64,
     ) -> Result<PowResult> {
-        self.prepared.proof_tail.pow.encode(
-            encoder,
-            challenger,
-            base,
-            [&self.pow[0], &self.pow[1], &self.pow[2]],
-        )
+        self.prepared
+            .proof_tail
+            .pow
+            .encode(encoder, challenger, base, [&self.pow[0], &self.pow[1]])
     }
 
     /// Challenges are supplied after consuming the PoW response. Gather the

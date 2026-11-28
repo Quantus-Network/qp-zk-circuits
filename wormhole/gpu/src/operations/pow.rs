@@ -14,7 +14,6 @@ pub struct PowKernels {
     poseidon: Arc<PoseidonKernels>,
     initialize: PreparedKernel,
     search: PreparedKernel,
-    finish: PreparedKernel,
 }
 
 impl PowKernels {
@@ -23,7 +22,7 @@ impl PowKernels {
             "{FIELD}\n{PERMUTATION}\n{}",
             include_str!("../shaders/pow.wgsl")
         );
-        let specs = [write(1), write(3), read(14), read(12), read(12), read(999)];
+        let specs = [write(1), read(14), read(12), read(12), read(999)];
         let prepare = |entry, label| {
             PreparedKernel::prepare_entry(context, &source, &specs, label, entry, true)
         };
@@ -31,7 +30,6 @@ impl PowKernels {
             poseidon,
             initialize: prepare("initialize", "FRI PoW initialization")?,
             search: prepare("search", "FRI PoW search")?,
-            finish: prepare("finish", "FRI PoW result")?,
         })
     }
 }
@@ -89,9 +87,9 @@ impl PowPlan {
         })
     }
 
-    /// Snapshot (14), atomic scratch (one field allocation), result (3).
-    pub fn workspace_field_counts(&self) -> [usize; 3] {
-        [14, 1, 3]
+    /// Snapshot (14) and winner offset (one field allocation).
+    pub fn workspace_field_counts(&self) -> [usize; 2] {
+        [14, 1]
     }
 
     /// Snapshot the CPU transcript without changing it, then encode a search
@@ -101,7 +99,7 @@ impl PowPlan {
         encoder: &mut ProofEncoder<'_>,
         challenger: &Challenger<F, PoseidonHash>,
         base: u64,
-        buffers: [&DeviceFieldSlice; 3],
+        buffers: [&DeviceFieldSlice; 2],
     ) -> Result<PowResult> {
         ensure!(
             buffers
@@ -110,15 +108,10 @@ impl PowPlan {
                 .eq(self.workspace_field_counts()),
             "FRI PoW workspace shape mismatch"
         );
-        ensure!(
-            !buffers[1].shares_buffer(buffers[2]),
-            "FRI PoW atomic scratch and result must use separate buffers"
-        );
         let snapshot = pow_snapshot(challenger, base)?;
         encoder.upload(buffers[0], &snapshot)?;
         let bindings = [
             FieldBinding::ReadWrite(buffers[1]),
-            FieldBinding::ReadWrite(buffers[2]),
             FieldBinding::Read(buffers[0].into()),
             FieldBinding::Read((&self.kernels.poseidon.circ).into()),
             FieldBinding::Read((&self.kernels.poseidon.diag).into()),
@@ -127,13 +120,12 @@ impl PowPlan {
         for (kernel, groups, label) in [
             (&self.kernels.initialize, 1, "FRI PoW initialization"),
             (&self.kernels.search, self.groups, "FRI PoW search"),
-            (&self.kernels.finish, 1, "FRI PoW result"),
         ] {
             let group = encoder.bind_with_params(kernel, &bindings, Some(&self.params), label)?;
             encoder.dispatch(kernel, &group, [groups, 1, 1], label)?;
         }
         Ok(PowResult {
-            words: buffers[2].clone(),
+            winner: buffers[1].clone(),
             bits: self.bits,
             trials: self.trials,
             snapshot,
@@ -144,7 +136,7 @@ impl PowPlan {
 /// Small resident grinding result. Views pin allocations and are overwritten
 /// on workspace reuse. Exhaustion is retryable, never an accepted witness.
 pub struct PowResult {
-    words: DeviceFieldSlice,
+    winner: DeviceFieldSlice,
     bits: u32,
     trials: usize,
     snapshot: [F; 14],
@@ -164,26 +156,28 @@ impl PowResult {
             pow_snapshot(challenger, base)? == self.snapshot,
             "FRI PoW transcript changed before acceptance"
         );
-        let words = context.readback(&self.words)?;
-        ensure!(words.len() == 3, "FRI PoW result shape mismatch");
-        if words[1] == F::ZERO {
+        let winner = context.readback(&self.winner)?;
+        ensure!(winner.len() == 1, "FRI PoW result shape mismatch");
+        let offset = winner[0].to_canonical_u64();
+        if offset == u64::from(u32::MAX) {
             return Ok(None);
         }
-        ensure!(words[1] == F::ONE, "invalid FRI PoW success flag");
-        let nonce = words[0].to_canonical_u64();
         ensure!(
-            nonce >= base && nonce - base < self.trials as u64,
-            "FRI PoW nonce is outside the search range"
+            offset < self.trials as u64,
+            "FRI PoW offset is outside the search range"
         );
+        let nonce = base + offset;
+        ensure!(nonce < F::ORDER, "FRI PoW nonce is not canonical");
+        let nonce = F::from_canonical_u64(nonce);
         let mut advanced = challenger.clone();
-        advanced.observe_element(words[0]);
+        advanced.observe_element(nonce);
         let response = advanced.get_challenge();
         ensure!(
-            response == words[2] && response.to_canonical_u64().leading_zeros() >= self.bits,
+            response.to_canonical_u64().leading_zeros() >= self.bits,
             "invalid FRI PoW response"
         );
         *challenger = advanced;
-        Ok(Some(words[0]))
+        Ok(Some(nonce))
     }
 }
 
