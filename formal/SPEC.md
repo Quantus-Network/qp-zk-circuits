@@ -21,7 +21,7 @@ spec + the differential safety net.
 | `../wormhole/tests/.../spec_differential.rs` | proptest harness: native oracles vs spec |
 | `../wormhole/tests/.../encoding_safety.rs` | proptest harness: encoding round-trips + witnessed `{0,p}` collision |
 | `traces/private_batch_wrapper_n{2,4,8}.json` | Gadget-call trace of the real private-batch wrapper at `(leaves, exit slots) = (2, 2)`, `(4, 4)`, and the production shape `(8, 32)` (rows, copy constraints, constants, public inputs, and every `GadgetBuilder` call with the rows/copies it emitted), recorded by `TracingBuilder` in `common/src/formal_trace.rs`. Consumed by `qp-plonky2/constraint-exporter` to generate and prove the wrapper's Lean decode theorem and its composition into `RPrivateBatch` (qp-plonky2 `formal/PLAN.md` Steps 8c and 8e). The aggregator's unit tests fail if it is stale; regenerate with `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib private_batch_wrapper_n` |
-| `traces/public_batch_wrapper_n{2,4,89}.json` | The same for the real public-batch wrapper at `n_inner = 2` and `4` over `2`-leaf private batches, and at the production arity `89` over `(8, 32)` private batches (`build_public_batch_constraints`, wrapper logic only, on virtual inner PI targets). Regenerate with `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib public_batch_wrapper_n` |
+| `traces/public_batch_wrapper_n{2,4,86}.json` | The same for the real public-batch wrapper at `n_inner = 2` and `4` over `2`-leaf private batches, and at the production arity `86` over `(8, 32)` private batches (`build_public_batch_constraints`, wrapper logic only, on virtual inner PI targets). Regenerate with `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-aggregator --lib public_batch_wrapper_n` |
 | `traces/leaf_circuit.json` | The same for the whole leaf circuit (`WormholeCircuit`: every constraint of `build_leaf_constraints` on the targets of `CircuitTargets::new`, no recursion) — the 11 public inputs and the private witness targets by name. Consumed by the exporter to generate the leaf decode theorem and its bridge to `Rleaf` (qp-plonky2 `formal/PLAN.md` Step 9). Regenerate with `UPDATE_FORMAL_TRACE=1 cargo test -p qp-wormhole-circuit --test formal_trace` |
 
 ## Building
@@ -59,9 +59,10 @@ hermetic. Toolchain is pinned in `lean-toolchain` (Lean `v4.30`).
   probabilistic accounting is the Phase-4 game-based track; this interface is the seam.
 - **TCB and phase boundary.** Not re-verified: Plonky2's FRI/PLONK soundness, the
   `PoseidonGate` implementation, the Lean kernel, or the field-level wrapper
-  gadgets. This package is axiom-free; proof-system soundness is the one explicit
-  axiom `Plonky2Bridge.proof_sound` in qp-plonky2/formal (stated on the exported
-  recursion tree), and the field-level bridges there (`Plonky2Bridge.*_end_to_end`)
+  gadgets. This package is axiom-free; proof-system soundness is the theorem
+  `Plonky2Bridge.proof_sound` in qp-plonky2/formal (stated on the exported
+  recursion tree, resting on the axioms declared in `Plonky2Bridge/Trusted.lean`
+  and the per-circuit `build_agrees`), and the field-level bridges there (`Plonky2Bridge.*_end_to_end`)
   are what prove the field constraints implement the aggregate sums/comparison.
 
 ## Clause ↔ code cross-reference

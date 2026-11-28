@@ -104,7 +104,7 @@ pub struct AggConfigArgs {
     pub security_bits: Option<usize>,
 
     /// Number of challenge points. Lowering WEAKENS soundness. Requires
-    /// `--allow-weakening-security`. Production: 2.
+    /// `--allow-weakening-security`. Production: 3.
     #[arg(long)]
     pub num_challenges: Option<usize>,
 

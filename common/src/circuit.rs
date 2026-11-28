@@ -2,7 +2,7 @@ use alloc::{format, string::String, vec::Vec};
 use core::fmt;
 use core::marker::PhantomData;
 use plonky2::{
-    field::goldilocks_field::GoldilocksField,
+    field::{goldilocks_field::GoldilocksField, types::Field},
     fri::{FriConfig, FriReductionStrategy},
     iop::witness::PartialWitness,
     plonk::{
@@ -10,7 +10,7 @@ use plonky2::{
         config::PoseidonGoldilocksConfig,
     },
 };
-use qp_wormhole_inputs::leaf_config;
+use qp_wormhole_inputs::{leaf_config, private_batch_config, public_batch_config};
 use serde::de::{self, Deserializer, Error, SeqAccess, Visitor};
 use serde::Deserialize;
 
@@ -379,19 +379,20 @@ where
 /// proofs without compromising security - the aggregator that verifies these proofs runs in a
 /// trusted environment anyway.
 ///
-/// The leaf is a 2^8-degree circuit, so its FRI blowup is cheap (`rate_bits = 6` is a
-/// 2^14-row LDE) and buys 128 bits with 19 query rounds. The private batch verifies
+/// The leaf is a 2^8-degree circuit, so its FRI blowup is cheap (`rate_bits = 7` is a
+/// 2^15-row LDE) and buys 128 bits with 16 query rounds. The private batch verifies
 /// one leaf per slot recursively, and that cost scales with the leaf's query count
-/// (~2,600 gates per leaf here, against ~3,100 for `standard_recursion_config()` at
-/// 128 bits and ~2,370 at `rate_bits = 7`). Leaves are proven client-side, so the rate
-/// trades leaf prover time (each bit doubles the LDE) against leaf slots in the 2^15
-/// private batch (each bit removed costs about one). The parameters live in
-/// [`qp_wormhole_inputs::leaf_config`] so the `no_std` verifier can pin the same config.
+/// (~2,480 gates per leaf here, against ~2,730 at `rate_bits = 6` with 19 queries).
+/// Leaves are proven client-side, so the rate trades leaf prover time (each bit doubles
+/// the LDE) against leaf slots in the 2^15 private batch (each bit removed costs about
+/// one). The parameters live in [`qp_wormhole_inputs::leaf_config`] so the `no_std`
+/// verifier can pin the same config.
 pub fn wormhole_leaf_circuit_config() -> CircuitConfig {
     CircuitConfig {
         num_wires: leaf_config::NUM_WIRES,
         num_routed_wires: leaf_config::NUM_ROUTED_WIRES,
         security_bits: leaf_config::SECURITY_BITS,
+        num_challenges: leaf_config::NUM_CHALLENGES,
         zero_knowledge: false,
         fri_config: FriConfig {
             rate_bits: leaf_config::FRI_RATE_BITS,
@@ -416,36 +417,36 @@ pub fn wormhole_leaf_circuit_config() -> CircuitConfig {
 /// - num_wires = 135 (minimum for PoseidonGate)
 /// - num_routed_wires = 60 (optimal for degree_bits=15 circuits)
 /// - rate_bits = 3, 36 query rounds, 20 proof-of-work bits (`36 * 3 + 20 = 128`)
+/// - num_challenges = 3 (see [`soundness_bits`])
 ///
 /// The client proves this layer. `rate_bits = 4` doubled the LDE (2^19 rows,
 /// ~2.2 GB) and priced out 4 GB phones, whose foreground jetsam limit is about
 /// 2,050 MB. Rate 3 is plonky2's floor and puts the extension back at 2^18
-/// rows, the same size as the pre-change peak of ~1.5 GB. The public batch
-/// pays for those 36 queries: each inner proof costs ~5,855 verifier gates
-/// instead of ~4,740, so the 2^19 arity ceiling is 89 rather than 109.
+/// rows. The public batch pays for those 36 queries and the third challenge:
+/// each inner proof costs ~6,005 verifier gates, so the 2^19 arity ceiling is 86.
 ///
-/// Measured degree with this config (the leaf verifiers dominate at ~2,600 gates
+/// Measured degree with this config (the leaf verifiers dominate at ~2,480 gates
 /// each; the exit-slot count `M` costs about one gate per slot and does not move
 /// the degree for any `M <= 64`). The 36-query blinding rows are what move the
 /// bands relative to the rate-4 config:
 /// - 1-2 leaves: degree_bits=14
 /// - 3-8 leaves: degree_bits=15. The production shape (8, 32) is the largest
-///   that stays here; full proving at this degree peaks near the old ~1.5 GB.
-///   The `production_private_batch_stays_at_degree_15` test pins it.
-/// - 9-19 leaves: degree_bits=16
-/// - 20-44 leaves: degree_bits=17
-/// - 45-64 leaves: degree_bits=18
+///   that stays here; the `production_private_batch_stays_at_degree_15` test pins it.
+/// - 9-20 leaves: degree_bits=16
+/// - 21-46 leaves: degree_bits=17
+/// - 47-64 leaves: degree_bits=18
 pub fn wormhole_private_batch_circuit_config() -> CircuitConfig {
     CircuitConfig {
-        num_wires: 135,
-        num_routed_wires: 60,
-        security_bits: 128,
+        num_wires: private_batch_config::NUM_WIRES,
+        num_routed_wires: private_batch_config::NUM_ROUTED_WIRES,
+        security_bits: private_batch_config::SECURITY_BITS,
+        num_challenges: private_batch_config::NUM_CHALLENGES,
         fri_config: FriConfig {
-            rate_bits: 3,
-            cap_height: 4,
-            proof_of_work_bits: 20,
+            rate_bits: private_batch_config::FRI_RATE_BITS,
+            cap_height: private_batch_config::FRI_CAP_HEIGHT,
+            proof_of_work_bits: private_batch_config::FRI_PROOF_OF_WORK_BITS,
             reduction_strategy: FriReductionStrategy::ConstantArityBits(4, 5),
-            num_query_rounds: 36,
+            num_query_rounds: private_batch_config::FRI_NUM_QUERY_ROUNDS,
         },
         ..CircuitConfig::standard_recursion_zk_config()
     }
@@ -470,31 +471,70 @@ pub fn ownership_circuit_config() -> CircuitConfig {
 ///
 /// FRI: `rate_bits = 3`, 36 query rounds, 20 proof-of-work bits (`36 * 3 + 20 = 128`
 /// conjectured bits). This layer is proved on a GPU at 2^19 rows for the production
-/// arity, where the LDE already plans ~12 GB of device buffers, so the rate stays at
+/// arity, where the prover already plans ~15 GB of device buffers, so the rate stays at
 /// plonky2's minimum and the extra security comes from queries and grinding. Both
 /// cost only the (native, on-chain) verifier: 36 Merkle paths per oracle instead of
 /// 28, and one 2^20-hash grind per proof for the prover. Being non-ZK, the query
 /// count adds no blinding rows, so it does not affect the circuit degree.
 ///
-/// Measured degree over the production private batch (~5,880 rows per inner proof:
+/// `num_challenges = 3`: at 2^19 rows two permutation challenges give 76 bits and three
+/// 114, past the 105-bit quotient-identity ceiling that no config raises (see
+/// [`soundness_bits`]). A fourth would reach 152 without moving the total, at 0.9 GB more
+/// of GPU buffers.
+///
+/// Measured degree over the production private batch (~6,030 rows per inner proof:
 /// the recursive verifier plus one Poseidon gate per 8 forwarded public inputs,
 /// which `build()` appends for the public-input hash):
-/// - up to 44 inner proofs: degree_bits=18
-/// - 45-89: degree_bits=19 (production arity 89; pinned by
+/// - up to 43 inner proofs: degree_bits=18
+/// - 44-86: degree_bits=19 (production arity 86; pinned by
 ///   `production_public_batch_stays_at_degree_19` in the aggregator crate)
-/// - 90-178: degree_bits=20
+/// - 87-173: degree_bits=20
 pub fn wormhole_public_batch_circuit_config() -> CircuitConfig {
     CircuitConfig {
-        security_bits: 128,
+        num_wires: public_batch_config::NUM_WIRES,
+        num_routed_wires: public_batch_config::NUM_ROUTED_WIRES,
+        security_bits: public_batch_config::SECURITY_BITS,
+        num_challenges: public_batch_config::NUM_CHALLENGES,
         fri_config: FriConfig {
-            rate_bits: 3,
-            cap_height: 4,
-            proof_of_work_bits: 20,
+            rate_bits: public_batch_config::FRI_RATE_BITS,
+            cap_height: public_batch_config::FRI_CAP_HEIGHT,
+            proof_of_work_bits: public_batch_config::FRI_PROOF_OF_WORK_BITS,
             reduction_strategy: FriReductionStrategy::ConstantArityBits(4, 5),
-            num_query_rounds: 36,
+            num_query_rounds: public_batch_config::FRI_NUM_QUERY_ROUNDS,
         },
         ..CircuitConfig::standard_recursion_config() // zero_knowledge: false
     }
+}
+
+/// Soundness bits `config` buys for a circuit of `2^degree_bits` rows: the least of the
+/// conjectured FRI bound (`num_query_rounds * rate_bits + proof_of_work_bits`), the
+/// permutation-argument bound and the quotient-identity bound
+/// ([`quotient_identity_bits`]). The soundness error is the sum of the three terms, so
+/// the total is within a bit or two of the least, and a config that raises the other two
+/// past the quotient term buys nothing: the production configs hold each of them at or
+/// above it, which the tests pin.
+///
+/// The permutation challenges are base-field elements, so one of them gives only
+/// `64 - log2(rows * routed wires)` bits and `num_challenges` of them multiply it.
+/// plonky2's own `security_bits` check covers the FRI term alone.
+pub fn soundness_bits(config: &CircuitConfig, degree_bits: usize) -> usize {
+    let fri = &config.fri_config;
+    let fri_bits = fri.num_query_rounds * fri.rate_bits + fri.proof_of_work_bits as usize;
+    let permutation_bits = config.num_challenges
+        * F::BITS.saturating_sub(degree_bits + log2_ceil(config.num_routed_wires));
+    fri_bits
+        .min(permutation_bits)
+        .min(quotient_identity_bits(config, degree_bits))
+}
+
+/// Soundness bits of the quotient identity `C(ζ) = Z_H(ζ) · Q(ζ)`, checked at one point
+/// `ζ` of the quadratic extension: a false identity is a nonzero polynomial of degree at
+/// most `(max_quotient_degree_factor + 1) · rows` and vanishes at `ζ` with that
+/// probability over `2^128`. No config setting raises this term (the `num_challenges`
+/// identities share `ζ`); it is the ceiling the two configurable terms are measured
+/// against.
+pub fn quotient_identity_bits(config: &CircuitConfig, degree_bits: usize) -> usize {
+    (2 * F::BITS).saturating_sub(degree_bits + log2_ceil(config.max_quotient_degree_factor + 1))
 }
 
 // ============================================================================
@@ -832,5 +872,57 @@ mod transfer_proof_json_tests {
         };
         let err = proof.validate().unwrap_err();
         assert!(err.contains("total bytes"));
+    }
+}
+
+#[cfg(test)]
+mod soundness_bits_tests {
+    use super::*;
+
+    /// The FRI and permutation terms, which the config controls, are each at or above
+    /// the quotient-identity term, which it does not.
+    #[test]
+    fn canonical_configs_are_bounded_only_by_the_quotient_identity() {
+        for (config, degree_bits, quotient_bits) in [
+            (wormhole_leaf_circuit_config(), 8, 116),
+            (wormhole_private_batch_circuit_config(), 15, 109),
+            (wormhole_public_batch_circuit_config(), 19, 105),
+        ] {
+            assert_eq!(quotient_identity_bits(&config, degree_bits), quotient_bits);
+            assert_eq!(soundness_bits(&config, degree_bits), quotient_bits);
+        }
+    }
+
+    #[test]
+    fn two_permutation_challenges_fall_short_of_128_bits() {
+        for (mut config, degree_bits, bits) in [
+            (wormhole_leaf_circuit_config(), 8, 100),
+            (wormhole_private_batch_circuit_config(), 15, 86),
+            (wormhole_public_batch_circuit_config(), 19, 76),
+        ] {
+            config.num_challenges = 2;
+            assert_eq!(soundness_bits(&config, degree_bits), bits);
+        }
+    }
+
+    #[test]
+    fn fourth_public_batch_challenge_adds_nothing() {
+        let three = wormhole_public_batch_circuit_config();
+        let mut four = three.clone();
+        four.num_challenges = 4;
+        assert_eq!(soundness_bits(&four, 19), soundness_bits(&three, 19));
+    }
+
+    #[test]
+    fn fri_term_bounds_the_result() {
+        let mut config = wormhole_public_batch_circuit_config();
+        config.fri_config.num_query_rounds = 28;
+        config.fri_config.proof_of_work_bits = 16;
+        assert_eq!(soundness_bits(&config, 19), 100);
+    }
+
+    #[test]
+    fn oversized_circuit_has_no_permutation_soundness() {
+        assert_eq!(soundness_bits(&wormhole_leaf_circuit_config(), 64), 0);
     }
 }

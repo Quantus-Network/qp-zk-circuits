@@ -48,10 +48,38 @@ use tiny_keccak::{Hasher, Keccak};
 
 // Re-export input types from qp-wormhole-inputs
 pub use qp_wormhole_inputs::{
-    leaf_config, BlockData, BytesDigest, PrivateBatchPublicInputs, PrivateBatchShape,
-    PublicBatchPublicInputs, PublicCircuitInputs, PublicInputsByAccount, WithdrawalOutput,
-    MIN_LEAF_SECURITY_BITS, PUBLIC_INPUTS_FELTS_LEN,
+    leaf_config, private_batch_config, public_batch_config, BlockData, BytesDigest,
+    PrivateBatchPublicInputs, PrivateBatchShape, PublicBatchPublicInputs, PublicCircuitInputs,
+    PublicInputsByAccount, WithdrawalOutput, MIN_LEAF_SECURITY_BITS, PUBLIC_INPUTS_FELTS_LEN,
 };
+
+macro_rules! canonical_config {
+    ($base:ident, $params:ident) => {{
+        let mut config = CircuitConfig::$base();
+        config.num_wires = $params::NUM_WIRES;
+        config.num_routed_wires = $params::NUM_ROUTED_WIRES;
+        config.security_bits = $params::SECURITY_BITS;
+        config.num_challenges = $params::NUM_CHALLENGES;
+        config.fri_config.rate_bits = $params::FRI_RATE_BITS;
+        config.fri_config.cap_height = $params::FRI_CAP_HEIGHT;
+        config.fri_config.proof_of_work_bits = $params::FRI_PROOF_OF_WORK_BITS;
+        config.fri_config.num_query_rounds = $params::FRI_NUM_QUERY_ROUNDS;
+        config
+    }};
+}
+
+/// The canonical private-batch config, mirroring
+/// `zk_circuits_common::circuit::wormhole_private_batch_circuit_config()`. A verifier
+/// loading batch artifacts must check `common.config` against it.
+pub fn canonical_private_batch_circuit_config() -> CircuitConfig {
+    canonical_config!(standard_recursion_zk_config, private_batch_config)
+}
+
+/// The canonical public-batch config, mirroring
+/// `zk_circuits_common::circuit::wormhole_public_batch_circuit_config()`.
+pub fn canonical_public_batch_circuit_config() -> CircuitConfig {
+    canonical_config!(standard_recursion_config, public_batch_config)
+}
 
 /// Parse public inputs from a proof.
 pub fn parse_public_inputs(
@@ -107,12 +135,12 @@ pub struct WormholeVerifier {
 // `WormholeCircuit::new(wormhole_leaf_circuit_config())` with qp-plonky2 1.6.0. The integration tests rebuild the circuit and fail if a
 // deliberate circuit change requires these commitments to be updated.
 const CANONICAL_LEAF_VERIFIER_KECCAK256: [u8; 32] = [
-    0xe6, 0x83, 0x9d, 0x5e, 0xc6, 0x54, 0xe3, 0xcf, 0xb0, 0x7b, 0x84, 0x69, 0x71, 0xd6, 0xaf, 0x85,
-    0xa2, 0xb1, 0x86, 0xc2, 0x48, 0xc1, 0x09, 0xda, 0x3c, 0xee, 0x9d, 0xae, 0x33, 0x01, 0x58, 0xd7,
+    0xbd, 0x0c, 0x5a, 0xf3, 0x8f, 0x9f, 0x90, 0xa2, 0xe6, 0x90, 0x6f, 0x00, 0x5d, 0x9b, 0xe8, 0x89,
+    0x4a, 0x08, 0xf0, 0x4a, 0x55, 0xa7, 0x89, 0x0d, 0x0c, 0xa2, 0x96, 0x17, 0xb2, 0x4d, 0xec, 0x94,
 ];
 const CANONICAL_LEAF_COMMON_KECCAK256: [u8; 32] = [
-    0xf1, 0xa2, 0x70, 0x7c, 0xa6, 0xf1, 0x6e, 0x80, 0x12, 0x12, 0x4f, 0xea, 0x97, 0x32, 0x6a, 0x95,
-    0x90, 0xb5, 0xfc, 0x38, 0xa9, 0x0f, 0x10, 0x63, 0xb8, 0x5b, 0x41, 0x72, 0xd5, 0xed, 0x75, 0xce,
+    0x31, 0x02, 0xff, 0x86, 0x0b, 0x88, 0xcb, 0x19, 0xec, 0x29, 0xa4, 0xd8, 0x52, 0x96, 0xed, 0xf9,
+    0x44, 0x76, 0xa9, 0xda, 0x5b, 0x7c, 0x2b, 0x15, 0xe7, 0x44, 0x07, 0x1e, 0x40, 0xce, 0x95, 0x8c,
 ];
 
 /// Maximum size accepted for a serialized verifier artifact, whether loaded
@@ -221,16 +249,7 @@ impl WormholeVerifier {
     /// [`leaf_config`] parameters (this crate is `no_std` and cannot depend on the
     /// circuit crates). The keccak pins above catch any drift between the two.
     pub fn canonical_leaf_circuit_config() -> CircuitConfig {
-        let mut config = CircuitConfig::standard_recursion_config();
-        config.num_wires = leaf_config::NUM_WIRES;
-        config.num_routed_wires = leaf_config::NUM_ROUTED_WIRES;
-        config.security_bits = leaf_config::SECURITY_BITS;
-        config.zero_knowledge = false;
-        config.fri_config.rate_bits = leaf_config::FRI_RATE_BITS;
-        config.fri_config.cap_height = leaf_config::FRI_CAP_HEIGHT;
-        config.fri_config.proof_of_work_bits = leaf_config::FRI_PROOF_OF_WORK_BITS;
-        config.fri_config.num_query_rounds = leaf_config::FRI_NUM_QUERY_ROUNDS;
-        config
+        canonical_config!(standard_recursion_config, leaf_config)
     }
 
     fn ensure_loaded_matches_canonical_leaf_profile(

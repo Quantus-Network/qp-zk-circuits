@@ -5,8 +5,13 @@ use test_helpers::{fake_leaf::build_fake_leaf_circuit, TestInputs};
 use wormhole_circuit::circuit::circuit_logic::WormholeCircuit;
 use wormhole_circuit::inputs::CircuitInputs;
 use wormhole_prover::WormholeProver;
-use wormhole_verifier::WormholeVerifier;
-use zk_circuits_common::circuit::wormhole_leaf_circuit_config;
+use wormhole_verifier::{
+    canonical_private_batch_circuit_config, canonical_public_batch_circuit_config, WormholeVerifier,
+};
+use zk_circuits_common::circuit::{
+    wormhole_leaf_circuit_config, wormhole_private_batch_circuit_config,
+    wormhole_public_batch_circuit_config,
+};
 
 fn circuit_config() -> CircuitConfig {
     wormhole_leaf_circuit_config()
@@ -126,4 +131,20 @@ fn cannot_verify_with_modified_proof() {
             }
         }
     }
+}
+
+#[test]
+fn canonical_verifier_configs_match_the_circuit_configs() {
+    assert_eq!(
+        WormholeVerifier::canonical_leaf_circuit_config(),
+        wormhole_leaf_circuit_config()
+    );
+    assert_eq!(
+        canonical_private_batch_circuit_config(),
+        wormhole_private_batch_circuit_config()
+    );
+    assert_eq!(
+        canonical_public_batch_circuit_config(),
+        wormhole_public_batch_circuit_config()
+    );
 }

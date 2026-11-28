@@ -51,17 +51,45 @@ pub const MIN_LEAF_SECURITY_BITS: usize = 128;
 /// leaf is a 2^8-degree circuit, so its blowup is cheap for the prover, while
 /// every query it saves removes ~75 gates from each recursive verification in
 /// the private batch. Leaves are proven client-side, so the rate is a
-/// compromise: each extra rate bit doubles the leaf prover's LDE (rate 7 proved
-/// in ~130 ms where rate 6 takes ~60 ms on an M4) and each bit removed costs a
-/// leaf slot in the 2^15 private batch. `19 * 6 + 16 = 130` conjectured bits.
+/// compromise: each extra rate bit doubles the leaf prover's LDE and each bit
+/// removed costs a leaf slot in the 2^15 private batch. Rate 7 pays for the third
+/// permutation challenge (~110 gates per recursive verification), which rate 6
+/// could only absorb by dropping a leaf slot. `16 * 7 + 16 = 128` conjectured bits.
 pub mod leaf_config {
     pub const NUM_WIRES: usize = 135;
     pub const NUM_ROUTED_WIRES: usize = 60;
     pub const SECURITY_BITS: usize = 128;
-    pub const FRI_RATE_BITS: usize = 6;
+    pub const NUM_CHALLENGES: usize = 3;
+    pub const FRI_RATE_BITS: usize = 7;
     pub const FRI_CAP_HEIGHT: usize = 4;
     pub const FRI_PROOF_OF_WORK_BITS: u32 = 16;
-    pub const FRI_NUM_QUERY_ROUNDS: usize = 19;
+    pub const FRI_NUM_QUERY_ROUNDS: usize = 16;
+}
+
+/// FRI and wire parameters of the canonical private-batch circuit config. Lives here
+/// for the same reason as [`leaf_config`].
+pub mod private_batch_config {
+    pub const NUM_WIRES: usize = 135;
+    pub const NUM_ROUTED_WIRES: usize = 60;
+    pub const SECURITY_BITS: usize = 128;
+    pub const NUM_CHALLENGES: usize = 3;
+    pub const FRI_RATE_BITS: usize = 3;
+    pub const FRI_CAP_HEIGHT: usize = 4;
+    pub const FRI_PROOF_OF_WORK_BITS: u32 = 20;
+    pub const FRI_NUM_QUERY_ROUNDS: usize = 36;
+}
+
+/// FRI and wire parameters of the canonical public-batch circuit config. Lives here
+/// for the same reason as [`leaf_config`]: the on-chain verifier is `no_std`.
+pub mod public_batch_config {
+    pub const NUM_WIRES: usize = 143;
+    pub const NUM_ROUTED_WIRES: usize = 80;
+    pub const SECURITY_BITS: usize = 128;
+    pub const NUM_CHALLENGES: usize = 3;
+    pub const FRI_RATE_BITS: usize = 3;
+    pub const FRI_CAP_HEIGHT: usize = 4;
+    pub const FRI_PROOF_OF_WORK_BITS: u32 = 20;
+    pub const FRI_NUM_QUERY_ROUNDS: usize = 36;
 }
 
 /// Maximum number of leaf proofs and of exit slots in a private batch. The formal
@@ -92,11 +120,11 @@ pub mod production {
     /// and ~1 gate per inner proof in the public batch, but 40 bytes of public
     /// input each on chain whether used or not.
     pub const NUM_EXIT_SLOTS: usize = 32;
-    /// Private-batch proofs per public batch. 89 is the most that fit in 2^19
-    /// rows once each inner proof costs ~5,855 gates of recursive verification
-    /// (36 FRI queries at rate 3) plus the Poseidon gates hashing its forwarded
-    /// public inputs. 90 is degree 20.
-    pub const PUBLIC_BATCH_ARITY: usize = 89;
+    /// Private-batch proofs per public batch. 86 is the most that fit in 2^19
+    /// rows once each inner proof costs ~6,005 gates of recursive verification
+    /// (36 FRI queries at rate 3, 3 permutation challenges) plus the Poseidon
+    /// gates hashing its forwarded public inputs. 87 is degree 20.
+    pub const PUBLIC_BATCH_ARITY: usize = 86;
 
     pub const PRIVATE_BATCH_SHAPE: PrivateBatchShape =
         PrivateBatchShape::new(NUM_LEAF_PROOFS, NUM_EXIT_SLOTS);

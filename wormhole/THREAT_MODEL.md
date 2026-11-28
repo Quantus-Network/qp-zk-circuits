@@ -85,6 +85,46 @@ Even with a trusted build host, the following remain required:
 
 ---
 
+## Verifier integration requirements
+
+The circuits leave the following to whoever verifies their proofs. A verifier
+that skips one of them is unsound even though every proof it accepts is valid.
+
+1. **Whole-segment nullifier settlement**
+   The public batch does not deduplicate inner proofs or nullifiers, and
+   dummy-slot nullifiers are prover-chosen. See the
+   [nullifier section](./README.md#nullifiers-and-double-spend-prevention-security-model).
+
+2. **Block binding**
+   The leaf binds `block_hash` only to a header preimage. The verifier must
+   check that it is non-zero and is the canonical hash at `block_number`, and
+   must reject all-dummy batches.
+
+3. **Fee rate and asset**
+   `volume_fee_bps` is range-checked to `0..=10000`, nothing more. The verifier
+   must compare it and `asset_id` with the chain's configured values.
+
+4. **Proof bytes are not an identity**
+   `ProofWithPublicInputs::from_bytes` accepts one encoding per proof (it
+   rejects non-canonical field elements and trailing bytes), but the same
+   statement has many valid proofs. The verifier must key pool or replay state
+   on nullifiers, never on proof bytes or their hash.
+
+5. **Artifact config**
+   `verifier.bin` does not commit to the FRI parameters or `num_challenges`;
+   those live in `common.bin`. Both must come from the same attested build, and
+   the loaded `common.config` must equal the canonical config of its layer
+   (`canonical_private_batch_circuit_config` and
+   `canonical_public_batch_circuit_config` in `qp-wormhole-verifier`). The leaf
+   and ownership loaders pin both files by keccak256.
+
+6. **Leaf proofs stay on the client**
+   The leaf circuit is not zero-knowledge. A leaf proof must never leave the
+   device that holds the secret; the private-batch proof built from it is what
+   gets submitted.
+
+---
+
 ## Operational requirements (trusted path)
 
 To stay inside this model, deployments should:

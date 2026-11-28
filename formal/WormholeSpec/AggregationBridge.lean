@@ -1,8 +1,8 @@
 /-
   The aggregation bridge: the private-batch/public-batch wrapper *circuit constraints* imply the spec
   relations `RPrivateBatch` / `RPublicBatch`, and — given each child's relation, which
-  qp-plonky2/formal recovers from the accepted child proofs through its one trusted axiom
-  `Plonky2Bridge.proof_sound` — a satisfied aggregation circuit attests both its own relation
+  qp-plonky2/formal recovers from the accepted child proofs through its theorem
+  `Plonky2Bridge.proof_sound` and the axioms that rests on — a satisfied aggregation circuit attests both its own relation
   and every child's relation.
 
   WHAT THIS MODELS. We model the wrapper constraints of `build_private_batch_constraints`
@@ -129,7 +129,7 @@ theorem private_batch_bridge {ro : RandomOracle} {leaves : List LeafPublic}
 
     The children's `Rleaf` is a hypothesis here: on the exported wiring it is what
     `Plonky2Bridge.LeafCircuit.accepted_sound` (qp-plonky2/formal) yields for an accepted leaf
-    proof, through the one trusted axiom `Plonky2Bridge.proof_sound`. Honestly scoped, this is
+    proof, through `Plonky2Bridge.proof_sound`. Honestly scoped, this is
     "`private_batch_bridge` + that hypothesis", and the only real work inside the bridge is
     `nullifiersReplaced_build`; the aggregate fee predicate and the remaining `RPrivateBatch`
     clauses are shared verbatim with `PrivateBatchCircuit`. This does not prove that
